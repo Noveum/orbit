@@ -72,6 +72,36 @@ async function newIssue(title = 'Ship the hub', description = '') {
 }
 
 describe('mentions in an issue comment', () => {
+  it('groups separate comment notifications for one issue into one conversation', async () => {
+    const issue = await newIssue();
+    await createComment(workspace.admin, issue.id, {
+      body: `First update for @${grace.user.handle}`,
+    });
+    await createComment(workspace.admin, issue.id, {
+      body: `Second update for @${grace.user.handle}`,
+    });
+
+    const rows = await inboxOf(grace.user.id);
+    const conversations = await db
+      .select()
+      .from(schema.notificationConversation)
+      .where(eq(schema.notificationConversation.userId, grace.user.id));
+
+    expect(rows).toHaveLength(2);
+    expect(conversations).toHaveLength(1);
+    const conversation = conversations[0];
+    if (conversation === undefined) throw new Error('Expected one issue conversation.');
+    expect(new Set(rows.map((row) => row.conversationId))).toEqual(new Set([conversation.id]));
+    expect(rows.every((row) => row.sourceEventId !== null)).toBe(true);
+    expect(conversation).toMatchObject({
+      conversationKey: `orbit-issue:${issue.id}:activity`,
+      subjectType: 'issue',
+      subjectId: issue.id,
+      category: 'activity',
+      eventCount: 2,
+    });
+  });
+
   it('notifies the mentioned teammate and deep links to that comment', async () => {
     const issue = await newIssue();
     const { comment, actions } = await createComment(workspace.admin, issue.id, {

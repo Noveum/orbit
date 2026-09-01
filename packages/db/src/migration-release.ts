@@ -21,6 +21,19 @@ const LOCK_KEY = 4_611_358_438_132_153;
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
   1786217938315, 1786623194883, 1788083189965, 1788264445370,
 ]);
+const NOTIFICATION_AUDIT_MIGRATION = 1788268141469;
+const NOTIFICATION_AUDIT_ARTIFACTS = [
+  {
+    functionName: 'validate_notification_deduplicated_target',
+    triggerName: 'notification_deduplicated_target_trigger',
+    tableName: 'notification',
+  },
+  {
+    functionName: 'validate_notification_delivery_deduplicated_target',
+    triggerName: 'notification_delivery_deduplicated_target_trigger',
+    tableName: 'notification_delivery',
+  },
+] as const;
 
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>
@@ -38,6 +51,79 @@ function verifyLegacyDataReconciliation(migrations: readonly MigrationMeta[]): v
     throw new Error(
       `Legacy baseline has no reconciliation for data migration ${missing[0]?.folderMillis}.`,
     );
+  }
+}
+
+function artifactStatement(migration: MigrationMeta, prefix: string): string {
+  const statements = migration.sql.filter((statement) => statement.trimStart().startsWith(prefix));
+  if (statements.length !== 1) {
+    throw new Error(`Migration ${migration.folderMillis} has an invalid ${prefix} artifact.`);
+  }
+  const statement = statements[0];
+  if (statement === undefined) {
+    throw new Error(`Migration ${migration.folderMillis} has no ${prefix} artifact.`);
+  }
+  return statement;
+}
+
+async function reconcileNotificationAuditArtifacts(
+  sql: postgres.TransactionSql,
+  migration: MigrationMeta,
+): Promise<void> {
+  for (const artifact of NOTIFICATION_AUDIT_ARTIFACTS) {
+    const functionStatement = artifactStatement(
+      migration,
+      `CREATE FUNCTION ${artifact.functionName}()`,
+    );
+    const triggerStatement = artifactStatement(
+      migration,
+      `CREATE CONSTRAINT TRIGGER ${artifact.triggerName}`,
+    );
+    await sql.unsafe(functionStatement.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
+    await sql.unsafe(`drop trigger if exists "${artifact.triggerName}" on "${artifact.tableName}"`);
+    await sql.unsafe(triggerStatement);
+  }
+
+  const artifacts = await sql<
+    {
+      trigger_name: string;
+      table_name: string;
+      function_name: string;
+      valid: boolean;
+    }[]
+  >`
+    select
+      trigger.tgname as trigger_name,
+      relation.relname as table_name,
+      procedure.proname as function_name,
+      trigger.tgdeferrable
+        and trigger.tginitdeferred
+        and trigger.tgenabled = 'O'
+        and trigger.tgconstraint <> 0
+        and trigger.tgtype = 21 as valid
+    from pg_trigger trigger
+    inner join pg_class relation on relation.oid = trigger.tgrelid
+    inner join pg_namespace relation_namespace on relation_namespace.oid = relation.relnamespace
+    inner join pg_proc procedure on procedure.oid = trigger.tgfoid
+    inner join pg_namespace procedure_namespace on procedure_namespace.oid = procedure.pronamespace
+    where relation_namespace.nspname = 'public'
+      and procedure_namespace.nspname = 'public'
+      and trigger.tgname in (
+        'notification_deduplicated_target_trigger',
+        'notification_delivery_deduplicated_target_trigger'
+      )
+  `;
+  const valid = NOTIFICATION_AUDIT_ARTIFACTS.every((expected) =>
+    artifacts.some(
+      (artifact) =>
+        artifact.trigger_name === expected.triggerName &&
+        artifact.table_name === expected.tableName &&
+        artifact.function_name === expected.functionName &&
+        artifact.valid,
+    ),
+  );
+  if (!valid || artifacts.length !== NOTIFICATION_AUDIT_ARTIFACTS.length) {
+    throw new Error('Notification audit trigger reconciliation did not produce valid artifacts.');
   }
 }
 
@@ -86,6 +172,12 @@ async function baselineLedger(
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
+    const notificationAuditMigration = pendingMigrations.find(
+      (migration) => migration.folderMillis === NOTIFICATION_AUDIT_MIGRATION,
+    );
+    if (notificationAuditMigration !== undefined) {
+      await reconcileNotificationAuditArtifacts(tx, notificationAuditMigration);
+    }
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
       await tx`
         update attachment

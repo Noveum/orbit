@@ -25,6 +25,7 @@ import {
   unique,
   validationFailed,
 } from '@orbit/shared';
+import { notFound } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -33,6 +34,15 @@ import { hasSlackBotToken } from '../slack/credentials.ts';
 import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
 import { slackFeatureEnabled } from '../slack/feature.ts';
 import {
+  applyLiveNotificationConversations,
+  compatibleInboxSurface,
+  mutateLegacyNotifications,
+  type NotificationConversationPlan,
+  notificationConversationLookupKey,
+  prepareNotificationConversations,
+} from './compatibility.ts';
+import { type ConversationIdentity, resolveNotificationConversation } from './conversations.ts';
+import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
   isChannelEnabled,
@@ -40,6 +50,8 @@ import {
 } from './preferences.ts';
 import { isWithinQuietHours, nextQuietHoursEnd, type QuietHours } from './quiet-hours.ts';
 
+export * from './conversation-backfill.ts';
+export * from './conversations.ts';
 export * from './preferences.ts';
 export * from './quiet-hours.ts';
 
@@ -245,10 +257,6 @@ function isSlackDmDelivery(
 export const DEDUPE_WINDOW_MS = 60_000;
 export const INBOX_CHANNEL = 'inbox';
 
-function deliveredToInbox() {
-  return sql`${notification.deliveredChannels} @> '["inbox"]'::jsonb`;
-}
-
 export type NotificationSourceInput = z.input<typeof notificationSourceInputSchema>;
 
 export const notificationEventSchema = z.object({
@@ -319,6 +327,7 @@ interface Plan {
   readonly slackDmAt: Date | null;
   readonly slackDmDestination: SlackDmDestination | null;
   readonly sourceEventId: string | null;
+  readonly conversation: ConversationIdentity;
 }
 
 const slackDmEligibilitySchema = z.object({
@@ -366,11 +375,11 @@ export async function notifyMany(
       0,
     );
   const slackEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
-  await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
   const recipientIds = unique(
     activeEvents.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
   if (recipientIds.length === 0) {
+    await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
     await completeNotificationSources(database, claimedSources, now);
     return { ...emptyOutcome(), deduped };
   }
@@ -453,19 +462,43 @@ export async function notifyMany(
     }
   }
   if (plans.length === 0) {
+    await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
     await completeNotificationSources(database, claimedSources, now);
     return { ...emptyOutcome(), deduped };
   }
 
+  const conversationPlans: NotificationConversationPlan[] = plans.map((plan) => ({
+    notificationId: plan.id,
+    organizationId: plan.event.organizationId,
+    userId: plan.recipient.id,
+    conversation: plan.conversation,
+  }));
+  const conversations = await prepareNotificationConversations(database, conversationPlans, now);
   const rows = await database
     .insert(notification)
-    .values(plans.map((plan) => toInsert(plan, now)))
+    .values(
+      plans.map((plan) => {
+        const conversation = conversations.get(
+          notificationConversationLookupKey(
+            plan.event.organizationId,
+            plan.recipient.id,
+            plan.conversation.conversationKey,
+          ),
+        );
+        if (conversation === undefined) {
+          throw validationFailed('Notification conversation could not be created.');
+        }
+        return toInsert(plan, conversation.id, now);
+      }),
+    )
     .onConflictDoNothing()
     .returning();
   deduped += plans.length - rows.length;
 
+  await applyLiveNotificationConversations(database, rows, conversationPlans, conversations, now);
   const deliveryRows = slackDeliveryRows(rows, plans, now, options.sourceDeliveryId);
   if (deliveryRows.length > 0) await database.insert(notificationDelivery).values(deliveryRows);
+  await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
   await completeNotificationSources(database, claimedSources, now);
 
   return buildOutcome(plans, rows, deduped);
@@ -592,6 +625,7 @@ function slackDeliveryRows(
         sourceDeliveryId: sourceDeliveryId ?? null,
         userId: row.userId,
         channel: 'slack_dm',
+        conversationKey: plan.conversation.conversationKey,
         destinationKind: 'user',
         destinationId: plan.slackDmDestination.destinationId,
         integrationId: plan.slackDmDestination.integrationId,
@@ -637,8 +671,9 @@ function planFor(
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
   const deferred =
     (emailEnabled || slackDmEnabled) && !bypass && isWithinQuietHours(now, quietHours);
+  const id = randomUUIDv7(now);
   return {
-    id: randomUUIDv7(now),
+    id,
     event,
     recipient,
     channels: [
@@ -652,6 +687,22 @@ function planFor(
     slackDmAt: slackDmSendAt(slackDmEnabled, deferred, now, quietHours),
     slackDmDestination,
     sourceEventId,
+    conversation: resolveNotificationConversation({
+      notificationId: id,
+      type: event.type,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      url: event.url,
+      ...(event.source === undefined
+        ? {}
+        : {
+            source: {
+              subjectType: event.source.subjectType,
+              subjectKey: event.source.subjectKey,
+              payload: event.source.payload,
+            },
+          }),
+    }),
   };
 }
 
@@ -735,7 +786,7 @@ function isPersonalNotification(event: ParsedEvent): boolean {
   return NOTIFICATION_AUDIENCE_BY_REASON[event.reason] === 'personal';
 }
 
-function toInsert(plan: Plan, now: Date) {
+function toInsert(plan: Plan, conversationId: string, now: Date) {
   const { event } = plan;
   return {
     id: plan.id,
@@ -753,6 +804,11 @@ function toInsert(plan: Plan, now: Date) {
     url: event.url,
     externalUrl: event.externalUrl ?? null,
     sourceEventId: plan.sourceEventId,
+    conversationId,
+    occurredAt: event.source?.occurredAt ?? now,
+    ingestedAt: now,
+    ingestionSeq: nextSyncId,
+    surfaceInInbox: plan.channels.includes(INBOX_CHANNEL),
     deliveredChannels: plan.channels.filter((channel) => channel !== 'slack_dm'),
     syncId: nextSyncId,
     createdAt: now,
@@ -806,6 +862,7 @@ async function enqueueSharedSlackDeliveries(
         sourceEventId,
         userId: null,
         channel: 'slack',
+        conversationKey: event.source?.subjectKey ?? null,
         destinationKind: 'shared_channel',
         destinationId: `${target.integrationId}:${target.channelId}`,
         integrationId: target.integrationId,
@@ -930,6 +987,7 @@ async function loadRecentKeys(
       and(
         inArray(notification.userId, [...userIds]),
         gte(notification.createdAt, new Date(now.getTime() - DEDUPE_WINDOW_MS)),
+        isNull(notification.deduplicatedIntoNotificationId),
       ),
     );
   return new Set(rows.map((row) => dedupeKey(row.userId, row.type, row.entityId, row.externalUrl)));
@@ -960,21 +1018,17 @@ export async function markRead(
   input: z.input<typeof markReadSchema>,
 ): Promise<NotificationRecord[]> {
   const params = markReadSchema.parse(input);
-  return await database
-    .update(notification)
-    .set({
-      readAt: params.read ? new Date() : null,
-      manualUnreadAnchor: false,
-      syncId: nextSyncId,
-    })
-    .where(
-      and(
-        eq(notification.userId, params.userId),
-        eq(notification.organizationId, params.organizationId),
-        inArray(notification.id, params.notificationIds),
-      ),
-    )
-    .returning();
+  if ('$client' in database) {
+    return await database.transaction((tx) => markRead(tx, params));
+  }
+  return await mutateLegacyNotifications(database, {
+    kind: 'read',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    notificationIds: params.notificationIds,
+    read: params.read,
+    now: new Date(),
+  });
 }
 
 export const markAllReadSchema = z.object({
@@ -987,18 +1041,15 @@ export async function markAllRead(
   input: z.input<typeof markAllReadSchema>,
 ): Promise<number> {
   const params = markAllReadSchema.parse(input);
-  const updated = await database
-    .update(notification)
-    .set({ readAt: new Date(), manualUnreadAnchor: false, syncId: nextSyncId })
-    .where(
-      and(
-        eq(notification.userId, params.userId),
-        eq(notification.organizationId, params.organizationId),
-        isNull(notification.readAt),
-        isNull(notification.dismissedAt),
-      ),
-    )
-    .returning({ id: notification.id });
+  if ('$client' in database) {
+    return await database.transaction((tx) => markAllRead(tx, params));
+  }
+  const updated = await mutateLegacyNotifications(database, {
+    kind: 'read_all',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    now: new Date(),
+  });
   return updated.length;
 }
 
@@ -1014,19 +1065,45 @@ export async function snooze(
   input: z.input<typeof snoozeSchema>,
 ): Promise<NotificationRecord> {
   const params = snoozeSchema.parse(input);
-  const updated = await database
-    .update(notification)
-    .set({ snoozedUntil: params.until, syncId: nextSyncId })
-    .where(
-      and(
-        eq(notification.userId, params.userId),
-        eq(notification.organizationId, params.organizationId),
-        eq(notification.id, params.notificationId),
-      ),
-    )
-    .returning();
+  if ('$client' in database) {
+    return await database.transaction((tx) => snooze(tx, params));
+  }
+  const updated = await mutateLegacyNotifications(database, {
+    kind: 'snooze',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    notificationIds: [params.notificationId],
+    until: params.until,
+    now: new Date(),
+  });
   const row = updated[0];
   if (row === undefined) throw validationFailed('That notification does not exist.');
+  return row;
+}
+
+export const dismissNotificationSchema = z.object({
+  userId: idSchema,
+  organizationId: idSchema,
+  notificationId: idSchema,
+});
+
+export async function dismissNotification(
+  database: NotificationDatabase,
+  input: z.input<typeof dismissNotificationSchema>,
+): Promise<NotificationRecord> {
+  const params = dismissNotificationSchema.parse(input);
+  if ('$client' in database) {
+    return await database.transaction((tx) => dismissNotification(tx, params));
+  }
+  const updated = await mutateLegacyNotifications(database, {
+    kind: 'dismiss',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    notificationIds: [params.notificationId],
+    now: new Date(),
+  });
+  const row = updated[0];
+  if (row === undefined) throw notFound('That notification does not exist.');
   return row;
 }
 
@@ -1053,7 +1130,8 @@ export async function listInbox(
   const filters = [
     eq(notification.userId, params.userId),
     eq(notification.organizationId, params.organizationId),
-    deliveredToInbox(),
+    compatibleInboxSurface(),
+    isNull(notification.deduplicatedIntoNotificationId),
     isNull(notification.dismissedAt),
   ];
   if (params.cursor !== undefined) filters.push(lt(notification.id, params.cursor));
@@ -1089,7 +1167,8 @@ export async function unreadCount(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
         isNull(notification.readAt),
-        deliveredToInbox(),
+        compatibleInboxSurface(),
+        isNull(notification.deduplicatedIntoNotificationId),
         isNull(notification.dismissedAt),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
@@ -1117,7 +1196,8 @@ export async function unreadCounters(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
         isNull(notification.readAt),
-        deliveredToInbox(),
+        compatibleInboxSurface(),
+        isNull(notification.deduplicatedIntoNotificationId),
         isNull(notification.dismissedAt),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),

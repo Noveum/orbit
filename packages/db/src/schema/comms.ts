@@ -11,6 +11,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -70,6 +71,257 @@ export const notificationSourceEvent = pgTable(
   ],
 );
 
+function notificationOrganizationColumn(): AnyPgColumn {
+  return notification.organizationId;
+}
+
+function notificationIdColumn(): AnyPgColumn {
+  return notification.id;
+}
+
+function notificationUserColumn(): AnyPgColumn {
+  return notification.userId;
+}
+
+export const notificationConversation = pgTable(
+  'notification_conversation',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    conversationKey: text('conversation_key').notNull(),
+    subjectType: text('subject_type').notNull(),
+    subjectId: text('subject_id').notNull(),
+    category: text('category').notNull(),
+    latestEventId: text('latest_event_id'),
+    latestType: text('latest_type'),
+    latestActorName: text('latest_actor_name'),
+    latestTitle: text('latest_title'),
+    latestBody: text('latest_body'),
+    latestUrl: text('latest_url'),
+    latestExternalUrl: text('latest_external_url'),
+    latestOccurredAt: timestamp('latest_occurred_at', { withTimezone: true }),
+    eventCount: integer('event_count').notNull().default(0),
+    unreadEventCount: integer('unread_event_count').notNull().default(0),
+    unreadMentionCount: integer('unread_mention_count').notNull().default(0),
+    manualUnread: boolean('manual_unread').notNull().default(false),
+    lastMentionAt: timestamp('last_mention_at', { withTimezone: true }),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    accessHiddenAt: timestamp('access_hidden_at', { withTimezone: true }),
+    accessGeneration: bigint('access_generation', { mode: 'number' }).notNull().default(0),
+    snoozeGeneration: bigint('snooze_generation', { mode: 'number' }).notNull().default(0),
+    lastActivitySeq: bigint('last_activity_seq', { mode: 'number' }).notNull().default(0),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('notification_conversation_org_id_user_unique').on(
+      table.organizationId,
+      table.id,
+      table.userId,
+    ),
+    uniqueIndex('notification_conversation_org_user_key_unique').on(
+      table.organizationId,
+      table.userId,
+      table.conversationKey,
+    ),
+    index('notification_conversation_list_idx').on(
+      table.organizationId,
+      table.userId,
+      table.category,
+      table.lastActivitySeq.desc(),
+      table.id.desc(),
+    ),
+    index('notification_conversation_unread_idx')
+      .on(table.organizationId, table.userId, table.lastActivitySeq.desc(), table.id.desc())
+      .where(sql`${table.unreadEventCount} > 0 or ${table.manualUnread} is true`),
+    index('notification_conversation_mentions_idx')
+      .on(table.organizationId, table.userId, table.lastActivitySeq.desc(), table.id.desc())
+      .where(sql`${table.lastMentionAt} is not null`),
+    index('notification_conversation_pull_request_idx')
+      .on(table.organizationId, table.userId, table.lastActivitySeq.desc(), table.id.desc())
+      .where(sql`${table.subjectType} = 'github_pull_request'`),
+    index('notification_conversation_snooze_idx').on(
+      table.organizationId,
+      table.userId,
+      table.snoozedUntil,
+    ),
+    foreignKey({
+      name: 'notification_conversation_latest_event_fk',
+      columns: [table.organizationId, table.latestEventId, table.userId],
+      foreignColumns: [
+        notificationOrganizationColumn(),
+        notificationIdColumn(),
+        notificationUserColumn(),
+      ],
+    }).onDelete('restrict'),
+    check(
+      'notification_conversation_category_check',
+      sql`${table.category} in ('activity', 'status')`,
+    ),
+    check(
+      'notification_conversation_counts_check',
+      sql`${table.eventCount} >= 0
+        and ${table.unreadEventCount} >= 0
+        and ${table.unreadMentionCount} >= 0
+        and ${table.unreadEventCount} <= ${table.eventCount}
+        and ${table.unreadMentionCount} <= ${table.unreadEventCount}
+        and (${table.manualUnread} is false or ${table.unreadEventCount} = 0)`,
+    ),
+    check(
+      'notification_conversation_generations_check',
+      sql`${table.accessGeneration} >= 0
+        and ${table.snoozeGeneration} >= 0
+        and ${table.lastActivitySeq} >= 0`,
+    ),
+  ],
+);
+
+export const notificationInboxState = pgTable(
+  'notification_inbox_state',
+  {
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    unreadCount: integer('unread_count').notNull().default(0),
+    unreadActivityCount: integer('unread_activity_count').notNull().default(0),
+    unreadMentionCount: integer('unread_mention_count').notNull().default(0),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'notification_inbox_state_org_user_pk',
+      columns: [table.organizationId, table.userId],
+    }),
+    check(
+      'notification_inbox_state_counts_check',
+      sql`${table.unreadCount} >= 0
+        and ${table.unreadActivityCount} >= 0
+        and ${table.unreadMentionCount} >= 0
+        and ${table.unreadActivityCount} <= ${table.unreadCount}
+        and ${table.unreadMentionCount} <= ${table.unreadCount}`,
+    ),
+  ],
+);
+
+export const notificationSnoozeWake = pgTable(
+  'notification_snooze_wake',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    conversationId: text('conversation_id').notNull(),
+    snoozeGeneration: bigint('snooze_generation', { mode: 'number' }).notNull(),
+    wakeAt: timestamp('wake_at', { withTimezone: true }).notNull(),
+    status: text('status').notNull().default('pending'),
+    claimToken: text('claim_token'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    attempts: integer('attempts').notNull().default(0),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('notification_snooze_wake_conversation_generation_unique').on(
+      table.organizationId,
+      table.conversationId,
+      table.snoozeGeneration,
+    ),
+    index('notification_snooze_wake_due_idx').on(table.status, table.wakeAt),
+    foreignKey({
+      name: 'notification_snooze_wake_conversation_fk',
+      columns: [table.organizationId, table.conversationId, table.userId],
+      foreignColumns: [
+        notificationConversation.organizationId,
+        notificationConversation.id,
+        notificationConversation.userId,
+      ],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'notification_snooze_wake_inbox_state_fk',
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [notificationInboxState.organizationId, notificationInboxState.userId],
+    }).onDelete('cascade'),
+    check(
+      'notification_snooze_wake_status_check',
+      sql`${table.status} in ('pending', 'processing', 'completed', 'failed', 'unavailable')`,
+    ),
+    check(
+      'notification_snooze_wake_attempts_check',
+      sql`${table.snoozeGeneration} > 0 and ${table.attempts} >= 0`,
+    ),
+    check(
+      'notification_snooze_wake_claim_check',
+      sql`(
+        ${table.status} = 'processing'
+        and ${table.claimToken} is not null
+        and ${table.claimedAt} is not null
+        and ${table.leaseExpiresAt} is not null
+      ) or (
+        ${table.status} <> 'processing'
+        and ${table.claimToken} is null
+        and ${table.claimedAt} is null
+        and ${table.leaseExpiresAt} is null
+      )`,
+    ),
+  ],
+);
+
+export const notificationConversationBackfillProgress = pgTable(
+  'notification_conversation_backfill_progress',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    phase: text('phase').notNull(),
+    cursor: text('cursor'),
+    highWaterMark: text('high_water_mark'),
+    status: text('status').notNull().default('pending'),
+    processedRows: bigint('processed_rows', { mode: 'number' }).notNull().default(0),
+    passNumber: integer('pass_number').notNull().default(0),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('notification_conversation_backfill_org_phase_unique').on(
+      table.organizationId,
+      table.phase,
+    ),
+    index('notification_conversation_backfill_status_idx').on(table.status, table.updatedAt),
+    check(
+      'notification_conversation_backfill_status_check',
+      sql`${table.status} in ('pending', 'running', 'completed', 'failed')`,
+    ),
+    check(
+      'notification_conversation_backfill_progress_check',
+      sql`${table.processedRows} >= 0 and ${table.passNumber} >= 0`,
+    ),
+  ],
+);
+
 export const notification = pgTable(
   'notification',
   {
@@ -94,10 +346,16 @@ export const notification = pgTable(
     sourceEventId: text('source_event_id').references(() => notificationSourceEvent.id, {
       onDelete: 'restrict',
     }),
+    conversationId: text('conversation_id'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }),
+    ingestedAt: timestamp('ingested_at', { withTimezone: true }),
+    ingestionSeq: bigint('ingestion_seq', { mode: 'number' }),
+    surfaceInInbox: boolean('surface_in_inbox'),
     readAt: timestamp('read_at', { withTimezone: true }),
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
     dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
     manualUnreadAnchor: boolean('manual_unread_anchor').notNull().default(false),
+    deduplicatedIntoNotificationId: text('deduplicated_into_notification_id'),
     deliveredChannels: jsonb('delivered_channels').$type<string[]>().notNull().default([]),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -109,11 +367,60 @@ export const notification = pgTable(
     uniqueIndex('notification_source_user_unique')
       .on(table.sourceEventId, table.userId)
       .where(sql`${table.sourceEventId} is not null`),
+    index('notification_conversation_events_idx')
+      .on(
+        table.organizationId,
+        table.userId,
+        table.conversationId,
+        table.ingestionSeq.desc(),
+        table.id.desc(),
+      )
+      .where(
+        sql`${table.conversationId} is not null and ${table.deduplicatedIntoNotificationId} is null`,
+      ),
+    index('notification_deduplicated_into_idx')
+      .on(table.organizationId, table.userId, table.deduplicatedIntoNotificationId)
+      .where(sql`${table.deduplicatedIntoNotificationId} is not null`),
     foreignKey({
       name: 'notification_org_source_event_fk',
       columns: [table.organizationId, table.sourceEventId],
       foreignColumns: [notificationSourceEvent.organizationId, notificationSourceEvent.id],
     }),
+    foreignKey({
+      name: 'notification_conversation_fk',
+      columns: [table.organizationId, table.conversationId, table.userId],
+      foreignColumns: [
+        notificationConversation.organizationId,
+        notificationConversation.id,
+        notificationConversation.userId,
+      ],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'notification_deduplicated_into_fk',
+      columns: [table.organizationId, table.deduplicatedIntoNotificationId, table.userId],
+      foreignColumns: [table.organizationId, table.id, table.userId],
+    }).onDelete('restrict'),
+    check(
+      'notification_conversation_shape_check',
+      sql`${table.conversationId} is null or (
+        ${table.occurredAt} is not null
+        and ${table.ingestedAt} is not null
+        and ${table.ingestionSeq} is not null
+        and ${table.surfaceInInbox} is not null
+      )`,
+    ),
+    check(
+      'notification_ingestion_seq_check',
+      sql`${table.ingestionSeq} is null or ${table.ingestionSeq} > 0`,
+    ),
+    check(
+      'notification_deduplicated_shape_check',
+      sql`${table.deduplicatedIntoNotificationId} is null or (
+        ${table.sourceEventId} is null
+        and ${table.surfaceInInbox} is false
+        and ${table.deduplicatedIntoNotificationId} <> ${table.id}
+      )`,
+    ),
   ],
 );
 
@@ -133,18 +440,33 @@ export const notificationDelivery = pgTable(
     sourceDeliveryId: text('source_delivery_id'),
     userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
     channel: text('channel').notNull(),
+    conversationKey: text('conversation_key'),
+    deduplicatedIntoDeliveryId: text('deduplicated_into_delivery_id'),
     destinationKind: text('destination_kind'),
     destinationId: text('destination_id'),
     integrationId: text('integration_id'),
+    slackTeamId: text('slack_team_id'),
+    slackAppId: text('slack_app_id'),
+    credentialGeneration: bigint('credential_generation', { mode: 'number' }),
+    providerRequestId: text('provider_request_id'),
+    providerMessageId: text('provider_message_id'),
     providerPayload: jsonb('provider_payload').$type<Record<string, unknown>>(),
+    providerPayloadHash: text('provider_payload_hash'),
+    providerIdempotencyExpiresAt: timestamp('provider_idempotency_expires_at', {
+      withTimezone: true,
+    }),
     status: text('status').notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
     providerMessageChannel: text('provider_message_channel'),
     providerMessageTs: text('provider_message_ts'),
     availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    claimToken: text('claim_token'),
     claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    sendStartedAt: timestamp('send_started_at', { withTimezone: true }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    deadLetteredAt: timestamp('dead_lettered_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -165,7 +487,32 @@ export const notificationDelivery = pgTable(
         table.destinationKind,
         table.destinationId,
       )
-      .where(sql`${table.sourceEventId} is not null`),
+      .where(
+        sql`${table.sourceEventId} is not null and ${table.deduplicatedIntoDeliveryId} is null`,
+      ),
+    uniqueIndex('notification_delivery_slack_processing_unique')
+      .on(
+        table.organizationId,
+        table.channel,
+        table.integrationId,
+        table.slackTeamId,
+        table.slackAppId,
+        table.destinationKind,
+        table.destinationId,
+        table.conversationKey,
+      )
+      .where(
+        sql`${table.status} = 'processing'
+          and (${table.channel} = 'slack' or ${table.channel} = 'slack_dm')
+          and ${table.deduplicatedIntoDeliveryId} is null`,
+      ),
+    index('notification_delivery_deduplicated_into_idx')
+      .on(table.organizationId, table.deduplicatedIntoDeliveryId)
+      .where(sql`${table.deduplicatedIntoDeliveryId} is not null`),
+    index('notification_delivery_provider_request_idx')
+      .on(table.channel, table.providerRequestId)
+      .where(sql`${table.providerRequestId} is not null`),
+    unique('notification_delivery_org_id_unique').on(table.organizationId, table.id),
     foreignKey({
       name: 'notification_delivery_org_source_event_fk',
       columns: [table.organizationId, table.sourceEventId],
@@ -181,40 +528,73 @@ export const notificationDelivery = pgTable(
       columns: [table.organizationId, table.integrationId],
       foreignColumns: [integration.organizationId, integration.id],
     }).onDelete('cascade'),
+    foreignKey({
+      name: 'notification_delivery_deduplicated_into_fk',
+      columns: [table.organizationId, table.deduplicatedIntoDeliveryId],
+      foreignColumns: [table.organizationId, table.id],
+    }).onDelete('restrict'),
     check(
       'notification_delivery_owner_shape_check',
       sql`(
         (
-          ${table.sourceEventId} is null
-          and ${table.notificationId} is not null
-          and ${table.userId} is not null
+          ${table.deduplicatedIntoDeliveryId} is not null
+          and ${table.organizationId} is not null
         )
         or
         (
-          ${table.sourceEventId} is not null
-          and ${table.organizationId} is not null
-          and ${table.destinationKind} is not null
-          and ${table.destinationId} is not null
+          ${table.deduplicatedIntoDeliveryId} is null
           and (
             (
-              ${table.destinationKind} = 'user'
-              and ${table.channel} = 'slack_dm'
+              ${table.sourceEventId} is null
               and ${table.notificationId} is not null
               and ${table.userId} is not null
-              and ${table.integrationId} is not null
             )
             or
             (
-              ${table.destinationKind} = 'shared_channel'
-              and ${table.channel} = 'slack'
-              and ${table.notificationId} is null
-              and ${table.userId} is null
-              and ${table.integrationId} is not null
-              and ${table.providerPayload} is not null
+              ${table.sourceEventId} is not null
+              and ${table.organizationId} is not null
+              and ${table.destinationKind} is not null
+              and ${table.destinationId} is not null
+              and (
+                (
+                  ${table.destinationKind} = 'user'
+                  and ${table.channel} = 'slack_dm'
+                  and ${table.notificationId} is not null
+                  and ${table.userId} is not null
+                  and ${table.integrationId} is not null
+                )
+                or
+                (
+                  ${table.destinationKind} = 'shared_channel'
+                  and ${table.channel} = 'slack'
+                  and ${table.notificationId} is null
+                  and ${table.userId} is null
+                  and ${table.integrationId} is not null
+                  and ${table.providerPayload} is not null
+                )
+              )
             )
           )
         )
       )`,
+    ),
+    check(
+      'notification_delivery_deduplicated_shape_check',
+      sql`${table.deduplicatedIntoDeliveryId} is null or (
+        ${table.organizationId} is not null
+        and ${table.sourceEventId} is null
+        and ${table.deduplicatedIntoDeliveryId} <> ${table.id}
+        and ${table.status} in ('delivered', 'unavailable', 'succeeded', 'skipped')
+      )`,
+    ),
+    check(
+      'notification_delivery_attempts_check',
+      sql`${table.attempts} >= 0
+        and (${table.credentialGeneration} is null or ${table.credentialGeneration} >= 0)`,
+    ),
+    check(
+      'notification_delivery_provider_payload_check',
+      sql`${table.providerPayloadHash} is null or ${table.providerPayload} is not null`,
     ),
   ],
 );

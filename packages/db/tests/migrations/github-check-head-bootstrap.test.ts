@@ -34,11 +34,16 @@ describe('GitHub check head migration bootstrap', () => {
       await sql.unsafe(`create database "${SCRATCH}"`);
     });
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
-    const taskMigration = migrations.at(-1);
-    if (taskMigration === undefined) throw new Error('Task migration is missing.');
+    const taskMigrationIndex = migrations.findIndex(
+      (migration) => migration.folderMillis === 1788264445370,
+    );
+    const taskMigration = migrations[taskMigrationIndex];
+    if (taskMigrationIndex < 0 || taskMigration === undefined) {
+      throw new Error('Task migration is missing.');
+    }
     await run(urlFor(SCRATCH), async (sql) => {
       await sql`create extension if not exists pg_trgm`;
-      for (const migration of migrations.slice(0, -1)) {
+      for (const migration of migrations.slice(0, taskMigrationIndex)) {
         for (const statement of migration.sql) await sql.unsafe(statement);
       }
       await sql`insert into "user" (id, name, email, handle) values ('user-1', 'User', 'user@example.com', 'user')`;

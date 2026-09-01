@@ -77,6 +77,75 @@ describe('database release', () => {
     expect([...preserved]).toEqual([{ payload: 'preserve me' }]);
   }, 60_000);
 
+  it('restores deferred audit triggers while baselining a schema-pushed catalog', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`drop trigger notification_deduplicated_target_trigger on notification`;
+      await sql`drop function validate_notification_deduplicated_target()`;
+      await sql`drop trigger notification_delivery_deduplicated_target_trigger on notification_delivery`;
+      await sql`drop function validate_notification_delivery_deduplicated_target()`;
+      await sql`drop schema drizzle cascade`;
+    });
+
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const triggers = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<
+        {
+          trigger_name: string;
+          table_name: string;
+          function_name: string;
+          deferrable: boolean;
+          initially_deferred: boolean;
+          enabled: string;
+          constraint_trigger: boolean;
+        }[]
+      >`
+        select
+          trigger.tgname as trigger_name,
+          relation.relname as table_name,
+          procedure.proname as function_name,
+          trigger.tgdeferrable as deferrable,
+          trigger.tginitdeferred as initially_deferred,
+          trigger.tgenabled as enabled,
+          trigger.tgconstraint <> 0 as constraint_trigger
+        from pg_trigger trigger
+        inner join pg_class relation on relation.oid = trigger.tgrelid
+        inner join pg_namespace namespace on namespace.oid = relation.relnamespace
+        inner join pg_proc procedure on procedure.oid = trigger.tgfoid
+        where namespace.nspname = 'public'
+          and trigger.tgname in (
+            'notification_deduplicated_target_trigger',
+            'notification_delivery_deduplicated_target_trigger'
+          )
+        order by trigger.tgname
+      `,
+    );
+
+    expect(result.mode).toBe('baselined');
+    expect([...triggers]).toEqual([
+      {
+        trigger_name: 'notification_deduplicated_target_trigger',
+        table_name: 'notification',
+        function_name: 'validate_notification_deduplicated_target',
+        deferrable: true,
+        initially_deferred: true,
+        enabled: 'O',
+        constraint_trigger: true,
+      },
+      {
+        trigger_name: 'notification_delivery_deduplicated_target_trigger',
+        table_name: 'notification_delivery',
+        function_name: 'validate_notification_delivery_deduplicated_target',
+        deferrable: true,
+        initially_deferred: true,
+        enabled: 'O',
+        constraint_trigger: true,
+      },
+    ]);
+  }, 60_000);
+
   it('reconciles historical data backfills before baselining a legacy database', async () => {
     await resetScratch();
     await migrateScratch();
