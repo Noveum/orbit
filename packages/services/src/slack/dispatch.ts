@@ -313,6 +313,23 @@ interface SlackMemberIdentity {
   readonly email: string;
 }
 
+export function slackUserMappingSyncReady(input: {
+  readonly context: SlackContext | null;
+  readonly slackTeamId: unknown;
+}): input is {
+  readonly context: SlackContext & { readonly token: string };
+  readonly slackTeamId: string;
+} {
+  return (
+    input.context !== null &&
+    input.context.token !== null &&
+    !input.context.reauthorize &&
+    typeof input.slackTeamId === 'string' &&
+    input.slackTeamId.length > 0 &&
+    slackDirectoryScopesPresent(input.context.scopes)
+  );
+}
+
 export async function syncSlackUserMappings(
   database: SlackDatabase,
   input: {
@@ -392,22 +409,15 @@ async function slackUserMappingSyncContext(
   if (row === undefined) throw validationFailed('Reconnect Slack before syncing members.');
   const context = slackContextFromRow(row, organizationId);
   const slackTeamId = row.config['slackTeamId'];
-  const hasDirectoryScopes =
-    context.scopes.includes('users:read') && context.scopes.includes('users:read.email');
-  if (
-    context.token === null ||
-    context.reauthorize ||
-    typeof slackTeamId !== 'string' ||
-    slackTeamId.length === 0 ||
-    !hasDirectoryScopes
-  ) {
+  const readiness = { context, slackTeamId };
+  if (!slackUserMappingSyncReady(readiness)) {
     throw validationFailed('Reconnect Slack before syncing members.');
   }
   return {
-    integrationId: context.integrationId,
-    integrationVersion: context.integrationVersion,
-    slackTeamId,
-    token: context.token,
+    integrationId: readiness.context.integrationId,
+    integrationVersion: readiness.context.integrationVersion,
+    slackTeamId: readiness.slackTeamId,
+    token: readiness.context.token,
   };
 }
 

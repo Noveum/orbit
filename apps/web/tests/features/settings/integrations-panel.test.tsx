@@ -208,7 +208,7 @@ describe('IntegrationsPanel', () => {
     expect(replace).toHaveBeenCalledWith('/settings/integrations', { scroll: false });
   });
 
-  it('disables the member sync control while Slack is still responding', async () => {
+  it('marks the member sync control aria-disabled while Slack is still responding', async () => {
     let finish: (() => void) | undefined;
     globalThis.fetch = mock(
       () =>
@@ -221,7 +221,10 @@ describe('IntegrationsPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Sync Slack members' }));
 
-    expect(screen.getByRole('button', { name: 'Syncing Slack members' })).toBeDisabled();
+    const pendingSync = screen.getByRole('button', { name: 'Syncing Slack members' });
+    expect(pendingSync).toHaveAttribute('aria-disabled', 'true');
+    expect(pendingSync).not.toBeDisabled();
+    expect(pendingSync).toHaveFocus();
     finish?.();
     await screen.findByText('Slack member sync completed: 2 of 2 matched.');
   });

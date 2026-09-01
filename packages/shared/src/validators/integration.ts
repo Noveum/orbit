@@ -62,6 +62,11 @@ export const slackIntegrationActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('sync_members') }),
 ]);
 
+export const slackMemberSyncResultSchema = z.object({
+  eligible: z.number().int().nonnegative(),
+  mapped: z.number().int().nonnegative(),
+});
+
 export const slackCallbackSchema = z.object({
   code: z.string().trim().min(1).max(255),
   state: z.string().trim().min(1).max(2048),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   slackCallbackSchema,
   slackIntegrationActionSchema,
+  slackMemberSyncResultSchema,
 } from '../../src/validators/integration.ts';
 
 describe('Slack callback validator', () => {
@@ -33,5 +34,20 @@ describe('Slack integration action validator', () => {
     expect(slackIntegrationActionSchema.safeParse({ action: 'sync-users' }).success).toBe(false);
     expect(slackIntegrationActionSchema.safeParse({ action: 'connect' }).success).toBe(false);
     expect(slackIntegrationActionSchema.safeParse({ action: 'disconnect' }).success).toBe(false);
+  });
+});
+
+describe('Slack member sync result validator', () => {
+  it('accepts nonnegative integer member counts', () => {
+    expect(slackMemberSyncResultSchema.parse({ eligible: 3, mapped: 2 })).toEqual({
+      eligible: 3,
+      mapped: 2,
+    });
+  });
+
+  it('rejects missing, negative, and fractional member counts', () => {
+    expect(slackMemberSyncResultSchema.safeParse({ mapped: 2 }).success).toBe(false);
+    expect(slackMemberSyncResultSchema.safeParse({ eligible: -1, mapped: 0 }).success).toBe(false);
+    expect(slackMemberSyncResultSchema.safeParse({ eligible: 1, mapped: 0.5 }).success).toBe(false);
   });
 });

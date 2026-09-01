@@ -27,6 +27,7 @@ import {
   resolveSlackTargets,
   sendSlackUnfurls,
   slackDmAvailable,
+  slackUserMappingSyncReady,
   syncSlackUserMappings,
   upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
@@ -154,6 +155,59 @@ describe('resolveSlackContext', () => {
       });
     }
   });
+});
+
+describe('slackUserMappingSyncReady', () => {
+  const readyContext = {
+    integrationId: 'int-ready',
+    integrationVersion: 'version-ready',
+    token: 'xoxb-ready',
+    scopes: ['users:read', 'users:read.email'],
+    hasDirectMessageScope: false,
+    reauthorize: false,
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+
+  it('accepts a usable Slack directory context', () => {
+    expect(slackUserMappingSyncReady({ context: readyContext, slackTeamId: 'T-WORKSPACE' })).toBe(
+      true,
+    );
+  });
+
+  for (const readinessCase of [
+    { name: 'missing context', context: null, slackTeamId: 'T-WORKSPACE' },
+    {
+      name: 'missing token',
+      context: { ...readyContext, token: null },
+      slackTeamId: 'T-WORKSPACE',
+    },
+    {
+      name: 'reauthorization required',
+      context: { ...readyContext, reauthorize: true },
+      slackTeamId: 'T-WORKSPACE',
+    },
+    { name: 'missing team id', context: readyContext, slackTeamId: undefined },
+    { name: 'empty team id', context: readyContext, slackTeamId: '' },
+    {
+      name: 'missing users read scope',
+      context: { ...readyContext, scopes: ['users:read.email'] },
+      slackTeamId: 'T-WORKSPACE',
+    },
+    {
+      name: 'missing users email scope',
+      context: { ...readyContext, scopes: ['users:read'] },
+      slackTeamId: 'T-WORKSPACE',
+    },
+  ]) {
+    it(`rejects ${readinessCase.name}`, () => {
+      expect(
+        slackUserMappingSyncReady({
+          context: readinessCase.context,
+          slackTeamId: readinessCase.slackTeamId,
+        }),
+      ).toBe(false);
+    });
+  }
 });
 
 describe('ensureSlackIntegration', () => {
@@ -821,7 +875,7 @@ describe('syncSlackUserMappings', () => {
     });
   });
 
-  it('maps a directory that crosses the database insert batch boundary', async () => {
+  it('maps a directory larger than PostgreSQL can bind in one insert', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       await tx

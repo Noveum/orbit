@@ -213,13 +213,18 @@ describe('loadIntegrationSettings', () => {
     const integrationId = `int_${randomUUIDv7()}`;
     const activeSecret = process.env['BETTER_AUTH_SECRET'];
     if (activeSecret === undefined) throw new Error('Expected an active auth secret.');
-    process.env['BETTER_AUTH_SECRET'] = 'retired-slack-integrations-data-secret';
-    const retiredToken = encryptSlackBotToken({
-      organizationId: workspace.organizationId,
-      integrationId,
-      token: 'xoxb-retired',
-    });
-    process.env['BETTER_AUTH_SECRET'] = activeSecret;
+    const retiredToken = (() => {
+      process.env['BETTER_AUTH_SECRET'] = 'retired-slack-integrations-data-secret';
+      try {
+        return encryptSlackBotToken({
+          organizationId: workspace.organizationId,
+          integrationId,
+          token: 'xoxb-retired',
+        });
+      } finally {
+        process.env['BETTER_AUTH_SECRET'] = activeSecret;
+      }
+    })();
     await db.insert(schema.integration).values({
       id: integrationId,
       organizationId: workspace.organizationId,

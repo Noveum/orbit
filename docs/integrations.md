@@ -225,10 +225,12 @@ Slack integration behavior:
   private notification cannot be routed to an arbitrary account.
 - **Member resynchronization.** Workspace admins can use **Sync Slack members**
   in integration settings to refresh a healthy connection without repeating
-  OAuth. Connections with missing directory scopes, unusable credentials, or a
-  reauthorization requirement must reconnect first. Orbit replaces the mapping
-  snapshot atomically only after every Slack directory page succeeds. The
-  settings panel reports how many current workspace members are matched.
+  OAuth. Newly joined Orbit members remain unmapped until a workspace admin
+  runs **Sync Slack members** again. Connections with missing directory scopes,
+  unusable credentials, or a reauthorization requirement must reconnect first.
+  Orbit replaces the mapping snapshot atomically only after every Slack
+  directory page succeeds. The settings panel reports how many current
+  workspace members are matched.
 
 ### Note on GitHub sign-in
 

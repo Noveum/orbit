@@ -1,6 +1,6 @@
 import { and, count, db, desc, eq, schema } from '@orbit/db';
 import { hasSlackBotToken } from '@orbit/services/slack/credentials';
-import { resolveSlackContext, type SlackContext } from '@orbit/services/slack/dispatch';
+import { resolveSlackContext, slackUserMappingSyncReady } from '@orbit/services/slack/dispatch';
 import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
 import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
@@ -106,30 +106,13 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
       teams,
       memberSync: {
         ...memberSync,
-        ready: slackMemberSyncReady(slackRow, slackContext),
+        ready: slackUserMappingSyncReady({
+          context: slackContext,
+          slackTeamId: slackRow?.config['slackTeamId'],
+        }),
       },
     },
   };
-}
-
-function slackMemberSyncReady(
-  row:
-    | {
-        readonly credentials: unknown;
-        readonly config: Record<string, unknown>;
-      }
-    | undefined,
-  context: SlackContext | null,
-): boolean {
-  if (row === undefined || context === null || context.token === null) return false;
-  const slackTeamId = row.config['slackTeamId'];
-  return (
-    !context.reauthorize &&
-    typeof slackTeamId === 'string' &&
-    slackTeamId.length > 0 &&
-    context.scopes.includes('users:read') &&
-    context.scopes.includes('users:read.email')
-  );
 }
 
 async function loadSlackMemberSync(

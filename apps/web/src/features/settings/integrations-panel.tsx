@@ -1,8 +1,8 @@
 'use client';
 
+import { slackMemberSyncResultSchema } from '@orbit/shared/validators';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { z } from 'zod';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
@@ -107,11 +107,6 @@ type CallFn = (
   method: string,
   body: Record<string, unknown>,
 ) => Promise<unknown | null>;
-
-const slackMemberSyncResultSchema = z.object({
-  eligible: z.number().int().nonnegative(),
-  mapped: z.number().int().nonnegative(),
-});
 
 function ConnectionBadge({ connected }: { connected: boolean }) {
   return connected ? (
@@ -325,7 +320,7 @@ function SlackSection({
                 Connect a channel
               </Button>
               {settings.memberSync.ready ? (
-                <Button variant="secondary" size="sm" disabled={syncing} onClick={syncMembers}>
+                <Button variant="secondary" size="sm" aria-disabled={syncing} onClick={syncMembers}>
                   {syncing ? 'Syncing Slack members' : 'Sync Slack members'}
                 </Button>
               ) : null}
