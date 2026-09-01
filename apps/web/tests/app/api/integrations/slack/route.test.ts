@@ -61,6 +61,7 @@ beforeAll(async () => {
     connectedById: workspace.adminUser.id,
     botToken: 'xoxb-workspace-secret',
     externalId: 'T-WORKSPACE',
+    scopes: ['chat:write', 'im:write', 'users:read', 'users:read.email'],
   });
   await connectSlackChannel(db, {
     organizationId: workspace.organizationId,
@@ -118,6 +119,241 @@ describe('GET /api/integrations/slack', () => {
       .from(schema.integration)
       .where(eq(schema.integration.organizationId, workspace.organizationId));
     expect(JSON.stringify(saved?.credentials)).not.toContain('xoxb-raw-token');
+  });
+
+  it('syncs every matching member through the existing Slack connection', async () => {
+    const teammate = await addMember(workspace, 'member', { name: 'Slack Teammate' });
+    const realFetch = globalThis.fetch;
+    const requests: { authorization: string | null; url: string }[] = [];
+    globalThis.fetch = Object.assign(
+      (...args: Parameters<typeof globalThis.fetch>) => {
+        const request = new Request(...args);
+        requests.push({ authorization: request.headers.get('authorization'), url: request.url });
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U-ADMIN-SYNC',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: workspace.adminUser.name,
+                profile: { email: workspace.adminUser.email, display_name: 'Admin' },
+              },
+              {
+                id: 'U-TEAMMATE-SYNC',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: teammate.user.name,
+                profile: { email: teammate.user.email, display_name: 'Teammate' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        );
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_members' }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ eligible: 2, mapped: 2 });
+      expect(requests).toEqual([
+        {
+          authorization: 'Bearer xoxb-workspace-secret',
+          url: 'https://slack.com/api/users.list?limit=200',
+        },
+      ]);
+      const mappings = await db
+        .select({
+          userId: schema.slackUserMapping.userId,
+          slackUserId: schema.slackUserMapping.slackUserId,
+        })
+        .from(schema.slackUserMapping)
+        .where(eq(schema.slackUserMapping.organizationId, workspace.organizationId));
+      expect(mappings.sort((left, right) => left.userId.localeCompare(right.userId))).toEqual(
+        [
+          { userId: workspace.adminUser.id, slackUserId: 'U-ADMIN-SYNC' },
+          { userId: teammate.user.id, slackUserId: 'U-TEAMMATE-SYNC' },
+        ].sort((left, right) => left.userId.localeCompare(right.userId)),
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('rejects member synchronization before provider access when the viewer cannot manage it', async () => {
+    const viewer = await addMember(workspace, 'member', { name: 'Slack Viewer' });
+    signIn(viewer.user);
+    const realFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = Object.assign(
+      () => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: false, error: 'must_not_call' }));
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_members' }),
+        }),
+      );
+
+      expect(response.status).toBe(403);
+      expect(providerCalls).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+      signIn(workspace.adminUser);
+    }
+  });
+
+  it('requires a reconnect before syncing a token without directory scopes', async () => {
+    const [current] = await db
+      .select({ id: schema.integration.id, config: schema.integration.config })
+      .from(schema.integration)
+      .where(
+        and(
+          eq(schema.integration.organizationId, workspace.organizationId),
+          eq(schema.integration.provider, 'slack'),
+          eq(schema.integration.externalId, 'default'),
+        ),
+      );
+    if (current === undefined) throw new Error('Expected the canonical Slack integration.');
+    await db
+      .update(schema.integration)
+      .set({ config: { ...current.config, scopes: ['chat:write'] } })
+      .where(eq(schema.integration.id, current.id));
+    const realFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = Object.assign(
+      () => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: false, error: 'must_not_call' }));
+      },
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_members' }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'validation_failed',
+          message: 'Reconnect Slack before syncing members.',
+        },
+      });
+      expect(providerCalls).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+      await db
+        .update(schema.integration)
+        .set({ config: current.config })
+        .where(eq(schema.integration.id, current.id));
+    }
+  });
+
+  it('returns a retryable response when Slack rate limits member synchronization', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      () =>
+        Promise.resolve(
+          Response.json(
+            { ok: false, error: 'ratelimited' },
+            { status: 429, headers: { 'retry-after': '30' } },
+          ),
+        ),
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_members' }),
+        }),
+      );
+
+      expect(response.status).toBe(429);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'rate_limited',
+          message: 'Slack is busy. Try syncing members again shortly.',
+        },
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('requires a reconnect and records reauthorization when the stored token expires', async () => {
+    const [current] = await db
+      .select({ id: schema.integration.id, config: schema.integration.config })
+      .from(schema.integration)
+      .where(
+        and(
+          eq(schema.integration.organizationId, workspace.organizationId),
+          eq(schema.integration.provider, 'slack'),
+          eq(schema.integration.externalId, 'default'),
+        ),
+      );
+    if (current === undefined) throw new Error('Expected the canonical Slack integration.');
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      () => Promise.resolve(Response.json({ ok: false, error: 'token_expired' })),
+      { preconnect: realFetch.preconnect },
+    );
+
+    try {
+      const response = await POST(
+        new Request('https://orbit.test/api/integrations/slack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_members' }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'validation_failed',
+          message: 'Reconnect Slack before syncing members.',
+        },
+      });
+      const [stored] = await db
+        .select({ config: schema.integration.config })
+        .from(schema.integration)
+        .where(eq(schema.integration.id, current.id));
+      expect(stored?.config['slackReauthorize']).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+      await db
+        .update(schema.integration)
+        .set({ config: current.config })
+        .where(eq(schema.integration.id, current.id));
+    }
   });
 
   it('offers only joined channels through the legacy channel listing', async () => {

@@ -56,6 +56,17 @@ export const slackDisconnectChannelSchema = z.object({
   channelId: z.string().trim().min(1).max(64),
 });
 
+export const slackIntegrationActionSchema = z.discriminatedUnion('action', [
+  slackConnectChannelSchema.extend({ action: z.literal('connect') }),
+  slackDisconnectChannelSchema.extend({ action: z.literal('disconnect') }),
+  z.object({ action: z.literal('sync_members') }),
+]);
+
+export const slackMemberSyncResultSchema = z.object({
+  eligible: z.number().int().nonnegative(),
+  mapped: z.number().int().nonnegative(),
+});
+
 export const slackCallbackSchema = z.object({
   code: z.string().trim().min(1).max(255),
   state: z.string().trim().min(1).max(2048),

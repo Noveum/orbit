@@ -1,11 +1,8 @@
-import { and, db, eq } from '@orbit/db';
-import { integration, slackUserMapping, user } from '@orbit/db/schema';
-import { SlackClient } from '@orbit/services/slack';
+import { db } from '@orbit/db';
 import {
   assertSlackIntegrationManager,
   ensureSlackIntegrationWithVersion,
-  slackCredentialVersionExpression,
-  upsertSlackUserMapping,
+  syncSlackUserMappings,
 } from '@orbit/services/slack/dispatch';
 import { internal } from '@orbit/shared/errors';
 import { z } from 'zod';
@@ -68,7 +65,7 @@ export async function completeSlackInstall(input: {
     .split(',')
     .map((scope) => scope.trim())
     .filter((scope) => scope.length > 0);
-  const connected = await db.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     return await ensureSlackIntegrationWithVersion(tx, {
       organizationId: input.organizationId,
       connectedById: input.userId,
@@ -77,87 +74,8 @@ export async function completeSlackInstall(input: {
       scopes: grantedScopes,
     });
   });
-  const integrationId = connected.id;
-
-  const [orbitUser] = await db
-    .select({ email: user.email })
-    .from(user)
-    .where(eq(user.id, input.userId))
-    .limit(1);
-  if (orbitUser === undefined) return;
-
-  let slackUser: Awaited<ReturnType<SlackClient['lookupUserByEmail']>>;
-  try {
-    slackUser = await new SlackClient({ token: accessToken }).lookupUserByEmail(
-      orbitUser.email.trim().toLowerCase(),
-    );
-  } catch (error) {
-    await reconcileSlackUserMapping({
-      organizationId: input.organizationId,
-      integrationId,
-      integrationVersion: connected.integrationVersion,
-      userId: input.userId,
-      slackTeamId,
-      slackUser: null,
-    });
-    console.error('Could not map the Slack user after installation.', error);
-    return;
-  }
-  await reconcileSlackUserMapping({
+  await syncSlackUserMappings(db, {
     organizationId: input.organizationId,
-    integrationId,
-    integrationVersion: connected.integrationVersion,
     userId: input.userId,
-    slackTeamId,
-    slackUser,
-  });
-}
-
-async function reconcileSlackUserMapping(input: {
-  readonly organizationId: string;
-  readonly integrationId: string;
-  readonly integrationVersion: string;
-  readonly userId: string;
-  readonly slackTeamId: string;
-  readonly slackUser: Awaited<ReturnType<SlackClient['lookupUserByEmail']>>;
-}): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [current] = await tx
-      .select({
-        config: integration.config,
-        integrationVersion: slackCredentialVersionExpression(),
-      })
-      .from(integration)
-      .where(
-        and(
-          eq(integration.id, input.integrationId),
-          eq(integration.organizationId, input.organizationId),
-          eq(integration.provider, 'slack'),
-        ),
-      )
-      .limit(1)
-      .for('update');
-    if (current === undefined) return;
-    if (current.integrationVersion !== input.integrationVersion) return;
-    if (current.config['slackTeamId'] !== input.slackTeamId) return;
-    if (input.slackUser === null) {
-      await tx
-        .delete(slackUserMapping)
-        .where(
-          and(
-            eq(slackUserMapping.organizationId, input.organizationId),
-            eq(slackUserMapping.integrationId, input.integrationId),
-            eq(slackUserMapping.userId, input.userId),
-          ),
-        );
-      return;
-    }
-    await upsertSlackUserMapping(tx, {
-      organizationId: input.organizationId,
-      integrationId: input.integrationId,
-      userId: input.userId,
-      slackUserId: input.slackUser.id,
-      slackDisplayName: input.slackUser.displayName,
-    });
   });
 }

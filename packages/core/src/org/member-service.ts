@@ -304,6 +304,14 @@ export async function removeMember(
         ),
       );
 
+    await tx
+      .delete(schema.slackUserMapping)
+      .where(
+        and(
+          eq(schema.slackUserMapping.organizationId, principal.organizationId),
+          eq(schema.slackUserMapping.userId, current.userId),
+        ),
+      );
     await tx.delete(schema.member).where(eq(schema.member.id, memberId));
     await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 

@@ -1,10 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import { claimSlackDmDeliveries } from '@orbit/services/notifications';
 import { SlackApiError } from '@orbit/services/slack';
 import { encryptSlackBotToken } from '@orbit/services/slack/credentials';
-import type { dispatchSlackDmResult } from '@orbit/services/slack/dispatch';
+import {
+  type dispatchSlackDmResult,
+  resolveSlackContext,
+  SlackDmDispatchError,
+} from '@orbit/services/slack/dispatch';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { deliverPendingSlackDms, notifyRecipients } from '../../src/notifications/notify.ts';
 import { resetDatabase } from '../../src/test-support.ts';
@@ -53,6 +57,12 @@ async function seedPendingSlackDm(): Promise<Fixture> {
     name: 'Ada',
     email: `ada.${suffix}@orbit.local`,
     handle: `ada-${suffix.toLowerCase()}`,
+  });
+  await db.insert(schema.member).values({
+    id: `mem_${suffix}`,
+    organizationId,
+    userId,
+    role: 'member',
   });
   await db.insert(schema.integration).values({
     id: integrationId,
@@ -185,6 +195,30 @@ describe('notifyRecipients global Slack rollout', () => {
 });
 
 describe('deliverPendingSlackDms', () => {
+  it('skips a queued private message after the recipient leaves the workspace', async () => {
+    const fixture = await seedPendingSlackDm();
+    await db
+      .delete(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, fixture.organizationId),
+          eq(schema.member.userId, fixture.userId),
+        ),
+      );
+    let providerCalls = 0;
+    const fetch = (() => {
+      providerCalls += 1;
+      return Promise.resolve(Response.json({ ok: true }));
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await deliverPendingSlackDms(db, 1, fetch)).toBe(0);
+    expect(providerCalls).toBe(0);
+    const [delivery] = await db
+      .select({ status: schema.notificationDelivery.status })
+      .from(schema.notificationDelivery);
+    expect(delivery?.status).toBe('skipped');
+  });
+
   it('delivers pending messages across every organization without a filter', async () => {
     const first = await seedPendingSlackDm();
     const second = await seedPendingSlackDm();
@@ -596,15 +630,12 @@ describe('deliverPendingSlackDms', () => {
 
   it('retries a permanent failure after a concurrent token refresh', async () => {
     const fixture = await seedPendingSlackDm();
-    let calls = 0;
-    const authorization: string[] = [];
-    const fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
-      calls += 1;
-      authorization.push(String(new Headers(init?.headers).get('authorization')));
-      if (calls === 1) {
-        return new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }));
-      }
-      if (calls === 2) {
+    const staleContext = await resolveSlackContext(db, fixture.organizationId, 'default');
+    if (staleContext === null) throw new Error('Expected the Slack integration context.');
+    let dispatchCalls = 0;
+    const dispatch: typeof dispatchSlackDmResult = async () => {
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) {
         await db
           .update(schema.integration)
           .set({
@@ -613,12 +644,15 @@ describe('deliverPendingSlackDms', () => {
             updatedAt: new Date(Date.now() + 1_000),
           })
           .where(eq(schema.integration.id, fixture.integrationId));
-        return new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }));
+        throw new SlackDmDispatchError(
+          staleContext,
+          new SlackApiError('chat.postMessage', 'invalid_auth'),
+        );
       }
-      return new Response(JSON.stringify({ ok: true, channel: 'D123', ts: '123.456' }));
-    }) as unknown as typeof globalThis.fetch;
+      return { delivered: 1, channel: 'D123', ts: '123.456' };
+    };
 
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
 
     const [storedIntegration] = await db
       .select({ config: schema.integration.config, credentials: schema.integration.credentials })
@@ -636,18 +670,17 @@ describe('deliverPendingSlackDms', () => {
       .set({ availableAt: new Date(0) })
       .where(eq(schema.notificationDelivery.id, failedDelivery.id));
 
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(1);
-    expect(authorization).toEqual(['Bearer xoxb-old', 'Bearer xoxb-old', 'Bearer xoxb-refreshed']);
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(1);
+    expect(dispatchCalls).toBe(2);
+    const refreshedContext = await resolveSlackContext(db, fixture.organizationId, 'default');
+    expect(refreshedContext?.token).toBe('xoxb-refreshed');
   });
 
   it('does not mark a same-token refreshed Slack integration for reauthorization', async () => {
     const fixture = await seedPendingSlackDm();
-    let calls = 0;
-    const fetch = (async () => {
-      calls += 1;
-      if (calls === 1) {
-        return new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }));
-      }
+    const staleContext = await resolveSlackContext(db, fixture.organizationId, 'default');
+    if (staleContext === null) throw new Error('Expected the Slack integration context.');
+    const dispatch: typeof dispatchSlackDmResult = async () => {
       await db
         .update(schema.integration)
         .set({
@@ -655,10 +688,13 @@ describe('deliverPendingSlackDms', () => {
           updatedAt: new Date(Date.now() + 1_000),
         })
         .where(eq(schema.integration.id, fixture.integrationId));
-      return new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }));
-    }) as unknown as typeof globalThis.fetch;
+      throw new SlackDmDispatchError(
+        staleContext,
+        new SlackApiError('chat.postMessage', 'invalid_auth'),
+      );
+    };
 
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
+    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
 
     const [storedIntegration] = await db
       .select({ config: schema.integration.config })

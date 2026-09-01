@@ -1,5 +1,6 @@
-import { and, db, desc, eq, schema } from '@orbit/db';
+import { and, count, db, desc, eq, schema } from '@orbit/db';
 import { hasSlackBotToken } from '@orbit/services/slack/credentials';
+import { resolveSlackContext, slackUserMappingSyncReady } from '@orbit/services/slack/dispatch';
 import { can, type Principal } from '@orbit/shared/policy';
 import { slackConnectReady } from '@/lib/env.ts';
 import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
@@ -26,6 +27,11 @@ export interface SlackIntegrationSettings {
   readonly slackConnectEnabled: boolean;
   readonly channels: ConnectedChannel[];
   readonly teams: IntegrationTeam[];
+  readonly memberSync: {
+    readonly eligible: number;
+    readonly mapped: number;
+    readonly ready: boolean;
+  };
 }
 
 export interface IntegrationSettings {
@@ -50,11 +56,12 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
   const github = await loadGithubSettings(principal);
   if (!slackIntegrationEnabledForOrganization(principal.organizationId)) return { github };
 
-  const [slackRows, teams] = await Promise.all([
+  const [slackRows, teams, slackContext] = await Promise.all([
     db
       .select({
         id: schema.integration.id,
         credentials: schema.integration.credentials,
+        config: schema.integration.config,
       })
       .from(schema.integration)
       .where(
@@ -66,13 +73,14 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
       )
       .limit(1),
     listTeamsForPrincipal(principal),
+    resolveSlackContext(db, principal.organizationId, 'default'),
   ]);
 
   const slackRow = slackRows[0];
-  const channels =
+  const [channels, memberSync] = await Promise.all([
     slackRow === undefined
-      ? []
-      : await db
+      ? Promise.resolve([])
+      : db
           .select({
             channelId: schema.slackChannelSync.channelId,
             channelName: schema.slackChannelSync.channelName,
@@ -85,7 +93,9 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
               eq(schema.slackChannelSync.organizationId, principal.organizationId),
               eq(schema.slackChannelSync.integrationId, slackRow.id),
             ),
-          );
+          ),
+    loadSlackMemberSync(principal.organizationId, slackRow?.id),
+  ]);
   return {
     github,
     slack: {
@@ -94,8 +104,44 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
       slackConnectEnabled: slackConnectReady(),
       channels,
       teams,
+      memberSync: {
+        ...memberSync,
+        ready: slackUserMappingSyncReady({
+          context: slackContext,
+          slackTeamId: slackRow?.config['slackTeamId'],
+        }),
+      },
     },
   };
+}
+
+async function loadSlackMemberSync(
+  organizationId: string,
+  integrationId: string | undefined,
+): Promise<{ readonly eligible: number; readonly mapped: number }> {
+  if (integrationId === undefined) {
+    const [summary] = await db
+      .select({ eligible: count(schema.member.userId) })
+      .from(schema.member)
+      .where(eq(schema.member.organizationId, organizationId));
+    return { eligible: summary?.eligible ?? 0, mapped: 0 };
+  }
+  const [summary] = await db
+    .select({
+      eligible: count(schema.member.userId),
+      mapped: count(schema.slackUserMapping.id),
+    })
+    .from(schema.member)
+    .leftJoin(
+      schema.slackUserMapping,
+      and(
+        eq(schema.slackUserMapping.organizationId, organizationId),
+        eq(schema.slackUserMapping.integrationId, integrationId),
+        eq(schema.slackUserMapping.userId, schema.member.userId),
+      ),
+    )
+    .where(eq(schema.member.organizationId, organizationId));
+  return { eligible: summary?.eligible ?? 0, mapped: summary?.mapped ?? 0 };
 }
 
 export interface GithubDeliveryView {

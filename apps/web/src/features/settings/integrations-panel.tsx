@@ -1,5 +1,6 @@
 'use client';
 
+import { slackMemberSyncResultSchema } from '@orbit/shared/validators';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -38,13 +39,19 @@ export function IntegrationsPanel({
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
-  async function call(path: string, method: string, body: Record<string, unknown>): Promise<void> {
+  async function call(
+    path: string,
+    method: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown | null> {
     setError(null);
     try {
-      await apiRequest(path, { method, body });
+      const payload = await apiRequest<unknown>(path, { method, body });
       router.refresh();
+      return payload;
     } catch (caught) {
       setError(messageOf(caught));
+      return null;
     }
   }
 
@@ -66,7 +73,13 @@ export function IntegrationsPanel({
             <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
           </IntegrationCard>
           {settings.slack === undefined ? null : (
-            <SlackSection settings={settings.slack} canManage={canManage} onCall={call} />
+            <SlackSection
+              settings={settings.slack}
+              canManage={canManage}
+              onCall={call}
+              onError={setError}
+              onSyncSuccess={() => router.replace('/settings/integrations', { scroll: false })}
+            />
           )}
         </>
       ) : (
@@ -80,16 +93,20 @@ export function IntegrationsPanel({
 function WorkspaceIntegrationsWithheld() {
   return (
     <section className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 sm:p-5">
-      <h3 className="font-medium text-dense text-text">GitHub</h3>
+      <h3 className="font-medium text-dense text-text">Workspace integrations</h3>
       <p className="text-muted text-xs" data-testid="integrations-withheld">
-        Only workspace admins can see which repositories this workspace is connected to. Your own
-        MCP client connections are below.
+        Only workspace admins can see and manage connected providers. Your own MCP client
+        connections are below.
       </p>
     </section>
   );
 }
 
-type CallFn = (path: string, method: string, body: Record<string, unknown>) => Promise<void>;
+type CallFn = (
+  path: string,
+  method: string,
+  body: Record<string, unknown>,
+) => Promise<unknown | null>;
 
 function ConnectionBadge({ connected }: { connected: boolean }) {
   return connected ? (
@@ -230,12 +247,37 @@ function SlackSection({
   settings,
   canManage,
   onCall,
+  onError,
+  onSyncSuccess,
 }: {
   settings: SlackIntegrationSettings;
   canManage: boolean;
   onCall: CallFn;
+  onError: (message: string | null) => void;
+  onSyncSuccess: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  async function syncMembers(): Promise<void> {
+    setSyncing(true);
+    setSyncStatus(null);
+    const payload = await onCall('/api/integrations/slack', 'POST', {
+      action: 'sync_members',
+    });
+    setSyncing(false);
+    if (payload === null) return;
+    const parsed = slackMemberSyncResultSchema.safeParse(payload);
+    if (!parsed.success) {
+      onError('Slack returned an unexpected member sync response.');
+      return;
+    }
+    setSyncStatus(
+      `Slack member sync completed: ${parsed.data.mapped} of ${parsed.data.eligible} matched.`,
+    );
+    onSyncSuccess();
+  }
 
   return (
     <IntegrationCard
@@ -245,6 +287,18 @@ function SlackSection({
     >
       {settings.slackHasToken ? (
         <div className="flex flex-col gap-2.5">
+          <p className="text-faint text-xs">
+            {settings.memberSync.mapped} of {settings.memberSync.eligible} workspace members matched
+            by email.
+          </p>
+          {settings.memberSync.ready ? null : (
+            <p className="text-faint text-xs">Reconnect Slack to enable workspace member sync.</p>
+          )}
+          {syncStatus === null ? null : (
+            <p role="status" className="text-success text-xs">
+              {syncStatus}
+            </p>
+          )}
           <ul className="flex flex-col overflow-hidden rounded-lg border border-border">
             {settings.channels.length === 0 ? (
               <li className="px-3 py-2.5 text-faint text-xs">No channels connected yet.</li>
@@ -265,6 +319,11 @@ function SlackSection({
               <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
                 Connect a channel
               </Button>
+              {settings.memberSync.ready ? (
+                <Button variant="secondary" size="sm" aria-disabled={syncing} onClick={syncMembers}>
+                  {syncing ? 'Syncing Slack members' : 'Sync Slack members'}
+                </Button>
+              ) : null}
               <ConnectLink
                 href="/api/integrations/slack/start"
                 label="Reconnect Slack"

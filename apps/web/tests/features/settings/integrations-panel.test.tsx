@@ -8,9 +8,10 @@ import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
 import type { McpConnection } from '@/features/settings/mcp-panel.tsx';
 
 const refresh = mock();
+const replace = mock();
 
 mock.module('next/navigation', () => ({
-  useRouter: () => ({ refresh }),
+  useRouter: () => ({ refresh, replace }),
 }));
 
 const MCP_URL = 'https://orbit.example.com/mcp';
@@ -59,6 +60,7 @@ const CONNECTED_WITH_SLACK: IntegrationSettings = {
     slackConnectEnabled: true,
     channels: [],
     teams: [],
+    memberSync: { eligible: 3, mapped: 0, ready: false },
   },
 };
 
@@ -70,6 +72,7 @@ const CONNECTED_WITH_SLACK_TOKEN: IntegrationSettings = {
     slackConnectEnabled: true,
     channels: [],
     teams: [{ id: 'team-engineering', name: 'Engineering', key: 'ENG' }],
+    memberSync: { eligible: 2, mapped: 1, ready: true },
   },
 };
 
@@ -116,19 +119,24 @@ let lastRequest: { url: string; method: string; body: unknown } | null = null;
 
 beforeEach(() => {
   refresh.mockClear();
+  replace.mockClear();
   lastRequest = null;
   globalThis.fetch = mock((url: string, init?: { method?: string; body?: string }) => {
+    const body = init?.body === undefined ? undefined : JSON.parse(init.body);
     lastRequest = {
       url,
       method: init?.method ?? 'GET',
-      body: init?.body === undefined ? undefined : JSON.parse(init.body),
+      body,
     };
-    const payload = url.startsWith('/api/integrations/slack/channels')
-      ? {
-          channels: [{ channelId: 'C-CANONICAL', channelName: 'canonical-name' }],
-          nextCursor: null,
-        }
-      : {};
+    let payload: unknown = {};
+    if (url.startsWith('/api/integrations/slack/channels')) {
+      payload = {
+        channels: [{ channelId: 'C-CANONICAL', channelName: 'canonical-name' }],
+        nextCursor: null,
+      };
+    } else if (body?.action === 'sync_members') {
+      payload = { eligible: 2, mapped: 2 };
+    }
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) });
   }) as unknown as typeof fetch;
 });
@@ -146,6 +154,7 @@ describe('IntegrationsPanel', () => {
       'href',
       '/api/integrations/slack/start',
     );
+    expect(screen.queryByRole('button', { name: 'Sync Slack members' })).toBeNull();
   });
 
   it('does not render Slack when the server withholds Slack settings', () => {
@@ -176,6 +185,88 @@ describe('IntegrationsPanel', () => {
         teamId: 'team-engineering',
       },
     });
+  });
+
+  it('shows member coverage and synchronizes the existing Slack connection', async () => {
+    const user = userEvent.setup();
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, true);
+
+    expect(screen.getByText('1 of 2 workspace members matched by email.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Sync Slack members' }));
+
+    await waitFor(() => {
+      expect(lastRequest).toEqual({
+        url: '/api/integrations/slack',
+        method: 'POST',
+        body: { action: 'sync_members' },
+      });
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Slack member sync completed: 2 of 2 matched.',
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith('/settings/integrations', { scroll: false });
+  });
+
+  it('marks the member sync control aria-disabled while Slack is still responding', async () => {
+    let finish: (() => void) | undefined;
+    globalThis.fetch = mock(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(Response.json({ eligible: 2, mapped: 2 }));
+        }),
+    ) as unknown as typeof fetch;
+    const user = userEvent.setup();
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, true);
+
+    await user.click(screen.getByRole('button', { name: 'Sync Slack members' }));
+
+    const pendingSync = screen.getByRole('button', { name: 'Syncing Slack members' });
+    expect(pendingSync).toHaveAttribute('aria-disabled', 'true');
+    expect(pendingSync).not.toBeDisabled();
+    expect(pendingSync).toHaveFocus();
+    finish?.();
+    await screen.findByText('Slack member sync completed: 2 of 2 matched.');
+  });
+
+  it('re-enables member sync and reports a provider failure without refreshing', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        Response.json(
+          { error: { code: 'internal', message: 'Slack directory unavailable.' } },
+          { status: 500 },
+        ),
+      ),
+    ) as unknown as typeof fetch;
+    const user = userEvent.setup();
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, true);
+
+    await user.click(screen.getByRole('button', { name: 'Sync Slack members' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Slack directory unavailable.');
+    expect(screen.getByRole('button', { name: 'Sync Slack members' })).toBeEnabled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('asks for reconnection instead of offering a member sync that cannot succeed', () => {
+    const slackSettings = CONNECTED_WITH_SLACK_TOKEN.slack;
+    if (slackSettings === undefined) throw new Error('Expected Slack settings.');
+    renderPanel(
+      {
+        ...CONNECTED_WITH_SLACK_TOKEN,
+        slack: {
+          ...slackSettings,
+          memberSync: { eligible: 2, mapped: 1, ready: false },
+        },
+      },
+      true,
+    );
+
+    expect(
+      screen.getByText('Reconnect Slack to enable workspace member sync.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync Slack members' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Reconnect Slack' })).toBeInTheDocument();
   });
 
   it('offers GitHub connect as the primary path when nothing is connected', () => {
@@ -214,9 +305,12 @@ describe('IntegrationsPanel', () => {
   });
 
   it('hides management affordances when the viewer cannot manage integrations', () => {
-    renderPanel(CONNECTED, false);
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, false);
     expect(screen.queryByRole('link', { name: 'Connect another organisation' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Remove the/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sync Slack members' })).toBeNull();
+    expect(screen.queryByText('1 of 2 workspace members matched by email.')).toBeNull();
+    expect(screen.getByText('Workspace integrations')).toBeInTheDocument();
     expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
   });
 
