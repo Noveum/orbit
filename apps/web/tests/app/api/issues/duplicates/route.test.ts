@@ -1,0 +1,41 @@
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { duplicateIssueListSchema } from '@/lib/query/schemas.ts';
+import {
+  buildIssueRoutesWorld,
+  type IssueRoutesWorld,
+  installRouteMocks,
+  signInAs,
+} from '../../../../../tests-support-issue-routes.ts';
+
+const duplicatesRoute = await import('../../../../../src/app/api/issues/duplicates/route.ts');
+
+let world: IssueRoutesWorld;
+
+beforeAll(async () => {
+  world = await buildIssueRoutesWorld();
+});
+
+beforeEach(() => {
+  installRouteMocks();
+  signInAs(world.admin);
+});
+
+describe('GET /api/issues/duplicates', () => {
+  it('returns duplicate suggestions matching title query within the specified team', async () => {
+    const url = `http://localhost:3000/api/issues/duplicates?teamId=${world.workspace.teamId}&title=${encodeURIComponent('Safari passkey')}`;
+    const response = await duplicatesRoute.GET(new Request(url));
+    const result = duplicateIssueListSchema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(result.duplicates)).toBe(true);
+  });
+
+  it('returns empty array when title has less than 3 characters', async () => {
+    const url = `http://localhost:3000/api/issues/duplicates?teamId=${world.workspace.teamId}&title=ab`;
+    const response = await duplicatesRoute.GET(new Request(url));
+    const result = duplicateIssueListSchema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(result.duplicates).toEqual([]);
+  });
+});
