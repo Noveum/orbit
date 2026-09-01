@@ -1,5 +1,4 @@
-import { nextSyncId } from '@orbit/core';
-import { and, db, eq, schema } from '@orbit/db';
+import { and, db, eq, isNull, schema } from '@orbit/db';
 import { snooze, unreadCount } from '@orbit/services/notifications';
 import { notFound } from '@orbit/shared/errors';
 import { z } from 'zod';
@@ -37,23 +36,21 @@ export async function DELETE(_request: Request, { params }: RouteParams): Promis
   return await handleRoute(async () => {
     const { principal, userName } = await apiContext();
     const { id } = await params;
-    const deleted = await db
-      .delete(schema.notification)
+    const dismissed = await db
+      .update(schema.notification)
+      .set({ dismissedAt: new Date(), syncId: schema.nextSyncId })
       .where(
         and(
           eq(schema.notification.id, id),
           eq(schema.notification.userId, principal.userId),
           eq(schema.notification.organizationId, principal.organizationId),
+          isNull(schema.notification.dismissedAt),
         ),
       )
       .returning();
-    const removed = deleted[0];
+    const removed = dismissed[0];
     if (removed === undefined) throw notFound('That notification does not exist.');
-    await publish(
-      notificationActions(principal, userName, 'delete', [
-        { ...removed, syncId: await nextSyncId(db) },
-      ]),
-    );
+    await publish(notificationActions(principal, userName, 'delete', [removed]));
     return {
       deletedId: id,
       unreadCount: await unreadCount(db, principal.userId, principal.organizationId),

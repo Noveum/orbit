@@ -61,14 +61,14 @@
 - Produces: canonical GitHub pull-request recipient fanout with one unioned audience
 - Preserves: legacy notification rows and APIs during compatibility
 
-- [ ] Write concurrent redelivery, multi-linked-issue, and post-crash duplicate tests.
-- [ ] Add `notification_source_event`, nullable source linkage, fanout fence, dismissal, and manual-unread compatibility fields.
-- [ ] Replace the 60-second GitHub gate with tenant-scoped source uniqueness and recipient conflict handling.
-- [ ] Canonicalize linked and unlinked GitHub pull requests before notification planning and union their audiences.
-- [ ] Soft-dismiss legacy rows and exclude dismissed rows from reads and counters.
-- [ ] Persist shared Slack channel work before removing synchronous webhook delivery.
-- [ ] Run focused services, core, web, and database tests.
-- [ ] Commit as `fix(notifications): contain duplicate fanout`.
+- [x] Write concurrent redelivery, multi-linked-issue, and post-crash duplicate tests.
+- [x] Add `notification_source_event`, nullable source linkage, fanout fence, dismissal, and manual-unread compatibility fields.
+- [x] Replace the 60-second GitHub gate with tenant-scoped source uniqueness and recipient conflict handling.
+- [x] Canonicalize linked and unlinked GitHub pull requests before notification planning and union their audiences.
+- [x] Soft-dismiss legacy rows and exclude dismissed rows from reads and counters.
+- [x] Persist shared Slack channel work before removing synchronous webhook delivery.
+- [x] Run focused services, core, web, and database tests.
+- [x] Commit as `fix(notifications): contain duplicate fanout`.
 
 ### Task 3: Make current-head GitHub CI authoritative
 

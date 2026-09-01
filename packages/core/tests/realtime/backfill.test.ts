@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { SYNC_MODELS, scopes } from '@orbit/shared/events';
 import { createComment, toggleReaction } from '../../src/content/comment-service.ts';
 import { createDoc, createDocCollection, setDocAccess } from '../../src/content/doc-service.ts';
@@ -75,6 +75,37 @@ describe('catchUp', () => {
     expect(issues).toHaveLength(1);
     expect(issues[0]?.data['title']).toBe('Third title');
     expect(issues[0]?.syncId).toBe(third.issue.syncId);
+  });
+
+  it('replays a dismissed notification as a delete', async () => {
+    const id = newId();
+    await db.insert(schema.notification).values({
+      id,
+      organizationId: workspace.organizationId,
+      userId: workspace.admin.userId,
+      type: 'comment_created',
+      actorType: 'user',
+      actorId: workspace.admin.userId,
+      actorName: 'Someone',
+      entityType: 'issue',
+      entityId: newId(),
+      title: 'A notification',
+      url: '/inbox',
+      deliveredChannels: ['inbox'],
+      syncId: schema.nextSyncId,
+    });
+    const cursor = (await catchUp(workspace.admin, 0)).syncId;
+    await db
+      .update(schema.notification)
+      .set({ dismissedAt: new Date(), syncId: schema.nextSyncId })
+      .where(eq(schema.notification.id, id));
+
+    const result = await catchUp(workspace.admin, cursor);
+    const action = result.actions.find(
+      (candidate) => candidate.model === 'notification' && candidate.modelId === id,
+    );
+
+    expect(action?.action).toBe('delete');
   });
 
   it('backfills reviewer ids with each issue', async () => {

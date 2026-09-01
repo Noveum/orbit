@@ -6,6 +6,8 @@ import {
   notificationDelivery,
   notificationPreference,
   notificationSetting,
+  notificationSourceEvent,
+  slackChannelSync,
   slackUserMapping,
   user,
 } from '@orbit/db/schema';
@@ -16,6 +18,7 @@ import {
   NOTIFICATION_AUDIENCE_BY_REASON,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
+  notificationSourceInputSchema,
   type SyncAction,
   scopes,
   syncActionSchema,
@@ -42,6 +45,10 @@ export * from './quiet-hours.ts';
 
 export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
+export type SlackDmDelivery = typeof notificationDelivery.$inferSelect & {
+  readonly notificationId: string;
+  readonly userId: string;
+};
 export const SLACK_DM_MAX_ATTEMPTS = 5;
 const SLACK_DM_RETRY_BASE_MS = 30_000;
 const SLACK_DM_RETRY_MAX_MS = 60 * 60_000;
@@ -185,7 +192,7 @@ export async function claimSlackDmDeliveries(
   now = new Date(),
   atomic = false,
   organizationId?: string,
-): Promise<(typeof notificationDelivery.$inferSelect)[]> {
+): Promise<SlackDmDelivery[]> {
   if (atomic && 'transaction' in database) {
     return await database.transaction((tx) =>
       claimSlackDmDeliveries(tx, limit, now, false, organizationId),
@@ -196,7 +203,7 @@ export async function claimSlackDmDeliveries(
     organizationId === undefined
       ? sql``
       : sql`AND ${notification.organizationId} = ${organizationId}`;
-  return await database
+  const claimed = await database
     .update(notificationDelivery)
     .set({ status: 'processing', claimedAt: now })
     .where(
@@ -206,6 +213,7 @@ export async function claimSlackDmDeliveries(
         INNER JOIN ${notification}
           ON ${notification.id} = ${notificationDelivery.notificationId}
         WHERE ${notificationDelivery.channel} = 'slack_dm'
+          AND ${notificationDelivery.userId} IS NOT NULL
           AND ${notificationDelivery.availableAt} <= ${now.toISOString()}
           ${organizationFilter}
           AND (
@@ -225,6 +233,13 @@ export async function claimSlackDmDeliveries(
       )`,
     )
     .returning();
+  return claimed.filter(isSlackDmDelivery);
+}
+
+function isSlackDmDelivery(
+  delivery: typeof notificationDelivery.$inferSelect,
+): delivery is SlackDmDelivery {
+  return delivery.notificationId !== null && delivery.userId !== null;
 }
 
 export const DEDUPE_WINDOW_MS = 60_000;
@@ -233,6 +248,8 @@ export const INBOX_CHANNEL = 'inbox';
 function deliveredToInbox() {
   return sql`${notification.deliveredChannels} @> '["inbox"]'::jsonb`;
 }
+
+export type NotificationSourceInput = z.input<typeof notificationSourceInputSchema>;
 
 export const notificationEventSchema = z.object({
   organizationId: idSchema,
@@ -247,6 +264,7 @@ export const notificationEventSchema = z.object({
   url: z.string().trim().min(1).max(2048),
   externalUrl: z.httpUrl().max(2048).nullish(),
   priority: z.number().int().min(0).max(4).optional(),
+  source: notificationSourceInputSchema.optional(),
 });
 
 export type NotificationEvent = z.input<typeof notificationEventSchema>;
@@ -286,6 +304,11 @@ interface Recipient {
   readonly timezone: string;
 }
 
+interface SlackDmDestination {
+  readonly integrationId: string;
+  readonly destinationId: string;
+}
+
 interface Plan {
   readonly id: string;
   readonly event: ParsedEvent;
@@ -294,6 +317,8 @@ interface Plan {
   readonly emailAt: Date | null;
   readonly emailDeferred: boolean;
   readonly slackDmAt: Date | null;
+  readonly slackDmDestination: SlackDmDestination | null;
+  readonly sourceEventId: string | null;
 }
 
 const slackDmEligibilitySchema = z.object({
@@ -313,21 +338,50 @@ export async function notifyMany(
     readonly sourceDeliveryId?: string;
   } = {},
 ): Promise<NotifyOutcome> {
+  if ('$client' in database) {
+    return await database.transaction((tx) => notifyMany(tx, events, options));
+  }
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
-  const slackEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
-  const recipientIds = unique(
-    parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
+  const claimedSources = await claimNotificationSources(
+    database,
+    parsed,
+    now,
+    options.sourceDeliveryId,
   );
-  if (recipientIds.length === 0) return emptyOutcome();
+  const activeEvents = parsed.filter(
+    (event) =>
+      event.source === undefined ||
+      claimedSources.has(sourceIdentity(event.organizationId, event.source.sourceEventKey)),
+  );
+  let deduped = parsed
+    .filter(
+      (event) =>
+        event.source !== undefined &&
+        !claimedSources.has(sourceIdentity(event.organizationId, event.source.sourceEventKey)),
+    )
+    .reduce(
+      (total, event) =>
+        total + unique(event.userIds.filter((userId) => userId !== event.actor.id)).length,
+      0,
+    );
+  const slackEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
+  await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
+  const recipientIds = unique(
+    activeEvents.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
+  );
+  if (recipientIds.length === 0) {
+    await completeNotificationSources(database, claimedSources, now);
+    return { ...emptyOutcome(), deduped };
+  }
 
   const recipients = await loadRecipients(database, recipientIds);
   const settings = await loadSettings(database, recipientIds);
-  const slackEnabledEvents = slackEnabled ? parsed : [];
+  const slackEnabledEvents = slackEnabled ? activeEvents : [];
   const slackDmEligibleRecipients =
     slackEnabledEvents.length > 0
       ? await loadSlackDmEligibleRecipients(database, slackEnabledEvents, recipientIds)
-      : new Map<string, ReadonlySet<string>>();
+      : new Map<string, ReadonlyMap<string, SlackDmDestination>>();
   const disabled = disabledPreferenceIndex(
     await database
       .select({
@@ -364,8 +418,12 @@ export async function notifyMany(
         );
 
   const plans: Plan[] = [];
-  let deduped = 0;
-  for (const event of parsed) {
+  for (const event of activeEvents) {
+    const sourceEventId =
+      event.source === undefined
+        ? null
+        : (claimedSources.get(sourceIdentity(event.organizationId, event.source.sourceEventKey)) ??
+          null);
     for (const userId of event.userIds) {
       const recipient = recipients.get(userId);
       if (userId === event.actor.id || recipient === undefined) continue;
@@ -374,7 +432,7 @@ export async function notifyMany(
         continue;
       }
       const key = dedupeKey(userId, event.type, event.entityId, event.externalUrl ?? null);
-      if (seen.has(key)) {
+      if (event.source === undefined && seen.has(key)) {
         deduped += 1;
         continue;
       }
@@ -385,25 +443,128 @@ export async function notifyMany(
         disabled,
         now,
         slackEnabled,
-        slackDmEligibleRecipients.get(event.organizationId)?.has(userId) === true,
+        slackDmEligibleRecipients.get(event.organizationId)?.get(userId) ?? null,
+        sourceEventId,
       );
       if (plan !== null) {
-        seen.add(key);
+        if (event.source === undefined) seen.add(key);
         plans.push(plan);
       }
     }
   }
-  if (plans.length === 0) return { ...emptyOutcome(), deduped };
+  if (plans.length === 0) {
+    await completeNotificationSources(database, claimedSources, now);
+    return { ...emptyOutcome(), deduped };
+  }
 
   const rows = await database
     .insert(notification)
     .values(plans.map((plan) => toInsert(plan, now)))
+    .onConflictDoNothing()
     .returning();
+  deduped += plans.length - rows.length;
 
   const deliveryRows = slackDeliveryRows(rows, plans, now, options.sourceDeliveryId);
   if (deliveryRows.length > 0) await database.insert(notificationDelivery).values(deliveryRows);
+  await completeNotificationSources(database, claimedSources, now);
 
   return buildOutcome(plans, rows, deduped);
+}
+
+function sourceIdentity(organizationId: string, sourceEventKey: string): string {
+  return JSON.stringify([organizationId, sourceEventKey]);
+}
+
+async function claimNotificationSources(
+  database: NotificationDatabase,
+  events: readonly ParsedEvent[],
+  now: Date,
+  sourceDeliveryId: string | undefined,
+): Promise<Map<string, string>> {
+  const byIdentity = new Map<string, ParsedEvent>();
+  for (const event of events) {
+    if (event.source === undefined) continue;
+    const identity = sourceIdentity(event.organizationId, event.source.sourceEventKey);
+    if (!byIdentity.has(identity)) byIdentity.set(identity, event);
+  }
+  if (byIdentity.size === 0) return new Map();
+  const orderedEvents = [...byIdentity.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, event]) => event);
+  await database
+    .insert(notificationSourceEvent)
+    .values(
+      orderedEvents.map((event) => {
+        const source = event.source;
+        if (source === undefined) throw validationFailed('Notification source is missing.');
+        return {
+          id: randomUUIDv7(now),
+          organizationId: event.organizationId,
+          sourceEventKey: source.sourceEventKey,
+          sourceDeliveryId: sourceDeliveryId ?? null,
+          subjectType: source.subjectType,
+          subjectKey: source.subjectKey,
+          occurredAt: source.occurredAt,
+          ingestedAt: now,
+          payload: source.payload,
+          createdAt: now,
+          updatedAt: now,
+        };
+      }),
+    )
+    .onConflictDoNothing();
+  const organizationIds = unique(orderedEvents.map((event) => event.organizationId));
+  const sourceEventKeys = unique(
+    orderedEvents.flatMap((event) =>
+      event.source === undefined ? [] : [event.source.sourceEventKey],
+    ),
+  );
+  const rows = await database
+    .select({
+      id: notificationSourceEvent.id,
+      organizationId: notificationSourceEvent.organizationId,
+      sourceEventKey: notificationSourceEvent.sourceEventKey,
+      subjectType: notificationSourceEvent.subjectType,
+      subjectKey: notificationSourceEvent.subjectKey,
+      fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt,
+      prunedAt: notificationSourceEvent.prunedAt,
+    })
+    .from(notificationSourceEvent)
+    .where(
+      and(
+        inArray(notificationSourceEvent.organizationId, organizationIds),
+        inArray(notificationSourceEvent.sourceEventKey, sourceEventKeys),
+      ),
+    )
+    .orderBy(notificationSourceEvent.organizationId, notificationSourceEvent.sourceEventKey)
+    .for('update');
+  const claimed = new Map<string, string>();
+  for (const row of rows) {
+    const identity = sourceIdentity(row.organizationId, row.sourceEventKey);
+    const requested = byIdentity.get(identity);
+    if (requested?.source === undefined) continue;
+    if (
+      row.subjectType !== requested.source.subjectType ||
+      row.subjectKey !== requested.source.subjectKey
+    ) {
+      throw validationFailed('Notification source identity conflicts with its subject.');
+    }
+    if (row.fanoutCompletedAt === null && row.prunedAt === null) claimed.set(identity, row.id);
+  }
+  return claimed;
+}
+
+async function completeNotificationSources(
+  database: NotificationDatabase,
+  claimedSources: ReadonlyMap<string, string>,
+  now: Date,
+): Promise<void> {
+  const ids = [...claimedSources.values()];
+  if (ids.length === 0) return;
+  await database
+    .update(notificationSourceEvent)
+    .set({ fanoutCompletedAt: now, updatedAt: now })
+    .where(inArray(notificationSourceEvent.id, ids));
 }
 
 function slackDeliveryRows(
@@ -415,14 +576,25 @@ function slackDeliveryRows(
   const planById = new Map(plans.map((plan) => [plan.id, plan]));
   return rows.flatMap((row) => {
     const plan = planById.get(row.id);
-    if (plan === undefined || !plan.channels.includes('slack_dm')) return [];
+    if (
+      plan === undefined ||
+      !plan.channels.includes('slack_dm') ||
+      plan.slackDmDestination === null
+    ) {
+      return [];
+    }
     return [
       {
         id: randomUUIDv7(now),
         notificationId: row.id,
+        organizationId: row.organizationId,
+        sourceEventId: plan.sourceEventId,
         sourceDeliveryId: sourceDeliveryId ?? null,
         userId: row.userId,
         channel: 'slack_dm',
+        destinationKind: 'user',
+        destinationId: plan.slackDmDestination.destinationId,
+        integrationId: plan.slackDmDestination.integrationId,
         availableAt: plan.slackDmAt ?? now,
       },
     ];
@@ -440,7 +612,8 @@ function planFor(
   disabled: ReadonlySet<string>,
   now: Date,
   slackFeatureEnabled: boolean,
-  slackDmEligible: boolean,
+  slackDmDestination: SlackDmDestination | null,
+  sourceEventId: string | null,
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
@@ -452,7 +625,7 @@ function planFor(
   const slackDmEnabled =
     slackFeatureEnabled &&
     personal &&
-    slackDmEligible &&
+    slackDmDestination !== null &&
     isChannelEnabled(disabled, recipient.id, 'slack_dm', event.type);
   if (!(inboxEnabled || emailEnabled || slackEnabled || slackDmEnabled)) return null;
   const quietHours: QuietHours = {
@@ -477,6 +650,8 @@ function planFor(
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,
     slackDmAt: slackDmSendAt(slackDmEnabled, deferred, now, quietHours),
+    slackDmDestination,
+    sourceEventId,
   };
 }
 
@@ -484,7 +659,7 @@ async function loadSlackDmEligibleRecipients(
   database: NotificationDatabase,
   events: readonly ParsedEvent[],
   recipientIds: readonly string[],
-): Promise<Map<string, ReadonlySet<string>>> {
+): Promise<Map<string, ReadonlyMap<string, SlackDmDestination>>> {
   const organizationIds = unique(
     events.filter(isPersonalNotification).map((event) => event.organizationId),
   );
@@ -492,7 +667,9 @@ async function loadSlackDmEligibleRecipients(
   const rows = await database
     .select({
       organizationId: integration.organizationId,
+      integrationId: integration.id,
       userId: slackUserMapping.userId,
+      slackUserId: slackUserMapping.slackUserId,
       credentials: integration.credentials,
       config: integration.config,
     })
@@ -512,15 +689,18 @@ async function loadSlackDmEligibleRecipients(
         inArray(slackUserMapping.userId, [...recipientIds]),
       ),
     );
-  const eligible = new Map<string, Set<string>>();
+  const eligible = new Map<string, Map<string, SlackDmDestination>>();
   for (const row of rows) {
     const parsed = slackDmEligibilitySchema.safeParse(row);
     if (!(parsed.success && hasSlackBotToken(row.credentials))) continue;
     if (parsed.data.config.slackReauthorize === true) continue;
     const scopes = parsed.data.config.scopes;
     if (!(scopes.includes('chat:write') && scopes.includes('im:write'))) continue;
-    const recipients = eligible.get(row.organizationId) ?? new Set<string>();
-    recipients.add(row.userId);
+    const recipients = eligible.get(row.organizationId) ?? new Map<string, SlackDmDestination>();
+    recipients.set(row.userId, {
+      integrationId: row.integrationId,
+      destinationId: row.slackUserId,
+    });
     eligible.set(row.organizationId, recipients);
   }
   return eligible;
@@ -572,10 +752,75 @@ function toInsert(plan: Plan, now: Date) {
     body: event.body,
     url: event.url,
     externalUrl: event.externalUrl ?? null,
+    sourceEventId: plan.sourceEventId,
     deliveredChannels: plan.channels.filter((channel) => channel !== 'slack_dm'),
     syncId: nextSyncId,
     createdAt: now,
   };
+}
+
+async function enqueueSharedSlackDeliveries(
+  database: NotificationDatabase,
+  events: readonly ParsedEvent[],
+  claimedSources: ReadonlyMap<string, string>,
+  now: Date,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return;
+  const sourceEvents = new Map<string, ParsedEvent>();
+  for (const event of events) {
+    if (event.source?.subjectType !== 'github_pull_request') continue;
+    const sourceEventId = claimedSources.get(
+      sourceIdentity(event.organizationId, event.source.sourceEventKey),
+    );
+    if (sourceEventId === undefined || sourceEvents.has(sourceEventId)) continue;
+    sourceEvents.set(sourceEventId, event);
+  }
+  if (sourceEvents.size === 0) return;
+  const organizationIds = unique([...sourceEvents.values()].map((event) => event.organizationId));
+  const targets = await database
+    .select({
+      organizationId: slackChannelSync.organizationId,
+      integrationId: slackChannelSync.integrationId,
+      teamId: slackChannelSync.teamId,
+      channelId: slackChannelSync.channelId,
+    })
+    .from(slackChannelSync)
+    .where(
+      and(
+        inArray(slackChannelSync.organizationId, organizationIds),
+        eq(slackChannelSync.enabled, true),
+      ),
+    );
+  const values = [...sourceEvents.entries()].flatMap(([sourceEventId, event]) =>
+    targets
+      .filter(
+        (target) =>
+          target.organizationId === event.organizationId &&
+          (target.teamId === null || event.source?.teamIds.includes(target.teamId) === true),
+      )
+      .map((target) => ({
+        id: randomUUIDv7(now),
+        notificationId: null,
+        organizationId: event.organizationId,
+        sourceEventId,
+        userId: null,
+        channel: 'slack',
+        destinationKind: 'shared_channel',
+        destinationId: `${target.integrationId}:${target.channelId}`,
+        integrationId: target.integrationId,
+        providerPayload: {
+          title: event.title,
+          body: event.body,
+          url: event.url,
+          externalUrl: event.externalUrl ?? null,
+        },
+        availableAt: now,
+        createdAt: now,
+      })),
+  );
+  if (values.length === 0) return;
+  await database.insert(notificationDelivery).values(values).onConflictDoNothing();
 }
 
 function buildOutcome(
@@ -717,7 +962,11 @@ export async function markRead(
   const params = markReadSchema.parse(input);
   return await database
     .update(notification)
-    .set({ readAt: params.read ? new Date() : null, syncId: nextSyncId })
+    .set({
+      readAt: params.read ? new Date() : null,
+      manualUnreadAnchor: false,
+      syncId: nextSyncId,
+    })
     .where(
       and(
         eq(notification.userId, params.userId),
@@ -740,12 +989,13 @@ export async function markAllRead(
   const params = markAllReadSchema.parse(input);
   const updated = await database
     .update(notification)
-    .set({ readAt: new Date(), syncId: nextSyncId })
+    .set({ readAt: new Date(), manualUnreadAnchor: false, syncId: nextSyncId })
     .where(
       and(
         eq(notification.userId, params.userId),
         eq(notification.organizationId, params.organizationId),
         isNull(notification.readAt),
+        isNull(notification.dismissedAt),
       ),
     )
     .returning({ id: notification.id });
@@ -804,6 +1054,7 @@ export async function listInbox(
     eq(notification.userId, params.userId),
     eq(notification.organizationId, params.organizationId),
     deliveredToInbox(),
+    isNull(notification.dismissedAt),
   ];
   if (params.cursor !== undefined) filters.push(lt(notification.id, params.cursor));
   if (params.unreadOnly) filters.push(isNull(notification.readAt));
@@ -839,6 +1090,7 @@ export async function unreadCount(
         eq(notification.organizationId, organizationId),
         isNull(notification.readAt),
         deliveredToInbox(),
+        isNull(notification.dismissedAt),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
     );
@@ -866,6 +1118,7 @@ export async function unreadCounters(
         eq(notification.organizationId, organizationId),
         isNull(notification.readAt),
         deliveredToInbox(),
+        isNull(notification.dismissedAt),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
     )

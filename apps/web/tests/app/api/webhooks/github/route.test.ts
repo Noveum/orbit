@@ -1,6 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
 import {
   bindGithubInstallation,
@@ -24,7 +29,6 @@ const services = await import('@orbit/services');
 const notifications = await import('@orbit/services/notifications');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const nextHeaders = await import('next/headers');
-const realDispatchSlackMessage = services.dispatchSlackMessage;
 const realApplyGithubInstallationEvent = services.applyGithubInstallationEvent;
 const realNotifyMany = notifications.notifyMany;
 const dispatchSlackMessage = mock(
@@ -166,6 +170,7 @@ function pullRequestBody(
   headRef: string,
   state: 'open' | 'closed' = 'open',
   title = 'Rework dashboard',
+  merged = false,
 ): string {
   return JSON.stringify({
     action: state === 'open' ? 'opened' : 'closed',
@@ -174,7 +179,7 @@ function pullRequestBody(
       title,
       html_url: 'https://github.com/acme/web/pull/7',
       draft: false,
-      merged: false,
+      merged,
       state,
       head: { ref: headRef },
       base: { ref: 'main' },
@@ -301,7 +306,7 @@ describe('POST /api/webhooks/github', () => {
     expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
-  it('passes enabled routing outcomes through without double-delivering', async () => {
+  it('persists enabled routing without synchronously contacting Slack', async () => {
     slackEnabledForTest = true;
     notifyMany.mockImplementationOnce(async () => ({
       actions: [],
@@ -329,32 +334,46 @@ describe('POST /api/webhooks/github', () => {
       signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-broadcast'),
     );
     expect(broadcast.status).toBe(200);
-    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
-  it('escapes external pull request titles in the exact Slack payload', async () => {
+  it('persists shared Slack channel work without synchronous delivery', async () => {
     slackEnabledForTest = true;
-    notifyMany.mockImplementationOnce(async () => ({
-      actions: [],
-      deduped: 0,
-      email: [],
-      notifications: [],
-      slack: [{ userId: 'user-1', notificationId: 'notification-1' }],
-      slackDm: [],
-    }));
-    const title = 'Deploy <!channel> <@U999> <https://evil.example|click>';
+    process.env['SLACK_ENABLED'] = 'true';
+    const recipient = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    await db
+      .update(schema.issue)
+      .set({ assigneeId: recipient.principal.userId })
+      .where(eq(schema.issue.id, issueId));
+    const integrationId = await services.ensureSlackIntegration(db, {
+      organizationId: workspace.organizationId,
+      connectedById: workspace.adminUser.id,
+      botToken: 'xoxb-durable-channel',
+      externalId: 'T-DURABLE-CHANNEL',
+      scopes: ['chat:write'],
+    });
+    await services.connectSlackChannel(db, {
+      organizationId: workspace.organizationId,
+      integrationId,
+      channelId: 'C-DURABLE-CHANNEL',
+      channelName: 'durable-channel',
+      teamId: workspace.teamId,
+    });
 
     const response = await POST(
-      signed(pullRequestBody('orb-3-dashboard', 'closed', title), 'delivery-escaped-title'),
+      signed(
+        pullRequestBody('orb-3-dashboard', 'closed', 'Rework dashboard', true),
+        'delivery-durable-channel',
+      ),
     );
+    const queued = await db
+      .select({ id: schema.notificationDelivery.id })
+      .from(schema.notificationDelivery)
+      .where(eq(schema.notificationDelivery.channel, 'slack'));
 
-    const appUrl = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
     expect(response.status).toBe(200);
-    expect(dispatchSlackMessage).toHaveBeenCalledWith(db, {
-      organizationId: workspace.organizationId,
-      teamIds: [workspace.teamId],
-      text: `Deploy &lt;!channel&gt; &lt;@U999&gt; &lt;https://evil.example|click&gt; was closed: ${new URL('/inbox', `${appUrl}/`).toString()}`,
-    });
+    expect(queued).toHaveLength(1);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
   it('processes GitHub successfully when optional Slack credentials use an old key', async () => {
@@ -376,23 +395,19 @@ describe('POST /api/webhooks/github', () => {
       teamId: workspace.teamId,
     });
     process.env['BETTER_AUTH_SECRET'] = 'github-slack-rotated-key';
-    notifyMany.mockImplementationOnce(async () => ({
-      actions: [],
-      deduped: 0,
-      email: [],
-      notifications: [],
-      slack: [{ userId: workspace.adminUser.id, notificationId: 'notification-old-key' }],
-      slackDm: [],
-    }));
-    dispatchSlackMessage.mockImplementationOnce(realDispatchSlackMessage);
 
     const response = await POST(
       signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-old-slack-key'),
     );
+    const queued = await db
+      .select({ id: schema.notificationDelivery.id })
+      .from(schema.notificationDelivery)
+      .where(eq(schema.notificationDelivery.channel, 'slack'));
 
     expect(response.status).toBe(200);
     expect((await deliveryRow('delivery-old-slack-key'))?.status).toBe('processed');
-    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
+    expect(queued).toHaveLength(1);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {
@@ -508,11 +523,18 @@ describe('POST /api/webhooks/github', () => {
     });
 
     const response = await POST(
-      signed(pullRequestBody('orb-3-dashboard'), 'delivery-ordinary-claim-lost'),
+      signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-ordinary-claim-lost'),
     );
+
+    const sources = await db.select().from(schema.notificationSourceEvent);
+    const recipientEvents = await db.select().from(schema.notification);
+    const providerWork = await db.select().from(schema.notificationDelivery);
 
     expect(response.status).toBe(500);
     expect(await linkCount()).toBe(0);
+    expect(sources).toEqual([]);
+    expect(recipientEvents).toEqual([]);
+    expect(providerWork).toEqual([]);
     expect(published).toHaveLength(0);
     expect((await deliveryRow('delivery-ordinary-claim-lost'))?.status).toBe('processing');
     expect((await deliveryRow('delivery-ordinary-claim-lost'))?.claimToken).toBe(currentClaimToken);

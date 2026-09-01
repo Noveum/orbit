@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  check,
   doublePrecision,
   foreignKey,
   index,
@@ -11,6 +12,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
@@ -33,6 +35,40 @@ export const notificationReason = pgEnum('notification_reason', [
   'manual',
 ]);
 
+export const notificationSourceEvent = pgTable(
+  'notification_source_event',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    sourceEventKey: text('source_event_key').notNull(),
+    sourceDeliveryId: text('source_delivery_id'),
+    subjectType: text('subject_type').notNull(),
+    subjectKey: text('subject_key').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    ingestedAt: timestamp('ingested_at', { withTimezone: true }).notNull().defaultNow(),
+    ingestionSeq: bigint('ingestion_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('sync_id_seq')`),
+    payload: jsonb('payload').$type<Record<string, unknown>>(),
+    fanoutCompletedAt: timestamp('fanout_completed_at', { withTimezone: true }),
+    prunedAt: timestamp('pruned_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('notification_source_event_org_id_unique').on(table.organizationId, table.id),
+    uniqueIndex('notification_source_event_org_key_unique').on(
+      table.organizationId,
+      table.sourceEventKey,
+    ),
+    index('notification_source_event_delivery_idx')
+      .on(table.sourceDeliveryId)
+      .where(sql`${table.sourceDeliveryId} is not null`),
+  ],
+);
+
 export const notification = pgTable(
   'notification',
   {
@@ -54,8 +90,13 @@ export const notification = pgTable(
     body: text('body').notNull().default(''),
     url: text('url').notNull(),
     externalUrl: text('external_url'),
+    sourceEventId: text('source_event_id').references(() => notificationSourceEvent.id, {
+      onDelete: 'restrict',
+    }),
     readAt: timestamp('read_at', { withTimezone: true }),
     snoozedUntil: timestamp('snoozed_until', { withTimezone: true }),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    manualUnreadAnchor: boolean('manual_unread_anchor').notNull().default(false),
     deliveredChannels: jsonb('delivered_channels').$type<string[]>().notNull().default([]),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -63,6 +104,15 @@ export const notification = pgTable(
   (table) => [
     index('notification_user_idx').on(table.userId, table.createdAt),
     index('notification_unread_idx').on(table.userId, table.readAt),
+    unique('notification_org_id_user_unique').on(table.organizationId, table.id, table.userId),
+    uniqueIndex('notification_source_user_unique')
+      .on(table.sourceEventId, table.userId)
+      .where(sql`${table.sourceEventId} is not null`),
+    foreignKey({
+      name: 'notification_org_source_event_fk',
+      columns: [table.organizationId, table.sourceEventId],
+      foreignColumns: [notificationSourceEvent.organizationId, notificationSourceEvent.id],
+    }).onDelete('restrict'),
   ],
 );
 
@@ -70,14 +120,22 @@ export const notificationDelivery = pgTable(
   'notification_delivery',
   {
     id: text('id').primaryKey(),
-    notificationId: text('notification_id')
-      .notNull()
-      .references(() => notification.id, { onDelete: 'cascade' }),
+    notificationId: text('notification_id').references(() => notification.id, {
+      onDelete: 'cascade',
+    }),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade',
+    }),
+    sourceEventId: text('source_event_id').references(() => notificationSourceEvent.id, {
+      onDelete: 'restrict',
+    }),
     sourceDeliveryId: text('source_delivery_id'),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
     channel: text('channel').notNull(),
+    destinationKind: text('destination_kind'),
+    destinationId: text('destination_id'),
+    integrationId: text('integration_id'),
+    providerPayload: jsonb('provider_payload').$type<Record<string, unknown>>(),
     status: text('status').notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
@@ -98,6 +156,65 @@ export const notificationDelivery = pgTable(
       .on(table.sourceDeliveryId, table.userId, table.channel)
       .where(sql`${table.sourceDeliveryId} is not null`),
     index('notification_delivery_pending_idx').on(table.status, table.availableAt),
+    uniqueIndex('notification_delivery_source_destination_unique')
+      .on(
+        table.organizationId,
+        table.sourceEventId,
+        table.channel,
+        table.destinationKind,
+        table.destinationId,
+      )
+      .where(sql`${table.sourceEventId} is not null`),
+    foreignKey({
+      name: 'notification_delivery_org_source_event_fk',
+      columns: [table.organizationId, table.sourceEventId],
+      foreignColumns: [notificationSourceEvent.organizationId, notificationSourceEvent.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'notification_delivery_org_notification_user_fk',
+      columns: [table.organizationId, table.notificationId, table.userId],
+      foreignColumns: [notification.organizationId, notification.id, notification.userId],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'notification_delivery_org_integration_fk',
+      columns: [table.organizationId, table.integrationId],
+      foreignColumns: [integration.organizationId, integration.id],
+    }).onDelete('cascade'),
+    check(
+      'notification_delivery_owner_shape_check',
+      sql`(
+        (
+          ${table.sourceEventId} is null
+          and ${table.notificationId} is not null
+          and ${table.userId} is not null
+        )
+        or
+        (
+          ${table.sourceEventId} is not null
+          and ${table.organizationId} is not null
+          and ${table.destinationKind} is not null
+          and ${table.destinationId} is not null
+          and (
+            (
+              ${table.destinationKind} = 'user'
+              and ${table.channel} = 'slack_dm'
+              and ${table.notificationId} is not null
+              and ${table.userId} is not null
+              and ${table.integrationId} is not null
+            )
+            or
+            (
+              ${table.destinationKind} = 'shared_channel'
+              and ${table.channel} = 'slack'
+              and ${table.notificationId} is null
+              and ${table.userId} is null
+              and ${table.integrationId} is not null
+              and ${table.providerPayload} is not null
+            )
+          )
+        )
+      )`,
+    ),
   ],
 );
 
@@ -163,6 +280,7 @@ export const integration = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    unique('integration_org_id_unique').on(table.organizationId, table.id),
     uniqueIndex('integration_org_provider_unique').on(
       table.organizationId,
       table.provider,

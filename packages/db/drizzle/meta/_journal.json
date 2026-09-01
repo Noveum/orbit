@@ -127,6 +127,20 @@
       "when": 1788253987024,
       "tag": "0017_notification_webhook_fencing",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788256148995,
+      "tag": "0018_free_doctor_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788259632451,
+      "tag": "0019_round_skrulls",
+      "breakpoints": true
     }
   ]
 }

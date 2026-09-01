@@ -112,6 +112,9 @@ export async function applyNormalizedGithubEvent(
     readonly now?: Date;
   },
 ): Promise<GithubApplyResult> {
+  if ('$client' in database) {
+    return await database.transaction((tx) => applyNormalizedGithubEvent(tx, input));
+  }
   const { event } = input;
   if (input.organizationId === null) {
     return { ...EMPTY, ignoredReason: 'repository_not_connected' };
@@ -128,7 +131,8 @@ export async function applyNormalizedGithubEvent(
           : eq(githubRepositorySync.organizationId, input.organizationId),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .for('update');
   if (repo === undefined) return { ...EMPTY, ignoredReason: 'repository_not_connected' };
   if (!repo.enabled) return { ...EMPTY, ignoredReason: 'repository_disabled' };
 
@@ -144,6 +148,7 @@ export async function applyNormalizedGithubEvent(
       event,
       pullRequests,
       stalePullRequestEvent,
+      now,
       emptyReason: 'no_issue_identifier',
     });
   }
@@ -155,6 +160,7 @@ export async function applyNormalizedGithubEvent(
       event,
       pullRequests,
       stalePullRequestEvent,
+      now,
       emptyReason: 'no_matching_issue',
     });
   }
@@ -196,7 +202,14 @@ export async function applyNormalizedGithubEvent(
     ignoredReason: null,
     organizationId: repo.organizationId,
     actions,
-    notificationEvents,
+    notificationEvents: await canonicalGithubNotifications(database, notificationEvents, {
+      repo,
+      event,
+      pullRequests,
+      now,
+      defaultTeamIds: [],
+      teamIdsByIssueId: new Map(issues.map((entry) => [entry.id, entry.teamId])),
+    }),
     teamIds: unique(issues.map((entry) => entry.teamId)),
     gitLinks,
     pullRequests,
@@ -210,10 +223,11 @@ async function resultWithoutLinkedIssues(
     readonly event: NormalizedGithubEvent;
     readonly pullRequests: GithubPullRequestRow[];
     readonly stalePullRequestEvent: boolean;
+    readonly now: Date;
     readonly emptyReason: Extract<GithubIgnoredReason, 'no_issue_identifier' | 'no_matching_issue'>;
   },
 ): Promise<GithubApplyResult> {
-  const { repo, event, pullRequests, stalePullRequestEvent, emptyReason } = context;
+  const { repo, event, pullRequests, stalePullRequestEvent, now, emptyReason } = context;
   const notificationEvents = stalePullRequestEvent
     ? []
     : await unlinkedPullRequestNotifications(database, { repo, event, pullRequests });
@@ -222,8 +236,164 @@ async function resultWithoutLinkedIssues(
     handled: true,
     ignoredReason: pullRequests.length === 0 ? emptyReason : null,
     organizationId: repo.organizationId,
-    notificationEvents,
+    notificationEvents: await canonicalGithubNotifications(database, notificationEvents, {
+      repo,
+      event,
+      pullRequests,
+      now,
+      defaultTeamIds: repo.teamId === null ? [] : [repo.teamId],
+      teamIdsByIssueId: new Map(),
+    }),
+    teamIds: repo.teamId === null ? [] : [repo.teamId],
     pullRequests,
+  };
+}
+
+async function canonicalGithubNotifications(
+  database: GithubDatabase,
+  notifications: readonly NotificationEvent[],
+  context: {
+    readonly repo: RepositorySync;
+    readonly event: NormalizedGithubEvent;
+    readonly pullRequests: readonly GithubPullRequestRow[];
+    readonly now: Date;
+    readonly defaultTeamIds: readonly string[];
+    readonly teamIdsByIssueId: ReadonlyMap<string, string>;
+  },
+): Promise<NotificationEvent[]> {
+  const { repo, event, pullRequests, now } = context;
+  if (notifications.length === 0) return [];
+  if (pullRequests.length === 1) {
+    const pull = pullRequests[0];
+    if (pull === undefined) return [];
+    const first = notifications[0];
+    if (first === undefined) return [];
+    return [
+      canonicalGithubNotification(first, notifications, {
+        repo,
+        event,
+        pull,
+        now,
+        defaultTeamIds: context.defaultTeamIds,
+        teamIdsByIssueId: context.teamIdsByIssueId,
+      }),
+    ];
+  }
+  const notificationsByPull = await groupGithubNotificationsByPull(
+    database,
+    notifications,
+    repo.organizationId,
+    pullRequests.map((pull) => pull.id),
+  );
+  return pullRequests.flatMap((pull) => {
+    const audienceEvents = notificationsByPull.get(pull.id) ?? [];
+    const first = audienceEvents[0];
+    if (first === undefined) return [];
+    return [
+      canonicalGithubNotification(first, audienceEvents, {
+        repo,
+        event,
+        pull,
+        now,
+        defaultTeamIds: context.defaultTeamIds,
+        teamIdsByIssueId: context.teamIdsByIssueId,
+      }),
+    ];
+  });
+}
+
+async function groupGithubNotificationsByPull(
+  database: GithubDatabase,
+  notifications: readonly NotificationEvent[],
+  organizationId: string,
+  pullIds: readonly string[],
+): Promise<Map<string, NotificationEvent[]>> {
+  const pullIdSet = new Set(pullIds);
+  const issueIds = unique(
+    notifications.flatMap((notification) =>
+      notification.entityType === 'issue' ? [notification.entityId] : [],
+    ),
+  );
+  const links =
+    issueIds.length === 0
+      ? []
+      : await database
+          .select({ issueId: gitLink.issueId, pullRequestId: gitLink.pullRequestId })
+          .from(gitLink)
+          .where(
+            and(
+              eq(gitLink.organizationId, organizationId),
+              eq(gitLink.provider, 'github'),
+              eq(gitLink.kind, 'pull_request'),
+              inArray(gitLink.issueId, issueIds),
+              inArray(gitLink.pullRequestId, pullIds),
+            ),
+          )
+          .orderBy(asc(gitLink.id))
+          .for('update', { of: gitLink });
+  const pullIdsByIssue = new Map<string, Set<string>>();
+  for (const link of links) {
+    if (link.pullRequestId === null) continue;
+    const ids = pullIdsByIssue.get(link.issueId) ?? new Set<string>();
+    ids.add(link.pullRequestId);
+    pullIdsByIssue.set(link.issueId, ids);
+  }
+  const notificationsByPull = new Map<string, NotificationEvent[]>();
+  for (const notification of notifications) {
+    const targetPullIds =
+      notification.entityType === 'github_pull_request'
+        ? [notification.entityId]
+        : [...(pullIdsByIssue.get(notification.entityId) ?? [])];
+    for (const pullId of targetPullIds) {
+      if (!pullIdSet.has(pullId)) continue;
+      const grouped = notificationsByPull.get(pullId) ?? [];
+      grouped.push(notification);
+      notificationsByPull.set(pullId, grouped);
+    }
+  }
+  return notificationsByPull;
+}
+
+function canonicalGithubNotification(
+  notification: NotificationEvent,
+  audienceEvents: readonly NotificationEvent[],
+  context: {
+    readonly repo: RepositorySync;
+    readonly event: NormalizedGithubEvent;
+    readonly pull: GithubPullRequestRow;
+    readonly now: Date;
+    readonly defaultTeamIds: readonly string[];
+    readonly teamIdsByIssueId: ReadonlyMap<string, string>;
+  },
+): NotificationEvent {
+  const { repo, event, pull, now } = context;
+  return {
+    ...notification,
+    entityType: 'github_pull_request',
+    entityId: pull.id,
+    userIds: unique(audienceEvents.flatMap((candidate) => candidate.userIds)),
+    url: `/pulls/${pull.id}`,
+    source: {
+      sourceEventKey: `github:${repo.repositoryId}:pr:${pull.number}:${event.activity.externalId}`,
+      subjectType: 'github_pull_request',
+      subjectKey: `github-pr:${repo.repositoryId}:${pull.number}`,
+      occurredAt: new Date(event.activity.occurredAt ?? now),
+      teamIds: unique([
+        ...context.defaultTeamIds,
+        ...audienceEvents.flatMap((candidate) => {
+          if (candidate.entityType !== 'issue') return [];
+          const teamId = context.teamIdsByIssueId.get(candidate.entityId);
+          return teamId === undefined ? [] : [teamId];
+        }),
+      ]),
+      payload: {
+        action: event.action,
+        activity: event.activity,
+        repository: event.repository,
+        pullRequestId: pull.id,
+        pullRequestNumber: pull.number,
+      },
+    },
   };
 }
 
@@ -1028,21 +1198,43 @@ async function unlinkedPullRequestNotifications(
     event.requestedReviewer === null
       ? null
       : await githubAccountUser(database, event.requestedReviewer.id);
-  const candidates = unique(
+  const candidatesByPull = new Map(
     await Promise.all(
-      pullRequests.map(async (pull) => {
-        if (event.action === 'review_requested') return reviewerUserId;
-        return pull.authorId.length === 0 ? null : await githubAccountUser(database, pull.authorId);
-      }),
-    ).then((ids) => ids.filter((id): id is string => id !== null)),
+      pullRequests.map(
+        async (pull) =>
+          [
+            pull.id,
+            await unlinkedPullRequestAudience(database, event, pull, reviewerUserId),
+          ] as const,
+      ),
+    ),
   );
-  const userIds = await authorizedWorkspaceUsers(database, repo.organizationId, candidates);
-  if (userIds.length === 0) return [];
+  const authorizedUserIds = new Set(
+    await authorizedWorkspaceUsers(
+      database,
+      repo.organizationId,
+      unique([...candidatesByPull.values()].filter((userId): userId is string => userId !== null)),
+    ),
+  );
 
   return pullRequests.flatMap((pull) => {
+    const candidate = candidatesByPull.get(pull.id) ?? null;
+    const userIds = candidate !== null && authorizedUserIds.has(candidate) ? [candidate] : [];
+    if (userIds.length === 0) return [];
     const notification = unlinkedPullRequestNotification({ repo, event, pull, actor, userIds });
     return notification === null ? [] : [notification];
   });
+}
+
+async function unlinkedPullRequestAudience(
+  database: GithubDatabase,
+  event: NormalizedGithubEvent,
+  pull: GithubPullRequestRow,
+  reviewerUserId: string | null,
+): Promise<string | null> {
+  if (event.action === 'review_requested') return reviewerUserId;
+  if (pull.authorId.length === 0) return null;
+  return await githubAccountUser(database, pull.authorId);
 }
 
 function unlinkedPullRequestNotification(context: {
@@ -1197,18 +1389,22 @@ async function authorizedAudiences(
   issues: readonly LinkedIssue[],
   extra: string | null,
 ): Promise<Map<string, string[]>> {
-  const candidateIds = unique(issues.flatMap((linked) => audienceIds(linked, extra)));
+  const candidateIds = unique(issues.flatMap((linked) => audienceIds(linked, extra))).sort();
   if (candidateIds.length === 0) return new Map();
   const memberships = await database
     .select({ userId: member.userId, role: member.role })
     .from(member)
-    .where(and(eq(member.organizationId, organizationId), inArray(member.userId, candidateIds)));
+    .where(and(eq(member.organizationId, organizationId), inArray(member.userId, candidateIds)))
+    .orderBy(asc(member.userId))
+    .for('update');
   const roles = new Map(memberships.map((entry) => [entry.userId, entry.role]));
-  const teamIds = unique(issues.map((linked) => linked.teamId));
+  const teamIds = unique(issues.map((linked) => linked.teamId)).sort();
   const teamMemberships = await database
     .select({ userId: teamMember.userId, teamId: teamMember.teamId })
     .from(teamMember)
-    .where(and(inArray(teamMember.userId, candidateIds), inArray(teamMember.teamId, teamIds)));
+    .where(and(inArray(teamMember.userId, candidateIds), inArray(teamMember.teamId, teamIds)))
+    .orderBy(asc(teamMember.teamId), asc(teamMember.userId))
+    .for('update');
   const teamsByUser = new Map<string, Set<string>>();
   for (const entry of teamMemberships) {
     const teams = teamsByUser.get(entry.userId) ?? new Set<string>();
@@ -1242,7 +1438,9 @@ async function authorizedWorkspaceUsers(
   const rows = await database
     .select({ userId: member.userId, role: member.role })
     .from(member)
-    .where(and(eq(member.organizationId, organizationId), inArray(member.userId, [...userIds])));
+    .where(and(eq(member.organizationId, organizationId), inArray(member.userId, [...userIds])))
+    .orderBy(asc(member.userId))
+    .for('update');
   return unique(
     rows.flatMap((row) => {
       const principal: Principal = {
@@ -1295,7 +1493,9 @@ async function identifiersFromGitLinks(
         identity,
         inArray(gitLink.number, [...prNumbers]),
       ),
-    );
+    )
+    .orderBy(asc(gitLink.id))
+    .for('update', { of: gitLink });
   return rows.map((row) => row.identifier);
 }
 
@@ -1319,7 +1519,9 @@ async function loadLinkedIssues(
     .innerJoin(workflowState, eq(workflowState.id, issue.stateId))
     .where(
       and(eq(issue.organizationId, organizationId), inArray(issue.identifier, [...identifiers])),
-    );
+    )
+    .orderBy(asc(issue.id))
+    .for('update', { of: issue });
   if (rows.length === 0) return [];
 
   const subscriptions = await database
@@ -1330,7 +1532,9 @@ async function loadLinkedIssues(
         issueSubscription.issueId,
         rows.map((row) => row.id),
       ),
-    );
+    )
+    .orderBy(asc(issueSubscription.issueId), asc(issueSubscription.userId))
+    .for('update');
   const byIssue = new Map<string, string[]>();
   for (const sub of subscriptions) {
     byIssue.set(sub.issueId, [...(byIssue.get(sub.issueId) ?? []), sub.userId]);

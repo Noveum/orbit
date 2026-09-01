@@ -1,5 +1,5 @@
 import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
-import type { SyncAction, SyncModel } from '@orbit/shared/events';
+import type { SyncAction, SyncActionKind, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
@@ -20,6 +20,7 @@ interface BackfilledRow {
   readonly modelId: string;
   readonly syncId: number;
   readonly scopes: string[];
+  readonly action?: SyncActionKind;
   readonly data: Record<string, unknown>;
 }
 
@@ -680,6 +681,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       modelId: row.id,
       syncId: row.syncId,
       scopes: [scopes.user(row.userId)],
+      action: row.dismissedAt === null ? 'update' : 'delete',
       data: row,
     })),
 
@@ -778,7 +780,7 @@ export async function catchUp(
           syncId: row.syncId,
           organizationId: principal.organizationId,
           scopes: row.scopes,
-          action: 'update',
+          action: row.action ?? 'update',
           model,
           modelId: row.modelId,
           data: row.data,

@@ -2,8 +2,6 @@ import { and, db, eq, inArray, lt, or, schema } from '@orbit/db';
 import {
   applyGithubEvent,
   applyGithubInstallationEvent,
-  dispatchSlackMessage,
-  escapeSlackText,
   findGithubInstallationAnywhere,
   handlesGithubEvent,
   isGithubInstallationEvent,
@@ -14,7 +12,6 @@ import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { publish } from '@/lib/api/handler.ts';
-import { absoluteUrl } from '@/lib/env.ts';
 import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 
 const SIGNATURE_HEADER = 'x-hub-signature-256';
@@ -162,31 +159,13 @@ export async function POST(request: Request): Promise<Response> {
         await finalizeDelivery(claim, outcomeFinalization(applied.ignoredReason), tx),
       );
       return {
-        organizationId: applied.organizationId,
-        teamIds: applied.teamIds,
         actions,
-        slack: notified.slack,
         ignoredReason: applied.ignoredReason,
-        slackText: applied.notificationEvents[0]?.title ?? null,
-        slackEnabled,
       };
     });
 
     deliveryFinalized = true;
     await publish(outcome.actions);
-
-    if (
-      outcome.slackEnabled &&
-      outcome.organizationId !== null &&
-      outcome.slackText !== null &&
-      outcome.slack.length > 0
-    ) {
-      await dispatchSlackMessage(db, {
-        organizationId: outcome.organizationId,
-        teamIds: outcome.teamIds,
-        text: `${escapeSlackText(outcome.slackText)}: ${absoluteUrl('/inbox')}`,
-      });
-    }
 
     return Response.json({
       ok: true,

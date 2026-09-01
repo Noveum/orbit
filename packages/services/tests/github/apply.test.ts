@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { db } from '@orbit/db';
 import {
   account,
   githubPullRequest,
@@ -16,7 +17,7 @@ import {
   workflowState,
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { applyGithubEvent, upsertGithubPullRequestHistory } from '../../src/github/apply.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
@@ -152,23 +153,27 @@ function prEvent(overrides: {
   title?: string;
   headRef?: string;
   body?: string;
+  number?: number;
+  externalId?: number;
+  author?: { readonly login: string; readonly id: number };
 }): { eventName: string; body: unknown } {
+  const number = overrides.number ?? 7;
   return {
     eventName: 'pull_request',
     body: {
       action: overrides.action ?? 'opened',
       pull_request: {
-        id: 7007,
-        number: 7,
+        id: overrides.externalId ?? 7007,
+        number,
         title: overrides.title ?? 'Rework dashboard',
         body: overrides.body ?? null,
-        html_url: 'https://github.com/acme/web/pull/7',
+        html_url: `https://github.com/acme/web/pull/${number}`,
         draft: overrides.draft ?? false,
         merged: overrides.merged ?? false,
         state: overrides.state ?? 'open',
         head: { ref: overrides.headRef ?? 'eng-3-dashboard', sha: 'abc123' },
         base: { ref: 'main' },
-        user: { login: 'octocat', id: 500 },
+        user: overrides.author ?? { login: 'octocat', id: 500 },
         created_at: '2026-08-13T01:00:00.000Z',
         updated_at: '2026-08-13T02:00:00.000Z',
       },
@@ -321,6 +326,7 @@ describe('applyGithubEvent', () => {
       expect(pulls[0]?.number).toBe(7);
       expect(pulls[0]?.title).toBe('Tidy the dashboard');
       expect(result.ignoredReason).toBeNull();
+      expect(result.teamIds).toEqual([fixture.teamId]);
     });
   });
 
@@ -544,6 +550,65 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('canonicalizes a failed check notification for every linked pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'In Progress');
+      const stateId = fixture.states['In Progress'];
+      if (stateId === undefined) throw new Error('the in progress state is missing');
+      const secondIssueId = `iss_${randomUUIDv7()}`;
+      await tx.insert(issue).values({
+        id: secondIssueId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamId,
+        number: 4,
+        identifier: 'ENG-4',
+        title: 'Related checks',
+        stateId,
+        creatorId: fixture.assigneeId,
+      });
+
+      await applyGithubEvent(tx, prEvent({ headRef: 'eng-3-dashboard', body: 'Fixes ENG-3' }));
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          number: 8,
+          externalId: 8008,
+          title: 'Related checks',
+          headRef: 'eng-4-related-checks',
+          body: 'Fixes ENG-4',
+          author: { login: 'assignee', id: 900 },
+        }),
+      );
+
+      const result = await applyGithubEvent(tx, {
+        eventName: 'check_suite',
+        body: {
+          action: 'completed',
+          check_suite: {
+            id: 303,
+            conclusion: 'failure',
+            head_branch: 'shared-checks',
+            pull_requests: [{ number: 7 }, { number: 8 }],
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'ci', id: 3 },
+        },
+      });
+
+      expect(result.notificationEvents).toHaveLength(2);
+      const first = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:7',
+      );
+      const second = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:8',
+      );
+      expect(first?.entityId).toBe(result.pullRequests.find((pull) => pull.number === 7)?.id);
+      expect(first?.userIds).toEqual([fixture.creatorId, fixture.assigneeId]);
+      expect(second?.entityId).toBe(result.pullRequests.find((pull) => pull.number === 8)?.id);
+      expect(second?.userIds).toEqual([fixture.assigneeId]);
+    });
+  });
+
   it('rolls up concurrent checks and ignores an older retry result', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -660,7 +725,7 @@ describe('applyGithubEvent', () => {
 
   it('notifies an existing linked pull request about a conversation comment', async () => {
     await withRollback(async (tx) => {
-      const fixture = await seed(tx);
+      await seed(tx);
       await applyGithubEvent(tx, prEvent({}));
 
       const result = await applyGithubEvent(tx, {
@@ -689,7 +754,7 @@ describe('applyGithubEvent', () => {
       expect(result.notificationEvents[0]?.externalUrl).toBe(
         'https://github.com/acme/web/pull/7#issuecomment-1',
       );
-      expect(result.notificationEvents[0]?.entityId).toBe(fixture.issueId);
+      expect(result.notificationEvents[0]?.entityId).toBe(result.pullRequests[0]?.id);
 
       const edited = await applyGithubEvent(tx, {
         eventName: 'issue_comment',
@@ -711,6 +776,50 @@ describe('applyGithubEvent', () => {
         },
       });
       expect(edited.notificationEvents).toEqual([]);
+    });
+  });
+
+  it('plans one canonical pull request notification across several linked issues', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const stateId = fixture.states['Backlog'];
+      if (stateId === undefined) throw new Error('the backlog state is missing');
+      await tx.insert(issue).values({
+        id: `iss_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamId,
+        number: 4,
+        identifier: 'ENG-4',
+        title: 'Related dashboard work',
+        stateId,
+        creatorId: fixture.creatorId,
+        assigneeId: fixture.assigneeId,
+      });
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          action: 'closed',
+          state: 'closed',
+          headRef: 'chore/no-identifier',
+          body: 'Fixes ENG-3\nFixes ENG-4',
+        }),
+      );
+
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.userIds).toEqual([
+        fixture.creatorId,
+        fixture.assigneeId,
+      ]);
+      expect(result.notificationEvents[0]?.entityType).toBe('github_pull_request');
+      expect(result.notificationEvents[0]?.entityId).toBe(result.pullRequests[0]?.id);
+      expect(result.notificationEvents[0]).toMatchObject({
+        source: {
+          sourceEventKey: 'github:99:pr:7:pull_request:7007:closed:2026-08-13T02:00:00.000Z',
+          subjectType: 'github_pull_request',
+          subjectKey: 'github-pr:99:7',
+        },
+      });
     });
   });
 
@@ -792,6 +901,56 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('keeps each unlinked pull request notification scoped to its author', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          title: 'First unrelated change',
+          headRef: 'chore/first-unrelated',
+          body: 'No Orbit identifier.',
+        }),
+      );
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          number: 8,
+          externalId: 8008,
+          title: 'Second unrelated change',
+          headRef: 'chore/second-unrelated',
+          body: 'No Orbit identifier.',
+          author: { login: 'assignee', id: 900 },
+        }),
+      );
+
+      const result = await applyGithubEvent(tx, {
+        eventName: 'check_suite',
+        body: {
+          action: 'completed',
+          check_suite: {
+            id: 404,
+            conclusion: 'failure',
+            head_branch: 'shared-checks',
+            pull_requests: [{ number: 7 }, { number: 8 }],
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'ci', id: 3 },
+        },
+      });
+
+      expect(result.notificationEvents).toHaveLength(2);
+      const first = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:7',
+      );
+      const second = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:8',
+      );
+      expect(first?.userIds).toEqual([fixture.creatorId]);
+      expect(second?.userIds).toEqual([fixture.assigneeId]);
+    });
+  });
+
   it('does not notify a mapped GitHub user after they leave the workspace', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -810,6 +969,63 @@ describe('applyGithubEvent', () => {
 
       expect(result.notificationEvents).toHaveLength(0);
     });
+  });
+
+  it('rechecks team access after a concurrent membership removal', async () => {
+    const fixture = await db.transaction(async (tx) => {
+      const seeded = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      return seeded;
+    });
+    let announceRemoval = (): void => undefined;
+    const removalReady = new Promise<void>((resolve) => {
+      announceRemoval = resolve;
+    });
+    let releaseRemoval = (): void => undefined;
+    const removalRelease = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    const removal = db.transaction(async (tx) => {
+      await tx
+        .delete(teamMember)
+        .where(
+          and(eq(teamMember.teamId, fixture.teamId), eq(teamMember.userId, fixture.assigneeId)),
+        );
+      announceRemoval();
+      await removalRelease;
+    });
+
+    try {
+      await removalReady;
+      const applying = applyGithubEvent(db, {
+        eventName: 'check_suite',
+        body: {
+          action: 'completed',
+          check_suite: {
+            id: 505,
+            conclusion: 'failure',
+            head_branch: 'eng-3-dashboard',
+            pull_requests: [{ number: 7 }],
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'ci', id: 3 },
+        },
+      });
+      const releaseTimer = setTimeout(releaseRemoval, 50);
+      const result = await applying;
+      clearTimeout(releaseTimer);
+      releaseRemoval();
+      await removal;
+
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.userIds).toEqual([fixture.creatorId]);
+    } finally {
+      releaseRemoval();
+      await removal.catch(() => undefined);
+      await db.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await db.delete(user).where(eq(user.id, fixture.creatorId));
+      await db.delete(user).where(eq(user.id, fixture.assigneeId));
+    }
   });
 
   it('backfills review, comment, and check history idempotently', async () => {
