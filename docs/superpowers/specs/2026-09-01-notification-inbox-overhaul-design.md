@@ -2,8 +2,7 @@
 
 ## Status
 
-Proposed for product and engineering review. Implementation starts only after the behavior and
-rollout decisions in this document are accepted.
+Approved for implementation on 2026-09-01 with all eight recommended behavioral defaults accepted.
 
 ## Problem
 
