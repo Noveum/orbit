@@ -25,6 +25,7 @@ const notifications = await import('@orbit/services/notifications');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const nextHeaders = await import('next/headers');
 const realDispatchSlackMessage = services.dispatchSlackMessage;
+const realApplyGithubInstallationEvent = services.applyGithubInstallationEvent;
 const realNotifyMany = notifications.notifyMany;
 const dispatchSlackMessage = mock(
   (
@@ -33,12 +34,14 @@ const dispatchSlackMessage = mock(
   ) => Promise.resolve(0),
 );
 const deliverPendingSlackDms = mock(() => Promise.resolve(0));
+const applyGithubInstallationEvent = mock(services.applyGithubInstallationEvent);
 const notifyMany = mock(notifications.notifyMany);
 let slackEnabledForTest = false;
 const slackCapabilitySpy = spyOn(
   slackCapability,
   'slackIntegrationEnabledForOrganization',
 ).mockImplementation(() => slackEnabledForTest);
+const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
 notifyMany.mockImplementation(realNotifyMany);
 mock.module('@orbit/core', () => ({
   ...core,
@@ -48,7 +51,11 @@ mock.module('@orbit/core', () => ({
     return Promise.resolve(undefined);
   },
 }));
-mock.module('@orbit/services', () => ({ ...services, dispatchSlackMessage }));
+mock.module('@orbit/services', () => ({
+  ...services,
+  applyGithubInstallationEvent,
+  dispatchSlackMessage,
+}));
 mock.module('@orbit/services/notifications', () => ({ ...notifications, notifyMany }));
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
@@ -60,6 +67,19 @@ async function claimForTest(deliveryId: string) {
   const claim = await claimDelivery(deliveryId, 'pull_request');
   if (claim instanceof Response) throw new Error(`could not claim ${deliveryId}`);
   return claim;
+}
+
+async function reclaimDeliveryForTest(deliveryId: string) {
+  await db
+    .update(schema.webhookDelivery)
+    .set({ claimedAt: new Date(Date.now() - 2 * 60 * 1000) })
+    .where(
+      and(
+        eq(schema.webhookDelivery.provider, 'github'),
+        eq(schema.webhookDelivery.deliveryId, deliveryId),
+      ),
+    );
+  return await claimForTest(deliveryId);
 }
 
 function restoreSlackEnvironment(): void {
@@ -75,6 +95,7 @@ afterAll(() => {
   mock.module('@orbit/services/notifications', () => notifications);
   mock.module('next/headers', () => nextHeaders);
   slackCapabilitySpy.mockRestore();
+  consoleErrorSpy.mockRestore();
   if (existingWebhookSecret === undefined) delete process.env['GITHUB_WEBHOOK_SECRET'];
   else process.env['GITHUB_WEBHOOK_SECRET'] = existingWebhookSecret;
   restoreSlackEnvironment();
@@ -213,6 +234,8 @@ beforeEach(async () => {
   published.length = 0;
   dispatchSlackMessage.mockClear();
   deliverPendingSlackDms.mockClear();
+  applyGithubInstallationEvent.mockClear();
+  applyGithubInstallationEvent.mockImplementation(realApplyGithubInstallationEvent);
   notifyMany.mockClear();
   notifyMany.mockImplementation(realNotifyMany);
   slackEnabledForTest = false;
@@ -476,6 +499,24 @@ describe('POST /api/webhooks/github', () => {
 
     expect((await deliveryRow('delivery-named'))?.event).toBe('pull_request_review');
   });
+
+  it('rolls back ordinary effects after another worker reclaims its delivery', async () => {
+    let currentClaimToken = '';
+    notifyMany.mockImplementationOnce(async (database, input, options) => {
+      currentClaimToken = (await reclaimDeliveryForTest('delivery-ordinary-claim-lost')).claimToken;
+      return await realNotifyMany(database, input, options);
+    });
+
+    const response = await POST(
+      signed(pullRequestBody('orb-3-dashboard'), 'delivery-ordinary-claim-lost'),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await linkCount()).toBe(0);
+    expect(published).toHaveLength(0);
+    expect((await deliveryRow('delivery-ordinary-claim-lost'))?.status).toBe('processing');
+    expect((await deliveryRow('delivery-ordinary-claim-lost'))?.claimToken).toBe(currentClaimToken);
+  });
 });
 
 describe('GitHub webhook delivery ownership', () => {
@@ -606,6 +647,25 @@ describe('POST /api/webhooks/github, installation events', () => {
     expect(installations.map((row) => row.installationId)).toEqual(['install-42']);
     expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
     expect((await deliveryRow('install-deleted'))?.status).toBe('processed');
+  });
+
+  it('rolls back installation effects after another worker reclaims its delivery', async () => {
+    await connectInstallation();
+    let currentClaimToken = '';
+    applyGithubInstallationEvent.mockImplementationOnce(async (database, input) => {
+      const outcome = await realApplyGithubInstallationEvent(database, input);
+      currentClaimToken = (await reclaimDeliveryForTest('install-claim-lost')).claimToken;
+      return outcome;
+    });
+
+    const response = await POST(
+      signed(installationEnvelope('deleted'), 'install-claim-lost', 'installation'),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(2);
+    expect((await deliveryRow('install-claim-lost'))?.status).toBe('processing');
+    expect((await deliveryRow('install-claim-lost'))?.claimToken).toBe(currentClaimToken);
   });
 
   it('treats a redelivered installation delete as a duplicate', async () => {

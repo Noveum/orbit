@@ -158,10 +158,8 @@ export async function POST(request: Request): Promise<Response> {
         sourceDeliveryId: deliveryId,
       });
       const actions: SyncAction[] = [...applied.actions, ...notified.actions];
-      const deliveryFinalized = await finalizeDelivery(
-        claim,
-        outcomeFinalization(applied.ignoredReason),
-        tx,
+      requireDeliveryOwnership(
+        await finalizeDelivery(claim, outcomeFinalization(applied.ignoredReason), tx),
       );
       return {
         organizationId: applied.organizationId,
@@ -171,26 +169,23 @@ export async function POST(request: Request): Promise<Response> {
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
         slackEnabled,
-        deliveryFinalized,
       };
     });
 
-    deliveryFinalized = outcome.deliveryFinalized;
-    if (deliveryFinalized) {
-      await publish(outcome.actions);
+    deliveryFinalized = true;
+    await publish(outcome.actions);
 
-      if (
-        outcome.slackEnabled &&
-        outcome.organizationId !== null &&
-        outcome.slackText !== null &&
-        outcome.slack.length > 0
-      ) {
-        await dispatchSlackMessage(db, {
-          organizationId: outcome.organizationId,
-          teamIds: outcome.teamIds,
-          text: `${escapeSlackText(outcome.slackText)}: ${absoluteUrl('/inbox')}`,
-        });
-      }
+    if (
+      outcome.slackEnabled &&
+      outcome.organizationId !== null &&
+      outcome.slackText !== null &&
+      outcome.slack.length > 0
+    ) {
+      await dispatchSlackMessage(db, {
+        organizationId: outcome.organizationId,
+        teamIds: outcome.teamIds,
+        text: `${escapeSlackText(outcome.slackText)}: ${absoluteUrl('/inbox')}`,
+      });
     }
 
     return Response.json({
@@ -218,7 +213,9 @@ async function handleInstallationEvent(input: {
         eventName: input.eventName,
         body: input.body,
       });
-      await finalizeDelivery(input.claim, { status: 'processed', error: null }, tx);
+      requireDeliveryOwnership(
+        await finalizeDelivery(input.claim, { status: 'processed', error: null }, tx),
+      );
       return applied;
     });
     return Response.json({ ok: true, handled: outcome.handled });
@@ -262,4 +259,8 @@ function outcomeFinalization(ignoredReason: string | null): WebhookFinalization 
   return ignoredReason === null
     ? { status: 'processed', error: null }
     : { status: 'ignored', error: ignoredReason };
+}
+
+function requireDeliveryOwnership(finalized: boolean): void {
+  if (!finalized) throw new Error('GitHub webhook delivery ownership was lost.');
 }
