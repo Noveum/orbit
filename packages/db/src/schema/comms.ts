@@ -670,6 +670,7 @@ export const webhookDelivery = pgTable(
     }),
     status: text('status').notNull().default('received'),
     error: text('error'),
+    claimToken: text('claim_token'),
     claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

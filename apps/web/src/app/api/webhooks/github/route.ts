@@ -23,8 +23,24 @@ const DELIVERY_HEADER = 'x-github-delivery';
 export const maxDuration = 60;
 const DELIVERY_CLAIM_TIMEOUT_MS = (maxDuration + 15) * 1000;
 
-async function claimDelivery(deliveryId: string, eventName: string): Promise<Response | null> {
+export type WebhookClaim = {
+  readonly id: string;
+  readonly claimToken: string;
+};
+
+type WebhookFinalization = {
+  readonly status: 'failed' | 'ignored' | 'processed';
+  readonly error: string | null;
+};
+
+type WebhookDeliveryWriter = Pick<typeof db, 'update'>;
+
+export async function claimDelivery(
+  deliveryId: string,
+  eventName: string,
+): Promise<Response | WebhookClaim> {
   const claimedAt = new Date();
+  const claimToken = randomUUIDv7();
   const claimed = await db
     .insert(schema.webhookDelivery)
     .values({
@@ -33,15 +49,19 @@ async function claimDelivery(deliveryId: string, eventName: string): Promise<Res
       deliveryId,
       event: eventName,
       status: 'processing',
+      claimToken,
       claimedAt,
     })
     .onConflictDoNothing()
-    .returning({ id: schema.webhookDelivery.id });
-  if (claimed.length > 0) return null;
+    .returning({ id: schema.webhookDelivery.id, claimToken: schema.webhookDelivery.claimToken });
+  const created = claimed[0];
+  if (created !== undefined && created.claimToken !== null) {
+    return { id: created.id, claimToken: created.claimToken };
+  }
 
   const reclaimed = await db
     .update(schema.webhookDelivery)
-    .set({ status: 'processing', event: eventName, claimedAt })
+    .set({ status: 'processing', event: eventName, claimToken, claimedAt })
     .where(
       and(
         deliveryMatch(deliveryId),
@@ -57,8 +77,11 @@ async function claimDelivery(deliveryId: string, eventName: string): Promise<Res
         ),
       ),
     )
-    .returning({ id: schema.webhookDelivery.id });
-  if (reclaimed.length > 0) return null;
+    .returning({ id: schema.webhookDelivery.id, claimToken: schema.webhookDelivery.claimToken });
+  const reclaimedDelivery = reclaimed[0];
+  if (reclaimedDelivery !== undefined && reclaimedDelivery.claimToken !== null) {
+    return { id: reclaimedDelivery.id, claimToken: reclaimedDelivery.claimToken };
+  }
 
   const [current] = await db
     .select({ status: schema.webhookDelivery.status })
@@ -68,6 +91,19 @@ async function claimDelivery(deliveryId: string, eventName: string): Promise<Res
   return current?.status === 'processing'
     ? Response.json({ status: 'in_progress' }, { status: 409 })
     : Response.json({ status: 'duplicate' });
+}
+
+export async function finalizeDelivery(
+  claim: WebhookClaim,
+  finalization: WebhookFinalization,
+  database: WebhookDeliveryWriter = db,
+): Promise<boolean> {
+  const finalized = await database
+    .update(schema.webhookDelivery)
+    .set(finalization)
+    .where(deliveryOwnershipMatch(claim))
+    .returning({ id: schema.webhookDelivery.id });
+  return finalized.length > 0;
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -87,18 +123,15 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ status: 'unhandled', event: eventName });
   }
 
-  const claimResponse = await claimDelivery(deliveryId, eventName);
-  if (claimResponse !== null) return claimResponse;
+  const claim = await claimDelivery(deliveryId, eventName);
+  if (claim instanceof Response) return claim;
 
   let body: unknown;
   let deliveryFinalized = false;
   try {
     body = JSON.parse(raw);
   } catch {
-    await db
-      .update(schema.webhookDelivery)
-      .set({ status: 'failed' })
-      .where(deliveryMatch(deliveryId));
+    await finalizeDelivery(claim, { status: 'failed', error: null });
     return Response.json({ error: 'invalid json' }, { status: 400 });
   }
 
@@ -107,11 +140,11 @@ export async function POST(request: Request): Promise<Response> {
     await db
       .update(schema.webhookDelivery)
       .set({ organizationId })
-      .where(deliveryMatch(deliveryId));
+      .where(deliveryOwnershipMatch(claim));
   }
 
   if (isGithubInstallationEvent(eventName)) {
-    return await handleInstallationEvent({ eventName, body, deliveryId });
+    return await handleInstallationEvent({ eventName, body, claim });
   }
 
   try {
@@ -125,6 +158,11 @@ export async function POST(request: Request): Promise<Response> {
         sourceDeliveryId: deliveryId,
       });
       const actions: SyncAction[] = [...applied.actions, ...notified.actions];
+      const deliveryFinalized = await finalizeDelivery(
+        claim,
+        outcomeFinalization(applied.ignoredReason),
+        tx,
+      );
       return {
         organizationId: applied.organizationId,
         teamIds: applied.teamIds,
@@ -133,33 +171,27 @@ export async function POST(request: Request): Promise<Response> {
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
         slackEnabled,
+        deliveryFinalized,
       };
     });
 
-    await publish(outcome.actions);
+    deliveryFinalized = outcome.deliveryFinalized;
+    if (deliveryFinalized) {
+      await publish(outcome.actions);
 
-    if (
-      outcome.slackEnabled &&
-      outcome.organizationId !== null &&
-      outcome.slackText !== null &&
-      outcome.slack.length > 0
-    ) {
-      await dispatchSlackMessage(db, {
-        organizationId: outcome.organizationId,
-        teamIds: outcome.teamIds,
-        text: `${escapeSlackText(outcome.slackText)}: ${absoluteUrl('/inbox')}`,
-      });
+      if (
+        outcome.slackEnabled &&
+        outcome.organizationId !== null &&
+        outcome.slackText !== null &&
+        outcome.slack.length > 0
+      ) {
+        await dispatchSlackMessage(db, {
+          organizationId: outcome.organizationId,
+          teamIds: outcome.teamIds,
+          text: `${escapeSlackText(outcome.slackText)}: ${absoluteUrl('/inbox')}`,
+        });
+      }
     }
-
-    await db
-      .update(schema.webhookDelivery)
-      .set(
-        outcome.ignoredReason === null
-          ? { status: 'processed', error: null }
-          : { status: 'ignored', error: outcome.ignoredReason },
-      )
-      .where(deliveryMatch(deliveryId));
-    deliveryFinalized = true;
 
     return Response.json({
       ok: true,
@@ -168,10 +200,7 @@ export async function POST(request: Request): Promise<Response> {
     });
   } catch (error) {
     if (!deliveryFinalized) {
-      await db
-        .update(schema.webhookDelivery)
-        .set({ status: 'failed' })
-        .where(deliveryMatch(deliveryId));
+      await finalizeDelivery(claim, { status: 'failed', error: null });
     }
     console.error('[orbit] github webhook failed', error);
     return Response.json({ error: 'processing failed' }, { status: 500 });
@@ -181,22 +210,20 @@ export async function POST(request: Request): Promise<Response> {
 async function handleInstallationEvent(input: {
   readonly eventName: string;
   readonly body: unknown;
-  readonly deliveryId: string;
+  readonly claim: WebhookClaim;
 }): Promise<Response> {
   try {
-    const outcome = await db.transaction(async (tx) =>
-      applyGithubInstallationEvent(tx, { eventName: input.eventName, body: input.body }),
-    );
-    await db
-      .update(schema.webhookDelivery)
-      .set({ status: 'processed' })
-      .where(deliveryMatch(input.deliveryId));
+    const outcome = await db.transaction(async (tx) => {
+      const applied = await applyGithubInstallationEvent(tx, {
+        eventName: input.eventName,
+        body: input.body,
+      });
+      await finalizeDelivery(input.claim, { status: 'processed', error: null }, tx);
+      return applied;
+    });
     return Response.json({ ok: true, handled: outcome.handled });
   } catch (error) {
-    await db
-      .update(schema.webhookDelivery)
-      .set({ status: 'failed' })
-      .where(deliveryMatch(input.deliveryId));
+    await finalizeDelivery(input.claim, { status: 'failed', error: null });
     console.error('[orbit] github installation webhook failed', error);
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
@@ -221,4 +248,18 @@ function deliveryMatch(deliveryId: string) {
     eq(schema.webhookDelivery.provider, 'github'),
     eq(schema.webhookDelivery.deliveryId, deliveryId),
   );
+}
+
+function deliveryOwnershipMatch(claim: WebhookClaim) {
+  return and(
+    eq(schema.webhookDelivery.id, claim.id),
+    eq(schema.webhookDelivery.status, 'processing'),
+    eq(schema.webhookDelivery.claimToken, claim.claimToken),
+  );
+}
+
+function outcomeFinalization(ignoredReason: string | null): WebhookFinalization {
+  return ignoredReason === null
+    ? { status: 'processed', error: null }
+    : { status: 'ignored', error: ignoredReason };
 }

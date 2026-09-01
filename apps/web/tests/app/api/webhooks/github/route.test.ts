@@ -52,7 +52,15 @@ mock.module('@orbit/services', () => ({ ...services, dispatchSlackMessage }));
 mock.module('@orbit/services/notifications', () => ({ ...notifications, notifyMany }));
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
-const { POST } = await import('../../../../../src/app/api/webhooks/github/route.ts');
+const { POST, claimDelivery, finalizeDelivery } = await import(
+  '../../../../../src/app/api/webhooks/github/route.ts'
+);
+
+async function claimForTest(deliveryId: string) {
+  const claim = await claimDelivery(deliveryId, 'pull_request');
+  if (claim instanceof Response) throw new Error(`could not claim ${deliveryId}`);
+  return claim;
+}
 
 function restoreSlackEnvironment(): void {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
@@ -467,6 +475,58 @@ describe('POST /api/webhooks/github', () => {
     await POST(signed(raw, 'delivery-named', 'pull_request_review'));
 
     expect((await deliveryRow('delivery-named'))?.event).toBe('pull_request_review');
+  });
+});
+
+describe('GitHub webhook delivery ownership', () => {
+  it('gives a fresh claimant a durable ownership token', async () => {
+    const claim = await claimForTest('delivery-owner-fresh');
+
+    expect(claim.id).toEqual(expect.any(String));
+    expect(claim.claimToken).toEqual(expect.any(String));
+    expect((await deliveryRow('delivery-owner-fresh'))?.claimToken).toBe(claim.claimToken);
+  });
+
+  it('rotates the ownership token when reclaiming an expired delivery', async () => {
+    const firstClaim = await claimForTest('delivery-owner-reclaimed');
+    await db
+      .update(schema.webhookDelivery)
+      .set({ claimedAt: new Date(Date.now() - 2 * 60 * 1000) })
+      .where(eq(schema.webhookDelivery.id, firstClaim.id));
+
+    const reclaimed = await claimForTest('delivery-owner-reclaimed');
+
+    expect(reclaimed.id).toBe(firstClaim.id);
+    expect(reclaimed.claimToken).not.toBe(firstClaim.claimToken);
+    expect((await deliveryRow('delivery-owner-reclaimed'))?.claimToken).toBe(reclaimed.claimToken);
+  });
+
+  it('does not let a stale claimant finalize a reclaimed delivery', async () => {
+    const staleClaim = await claimForTest('delivery-owner-stale');
+    await db
+      .update(schema.webhookDelivery)
+      .set({ claimedAt: new Date(Date.now() - 2 * 60 * 1000) })
+      .where(eq(schema.webhookDelivery.id, staleClaim.id));
+    const currentClaim = await claimForTest('delivery-owner-stale');
+
+    const finalized = await finalizeDelivery(staleClaim, {
+      status: 'failed',
+      error: null,
+    });
+
+    expect(finalized).toBe(false);
+    expect((await deliveryRow('delivery-owner-stale'))?.status).toBe('processing');
+    expect((await deliveryRow('delivery-owner-stale'))?.claimToken).toBe(currentClaim.claimToken);
+  });
+
+  it('lets the current claimant finalize a delivery only once', async () => {
+    const claim = await claimForTest('delivery-owner-current');
+    const first = await finalizeDelivery(claim, { status: 'processed', error: null });
+    const second = await finalizeDelivery(claim, { status: 'processed', error: null });
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect((await deliveryRow('delivery-owner-current'))?.status).toBe('processed');
   });
 });
 
