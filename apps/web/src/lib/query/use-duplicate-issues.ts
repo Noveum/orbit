@@ -1,11 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from './fetcher.ts';
-import { queryKeys } from './keys.ts';
-import type { DuplicateIssueMatch } from './schemas.ts';
-import { duplicateIssueListSchema } from './schemas.ts';
-import { SEARCH_DEBOUNCE_MS, useDebounced } from './search-tuning.ts';
+import { apiFetch } from '@/lib/query/fetcher.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
+import type { DuplicateIssueMatch } from '@/lib/query/schemas.ts';
+import { duplicateIssueListSchema } from '@/lib/query/schemas.ts';
+import { SEARCH_DEBOUNCE_MS, useDebounced } from '@/lib/query/search-tuning.ts';
 
 export const DUPLICATE_SEARCH_MIN_LENGTH = 3;
 

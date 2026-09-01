@@ -22,12 +22,14 @@ beforeEach(() => {
 
 describe('GET /api/issues/duplicates', () => {
   it('returns duplicate suggestions matching title query within the specified team', async () => {
-    const url = `http://localhost:3000/api/issues/duplicates?teamId=${world.workspace.teamId}&title=${encodeURIComponent('Safari passkey')}`;
+    const url = `http://localhost:3000/api/issues/duplicates?teamId=${world.workspace.teamId}&title=${encodeURIComponent('Blocks the other issue')}`;
     const response = await duplicatesRoute.GET(new Request(url));
     const result = duplicateIssueListSchema.parse(await response.json());
 
     expect(response.status).toBe(200);
-    expect(Array.isArray(result.duplicates)).toBe(true);
+    expect(result.duplicates.length).toBeGreaterThanOrEqual(1);
+    expect(result.duplicates.map((d) => d.id)).toContain(world.first.id);
+    expect(result.duplicates[0]?.identifier).toBe(world.first.identifier);
   });
 
   it('returns empty array when title has less than 3 characters', async () => {
