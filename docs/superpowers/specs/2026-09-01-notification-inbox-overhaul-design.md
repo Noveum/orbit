@@ -194,6 +194,10 @@ delivery payload and hash
 sufficient for every remaining operation. Pruning clears only the payload and retains the source
 identity as a tombstone.
 
+Retention dependency queries follow both canonical delivery rows and historical delivery-audit links.
+Backfill never closes fanout while an audit delivery is nonterminal or unresolved, so a source payload
+cannot be pruned around legacy provider work merely because that row has a null source id.
+
 ### `notification_conversation`
 
 One row represents one recipient's inbox state for one canonical conversation key.
@@ -264,6 +268,7 @@ so old and new code can coexist:
 - `surface_in_inbox`
 - `dismissed_at`
 - `manual_unread_anchor`
+- `deduplicated_into_notification_id`
 
 `manual_unread_anchor` is a temporary compatibility marker. It is true only when a
 conversation-level manual-unread action must project into the legacy model by clearing the newest
@@ -275,6 +280,20 @@ The recipient constraint is unique `(source_event_id, user_id)`. The application
 `INSERT ... ON CONFLICT DO NOTHING RETURNING`, and only returned recipient rows can change a
 conversation or enqueue a direct-message delivery. The old 60 second dedupe window is removed after
 all producers create durable source events.
+
+`deduplicated_into_notification_id` is null for ordinary recipient events. During historical
+backfill, each exact source-and-user equivalence group keeps its already linked row as the survivor when
+one exists, otherwise it chooses the first row by `created_at` and id. The survivor receives the shared
+source identity. Additional same-user rows keep their original immutable payload, point to the
+survivor, set `surface_in_inbox` false and keep `source_event_id` null. They are audit duplicates, not
+recipient events for counters, conversation snapshots or provider delivery. A tenant-safe foreign key
+prevents a duplicate from pointing across organizations or users. A row-local check requires a
+deduplicated row to have a null source id, false `surface_in_inbox` and a different survivor id. A
+deferred constraint trigger locks and verifies the target at commit: it must have the same organization
+and user, a non-null source id and no deduplication target. This makes self-links, chains and cycles
+invalid rather than relying on application convention. The trigger also runs when a referenced
+survivor's source or deduplication role changes and rejects its demotion while any inbound audit link
+remains. It locks candidate survivor rows and inbound rows by id before validation.
 
 Source keys describe the user-visible semantic event, not its presentation. Most map directly to a
 GitHub delivery and normalized activity identity, an Orbit comment id and create action, or an issue
@@ -289,12 +308,17 @@ boundary. `ingested_at` is the human-readable ingestion time. Delayed provider t
 cannot move a conversation backward, corrupt a cursor or make a previously read event appear newer
 than it was ingested.
 
-During backfill, `surface_in_inbox` is exactly the legacy
-`delivered_channels @> '["inbox"]'::jsonb` result. Email-only and Slack-only historical rows never
-appear in the inbox by accident. Conversation counts and latest snapshots use only surfaced rows.
+During backfill, an ordinary canonical row's `surface_in_inbox` is exactly the legacy
+`delivered_channels @> '["inbox"]'::jsonb` result. For an exact same-source, same-user group, the
+survivor is surfaced when any member carried the inbox channel, and later audit duplicates are set
+false. Before classification, the compatibility fold makes the survivor active when any member is
+active and dismissed only when all members are dismissed. It snoozes the survivor only when every
+active member has a future snooze, using the earliest wake time. A real unread member takes precedence
+over a manual-unread anchor; otherwise any active anchor becomes the survivor's anchor. The fold also
+preserves the union of confirmed legacy delivery channels. Email-only and Slack-only groups therefore
+never appear in the inbox by accident. Conversation counts and latest snapshots use only surfaced rows.
 Phase 1 adds `dismissed_at` to the legacy row before hard delete is removed. Phase 2 dual-writes and
-backfills that value into conversation state without changing `surface_in_inbox` or deleting event
-history.
+backfills that value into conversation state without deleting event history.
 
 The event has a tenant-safe composite foreign key to its conversation. The conversation's nullable
 `latest_event_id` has the inverse tenant-safe composite foreign key. A conversation is created with
@@ -309,9 +333,10 @@ channel messages and notification email. It gains:
 - `organization_id`
 - `source_event_id`
 - `conversation_key`
+- `deduplicated_into_delivery_id`
 - `destination_kind`
 - `destination_id`
-- `slack_team_id`, `slack_app_id`
+- `integration_id`, `slack_team_id`, `slack_app_id`
 - `credential_generation`
 - `provider_request_id`
 - `provider_message_id`
@@ -334,10 +359,19 @@ ambiguous, then atomically activates the new identity, marks old pending deliver
 archives old thread rows. Rotation within the same provider namespace uses the same drain, preserves
 eligible threads and still uses credential generation as a send-time race fence.
 
-Unique `(organization_id, source_event_id, channel, destination_kind, destination_id)` prevents a
-single source event from reaching the same destination more than once. A channel delivery is created
-once per configured channel, not once per user notification. Existing lease, attempt and retry fields
-remain the worker contract.
+Unique `(organization_id, source_event_id, channel, destination_kind, destination_id)` for rows whose
+source id is non-null and `deduplicated_into_delivery_id` is null prevents a single source event from
+reaching the same destination more than once. A channel delivery is created once per configured
+channel, not once per user notification. Existing lease, attempt and retry fields remain the worker
+contract.
+
+`deduplicated_into_delivery_id` is used only for classified legacy provider records. The target is the
+canonical row for that source, provider and destination. A deduplicated row retains confirmed provider
+ids and audit history but is never claimable. Before workers resume, it must be terminal `delivered` or
+`unavailable`; an uncertain provider result remains an explicit migration blocker until reconciled. A
+deferred constraint trigger enforces a same-organization canonical target with a non-null source and no
+deduplication target, preventing self-links, chains and cycles. It also fires on canonical-role changes
+and rejects demotion while an inbound delivery audit link exists, using target-then-inbound id order.
 
 Delivery state has one meaning for every provider: `pending` is queued, `processing` is leased,
 `delivered` has a confirmed provider identity, `failed` is retryable, `unavailable` is a permanent
@@ -347,6 +381,10 @@ compatibility window, a channel is added to `notification.delivered_channels` on
 confirmation. The final model reads status from delivery rows and stops mutating that compatibility
 field. Every notification provider uses these state meanings rather than being marked delivered at
 planning time.
+
+Every provider claim requires a non-null source id, a null delivery deduplication target and, when it
+has a notification owner, a null recipient deduplication target. Audit duplicates can never re-enter
+`pending`, `processing` or `failed` through retry or operator tooling.
 
 Every claim or reclaim writes a fresh UUID claim token. Completion and failure updates require both
 the delivery id and active claim token and return the updated row. Zero returned rows means the lease
@@ -395,12 +433,13 @@ marked ambiguous rather than risking a duplicate after expiry. Only a confirmed 
 moves the row to delivered.
 
 Existing Slack direct-message rows migrate under a paused worker after every active lease has either
-completed or expired:
+completed or expired and after recipient-owned delivery duplicates are classified:
 
 - `succeeded` becomes `delivered` and keeps provider channel and timestamp ids.
 - `skipped` becomes `unavailable` with its existing reason.
 - `pending` and `failed` are backfilled only when integration, Slack team, destination mapping and
-  conversation are unambiguous; otherwise they become `unavailable` with a legacy-resolution reason.
+  conversation are unambiguous, the row is canonical and its notification owner is not an audit
+  duplicate; otherwise they become `unavailable` with a legacy-resolution reason.
 - Expired legacy `processing` rows become `ambiguous` unless logs or provider reconciliation prove
   that no provider call began; only definitively unsent rows return to `failed` with attempts
   preserved.
@@ -438,8 +477,11 @@ is rebound and the new namespace starts empty.
 
 ### `webhook_delivery` additions
 
-Add a nullable `claim_token` during Phase 1. Every fresh claim or expired-lease reclaim writes a new
-UUID and the existing lease timestamps in one compare-and-swap update. Success and failure
+Add nullable `claim_token` and `replay_of_delivery_id` columns during Phase 1. Provider delivery
+identity becomes nullable only for internal replay rows. A shape check requires exactly one of provider
+delivery identity or `replay_of_delivery_id`; provider identity keeps its provider-scoped unique index,
+and `replay_of_delivery_id` has its own unique partial index. Every fresh claim or expired-lease reclaim
+writes a new UUID and the existing lease timestamps in one compare-and-swap update. Success and failure
 finalization both require the active token. Existing pending and failed rows receive a token only
 when next claimed; existing processing rows keep their current lease and are reclaimed with a fresh
 token after expiry. A stale claimant that cannot return its row from finalization must roll back its
@@ -452,44 +494,93 @@ token-aware claimant and resume. An old deployment can no longer claim under tha
 tokenless finalizer cannot update a freshly claimed row. The pause remains available for rollback
 until every allowed deployment understands claim tokens.
 
-A `webhook_delivery_quarantine` row keyed by webhook delivery id stores encrypted payload ciphertext,
-encryption-key version, parser schema version, reason code, sanitized diagnostics, quarantined time,
-replay claimant and token, replayed time and replacement delivery id. It is tenant-scoped through the
-parent delivery. Quarantined parents and ciphertext are exempt from the ordinary 30-day hard prune
-until successful replay or an explicit operator resolution. After the approved quarantine retention
-window, a cleanup may clear ciphertext only while retaining the delivery identity, reason, schema
-version and replay audit as a tombstone.
+A `webhook_delivery_quarantine` row is keyed by the parent webhook delivery's immutable internal id, so
+it can exist before organization or installation routing succeeds. It stores nullable organization
+attribution, a non-sensitive scope-kind and scope-key hash for unresolved operations, encrypted payload
+ciphertext, encryption-key version, parser schema version, reason code, sanitized diagnostics,
+quarantined time, replay request identity, replacement delivery id, replayed time and terminal
+disposition. Parent and quarantine organization attribution are nullable with `ON DELETE SET NULL`.
+The parent and child use deletion-restricted linkage during active retention, but neither depends on a
+live organization foreign key for identity.
+
+Quarantined parents and ciphertext are exempt from the ordinary 30-day hard prune until successful
+replay or explicit operator resolution. After the approved quarantine retention window, cleanup may
+clear parent payload and child ciphertext while retaining a minimal parent-and-child audit tombstone
+with the provider delivery hash, reason, parser version, disposition and replacement link. Organization
+deletion locks the parent, quarantine and replacement, invalidates any active replacement claim and
+makes nonterminal replay unavailable before clearing ciphertext and tenant content. It then nulls live
+organization attribution and records an `organization_deleted` disposition without blocking the
+organization delete. Only the non-sensitive global delivery hash and replay audit remain for the
+separately defined security-audit retention, after which that deletion workflow may remove both
+tombstones.
 
 A correctly signed delivery whose required GitHub identity fails shared-schema normalization enters a
 terminal `quarantined` state and writes the linked quarantine row in the same transaction. The
 transition requires the active webhook claim token and one returned parent row. The validated envelope
 and original payload remain available for diagnosis without entering logs, but the delivery creates no
-source, domain, inbox or provider effects and is never retried automatically. An operator can replay it
-with a fenced claim only after the parser or upstream data problem is resolved. This delivery-keyed
-quarantine remains addressable even when a missing SHA, app or check name makes a context-keyed
-reconciliation row impossible.
+source, domain, inbox or provider effects and is never retried automatically. Unresolved-scope rows are
+visible only to audited platform operators; organization administrators gain access only after a
+fenced routing update binds the parent to their organization. This parent-keyed quarantine remains
+addressable even when a missing installation, SHA, app or check name makes tenant or context routing
+impossible.
+
+Replay scheduling is one short transaction guarded by a fresh quarantine replay claim token. It locks
+the parent and quarantine row, allocates the replacement id once, inserts one internal webhook delivery
+with unique `replay_of_delivery_id`, leaves its provider delivery id null, and stores the same
+replacement id on the quarantine row. A crash commits neither side or both sides; a retry returns the
+existing replacement and never creates another. The replacement uses the ordinary webhook claim-token
+and lease state machine, reads the original validated envelope and ciphertext, and derives domain and
+source idempotency from the original provider identity. Its successful effects transaction finalizes
+the replacement and records the quarantine's `replayed_at` and terminal disposition atomically under
+the replacement claim token. Parser failure or a worker crash retries the same replacement row. Ciphertext
+cannot be cleared while that row is pending, processing, retryable or ambiguous.
 
 ### GitHub activity additions
 
-`github_pull_request_activity` gains `head_sha`, `source_kind`, `context_key` and the normalized
-provider update time. A `github_pull_request_check_context` row keyed by pull request, head SHA and
-context key stores current state, provider update time, latest provider run id, active or superseded
-state, a monotonic context version, latest raw activity id, nullable notification source event id,
-reconciliation state and a fenced reconciliation lease.
+`github_check_activity` is the repository-scoped append-only owner for every direct check-run,
+commit-status and reconciliation-fetch activity. Direct webhook rows are unique by organization,
+repository, provider delivery, stable activity identity and provider update version. Reconciliation
+rows are unique by fetch attempt, stable provider object identity and provider update version. They
+carry the head SHA, source kind and normalized context key and exist even when no pull request is
+mirrored.
+
+`github_check_reconciliation_fetch` is one durable lifecycle row per provider request attempt. Before
+the provider call, a short head-locked transaction validates the claim and commits a new attempt id,
+captured job version and context generation, request time and `started` disposition. After the call,
+the worker records completion time, normalized result hash, sanitized failure and a `fetched` or
+`failed` disposition. State acceptance later changes `fetched` to `accepted` or `invalidated`; a lost
+lease changes `started` or `fetched` to `abandoned` or `invalidated`. A retry always receives a new
+attempt id, including within one job version. Normalized check activities are persisted under that
+attempt before the state compare-and-swap, so every issued request and every available invalidated
+response remains auditable without changing current contexts.
+
+A `github_check_head_context` row keyed by organization, repository, head SHA and context key stores
+current state, provider update time, latest provider run id, active or superseded state, a monotonic
+context version, latest raw check activity id, reconciliation state and a fenced reconciliation lease.
+A `github_pull_request_check_context` row binds that head-scoped context to a pull request and records
+the captured head epoch, projected context version, latest raw activity id and nullable
+pull-request-specific notification source event id used for its aggregate projection.
+`github_pull_request_activity` remains the append-only owner for pull-request-native activity and may
+reference a repository-scoped check activity when that check produces a pull-request conversation
+event.
 
 A `github_check_head_reconciliation` row keyed by organization, repository and head SHA stores job
-state, a monotonic version, trigger identity, attempts, settle deadline, claim token, lease and the
-latest validated normalized context snapshot. It does not require a pull request to exist. A separate
-`github_pull_request_reconciliation` row keyed by pull request stores the job version, conflicting
-head candidates, claim token and lease for authoritative pull request reload. The pull request row
-gains a `head_epoch` and normalized provider update time. It remains the source of truth for current
-`head_sha` and aggregate `check_status`.
+state, a monotonic job version, a monotonic context generation, trigger identity, attempts, settle
+deadline, claim token, lease, accepted fetch attempt id, accepted job version and the latest validated
+normalized context snapshot. It does not require a pull request to exist. Every accepted direct
+check-run or commit-status mutation locks this row, updates its head-scoped context and advances the
+context generation. A separate
+`github_pull_request_reconciliation` row keyed by pull request stores the job version, conflicting head
+candidates, claim token and lease for authoritative pull request reload. The pull request row gains a
+`head_epoch` and normalized provider update time. It remains the source of truth for current `head_sha`
+and aggregate `check_status`.
 
 Every webhook activity stores a provider-delivery id plus a stable activity index or provider object
 id and update version, with a tenant-scoped uniqueness constraint independent of notification sources.
-A reconciliation fetch stores the check-head job id, provider object id and provider update version as
-raw provenance. Pending, success, repeated failure and superseded activities therefore remain
-auditable even when no user-visible transition creates a notification source row.
+Every reconciliation attempt stores its fetch id, check-head job id, provider object id and provider
+update version as repository-scoped raw provenance before attempting to update current state. Pending,
+success, repeated failure, rejected stale results and superseded activities therefore remain auditable
+before a pull request exists and when no user-visible transition creates a notification source row.
 
 `context_key` uses a versioned, length-delimited tuple encoding rather than concatenated display
 text. A check-run key is `(check_run, app_id, check_name)`, where `app_id` is the validated
@@ -507,22 +598,48 @@ a stable cross-source equivalence; the generic ingester never guesses that equiv
 malformed check-run app or name identity fails normalization and terminally quarantines the parent
 webhook delivery instead of creating a fallback context key.
 
-The context row is the durable context-scoped reconciliation job: a bounded worker claims unresolved
-rows, reloads the current GitHub context and conditionally resolves the row only when its claim token,
-context version, pull request head SHA and head epoch still match.
+The head context row is the durable context-scoped reconciliation job: a bounded worker claims
+unresolved rows, reloads the current GitHub context and conditionally resolves it only when the claim
+token, context version and owning head context generation still match. An accepted result updates the
+head context and advances the generation atomically. It then projects the accepted state only into
+pull requests whose head SHA and captured head epoch still match.
 
-The check-head row owns a full check-context fetch with the same fencing. Every valid check-suite or
-workflow-run trigger upserts it even when no mirrored pull request or constituent check run exists.
-Every trigger increments the job version and moves a completed or failed job to pending. A trigger
-that arrives during processing advances the version and records `rerun_required`, so the old claimant
-cannot finalize and the row returns to pending after that attempt releases its lease.
-The worker persists raw reconciled activities and its normalized snapshot before binding the result to
-every matching pull request in stable order. With no matching pull request, the snapshot remains
-unbound for a later pull request synchronize or mirror operation. An empty fetch stays retryable until
-the settle deadline with bounded backoff rather than completing the only trigger; reaching the deadline
-persists an explicit empty snapshot. A newer provider trigger restarts settlement. Binding compares
-the job token and version plus each captured pull request head epoch before changing contexts or
-aggregate state. A non-current head can gain historical contexts but cannot affect the current rollup.
+The check-head row owns a full check-context fetch with two independent fences. Every valid check-suite
+or workflow-run trigger upserts it even when no mirrored pull request or constituent check run exists.
+Every trigger increments the job version and moves a completed or failed job to pending. A trigger that
+arrives during processing advances the job version and records `rerun_required`, so the old claimant
+cannot finalize and the row returns to pending after that attempt releases its lease. The claimant also
+captures the context generation before its provider fetch. Applying the fetched snapshot locks the
+head row and succeeds only when the claim token, job version and captured context generation still
+match. A direct check-run or status accepted after the fetch began advances the generation, rejects the
+stale replacement and rearms the job.
+
+After committing the `started` attempt and making the provider call, the worker records every available
+normalized raw activity and the attempt result without changing current state. It then opens one state
+transaction, locks the head row, locks the attempt and performs the compare-and-swap. A rejected
+compare-and-swap marks the attempt invalidated and rearms the job. A successful compare-and-swap
+atomically replaces the active head-scoped context set, advances the context generation, stores the
+accepted fetch attempt and job version, and binds the accepted contexts to every currently matching
+pull request in stable order before marking the job completed and the attempt accepted.
+A trigger cannot interleave between snapshot acceptance and those existing pull-request projections
+because it needs the same head lock.
+
+A reclaimer locks the head before its attempt rows and marks a still-`started` attempt abandoned or a
+still-`fetched` attempt invalidated when its claim lease is lost before the state transaction. A late
+response may append its result hash and raw activities to an already terminal attempt but cannot
+resurrect it or change current state. The reclaimer creates a new attempt for the next provider call and
+never deletes or reuses the prior attempt's raw activities.
+
+With no matching pull request, the head contexts remain durable for a later pull request synchronize or
+mirror operation. That later binder locks the head row and may project only when the job is absent or is
+completed without `rerun_required`, the accepted job version still equals the current job version and
+the context generation remains stable through the bind. A newer suite or workflow trigger advances the
+job version and moves it to pending, so an older accepted snapshot cannot bind to a newly mirrored pull
+request. An unambiguous direct context update may advance the current generation while no full-head job
+is pending; the later binder reads those current head contexts rather than an old snapshot. An empty
+fetch stays retryable until the settle deadline with bounded backoff rather than completing the only
+trigger; reaching the deadline persists an explicit empty snapshot through the same fences. A
+non-current head can gain historical contexts but cannot affect the current rollup.
 
 The pull-request reconciliation worker reloads the authoritative GitHub pull request and conditionally
 changes `head_sha` only when its job token and version plus the captured pull request epoch still match.
@@ -530,12 +647,21 @@ An accepted correction increments `head_epoch` and upserts the repository-and-he
 authoritative SHA. The check-head worker never chooses the pull request's current SHA.
 
 If a newer event reuses one `check_run.id` for a different check name on the same app and head, the
-pull request lock prevents both keys from remaining active. The worker marks the affected contexts
-unresolved, suppresses their aggregate transition and enqueues the repository-and-head check job. That fetch
-requests GitHub's latest check runs for the head, atomically replaces the active check-run context set
-under the captured head epoch and marks provider-absent contexts superseded. Superseded rows remain
-history but do not participate in the aggregate. A later distinct run can reactivate the same app and
-name through a newer provider update.
+head lock prevents both keys from remaining active. The worker advances the context generation, marks
+the affected head contexts unresolved, suppresses their aggregate transition and enqueues the
+repository-and-head check job. That fetch requests GitHub's latest check runs for the head and, through
+the generation compare-and-swap, atomically replaces the active check-run context set and marks
+provider-absent contexts superseded. Superseded rows remain history but do not participate in the
+aggregate. A later distinct run can reactivate the same app and name through a newer provider update.
+
+Every direct check mutation, context reconciliation, full-head reconciliation and pull-request bind
+uses the same domain lock order: repository rows by organization and repository id, head rows by SHA,
+fetch-attempt rows by id, head contexts by encoded context key, pull requests by id, then pull-request
+context projections. CAS, invalidation and reclaim paths all lock head before attempt. A result-only
+transaction may lock its attempt without a head only when it will not acquire any later lock class. A
+worker never holds an attempt, pull-request or projection lock while waiting for a head row. The
+full-head compare-and-swap and direct context generation increment therefore serialize without
+deadlocking, and multi-pull-request binding cannot reverse the order.
 
 ## Transaction and concurrency rules
 
@@ -636,7 +762,9 @@ CI state follows these rules:
   `workflow_run.head_sha` and top-level `status.sha`. The result is the checked commit and is compared
   with the locked pull request head rather than assumed to be current. A missing or malformed source
   SHA terminally quarantines the provider delivery before activity or context planning.
-- Lock the pull request row while applying a check event.
+- Lock the repository row and repository-and-head reconciliation row before applying a check event.
+  Upsert its head context and advance the context generation first, then lock matching pull requests
+  in stable id order to project the accepted state.
 - Derive `context_key` with the versioned source-specific tuple rules above. Verify that reruns from
   one app and name update one row, equal names from different apps remain independent, status context
   casing and creator rotation update one native context, and check-run/status sources do not collapse
@@ -644,23 +772,28 @@ CI state follows these rules:
 - Order pull request head updates by the normalized provider pull request update time. Ignore an older
   head update. Equal provider times with different SHAs mark the pull request unresolved and enqueue
   the fenced pull-request reconciliation row instead of moving the head arbitrarily.
-- Persist a check event for a non-current SHA in its context row but do not include it in the current
-  aggregate. This preserves an early check that arrives before its synchronize event.
-- On an accepted pull request head change, increment `head_epoch`, reset aggregate state, then
-  recompute from every already stored resolved context for the new SHA. Upsert the repository-and-head
-  check job for unresolved or missing current-head contexts before emitting a failure transition.
-- Upsert the current-head context row while holding the pull request lock. Accept a state only when
-  its normalized provider update time is newer than the stored value. An older update remains
-  history and cannot change the context or aggregate.
+- Persist a check event for a non-current SHA in its head context but do not include it in a pull
+  request's current aggregate. This preserves an early check that arrives before its synchronize event
+  or before the pull request mirror exists.
+- On an accepted pull request head change, increment `head_epoch`, reset aggregate state, bind every
+  already stored resolved head context for the new SHA and recompute from those projections. Upsert the
+  repository-and-head check job for unresolved or missing current-head contexts before emitting a
+  failure transition.
+- Upsert a head context while holding its repository-and-head row. Accept a state only when its
+  normalized provider update time is newer than the stored value, then advance the head context
+  generation. An older update remains raw history and cannot change the head context or aggregate.
 - Treat equal provider times with different states as a reconciliation condition instead of choosing
   an arbitrary ingestion order. Mark the context unresolved, exclude the conflicting update from
   aggregate transitions, and fetch the authoritative current context from GitHub with a fenced
   reconciliation job. Equal time and equal state is idempotent.
-- Keep the latest resolved state per current-head context key. The unique pull request, head SHA and
-  context key row plus the pull request lock serialize concurrent check sources. Old-head rows remain
-  history but never participate in the rollup.
-- Persist every raw check or status activity independently of notification-source creation. A context
-  points to its latest raw activity and optionally to the user-visible source that emitted fanout.
+- Keep the latest resolved state per repository, head SHA and context key. The unique head context plus
+  its head-row lock serializes concurrent check sources. Pull-request projection occurs afterward under
+  stable pull-request locks. Old-head rows remain history but never participate in a current rollup.
+- Persist every raw check or status activity in the repository-and-head activity log independently of
+  pull-request existence and notification-source creation. A head context points only to its latest
+  raw activity. Each pull-request projection independently points to its optional PR-specific
+  user-visible source. When a pull request appears, bind its stored head contexts before computing the
+  current-head aggregate.
 - Treat every valid check-suite and workflow-run event as a durable repository-and-head check trigger,
   including when no pull request or constituent check run is available yet. They never compete with
   check runs as separate aggregate contexts.
@@ -669,25 +802,33 @@ CI state follows these rules:
 - Use source identity `github-pr:<repository-id>:<number>:<head-sha>:checks-failed`, so a
   failure-success-failure sequence on the same head still notifies at most once.
 - A new head can produce one new failure event.
-- Context reconciliation completion uses compare-and-swap on the captured head epoch, current SHA,
-  context version and claim token. Check-head completion uses the check-job version and claim token
-  plus each bound pull request's captured epoch. Pull-request reconciliation uses its own job version,
-  claim token and captured epoch. A force push or newer trigger invalidates stale worker results.
+- Context reconciliation completion uses compare-and-swap on the context version, owning head context
+  generation and claim token, then projects only through a captured pull-request head epoch and current
+  SHA. Check-head snapshot replacement uses the check-job version, claim token and captured head
+  context generation; snapshot acceptance and binding existing pull requests share one transaction.
+  A later binder also requires the current completed job version, no rerun flag, a stable context
+  generation and each pull request's captured epoch. Pull-request reconciliation uses its own job
+  version, claim token and captured epoch. A direct context event, force push or newer trigger
+  invalidates stale worker results.
 
 ## Slack delivery and threading
 
 Every Slack side effect is claimed from `notification_delivery`. The webhook request never calls
 Slack directly and never treats a swallowed provider error as success.
 
-The worker flow is:
+The Slack worker flow is:
 
-1. Claim a bounded batch with `FOR UPDATE SKIP LOCKED`, a fresh claim token and a lease.
-2. Reload the source event and canonical subject. For direct messages, recheck current recipient
+1. Read a bounded set of candidate provider-namespace, destination and conversation keys without
+   taking delivery locks, then enter one short claim transaction per key.
+2. In that transaction, create or lock the unique Slack thread row first, select its lowest eligible
+   delivery with `FOR UPDATE SKIP LOCKED`, reject the claim while a lower sequence is pending,
+   processing, failed or ambiguous, and write the delivery claim token and lease.
+3. Reload the source event and canonical subject. For direct messages, recheck current recipient
    policy, `slack_dm` preference, membership and mapping. For shared channels, recheck the current
    enabled mapping and its workspace or team scope against the subject.
-3. Resolve the current integration and credential generation.
-4. Find or lease the unique Slack thread row in a short transaction, then release the connection.
-5. If no root exists, post the conversation summary and persist its `channel` and `ts`.
+4. Resolve the current integration and credential generation.
+5. If no root exists, lease root creation, post the conversation summary and persist its `channel` and
+   `ts`.
 6. Otherwise post the new event with the root `ts` as `thread_ts`.
 7. Persist provider ids and mark the delivery sent in one short transaction using the active claim
    and credential-generation fences.
@@ -709,10 +850,12 @@ connection across the Slack request. An expired lease can be reclaimed. A worker
 cannot finalize the thread row.
 
 The atomic claim transaction locks the thread row and admits at most one processing delivery per
-provider namespace, destination and conversation. Its predicate selects the lowest eligible
-ingestion sequence and rejects a candidate while any lower sequence is pending, processing, failed or
-ambiguous. A partial uniqueness constraint on the same delivery key where status is `processing`
-backs the claim rule. Replies cannot be claimed until the thread is `ready`. An expired
+provider namespace, destination and conversation. Its predicate selects the lowest eligible ingestion
+sequence and rejects a candidate while any lower sequence is pending, processing, failed or ambiguous.
+A partial unique index on `(organization_id, channel, integration_id, slack_team_id, slack_app_id,
+destination_kind, destination_id, conversation_key)` for Slack rows where status is `processing`
+backs the claim rule independently of the source-event delivery key. Replies cannot be claimed until
+the thread is `ready`. An expired
 `creating` lease is reclaimable only when `send_started_at` is null or Slack definitively rejected the
 call. Once a call may have reached Slack, an unconfirmed root becomes ambiguous and cannot be replaced
 automatically because that could create a second parent. It blocks replies until provider or operator
@@ -874,14 +1017,15 @@ client reads conversation deltas.
 - Pause webhook claims, drain every tokenless processing lease, add
   `webhook_delivery.claim_token` plus the processing-token check, deploy token-aware claims and only
   then resume. Require compare-and-swap success and failure finalization.
-- Add the terminal webhook quarantine state, encrypted quarantine table, replay audit and retention
-  exception before strict GitHub identity schemas are enabled.
+- Add the terminal webhook quarantine state, unresolved global scope, encrypted quarantine table,
+  unique replacement replay contract and retention exception before strict GitHub identity schemas are
+  enabled.
 - Finalize ordinary and installation GitHub webhook deliveries in the same transaction as domain
   effects, source identities and every post-commit provider enqueue.
 - Fence finalization with a claim token and require one returned delivery row before commit.
 - Union linked-issue audiences before notification planning.
-- Add check-context and head-reconciliation rows, then make CI failure notifications current-head
-  transition based.
+- Add repository-and-head activity, context and reconciliation rows plus pull-request projections, then
+  make CI failure notifications current-head transition based.
 - Add failure-injection tests at every transaction boundary.
 
 This phase improves correctness before any inbox UI changes.
@@ -889,22 +1033,43 @@ This phase improves correctness before any inbox UI changes.
 ### Phase 2: Add and backfill conversations
 
 - Create `notification_conversation`, `notification_inbox_state`, `notification_snooze_wake` and
-  nullable event linkage columns.
+  nullable conversation, source and historical-deduplication linkage columns.
 - Deploy bidirectional compatibility writes for event creation plus every legacy or conversation
   read, unread, snooze and dismiss mutation before backfill so neither read model can fall behind the
   migration cursor or rollback path.
+- Pause notification provider claims and drain active leases before classifying historical recipient
+  or delivery duplicates. Claims remain paused until the recipient and delivery verifiers pass.
 - Run `bun run notifications:conversations-backfill` as a resumable, idempotent command in bounded
   primary-key batches, never as DML inside a Drizzle migration. Persist a high-water mark and repeat
   the tail pass until no gaps remain.
 - Resolve canonical pull requests through `github_pull_request`, `git_link` and repository identity.
 - Use separate issue activity and status keys.
-- Create source rows from an exact provider activity identity where one is provable. Give every other
-  legacy recipient row a unique `legacy-notification:<id>` source key rather than inventing source
-  equivalence. Conversation grouping can still collapse those events by canonical subject.
-- For each historical equivalence group, lock the source, link every provably equivalent recipient row,
-  re-read the group and set `fanout_completed_at` only when no unlinked sibling remains. The resumable
-  verifier must report zero incomplete historical sources before provider enqueue or payload pruning is
-  enabled.
+- Create one source row for each exact provider activity identity where equivalence is provable, then
+  classify same-user duplicates through the survivor rule below. Give every non-equivalent legacy
+  recipient row a unique `legacy-notification:<id>` source key rather than inventing source equivalence.
+  Conversation grouping can still collapse those events by canonical subject.
+- For each historical equivalence group, lock the source and group rows by user. Keep an existing
+  source-linked row as survivor, or choose the first row by `created_at` and id when none is linked.
+  Under the conversation compatibility-state version fence, fold the group's active or dismissed,
+  all-active-snooze, real-unread-or-manual-anchor, inbox visibility and confirmed delivery-channel
+  state into the survivor without overwriting a newer dual-write, and link only it to the shared source.
+  Mark other rows as non-surfaced audit duplicates of the survivor with a null source id.
+- Lock the group's provider deliveries last and group them by the new source, provider and destination
+  key. Resolve every uncertain send before selection. A confirmed delivered row always wins as the
+  canonical row, ordered by provider confirmation time, `created_at` and id when several exist. With no
+  delivered row, choose the first currently eligible and definitively unsent pending or failed row by
+  `created_at` and id; when none exists, choose the first terminal row using the fixed status priority
+  `dead_letter` before `unavailable`, followed by `created_at` and id.
+  Reparent that one canonical row to the survivor. A redundant confirmed send remains delivered as an
+  audit duplicate; every redundant definitively unsent pending or failed row becomes unavailable with
+  a legacy-duplicate reason. Audit-duplicate delivery rows keep a null source, retain provider ids and
+  cannot be claimed.
+- Re-read each equivalence group and set `fanout_completed_at` only when every recipient row is either
+  the linked survivor or points to it, and every owned delivery is either the canonical source-linked
+  row or a terminal audit duplicate of it. The resumable verifier must report zero incomplete
+  historical sources, unclassified historical rows, source-less non-audit deliveries, retryable or
+  ambiguous audit deliveries and canonical destination-key collisions before provider claims or
+  payload pruning are enabled.
 - Preserve the latest event snapshot. A conversation is unread when any retained inbox event is
   unread, which collapses duplicate badges without silently marking work read.
 - Transfer Phase 1 legacy dismissal into conversation state. Enqueue generation-fenced wake rows for
@@ -917,9 +1082,16 @@ This phase improves correctness before any inbox UI changes.
   policy and writes visibility in separate transactions.
 - Compare conversation and legacy unread results in structured server logs without sending product
   telemetry.
-- Require `bun run notifications:conversations-verify` to report zero unlinked surfaced rows and zero
-  state drift before read cutover. Backfill locks a conversation before applying state and never
-  overwrites a newer dual-written read, snooze or dismissal.
+- Require `bun run notifications:conversations-verify` to report zero unlinked surfaced rows, zero
+  unclassified historical rows, zero provider-classification drift and zero compatibility-state drift
+  for active or dismissed, snooze, real unread, manual unread and delivery channels before read cutover.
+  Backfill locks a conversation before applying state and never overwrites a newer dual-written read,
+  snooze or dismissal.
+- After verification, validate a check requiring every row to have exactly one of a source id or a
+  historical deduplication target. Live writes always use a source id; only classified historical audit
+  duplicates may use the deduplication target.
+- Validate the equivalent source-or-deduplication check for provider deliveries, then resume provider
+  claims with query guards that exclude every audit-duplicate notification and delivery.
 - Build final unique and list indexes with a measured, low-lock release procedure. Do not make linkage
   columns non-null until backfill completeness and query plans are verified.
 
@@ -943,9 +1115,9 @@ This phase improves correctness before any inbox UI changes.
 
 ### Phase 5: Remove compatibility paths
 
-- In a separate contract PR, require `conversation_id`, `source_event_id`, `occurred_at`,
-  `ingested_at` and `ingestion_seq` only after every deployed writer and allowed rollback deployment
-  populates them.
+- In a separate contract PR, require `conversation_id`, `occurred_at`, `ingested_at` and
+  `ingestion_seq`, plus a source id for every row without a historical deduplication target, only after
+  every deployed writer and allowed rollback deployment populates them.
 - Remove time-window deduplication and legacy row-level inbox mutations.
 - Stop publishing legacy notification deltas.
 - Decide event retention only after production volume is measured. Any future pruning follows the
@@ -1027,14 +1199,39 @@ delivery and any non-zero shadow-read drift after backfill completion.
 - A tokenless old handler cannot finalize while or after a token-aware claimant reclaims the same
   webhook delivery.
 - A quarantined delivery survives ordinary webhook retention, then replays exactly once under a fenced
-  claim after a parser fix while preserving its reason and replay audit tombstone.
+  claim after a parser fix. Ordinary pruning after replay clears eligible sensitive payloads but cannot
+  delete its parent delivery identity, reason or replay audit tombstones.
+- Missing or malformed organization and installation routing still creates one globally scoped
+  quarantine row without inventing tenant attribution; a later fenced resolution can bind it safely.
+- Replay crashes immediately before and after replacement scheduling commit, and before and after the
+  replacement effects commit, always reuse the one `replay_of_delivery_id` row and create domain,
+  source, inbox and provider effects at most once.
+- Organization deletion is not blocked by quarantine retention. It clears encrypted tenant content,
+  disables replay and retains only the bounded non-sensitive global audit tombstone.
 - Redelivery after the old 60 second window still creates no duplicate.
-- Enqueue-first and prune-first races share the source lock. Enqueue-first blocks pruning while its
-  delivery is pending or retryable; prune-first closes fanout and makes a later enqueue fail without
-  creating an undeliverable row. Once every dependency is terminal or reconciled, pruning retains the
-  source-key tombstone and a redelivery still creates no duplicate.
+- Fanout completion and pruning share the source lock. Pruning cannot observe or pass an incomplete
+  fanout transaction, and a completed fanout fence rejects every later ordinary enqueue whether or not
+  payload pruning has run. Pending, retryable and ambiguous deliveries block pruning. Once every
+  dependency is terminal or reconciled, pruning retains the source-key tombstone and a redelivery still
+  creates no duplicate.
 - Historical source backfill can crash and resume between sibling batches but closes fanout only after
-  a locked recheck proves every equivalent recipient row is linked.
+  a locked recheck proves every row is either the existing or deterministically selected
+  source-and-user survivor or a non-surfaced audit duplicate of that survivor.
+- A same-source, same-user group with mixed legacy dismissal, snooze, real unread, manual unread,
+  inbox visibility and delivery-channel state produces one survivor with the compatibility fold's
+  result and no state drift.
+- Recipient and delivery deduplication constraints reject self-links, cross-user or cross-organization
+  targets, chains and cycles at commit, including an attempt to demote a canonical row that already has
+  inbound audit links.
+- A legacy duplicate with pending, failed, processing, ambiguous and confirmed delivery variants
+  selects the confirmed delivery as canonical regardless of row age and resumes with no retryable audit
+  duplicate, uniqueness collision or provider resend. With no confirmed delivery, at most one
+  definitively unsent eligible row remains retryable. Unresolved provider uncertainty blocks worker
+  restart.
+- A direct check-run or commit-status mutation accepted between a full head fetch and snapshot binding
+  advances the head context generation, rejects the stale replacement and rearms reconciliation.
+- A status or check-run received before its pull request is mirrored remains durable in the
+  repository-and-head activity and context tables and binds when the pull request appears.
 - One pull request linked to several issues creates one recipient event and retains every authorized
   related issue as context.
 - Live ingestion racing a grant or revocation shares the canonical policy lock. A grant that commits
@@ -1081,6 +1278,18 @@ delivery and any non-zero shadow-read drift after backfill completion.
 - A repository-and-head trigger with no mirrored pull request retains its snapshot and binds when the
   pull request appears. New triggers rearm completed jobs and invalidate processing claims by advancing
   the version and requiring a rerun.
+- Snapshot acceptance and existing-PR binding are atomic under the head lock. For a no-PR snapshot, a
+  newer suite or workflow trigger that commits before PR mirroring advances the job version and blocks
+  the older snapshot from binding or emitting a failure.
+- Two pull requests sharing one repository and head use the same head context but independent
+  projections and PR-specific notification source ids.
+- A full-head fetch invalidated by a direct event, newer trigger or lost claim retains a distinct fetch
+  attempt and every normalized raw activity with an invalidated disposition while changing no context
+  or projection.
+- A crash after the provider request but before result persistence leaves its precommitted `started`
+  attempt for the reclaimer to mark abandoned; the next request uses a new attempt id.
+- An old fetch worker and a reclaimer racing attempt finalization both lock head before attempt and
+  finish without deadlock or resurrection of the lost claim.
 - Check-run reruns from one app and name update one context; equal names from different apps remain
   separate; different names from one app remain separate; separator-like and case-variant check names
   remain exact and collision-free; case variants and creator rotations update one commit-status
@@ -1121,8 +1330,9 @@ delivery and any non-zero shadow-read drift after backfill completion.
 
 - Concurrent workers create one root message for one destination and conversation.
 - Later events use the persisted root `thread_ts`.
-- Two workers racing ready-thread replies can claim only the lower ingestion sequence; the second
-  remains unclaimed until the first reaches a nonblocking terminal state.
+- Two workers racing distinct source events for one ready thread lock the thread before either
+  delivery, so only the lower ingestion sequence becomes processing; the second remains unclaimed
+  until the first reaches a nonblocking terminal state.
 - A channel configured through several linked issues receives one delivery.
 - An enabled shared-channel mapping produces one channel delivery regardless of legacy per-user
   `slack` preference rows, while a disabled `slack_dm` preference still prevents that user's direct
