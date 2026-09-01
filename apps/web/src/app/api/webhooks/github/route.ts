@@ -5,6 +5,8 @@ import {
   findGithubInstallationAnywhere,
   handlesGithubEvent,
   isGithubInstallationEvent,
+  normalizeGithubCheckEvent,
+  quarantineGithubWebhookDelivery,
   verifyGithubSignature,
 } from '@orbit/services';
 import { notifyMany } from '@orbit/services/notifications';
@@ -144,9 +146,23 @@ export async function POST(request: Request): Promise<Response> {
     return await handleInstallationEvent({ eventName, body, claim });
   }
 
+  const checkNormalization = normalizeGithubCheckEvent(eventName, body);
+  if (checkNormalization.status === 'invalid') {
+    return await handleInvalidCheckEvent({
+      claim,
+      rawPayload: raw,
+      failure: checkNormalization.failure,
+    });
+  }
+
   try {
     const outcome = await db.transaction(async (tx) => {
-      const applied = await applyGithubEvent(tx, { eventName, body, organizationId });
+      const applied = await applyGithubEvent(tx, {
+        eventName,
+        body,
+        organizationId,
+        webhookDeliveryId: claim.id,
+      });
       const slackEnabled =
         applied.organizationId !== null &&
         slackIntegrationEnabledForOrganization(applied.organizationId);
@@ -177,6 +193,28 @@ export async function POST(request: Request): Promise<Response> {
       await finalizeDelivery(claim, { status: 'failed', error: null });
     }
     console.error('[orbit] github webhook failed', error);
+    return Response.json({ error: 'processing failed' }, { status: 500 });
+  }
+}
+
+async function handleInvalidCheckEvent(input: {
+  readonly claim: WebhookClaim;
+  readonly rawPayload: string;
+  readonly failure: {
+    readonly code: Parameters<typeof quarantineGithubWebhookDelivery>[1]['failure']['code'];
+    readonly path: string;
+  };
+}): Promise<Response> {
+  try {
+    await quarantineGithubWebhookDelivery(db, {
+      claim: input.claim,
+      rawPayload: input.rawPayload,
+      failure: input.failure,
+    });
+    return Response.json({ ok: true, quarantined: true });
+  } catch {
+    await finalizeDelivery(input.claim, { status: 'failed', error: null });
+    console.error('[orbit] github webhook quarantine failed');
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
 }

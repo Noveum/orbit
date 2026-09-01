@@ -87,14 +87,14 @@
 - Produces: versioned reconciliation claims and raw fetch-attempt provenance
 - Produces: one `pr_checks_failed` source transition per pull request and head SHA
 
-- [ ] Write tests for old-head rejection, overlapping GitHub event kinds, pre-PR checks, force-push races, and one failure transition.
-- [ ] Add repository-head activity, context, reconciliation, fetch-attempt, and per-PR projection tables.
-- [ ] Normalize exact check-run app identity and exact commit-status creator/context identity.
-- [ ] Treat suites and workflow runs as reconciliation triggers and direct runs or statuses as context mutations.
-- [ ] Fence snapshots with job version, claim token, head generation, PR head epoch, and current SHA.
-- [ ] Emit the coarse failure source only on a current-head nonfailure-to-failure transition.
-- [ ] Run focused GitHub and migration tests.
-- [ ] Commit as `fix(github): scope checks to current pull heads`.
+- [x] Write tests for old-head rejection, overlapping GitHub event kinds, pre-PR checks, force-push races, and one failure transition.
+- [x] Add repository-head activity, context, reconciliation, fetch-attempt, and per-PR projection tables.
+- [x] Normalize exact check-run app identity and exact commit-status creator/context identity.
+- [x] Treat suites and workflow runs as reconciliation triggers and direct runs or statuses as context mutations.
+- [x] Fence snapshots with job version, claim token, head generation, PR head epoch, and current SHA.
+- [x] Emit the coarse failure source only on a current-head nonfailure-to-failure transition.
+- [x] Run focused GitHub and migration tests.
+- [x] Commit as `fix(github): scope checks to current pull heads`.
 
 ### Task 4: Add conversations, compatibility writes, and migration tools
 

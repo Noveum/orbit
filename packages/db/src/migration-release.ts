@@ -18,7 +18,9 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
-const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([1786217938315, 1786623194883, 1788083189965]);
+const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
+  1786217938315, 1786623194883, 1788083189965, 1788264445370,
+]);
 
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>
@@ -113,6 +115,50 @@ async function baselineLedger(
           'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
         );
       }
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1788264445370)) {
+      await tx`
+        insert into github_check_head_reconciliation (
+          id,
+          organization_id,
+          repository_sync_id,
+          head_sha,
+          status,
+          job_version,
+          context_generation,
+          trigger_kind,
+          trigger_identity,
+          attempts,
+          available_at,
+          rerun_required,
+          created_at,
+          updated_at
+        )
+        select
+          'ghr_bootstrap_' || md5(organization_id || ':' || repository_sync_id || ':' || head_sha),
+          organization_id,
+          repository_sync_id,
+          head_sha,
+          'pending',
+          1,
+          0,
+          'migration_bootstrap',
+          '0020_mixed_dust',
+          0,
+          now(),
+          false,
+          now(),
+          now()
+        from (
+          select organization_id, repository_sync_id, lower(head_sha) as head_sha
+          from github_pull_request
+          where state in ('draft', 'open', 'approved', 'changes_requested')
+            and merged = false
+            and head_sha ~ '^[0-9A-Fa-f]{40}$'
+          group by organization_id, repository_sync_id, lower(head_sha)
+        ) current_heads
+        on conflict (organization_id, repository_sync_id, head_sha) do nothing
+      `;
     }
     await tx`create schema if not exists drizzle`;
     await tx`

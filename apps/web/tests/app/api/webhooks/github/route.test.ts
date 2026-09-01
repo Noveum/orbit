@@ -106,6 +106,7 @@ afterAll(() => {
 });
 
 const bodySchema = z.union([
+  z.object({ ok: z.literal(true), quarantined: z.literal(true) }),
   z.object({ ok: z.literal(true), actions: z.number(), ignored: z.string() }),
   z.object({ ok: z.literal(true), actions: z.number() }),
   z.object({ ok: z.literal(true), handled: z.boolean() }),
@@ -232,6 +233,35 @@ async function deliveryRow(deliveryId: string) {
 async function linkCount(): Promise<number> {
   const rows = await db.select().from(schema.gitLink).where(eq(schema.gitLink.issueId, issueId));
   return rows.length;
+}
+
+async function githubEffectCounts() {
+  const [
+    pullRequests,
+    pullRequestActivities,
+    checkActivities,
+    headContexts,
+    sources,
+    inbox,
+    outbox,
+  ] = await Promise.all([
+    db.select().from(schema.githubPullRequest),
+    db.select().from(schema.githubPullRequestActivity),
+    db.select().from(schema.githubCheckActivity),
+    db.select().from(schema.githubCheckHeadContext),
+    db.select().from(schema.notificationSourceEvent),
+    db.select().from(schema.notification),
+    db.select().from(schema.notificationDelivery),
+  ]);
+  return {
+    pullRequests: pullRequests.length,
+    pullRequestActivities: pullRequestActivities.length,
+    checkActivities: checkActivities.length,
+    headContexts: headContexts.length,
+    sources: sources.length,
+    inbox: inbox.length,
+    outbox: outbox.length,
+  };
 }
 
 beforeEach(async () => {
@@ -506,6 +536,164 @@ describe('POST /api/webhooks/github', () => {
     expect(bodySchema.parse(await response.json())).toEqual({ error: 'invalid json' });
     expect((await deliveryRow('delivery-malformed'))?.status).toBe('failed');
     expect(published).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      'check_run',
+      {
+        action: 'completed',
+        check_run: {
+          id: 501,
+          name: 'build',
+          head_sha: '1111111111111111111111111111111111111111',
+        },
+      },
+      'invalid_check_run_app',
+      'check_run.app.id',
+    ],
+    [
+      'check_run',
+      {
+        action: 'completed',
+        check_run: {
+          id: 502,
+          name: '',
+          app: { id: 25 },
+          head_sha: '1111111111111111111111111111111111111111',
+        },
+      },
+      'invalid_check_run_name',
+      'check_run.name',
+    ],
+    [
+      'check_run',
+      {
+        action: 'completed',
+        check_run: { id: 503, name: 'build', app: { id: 25 }, head_sha: 'wrong' },
+      },
+      'invalid_head_sha',
+      'check_run.head_sha',
+    ],
+    [
+      'check_suite',
+      { action: 'completed', check_suite: { id: 504, head_sha: 'wrong' } },
+      'invalid_head_sha',
+      'check_suite.head_sha',
+    ],
+    [
+      'workflow_run',
+      { action: 'completed', workflow_run: { id: 505, head_sha: 'wrong' } },
+      'invalid_head_sha',
+      'workflow_run.head_sha',
+    ],
+    [
+      'status',
+      { id: 506, sha: '1111111111111111111111111111111111111111', state: 'failure', context: '' },
+      'invalid_status_context',
+      'context',
+    ],
+    [
+      'status',
+      { id: 507, sha: 'wrong', state: 'failure', context: 'build' },
+      'invalid_head_sha',
+      'sha',
+    ],
+  ] as const)(
+    'terminally quarantines malformed %s check identity without effects',
+    async (eventName, checkedPayload, reasonCode, reasonPath) => {
+      process.env['BETTER_AUTH_SECRET'] = 'github-quarantine-test-secret-with-safe-length';
+      const deliveryId = `quarantine-${eventName}-${reasonCode}`;
+      const raw = JSON.stringify({
+        ...checkedPayload,
+        repository: { id: 99, full_name: 'acme/web' },
+        installation: { id: 'install-42' },
+        sender: { login: 'octocat', id: 500 },
+      });
+
+      const response = await POST(signed(raw, deliveryId, eventName));
+      const delivery = await deliveryRow(deliveryId);
+      const [quarantine] = await db
+        .select()
+        .from(schema.webhookDeliveryQuarantine)
+        .where(eq(schema.webhookDeliveryQuarantine.deliveryId, delivery?.id ?? 'missing'));
+
+      expect(response.status).toBe(200);
+      expect(bodySchema.parse(await response.json())).toEqual({ ok: true, quarantined: true });
+      expect(delivery).toMatchObject({
+        status: 'quarantined',
+        error: reasonCode,
+        organizationId: workspace.organizationId,
+      });
+      expect(quarantine).toMatchObject({
+        organizationId: workspace.organizationId,
+        scopeKind: 'organization',
+        reasonCode,
+        reasonPath,
+        disposition: 'awaiting_resolution',
+        diagnostics: {
+          eventName,
+          payloadBytes: Buffer.byteLength(raw, 'utf8'),
+          organizationAttributed: true,
+        },
+      });
+      expect(JSON.stringify(quarantine?.payloadEnvelope)).not.toContain(raw);
+      expect(
+        services.decryptGithubWebhookQuarantinePayload(quarantine?.payloadEnvelope, {
+          deliveryId: delivery?.id ?? 'missing',
+          provider: 'github',
+          providerDeliveryId: deliveryId,
+        }).rawPayload,
+      ).toBe(raw);
+      expect(await githubEffectCounts()).toEqual({
+        pullRequests: 0,
+        pullRequestActivities: 0,
+        checkActivities: 0,
+        headContexts: 0,
+        sources: 0,
+        inbox: 0,
+        outbox: 0,
+      });
+      expect(notifyMany).not.toHaveBeenCalled();
+      expect(published).toHaveLength(0);
+    },
+  );
+
+  it('keeps an unroutable malformed delivery globally scoped and terminal on redelivery', async () => {
+    process.env['BETTER_AUTH_SECRET'] = 'github-quarantine-test-secret-with-safe-length';
+    const raw = JSON.stringify({
+      action: 'completed',
+      check_suite: { id: 508, head_sha: 'wrong' },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'octocat', id: 500 },
+    });
+
+    const first = await POST(signed(raw, 'quarantine-unresolved', 'check_suite'));
+    const repeated = await POST(signed(raw, 'quarantine-unresolved', 'check_suite'));
+    const delivery = await deliveryRow('quarantine-unresolved');
+    const quarantines = await db
+      .select()
+      .from(schema.webhookDeliveryQuarantine)
+      .where(eq(schema.webhookDeliveryQuarantine.deliveryId, delivery?.id ?? 'missing'));
+
+    expect(bodySchema.parse(await first.json())).toEqual({ ok: true, quarantined: true });
+    expect(bodySchema.parse(await repeated.json())).toEqual({ status: 'duplicate' });
+    expect(delivery).toMatchObject({ status: 'quarantined', organizationId: null });
+    expect(quarantines).toHaveLength(1);
+    expect(quarantines[0]).toMatchObject({
+      organizationId: null,
+      scopeKind: 'unresolved',
+      reasonCode: 'invalid_head_sha',
+    });
+    expect(await githubEffectCounts()).toEqual({
+      pullRequests: 0,
+      pullRequestActivities: 0,
+      checkActivities: 0,
+      headContexts: 0,
+      sources: 0,
+      inbox: 0,
+      outbox: 0,
+    });
   });
 
   it('records the event name it was handed on the delivery row', async () => {

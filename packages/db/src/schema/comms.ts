@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -112,7 +113,7 @@ export const notification = pgTable(
       name: 'notification_org_source_event_fk',
       columns: [table.organizationId, table.sourceEventId],
       foreignColumns: [notificationSourceEvent.organizationId, notificationSourceEvent.id],
-    }).onDelete('restrict'),
+    }),
   ],
 );
 
@@ -445,6 +446,7 @@ export const githubRepositorySync = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    unique('github_repository_sync_org_id_unique').on(table.organizationId, table.id),
     uniqueIndex('github_repository_sync_unique').on(table.organizationId, table.repositoryId),
     index('github_repository_sync_team_idx').on(table.teamId),
   ],
@@ -469,6 +471,8 @@ export const githubPullRequest = pgTable(
     url: text('url').notNull(),
     headRef: text('head_ref').notNull().default(''),
     headSha: text('head_sha').notNull().default(''),
+    headEpoch: bigint('head_epoch', { mode: 'number' }).notNull().default(0),
+    providerUpdatedAt: timestamp('provider_updated_at', { withTimezone: true }),
     baseRef: text('base_ref').notNull().default(''),
     state: text('state').notNull().default('open'),
     draft: boolean('draft').notNull().default(false),
@@ -487,6 +491,12 @@ export const githubPullRequest = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    unique('github_pull_request_org_id_unique').on(table.organizationId, table.id),
+    unique('github_pull_request_org_repository_id_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.id,
+    ),
     uniqueIndex('github_pull_request_repository_number_unique').on(
       table.repositorySyncId,
       table.number,
@@ -497,6 +507,7 @@ export const githubPullRequest = pgTable(
       table.repositoryId,
       table.number,
     ),
+    check('github_pull_request_head_epoch_check', sql`${table.headEpoch} >= 0`),
   ],
 );
 
@@ -510,6 +521,7 @@ export const githubPullRequestActivity = pgTable(
     pullRequestId: text('pull_request_id')
       .notNull()
       .references(() => githubPullRequest.id, { onDelete: 'cascade' }),
+    checkActivityId: text('check_activity_id'),
     externalId: text('external_id').notNull(),
     type: text('type').notNull(),
     action: text('action').notNull(),
@@ -532,6 +544,573 @@ export const githubPullRequestActivity = pgTable(
     ),
     index('github_pull_request_activity_timeline_idx').on(table.pullRequestId, table.occurredAt),
     index('github_pull_request_activity_org_idx').on(table.organizationId),
+    foreignKey({
+      name: 'github_pull_request_activity_org_check_activity_fk',
+      columns: [table.organizationId, table.checkActivityId],
+      foreignColumns: [githubCheckActivity.organizationId, githubCheckActivity.id],
+    }).onDelete('restrict'),
+  ],
+);
+
+function checkFetchOrganizationColumn(): AnyPgColumn {
+  return githubCheckReconciliationFetch.organizationId;
+}
+
+function checkFetchRepositoryColumn(): AnyPgColumn {
+  return githubCheckReconciliationFetch.repositorySyncId;
+}
+
+function checkFetchHeadColumn(): AnyPgColumn {
+  return githubCheckReconciliationFetch.headSha;
+}
+
+function checkFetchIdColumn(): AnyPgColumn {
+  return githubCheckReconciliationFetch.id;
+}
+
+function checkReconciliationOrganizationColumn(): AnyPgColumn {
+  return githubCheckHeadReconciliation.organizationId;
+}
+
+function checkReconciliationRepositoryColumn(): AnyPgColumn {
+  return githubCheckHeadReconciliation.repositorySyncId;
+}
+
+function checkReconciliationHeadColumn(): AnyPgColumn {
+  return githubCheckHeadReconciliation.headSha;
+}
+
+function checkReconciliationIdColumn(): AnyPgColumn {
+  return githubCheckHeadReconciliation.id;
+}
+
+export const githubCheckHeadReconciliation = pgTable(
+  'github_check_head_reconciliation',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    headSha: text('head_sha').notNull(),
+    status: text('status').notNull().default('pending'),
+    jobVersion: bigint('job_version', { mode: 'number' }).notNull().default(0),
+    contextGeneration: bigint('context_generation', { mode: 'number' }).notNull().default(0),
+    triggerKind: text('trigger_kind').notNull(),
+    triggerIdentity: text('trigger_identity').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    settleDeadline: timestamp('settle_deadline', { withTimezone: true }),
+    rerunRequired: boolean('rerun_required').notNull().default(false),
+    claimToken: text('claim_token'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    claimedJobVersion: bigint('claimed_job_version', { mode: 'number' }),
+    claimedContextGeneration: bigint('claimed_context_generation', { mode: 'number' }),
+    acceptedFetchAttemptId: text('accepted_fetch_attempt_id'),
+    acceptedJobVersion: bigint('accepted_job_version', { mode: 'number' }),
+    acceptedContextGeneration: bigint('accepted_context_generation', { mode: 'number' }),
+    latestSnapshot: jsonb('latest_snapshot').$type<Record<string, unknown>[]>(),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('github_check_head_reconciliation_owner_id_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+      table.id,
+    ),
+    unique('github_check_head_reconciliation_head_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+    ),
+    index('github_check_head_reconciliation_pending_idx').on(table.status, table.availableAt),
+    foreignKey({
+      name: 'github_check_head_reconciliation_repository_fk',
+      columns: [table.organizationId, table.repositorySyncId],
+      foreignColumns: [githubRepositorySync.organizationId, githubRepositorySync.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'github_check_head_reconciliation_accepted_fetch_fk',
+      columns: [
+        table.organizationId,
+        table.repositorySyncId,
+        table.headSha,
+        table.acceptedFetchAttemptId,
+      ],
+      foreignColumns: [
+        checkFetchOrganizationColumn(),
+        checkFetchRepositoryColumn(),
+        checkFetchHeadColumn(),
+        checkFetchIdColumn(),
+      ],
+    }).onDelete('restrict'),
+    check(
+      'github_check_head_reconciliation_status_check',
+      sql`${table.status} in ('pending', 'processing', 'completed', 'failed', 'unavailable')`,
+    ),
+    check(
+      'github_check_head_reconciliation_versions_check',
+      sql`${table.jobVersion} >= 0 and ${table.contextGeneration} >= 0 and ${table.attempts} >= 0`,
+    ),
+    check(
+      'github_check_head_reconciliation_claim_check',
+      sql`(
+        ${table.status} = 'processing'
+        and ${table.claimToken} is not null
+        and ${table.claimedAt} is not null
+        and ${table.leaseExpiresAt} is not null
+        and ${table.claimedJobVersion} is not null
+        and ${table.claimedContextGeneration} is not null
+      ) or (
+        ${table.status} <> 'processing'
+        and ${table.claimToken} is null
+        and ${table.claimedAt} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.claimedJobVersion} is null
+        and ${table.claimedContextGeneration} is null
+      )`,
+    ),
+  ],
+);
+
+export const githubCheckReconciliationFetch = pgTable(
+  'github_check_reconciliation_fetch',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    headSha: text('head_sha').notNull(),
+    headReconciliationId: text('head_reconciliation_id').notNull(),
+    attemptNumber: integer('attempt_number').notNull(),
+    capturedJobVersion: bigint('captured_job_version', { mode: 'number' }).notNull(),
+    capturedContextGeneration: bigint('captured_context_generation', { mode: 'number' }).notNull(),
+    claimToken: text('claim_token').notNull(),
+    disposition: text('disposition').notNull().default('started'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    resultHash: text('result_hash'),
+    failure: text('failure'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('github_check_reconciliation_fetch_owner_id_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+      table.id,
+    ),
+    uniqueIndex('github_check_reconciliation_fetch_attempt_unique').on(
+      table.headReconciliationId,
+      table.capturedJobVersion,
+      table.attemptNumber,
+    ),
+    index('github_check_reconciliation_fetch_disposition_idx').on(
+      table.disposition,
+      table.requestedAt,
+    ),
+    foreignKey({
+      name: 'github_check_reconciliation_fetch_repository_fk',
+      columns: [table.organizationId, table.repositorySyncId],
+      foreignColumns: [githubRepositorySync.organizationId, githubRepositorySync.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'github_check_reconciliation_fetch_head_fk',
+      columns: [
+        table.organizationId,
+        table.repositorySyncId,
+        table.headSha,
+        table.headReconciliationId,
+      ],
+      foreignColumns: [
+        checkReconciliationOrganizationColumn(),
+        checkReconciliationRepositoryColumn(),
+        checkReconciliationHeadColumn(),
+        checkReconciliationIdColumn(),
+      ],
+    }).onDelete('cascade'),
+    check(
+      'github_check_reconciliation_fetch_disposition_check',
+      sql`${table.disposition} in ('started', 'fetched', 'failed', 'accepted', 'invalidated', 'abandoned')`,
+    ),
+    check(
+      'github_check_reconciliation_fetch_versions_check',
+      sql`${table.attemptNumber} > 0 and ${table.capturedJobVersion} >= 0 and ${table.capturedContextGeneration} >= 0`,
+    ),
+  ],
+);
+
+export const githubCheckActivity = pgTable(
+  'github_check_activity',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    headSha: text('head_sha').notNull(),
+    sourceKind: text('source_kind').notNull(),
+    contextKey: text('context_key').notNull(),
+    providerObjectId: text('provider_object_id').notNull(),
+    providerRunId: text('provider_run_id'),
+    providerUpdatedAt: timestamp('provider_updated_at', { withTimezone: true }).notNull(),
+    webhookDeliveryId: text('webhook_delivery_id'),
+    reconciliationFetchId: text('reconciliation_fetch_id'),
+    state: text('state').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('github_check_activity_org_id_unique').on(table.organizationId, table.id),
+    unique('github_check_activity_owner_id_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+      table.id,
+    ),
+    uniqueIndex('github_check_activity_webhook_unique')
+      .on(
+        table.organizationId,
+        table.repositorySyncId,
+        table.webhookDeliveryId,
+        table.sourceKind,
+        table.providerObjectId,
+        table.providerUpdatedAt,
+      )
+      .where(sql`${table.webhookDeliveryId} is not null`),
+    uniqueIndex('github_check_activity_fetch_unique')
+      .on(
+        table.organizationId,
+        table.repositorySyncId,
+        table.reconciliationFetchId,
+        table.sourceKind,
+        table.providerObjectId,
+        table.providerUpdatedAt,
+      )
+      .where(sql`${table.reconciliationFetchId} is not null`),
+    index('github_check_activity_head_idx').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+      table.createdAt,
+    ),
+    foreignKey({
+      name: 'github_check_activity_repository_fk',
+      columns: [table.organizationId, table.repositorySyncId],
+      foreignColumns: [githubRepositorySync.organizationId, githubRepositorySync.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'github_check_activity_webhook_delivery_fk',
+      columns: [table.organizationId, table.webhookDeliveryId],
+      foreignColumns: [webhookDelivery.organizationId, webhookDelivery.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'github_check_activity_fetch_fk',
+      columns: [
+        table.organizationId,
+        table.repositorySyncId,
+        table.headSha,
+        table.reconciliationFetchId,
+      ],
+      foreignColumns: [
+        githubCheckReconciliationFetch.organizationId,
+        githubCheckReconciliationFetch.repositorySyncId,
+        githubCheckReconciliationFetch.headSha,
+        githubCheckReconciliationFetch.id,
+      ],
+    }).onDelete('restrict'),
+    check(
+      'github_check_activity_source_kind_check',
+      sql`${table.sourceKind} in ('check_run', 'commit_status')`,
+    ),
+    check(
+      'github_check_activity_provenance_check',
+      sql`(${table.webhookDeliveryId} is not null) <> (${table.reconciliationFetchId} is not null)`,
+    ),
+  ],
+);
+
+export const githubCheckHeadContext = pgTable(
+  'github_check_head_context',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    headSha: text('head_sha').notNull(),
+    contextKey: text('context_key').notNull(),
+    sourceKind: text('source_kind').notNull(),
+    state: text('state').notNull(),
+    providerUpdatedAt: timestamp('provider_updated_at', { withTimezone: true }).notNull(),
+    latestProviderObjectId: text('latest_provider_object_id').notNull(),
+    latestProviderRunId: text('latest_provider_run_id'),
+    active: boolean('active').notNull().default(true),
+    contextVersion: bigint('context_version', { mode: 'number' }).notNull().default(0),
+    latestActivityId: text('latest_activity_id').notNull(),
+    reconciliationState: text('reconciliation_state').notNull().default('resolved'),
+    reconciliationAttempts: integer('reconciliation_attempts').notNull().default(0),
+    reconciliationAvailableAt: timestamp('reconciliation_available_at', {
+      withTimezone: true,
+    })
+      .notNull()
+      .defaultNow(),
+    reconciliationClaimToken: text('reconciliation_claim_token'),
+    reconciliationClaimedAt: timestamp('reconciliation_claimed_at', { withTimezone: true }),
+    reconciliationLeaseExpiresAt: timestamp('reconciliation_lease_expires_at', {
+      withTimezone: true,
+    }),
+    reconciliationClaimedVersion: bigint('reconciliation_claimed_version', { mode: 'number' }),
+    reconciliationClaimedHeadGeneration: bigint('reconciliation_claimed_head_generation', {
+      mode: 'number',
+    }),
+    lastReconciliationError: text('last_reconciliation_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('github_check_head_context_owner_id_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+      table.contextKey,
+      table.id,
+    ),
+    uniqueIndex('github_check_head_context_unique').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.headSha,
+      table.contextKey,
+    ),
+    index('github_check_head_context_reconciliation_idx').on(
+      table.reconciliationState,
+      table.reconciliationAvailableAt,
+    ),
+    foreignKey({
+      name: 'github_check_head_context_head_fk',
+      columns: [table.organizationId, table.repositorySyncId, table.headSha],
+      foreignColumns: [
+        githubCheckHeadReconciliation.organizationId,
+        githubCheckHeadReconciliation.repositorySyncId,
+        githubCheckHeadReconciliation.headSha,
+      ],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'github_check_head_context_activity_fk',
+      columns: [
+        table.organizationId,
+        table.repositorySyncId,
+        table.headSha,
+        table.latestActivityId,
+      ],
+      foreignColumns: [
+        githubCheckActivity.organizationId,
+        githubCheckActivity.repositorySyncId,
+        githubCheckActivity.headSha,
+        githubCheckActivity.id,
+      ],
+    }).onDelete('restrict'),
+    check(
+      'github_check_head_context_source_kind_check',
+      sql`${table.sourceKind} in ('check_run', 'commit_status')`,
+    ),
+    check(
+      'github_check_head_context_reconciliation_state_check',
+      sql`${table.reconciliationState} in ('resolved', 'unresolved', 'processing', 'failed', 'unavailable')`,
+    ),
+    check(
+      'github_check_head_context_versions_check',
+      sql`${table.contextVersion} >= 0 and ${table.reconciliationAttempts} >= 0`,
+    ),
+    check(
+      'github_check_head_context_claim_check',
+      sql`(
+        ${table.reconciliationState} = 'processing'
+        and ${table.reconciliationClaimToken} is not null
+        and ${table.reconciliationClaimedAt} is not null
+        and ${table.reconciliationLeaseExpiresAt} is not null
+        and ${table.reconciliationClaimedVersion} is not null
+        and ${table.reconciliationClaimedHeadGeneration} is not null
+      ) or (
+        ${table.reconciliationState} <> 'processing'
+        and ${table.reconciliationClaimToken} is null
+        and ${table.reconciliationClaimedAt} is null
+        and ${table.reconciliationLeaseExpiresAt} is null
+        and ${table.reconciliationClaimedVersion} is null
+        and ${table.reconciliationClaimedHeadGeneration} is null
+      )`,
+    ),
+  ],
+);
+
+export const githubPullRequestCheckContext = pgTable(
+  'github_pull_request_check_context',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    pullRequestId: text('pull_request_id').notNull(),
+    headContextId: text('head_context_id').notNull(),
+    headSha: text('head_sha').notNull(),
+    contextKey: text('context_key').notNull(),
+    capturedHeadEpoch: bigint('captured_head_epoch', { mode: 'number' }).notNull(),
+    projectedContextVersion: bigint('projected_context_version', { mode: 'number' }).notNull(),
+    projectedState: text('projected_state').notNull(),
+    latestActivityId: text('latest_activity_id').notNull(),
+    notificationSourceEventId: text('notification_source_event_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_pull_request_check_context_unique').on(
+      table.organizationId,
+      table.pullRequestId,
+      table.capturedHeadEpoch,
+      table.contextKey,
+    ),
+    index('github_pull_request_check_context_current_idx').on(
+      table.organizationId,
+      table.pullRequestId,
+      table.capturedHeadEpoch,
+      table.headSha,
+    ),
+    foreignKey({
+      name: 'github_pull_request_check_context_pull_request_fk',
+      columns: [table.organizationId, table.repositorySyncId, table.pullRequestId],
+      foreignColumns: [
+        githubPullRequest.organizationId,
+        githubPullRequest.repositorySyncId,
+        githubPullRequest.id,
+      ],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'github_pull_request_check_context_head_context_fk',
+      columns: [
+        table.organizationId,
+        table.repositorySyncId,
+        table.headSha,
+        table.contextKey,
+        table.headContextId,
+      ],
+      foreignColumns: [
+        githubCheckHeadContext.organizationId,
+        githubCheckHeadContext.repositorySyncId,
+        githubCheckHeadContext.headSha,
+        githubCheckHeadContext.contextKey,
+        githubCheckHeadContext.id,
+      ],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'github_pull_request_check_context_activity_fk',
+      columns: [
+        table.organizationId,
+        table.repositorySyncId,
+        table.headSha,
+        table.latestActivityId,
+      ],
+      foreignColumns: [
+        githubCheckActivity.organizationId,
+        githubCheckActivity.repositorySyncId,
+        githubCheckActivity.headSha,
+        githubCheckActivity.id,
+      ],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'github_pull_request_check_context_source_event_fk',
+      columns: [table.organizationId, table.notificationSourceEventId],
+      foreignColumns: [notificationSourceEvent.organizationId, notificationSourceEvent.id],
+    }).onDelete('restrict'),
+    check(
+      'github_pull_request_check_context_versions_check',
+      sql`${table.capturedHeadEpoch} >= 0 and ${table.projectedContextVersion} >= 0`,
+    ),
+  ],
+);
+
+export const githubPullRequestReconciliation = pgTable(
+  'github_pull_request_reconciliation',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    repositorySyncId: text('repository_sync_id').notNull(),
+    pullRequestId: text('pull_request_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    jobVersion: bigint('job_version', { mode: 'number' }).notNull().default(0),
+    capturedHeadEpoch: bigint('captured_head_epoch', { mode: 'number' }).notNull(),
+    conflictingHeadShas: jsonb('conflicting_head_shas').$type<string[]>().notNull().default([]),
+    conflictingProviderUpdatedAt: timestamp('conflicting_provider_updated_at', {
+      withTimezone: true,
+    }).notNull(),
+    triggerIdentity: text('trigger_identity').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true }).notNull().defaultNow(),
+    claimToken: text('claim_token'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    claimedJobVersion: bigint('claimed_job_version', { mode: 'number' }),
+    claimedHeadEpoch: bigint('claimed_head_epoch', { mode: 'number' }),
+    resolvedHeadSha: text('resolved_head_sha'),
+    resolvedProviderUpdatedAt: timestamp('resolved_provider_updated_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('github_pull_request_reconciliation_pull_unique').on(
+      table.organizationId,
+      table.pullRequestId,
+    ),
+    index('github_pull_request_reconciliation_pending_idx').on(table.status, table.availableAt),
+    foreignKey({
+      name: 'github_pull_request_reconciliation_pull_request_fk',
+      columns: [table.organizationId, table.repositorySyncId, table.pullRequestId],
+      foreignColumns: [
+        githubPullRequest.organizationId,
+        githubPullRequest.repositorySyncId,
+        githubPullRequest.id,
+      ],
+    }).onDelete('cascade'),
+    check(
+      'github_pull_request_reconciliation_status_check',
+      sql`${table.status} in ('pending', 'processing', 'completed', 'failed', 'unavailable')`,
+    ),
+    check(
+      'github_pull_request_reconciliation_versions_check',
+      sql`${table.jobVersion} >= 0 and ${table.capturedHeadEpoch} >= 0 and ${table.attempts} >= 0`,
+    ),
+    check(
+      'github_pull_request_reconciliation_conflicts_check',
+      sql`jsonb_typeof(${table.conflictingHeadShas}) = 'array'`,
+    ),
+    check(
+      'github_pull_request_reconciliation_claim_check',
+      sql`(
+        ${table.status} = 'processing'
+        and ${table.claimToken} is not null
+        and ${table.claimedAt} is not null
+        and ${table.leaseExpiresAt} is not null
+        and ${table.claimedJobVersion} is not null
+        and ${table.claimedHeadEpoch} is not null
+      ) or (
+        ${table.status} <> 'processing'
+        and ${table.claimToken} is null
+        and ${table.claimedAt} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.claimedJobVersion} is null
+        and ${table.claimedHeadEpoch} is null
+      )`,
+    ),
   ],
 );
 
@@ -784,7 +1363,7 @@ export const webhookDelivery = pgTable(
     deliveryId: text('delivery_id').notNull(),
     event: text('event').notNull(),
     organizationId: text('organization_id').references(() => organization.id, {
-      onDelete: 'cascade',
+      onDelete: 'set null',
     }),
     status: text('status').notNull().default('received'),
     error: text('error'),
@@ -793,8 +1372,74 @@ export const webhookDelivery = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    unique('webhook_delivery_org_id_unique').on(table.organizationId, table.id),
     uniqueIndex('webhook_delivery_unique').on(table.provider, table.deliveryId),
     index('webhook_delivery_org_idx').on(table.organizationId, table.createdAt),
+  ],
+);
+
+export const webhookDeliveryQuarantine = pgTable(
+  'webhook_delivery_quarantine',
+  {
+    deliveryId: text('delivery_id')
+      .primaryKey()
+      .references(() => webhookDelivery.id, { onDelete: 'restrict' }),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'set null',
+    }),
+    scopeKind: text('scope_kind').notNull(),
+    scopeKeyHash: text('scope_key_hash').notNull(),
+    payloadEnvelope: jsonb('payload_envelope').$type<Record<string, unknown>>(),
+    encryptionKeyVersion: integer('encryption_key_version').notNull(),
+    parserSchemaVersion: integer('parser_schema_version').notNull(),
+    reasonCode: text('reason_code').notNull(),
+    reasonPath: text('reason_path').notNull(),
+    diagnostics: jsonb('diagnostics').$type<Record<string, unknown>>().notNull().default({}),
+    disposition: text('disposition').notNull().default('awaiting_resolution'),
+    replayRequestId: text('replay_request_id'),
+    replayRequestedBy: text('replay_requested_by'),
+    replayRequestedAt: timestamp('replay_requested_at', { withTimezone: true }),
+    replayClaimToken: text('replay_claim_token'),
+    replayClaimedAt: timestamp('replay_claimed_at', { withTimezone: true }),
+    replayLeaseExpiresAt: timestamp('replay_lease_expires_at', { withTimezone: true }),
+    replacementDeliveryId: text('replacement_delivery_id').references(() => webhookDelivery.id, {
+      onDelete: 'restrict',
+    }),
+    replayedAt: timestamp('replayed_at', { withTimezone: true }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    ciphertextClearedAt: timestamp('ciphertext_cleared_at', { withTimezone: true }),
+    quarantinedAt: timestamp('quarantined_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('webhook_delivery_quarantine_replacement_unique')
+      .on(table.replacementDeliveryId)
+      .where(sql`${table.replacementDeliveryId} is not null`),
+    uniqueIndex('webhook_delivery_quarantine_replay_request_unique')
+      .on(table.replayRequestId)
+      .where(sql`${table.replayRequestId} is not null`),
+    index('webhook_delivery_quarantine_scope_idx').on(
+      table.scopeKind,
+      table.scopeKeyHash,
+      table.quarantinedAt,
+    ),
+    check(
+      'webhook_delivery_quarantine_scope_kind_check',
+      sql`${table.scopeKind} in ('organization', 'unresolved')`,
+    ),
+    check(
+      'webhook_delivery_quarantine_disposition_check',
+      sql`${table.disposition} in ('awaiting_resolution', 'replay_pending', 'replayed', 'resolved', 'organization_deleted', 'expired')`,
+    ),
+    check(
+      'webhook_delivery_quarantine_versions_check',
+      sql`${table.encryptionKeyVersion} > 0 and ${table.parserSchemaVersion} > 0`,
+    ),
+    check(
+      'webhook_delivery_quarantine_payload_retention_check',
+      sql`${table.payloadEnvelope} is not null or ${table.ciphertextClearedAt} is not null`,
+    ),
   ],
 );
 

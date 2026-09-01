@@ -1,8 +1,13 @@
 import type { Database, Transaction } from '@orbit/db';
 import {
   account,
+  githubCheckActivity,
+  githubCheckHeadContext,
+  githubCheckHeadReconciliation,
   githubPullRequest,
   githubPullRequestActivity,
+  githubPullRequestCheckContext,
+  githubPullRequestReconciliation,
   githubRepositorySync,
   gitLink,
   issue,
@@ -30,6 +35,7 @@ import type { NotificationEvent } from '../notifications/index.ts';
 import type { GithubPullRequestHistoryEntry } from './app.ts';
 import {
   canAdvance,
+  type NormalizedGithubCheckContext,
   type NormalizedGithubEvent,
   notificationTypeForReview,
   notificationTypeForState,
@@ -43,6 +49,8 @@ export type GithubDatabase = Database | Transaction;
 export type GitLinkRow = typeof gitLink.$inferSelect;
 export type GithubPullRequestRow = typeof githubPullRequest.$inferSelect;
 type RepositorySync = typeof githubRepositorySync.$inferSelect;
+
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 export type GithubIgnoredReason =
   | 'unsupported_event'
@@ -60,6 +68,17 @@ export interface GithubApplyResult {
   readonly teamIds: string[];
   readonly gitLinks: GitLinkRow[];
   readonly pullRequests: GithubPullRequestRow[];
+}
+
+interface GithubMirrorOutcome {
+  readonly pullRequests: GithubPullRequestRow[];
+  readonly failedTransitionPullRequestIds: ReadonlySet<string>;
+}
+
+interface MirroredPullRequestUpsert {
+  readonly row: GithubPullRequestRow;
+  readonly headChanged: boolean;
+  readonly created: boolean;
 }
 
 interface LinkedIssue {
@@ -91,6 +110,7 @@ export async function applyGithubEvent(
     readonly eventName: string;
     readonly body: unknown;
     readonly organizationId?: string | null;
+    readonly webhookDeliveryId?: string;
     readonly now?: Date;
   },
 ): Promise<GithubApplyResult> {
@@ -100,6 +120,9 @@ export async function applyGithubEvent(
   return await applyNormalizedGithubEvent(database, {
     event,
     ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
+    ...(input.webhookDeliveryId === undefined
+      ? {}
+      : { webhookDeliveryId: input.webhookDeliveryId }),
     ...(input.now === undefined ? {} : { now: input.now }),
   });
 }
@@ -109,6 +132,7 @@ export async function applyNormalizedGithubEvent(
   input: {
     readonly event: NormalizedGithubEvent;
     readonly organizationId?: string | null;
+    readonly webhookDeliveryId?: string;
     readonly now?: Date;
   },
 ): Promise<GithubApplyResult> {
@@ -137,7 +161,15 @@ export async function applyNormalizedGithubEvent(
   if (!repo.enabled) return { ...EMPTY, ignoredReason: 'repository_disabled' };
 
   const now = input.now ?? new Date();
-  const pullRequests = await persistGithubMirror(database, { repo, event, now });
+  const mirror = await persistGithubMirror(database, {
+    repo,
+    event,
+    now,
+    ...(input.webhookDeliveryId === undefined
+      ? {}
+      : { webhookDeliveryId: input.webhookDeliveryId }),
+  });
+  const { pullRequests } = mirror;
   const mirroredPullRequest = pullRequests[0] ?? null;
   const stalePullRequestEvent =
     mirroredPullRequest !== null && pullRequestEventIsStale(event, mirroredPullRequest, now);
@@ -147,6 +179,7 @@ export async function applyNormalizedGithubEvent(
       repo,
       event,
       pullRequests,
+      failedTransitionPullRequestIds: mirror.failedTransitionPullRequestIds,
       stalePullRequestEvent,
       now,
       emptyReason: 'no_issue_identifier',
@@ -159,6 +192,7 @@ export async function applyNormalizedGithubEvent(
       repo,
       event,
       pullRequests,
+      failedTransitionPullRequestIds: mirror.failedTransitionPullRequestIds,
       stalePullRequestEvent,
       now,
       emptyReason: 'no_matching_issue',
@@ -197,19 +231,31 @@ export async function applyNormalizedGithubEvent(
     if (outcome.gitLink !== null) gitLinks.push(outcome.gitLink);
   }
 
+  const canonicalNotifications = await canonicalGithubNotifications(database, notificationEvents, {
+    repo,
+    event,
+    pullRequests,
+    now,
+    defaultTeamIds: [],
+    teamIdsByIssueId: new Map(issues.map((entry) => [entry.id, entry.teamId])),
+  });
+  const checkNotifications = await githubCheckFailureNotifications(database, {
+    repo,
+    event,
+    pullRequests,
+    failedTransitionPullRequestIds: mirror.failedTransitionPullRequestIds,
+    actor,
+    now,
+    issues,
+    audiences,
+    defaultTeamIds: [],
+  });
   return {
     handled: true,
     ignoredReason: null,
     organizationId: repo.organizationId,
     actions,
-    notificationEvents: await canonicalGithubNotifications(database, notificationEvents, {
-      repo,
-      event,
-      pullRequests,
-      now,
-      defaultTeamIds: [],
-      teamIdsByIssueId: new Map(issues.map((entry) => [entry.id, entry.teamId])),
-    }),
+    notificationEvents: [...canonicalNotifications, ...checkNotifications],
     teamIds: unique(issues.map((entry) => entry.teamId)),
     gitLinks,
     pullRequests,
@@ -222,28 +268,50 @@ async function resultWithoutLinkedIssues(
     readonly repo: RepositorySync;
     readonly event: NormalizedGithubEvent;
     readonly pullRequests: GithubPullRequestRow[];
+    readonly failedTransitionPullRequestIds: ReadonlySet<string>;
     readonly stalePullRequestEvent: boolean;
     readonly now: Date;
     readonly emptyReason: Extract<GithubIgnoredReason, 'no_issue_identifier' | 'no_matching_issue'>;
   },
 ): Promise<GithubApplyResult> {
-  const { repo, event, pullRequests, stalePullRequestEvent, now, emptyReason } = context;
+  const {
+    repo,
+    event,
+    pullRequests,
+    failedTransitionPullRequestIds,
+    stalePullRequestEvent,
+    now,
+    emptyReason,
+  } = context;
   const notificationEvents = stalePullRequestEvent
     ? []
     : await unlinkedPullRequestNotifications(database, { repo, event, pullRequests });
+  const canonicalNotifications = await canonicalGithubNotifications(database, notificationEvents, {
+    repo,
+    event,
+    pullRequests,
+    now,
+    defaultTeamIds: repo.teamId === null ? [] : [repo.teamId],
+    teamIdsByIssueId: new Map(),
+  });
+  const actor = await resolveActor(database, event);
+  const checkNotifications = await githubCheckFailureNotifications(database, {
+    repo,
+    event,
+    pullRequests,
+    failedTransitionPullRequestIds,
+    actor,
+    now,
+    issues: [],
+    audiences: new Map(),
+    defaultTeamIds: repo.teamId === null ? [] : [repo.teamId],
+  });
   return {
     ...EMPTY,
     handled: true,
     ignoredReason: pullRequests.length === 0 ? emptyReason : null,
     organizationId: repo.organizationId,
-    notificationEvents: await canonicalGithubNotifications(database, notificationEvents, {
-      repo,
-      event,
-      pullRequests,
-      now,
-      defaultTeamIds: repo.teamId === null ? [] : [repo.teamId],
-      teamIdsByIssueId: new Map(),
-    }),
+    notificationEvents: [...canonicalNotifications, ...checkNotifications],
     teamIds: repo.teamId === null ? [] : [repo.teamId],
     pullRequests,
   };
@@ -300,6 +368,133 @@ async function canonicalGithubNotifications(
       }),
     ];
   });
+}
+
+async function githubCheckFailureNotifications(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly event: NormalizedGithubEvent;
+    readonly pullRequests: readonly GithubPullRequestRow[];
+    readonly failedTransitionPullRequestIds: ReadonlySet<string>;
+    readonly actor: Actor;
+    readonly now: Date;
+    readonly issues: readonly LinkedIssue[];
+    readonly audiences: ReadonlyMap<string, readonly string[]>;
+    readonly defaultTeamIds: readonly string[];
+  },
+): Promise<NotificationEvent[]> {
+  const pulls = context.pullRequests.filter((pull) =>
+    context.failedTransitionPullRequestIds.has(pull.id),
+  );
+  if (pulls.length === 0) return [];
+  const issueIds = context.issues.map((entry) => entry.id);
+  const links =
+    issueIds.length === 0
+      ? []
+      : await database
+          .select({ issueId: gitLink.issueId, pullRequestId: gitLink.pullRequestId })
+          .from(gitLink)
+          .where(
+            and(
+              eq(gitLink.organizationId, context.repo.organizationId),
+              eq(gitLink.provider, 'github'),
+              eq(gitLink.kind, 'pull_request'),
+              inArray(gitLink.issueId, issueIds),
+              inArray(
+                gitLink.pullRequestId,
+                pulls.map((pull) => pull.id),
+              ),
+            ),
+          )
+          .orderBy(asc(gitLink.id))
+          .for('update', { of: gitLink });
+  const linkedIssueIdsByPull = new Map<string, string[]>();
+  for (const link of links) {
+    if (link.pullRequestId === null) continue;
+    const linkedIssueIds = linkedIssueIdsByPull.get(link.pullRequestId) ?? [];
+    linkedIssueIds.push(link.issueId);
+    linkedIssueIdsByPull.set(link.pullRequestId, linkedIssueIds);
+  }
+  const unlinkedCandidates = new Map(
+    await Promise.all(
+      pulls.map(
+        async (pull) =>
+          [
+            pull.id,
+            await unlinkedPullRequestAudience(database, context.event, pull, null),
+          ] as const,
+      ),
+    ),
+  );
+  const authorizedUnlinked = new Set(
+    await authorizedWorkspaceUsers(
+      database,
+      context.repo.organizationId,
+      unique(
+        [...unlinkedCandidates.values()].filter((userId): userId is string => userId !== null),
+      ),
+    ),
+  );
+  const issueById = new Map(context.issues.map((entry) => [entry.id, entry]));
+  const normalized = context.event.checks?.normalized;
+  const providerOccurredAt =
+    normalized?.kind === 'context'
+      ? normalized.providerUpdatedAt
+      : context.event.activity.occurredAt;
+  const externalUrl = normalized?.kind === 'context' ? normalized.url : '';
+  return pulls.map((pull) => {
+    const linkedIssueIds = linkedIssueIdsByPull.get(pull.id) ?? [];
+    const linkedUserIds = linkedIssueIds.flatMap((issueId) => context.audiences.get(issueId) ?? []);
+    const unlinkedCandidate = unlinkedCandidates.get(pull.id) ?? null;
+    const userIds = checkFailureUserIds(linkedUserIds, unlinkedCandidate, authorizedUnlinked);
+    const teamIds = unique([
+      ...context.defaultTeamIds,
+      ...linkedIssueIds.flatMap((issueId) => {
+        const linked = issueById.get(issueId);
+        return linked === undefined ? [] : [linked.teamId];
+      }),
+    ]);
+    return {
+      organizationId: context.repo.organizationId,
+      type: 'pr_checks_failed',
+      reason: 'subscribed',
+      actor: context.actor,
+      entityType: 'github_pull_request',
+      entityId: pull.id,
+      userIds,
+      title: `Checks failed on ${pull.title}`,
+      body: `${context.repo.repositoryName}#${pull.number}`,
+      url: `/pulls/${pull.id}`,
+      externalUrl: externalUrl.length > 0 ? externalUrl : pull.url,
+      source: {
+        sourceEventKey: `github-pr:${context.repo.repositoryId}:${pull.number}:${pull.headSha}:checks-failed`,
+        subjectType: 'github_pull_request',
+        subjectKey: `github-pr:${context.repo.repositoryId}:${pull.number}`,
+        occurredAt: eventDate(providerOccurredAt, context.now),
+        teamIds,
+        payload: {
+          action: context.event.action,
+          headSha: pull.headSha,
+          repository: context.event.repository,
+          pullRequestId: pull.id,
+          pullRequestNumber: pull.number,
+        },
+      },
+    };
+  });
+}
+
+function checkFailureUserIds(
+  linkedUserIds: readonly string[],
+  unlinkedCandidate: string | null,
+  authorizedUnlinked: ReadonlySet<string>,
+): string[] {
+  const authorIds =
+    unlinkedCandidate !== null && authorizedUnlinked.has(unlinkedCandidate)
+      ? [unlinkedCandidate]
+      : [];
+  return unique([...linkedUserIds, ...authorIds]);
 }
 
 async function groupGithubNotificationsByPull(
@@ -413,78 +608,561 @@ function eventDate(value: string | null, fallback: Date): Date {
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
-function checkStatus(event: NormalizedGithubEvent): string {
-  if (event.checks === null) return 'unknown';
-  if (event.checks.failed) return 'failure';
-  const state = (event.checks.conclusion || event.checks.status).toLowerCase();
-  if (['success', 'neutral', 'skipped'].includes(state)) return 'success';
-  if (['queued', 'in_progress', 'requested', 'waiting', 'pending'].includes(state))
-    return 'pending';
-  return 'unknown';
-}
-
-function checkPullRequestFilter(checks: NonNullable<NormalizedGithubEvent['checks']>) {
-  if (checks.prNumbers.length > 0) return inArray(githubPullRequest.number, checks.prNumbers);
-  if (checks.headSha.length > 0) return eq(githubPullRequest.headSha, checks.headSha);
-  if (checks.headBranch.length > 0) return eq(githubPullRequest.headRef, checks.headBranch);
-  return sql<boolean>`false`;
-}
-
 async function persistGithubMirror(
   database: GithubDatabase,
   context: {
     readonly repo: RepositorySync;
     readonly event: NormalizedGithubEvent;
     readonly now: Date;
+    readonly webhookDeliveryId?: string;
   },
-): Promise<GithubPullRequestRow[]> {
+): Promise<GithubMirrorOutcome> {
   const { repo, event, now } = context;
   if (event.pullRequest !== null) {
-    const row = await upsertMirroredPullRequest(database, context);
-    if (row === null) return [];
+    await lockPullRequestHeadOwners(database, { repo, event, now });
+    const upserted = await upsertMirroredPullRequest(database, context);
+    if (upserted === null) {
+      return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+    }
+    const { row } = upserted;
     await upsertPullRequestActivity(database, { row, event, now });
-    return [row];
+    const bound = await bindCurrentHeadContexts(database, { repo, pull: row, now });
+    const newlyMirroredActive =
+      upserted.created &&
+      !bound.pull.merged &&
+      bound.pull.state !== 'closed' &&
+      bound.pull.state !== 'merged' &&
+      COMMIT_SHA_PATTERN.test(bound.pull.headSha);
+    if (upserted.headChanged || newlyMirroredActive) {
+      await enqueueHeadReconciliation(database, {
+        repo,
+        headSha: bound.pull.headSha,
+        triggerKind: upserted.headChanged ? 'pull_request_head_changed' : 'pull_request_mirrored',
+        triggerIdentity: `${bound.pull.number}:${bound.pull.headEpoch}`,
+        now,
+      });
+    }
+    return {
+      pullRequests: [bound.pull],
+      failedTransitionPullRequestIds: bound.failed ? new Set([row.id]) : new Set(),
+    };
   }
-  if (event.checks === null) return [];
+  const normalized = event.checks?.normalized;
+  if (normalized === null || normalized === undefined) {
+    return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+  }
+  if (normalized.kind === 'reconciliation_trigger') {
+    await enqueueHeadReconciliation(database, {
+      repo,
+      headSha: normalized.headSha,
+      triggerKind: normalized.sourceKind,
+      triggerIdentity: normalized.providerObjectId,
+      now,
+    });
+    return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+  }
+  if (context.webhookDeliveryId === undefined) {
+    throw new Error('GitHub check activity requires webhook delivery provenance.');
+  }
+  return await applyDirectCheckContext(database, {
+    repo,
+    check: normalized,
+    webhookDeliveryId: context.webhookDeliveryId,
+    now,
+  });
+}
 
-  const numberFilter = checkPullRequestFilter(event.checks);
-  const rows = await database
+async function lockPullRequestHeadOwners(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly event: NormalizedGithubEvent;
+    readonly now: Date;
+  },
+): Promise<void> {
+  const pullRequest = context.event.pullRequest;
+  if (pullRequest === null) return;
+  const [existing] = await database
+    .select({ headSha: githubPullRequest.headSha })
+    .from(githubPullRequest)
+    .where(
+      and(
+        eq(githubPullRequest.repositorySyncId, context.repo.id),
+        eq(githubPullRequest.number, pullRequest.number),
+      ),
+    )
+    .limit(1);
+  const headShas = unique([existing?.headSha ?? '', pullRequest.headSha])
+    .filter((headSha) => headSha.length > 0)
+    .sort();
+  for (const headSha of headShas) {
+    await lockedHeadReconciliation(database, {
+      repo: context.repo,
+      headSha,
+      triggerKind: 'pull_request_head_owner',
+      triggerIdentity: `${pullRequest.number}:${headSha}`,
+      now: context.now,
+    });
+  }
+}
+
+function aggregateCheckStates(states: readonly string[]): string {
+  if (states.includes('failure')) return 'failure';
+  if (states.includes('pending')) return 'pending';
+  if (states.length > 0 && states.every((state) => state === 'success')) return 'success';
+  return 'unknown';
+}
+
+async function lockedHeadReconciliation(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly headSha: string;
+    readonly triggerKind: string;
+    readonly triggerIdentity: string;
+    readonly now: Date;
+  },
+) {
+  await database
+    .insert(githubCheckHeadReconciliation)
+    .values({
+      id: randomUUIDv7(),
+      organizationId: context.repo.organizationId,
+      repositorySyncId: context.repo.id,
+      headSha: context.headSha,
+      status: 'completed',
+      triggerKind: context.triggerKind,
+      triggerIdentity: context.triggerIdentity,
+      availableAt: context.now,
+      updatedAt: context.now,
+    })
+    .onConflictDoNothing();
+  const [head] = await database
+    .select()
+    .from(githubCheckHeadReconciliation)
+    .where(
+      and(
+        eq(githubCheckHeadReconciliation.organizationId, context.repo.organizationId),
+        eq(githubCheckHeadReconciliation.repositorySyncId, context.repo.id),
+        eq(githubCheckHeadReconciliation.headSha, context.headSha),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  if (head === undefined) throw new Error('GitHub head reconciliation row was not created.');
+  return head;
+}
+
+async function enqueueHeadReconciliation(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly headSha: string;
+    readonly triggerKind: string;
+    readonly triggerIdentity: string;
+    readonly now: Date;
+  },
+): Promise<void> {
+  const head = await lockedHeadReconciliation(database, context);
+  const processing = head.status === 'processing';
+  await database
+    .update(githubCheckHeadReconciliation)
+    .set({
+      status: processing ? 'processing' : 'pending',
+      jobVersion: head.jobVersion + 1,
+      triggerKind: context.triggerKind,
+      triggerIdentity: context.triggerIdentity,
+      attempts: 0,
+      availableAt: context.now,
+      settleDeadline: null,
+      rerunRequired: processing,
+      lastError: null,
+      ...(processing
+        ? {}
+        : {
+            claimToken: null,
+            claimedAt: null,
+            leaseExpiresAt: null,
+            claimedJobVersion: null,
+            claimedContextGeneration: null,
+          }),
+      updatedAt: context.now,
+    })
+    .where(eq(githubCheckHeadReconciliation.id, head.id));
+}
+
+function directCheckProviderDate(check: NormalizedGithubCheckContext, now: Date): Date {
+  return eventDate(check.providerUpdatedAt, now);
+}
+
+async function insertDirectCheckActivity(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly check: NormalizedGithubCheckContext;
+    readonly webhookDeliveryId: string;
+    readonly now: Date;
+  },
+) {
+  const providerUpdatedAt = directCheckProviderDate(context.check, context.now);
+  const values = {
+    id: randomUUIDv7(),
+    organizationId: context.repo.organizationId,
+    repositorySyncId: context.repo.id,
+    headSha: context.check.headSha,
+    sourceKind: context.check.sourceKind,
+    contextKey: context.check.contextKey,
+    providerObjectId: context.check.providerObjectId,
+    providerRunId: context.check.sourceKind === 'check_run' ? context.check.providerObjectId : null,
+    providerUpdatedAt,
+    webhookDeliveryId: context.webhookDeliveryId,
+    state: context.check.state,
+    payload: {
+      appId: context.check.appId,
+      conclusion: context.check.conclusion,
+      context: context.check.providerContext,
+      creator: context.check.creator,
+      status: context.check.status,
+      url: context.check.url,
+    },
+    occurredAt: providerUpdatedAt,
+  };
+  const [inserted] = await database
+    .insert(githubCheckActivity)
+    .values(values)
+    .onConflictDoNothing()
+    .returning();
+  if (inserted !== undefined) return inserted;
+  const [existing] = await database
+    .select()
+    .from(githubCheckActivity)
+    .where(
+      and(
+        eq(githubCheckActivity.organizationId, context.repo.organizationId),
+        eq(githubCheckActivity.repositorySyncId, context.repo.id),
+        eq(githubCheckActivity.webhookDeliveryId, context.webhookDeliveryId),
+        eq(githubCheckActivity.sourceKind, context.check.sourceKind),
+        eq(githubCheckActivity.providerObjectId, context.check.providerObjectId),
+        eq(githubCheckActivity.providerUpdatedAt, providerUpdatedAt),
+      ),
+    )
+    .limit(1);
+  if (existing === undefined) throw new Error('GitHub check activity conflict was unresolved.');
+  return existing;
+}
+
+async function applyDirectCheckContext(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly check: NormalizedGithubCheckContext;
+    readonly webhookDeliveryId: string;
+    readonly now: Date;
+  },
+): Promise<GithubMirrorOutcome> {
+  const head = await lockedHeadReconciliation(database, {
+    repo: context.repo,
+    headSha: context.check.headSha,
+    triggerKind: 'direct_context',
+    triggerIdentity: `${context.check.sourceKind}:${context.check.providerObjectId}`,
+    now: context.now,
+  });
+  const activity = await insertDirectCheckActivity(database, context);
+  const contexts = await database
+    .select()
+    .from(githubCheckHeadContext)
+    .where(
+      and(
+        eq(githubCheckHeadContext.organizationId, context.repo.organizationId),
+        eq(githubCheckHeadContext.repositorySyncId, context.repo.id),
+        eq(githubCheckHeadContext.headSha, context.check.headSha),
+      ),
+    )
+    .orderBy(asc(githubCheckHeadContext.contextKey))
+    .for('update');
+  const current = contexts.find((entry) => entry.contextKey === context.check.contextKey);
+  const providerUpdatedAt = directCheckProviderDate(context.check, context.now);
+  if (current !== undefined && providerUpdatedAt.getTime() < current.providerUpdatedAt.getTime()) {
+    return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+  }
+  if (
+    current !== undefined &&
+    providerUpdatedAt.getTime() === current.providerUpdatedAt.getTime() &&
+    current.state !== context.check.state
+  ) {
+    await database
+      .update(githubCheckHeadContext)
+      .set({ reconciliationState: 'unresolved', updatedAt: context.now })
+      .where(eq(githubCheckHeadContext.id, current.id));
+    await enqueueHeadReconciliation(database, {
+      repo: context.repo,
+      headSha: context.check.headSha,
+      triggerKind: 'context_conflict',
+      triggerIdentity: activity.id,
+      now: context.now,
+    });
+    return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+  }
+  if (
+    current !== undefined &&
+    providerUpdatedAt.getTime() === current.providerUpdatedAt.getTime() &&
+    current.state === context.check.state
+  ) {
+    return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+  }
+  const renamed = contexts.find(
+    (entry) =>
+      entry.sourceKind === 'check_run' &&
+      context.check.sourceKind === 'check_run' &&
+      entry.latestProviderObjectId === context.check.providerObjectId &&
+      entry.contextKey !== context.check.contextKey &&
+      entry.active,
+  );
+  if (renamed !== undefined) {
+    await database
+      .update(githubCheckHeadContext)
+      .set({ reconciliationState: 'unresolved', active: false, updatedAt: context.now })
+      .where(eq(githubCheckHeadContext.id, renamed.id));
+    await enqueueHeadReconciliation(database, {
+      repo: context.repo,
+      headSha: context.check.headSha,
+      triggerKind: 'context_identity_changed',
+      triggerIdentity: activity.id,
+      now: context.now,
+    });
+    return { pullRequests: [], failedTransitionPullRequestIds: new Set() };
+  }
+  const contextVersion = (current?.contextVersion ?? 0) + 1;
+  const contextValues = {
+    sourceKind: context.check.sourceKind,
+    state: context.check.state,
+    providerUpdatedAt,
+    latestProviderObjectId: context.check.providerObjectId,
+    latestProviderRunId:
+      context.check.sourceKind === 'check_run' ? context.check.providerObjectId : null,
+    active: true,
+    contextVersion,
+    latestActivityId: activity.id,
+    reconciliationState: 'resolved',
+    updatedAt: context.now,
+  };
+  const [headContext] = await database
+    .insert(githubCheckHeadContext)
+    .values({
+      id: current?.id ?? randomUUIDv7(),
+      organizationId: context.repo.organizationId,
+      repositorySyncId: context.repo.id,
+      headSha: context.check.headSha,
+      contextKey: context.check.contextKey,
+      ...contextValues,
+    })
+    .onConflictDoUpdate({
+      target: [
+        githubCheckHeadContext.organizationId,
+        githubCheckHeadContext.repositorySyncId,
+        githubCheckHeadContext.headSha,
+        githubCheckHeadContext.contextKey,
+      ],
+      set: contextValues,
+    })
+    .returning();
+  if (headContext === undefined) throw new Error('GitHub head context was not persisted.');
+  await database
+    .update(githubCheckHeadReconciliation)
+    .set({ contextGeneration: head.contextGeneration + 1, updatedAt: context.now })
+    .where(eq(githubCheckHeadReconciliation.id, head.id));
+  return await projectHeadContext(database, {
+    repo: context.repo,
+    headIsAuthoritative: head.status === 'completed' || head.acceptedFetchAttemptId !== null,
+    headContext,
+    now: context.now,
+  });
+}
+
+async function projectHeadContext(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly headIsAuthoritative: boolean;
+    readonly headContext: typeof githubCheckHeadContext.$inferSelect;
+    readonly now: Date;
+  },
+): Promise<GithubMirrorOutcome> {
+  const pulls = await database
     .select()
     .from(githubPullRequest)
-    .where(and(eq(githubPullRequest.repositorySyncId, repo.id), numberFilter));
-  const updatedRows: GithubPullRequestRow[] = [];
-  for (const row of rows) {
-    await upsertPullRequestActivity(database, { row, event, now });
-    const checkActivities = await database
-      .select({
-        externalId: githubPullRequestActivity.externalId,
-        type: githubPullRequestActivity.type,
-        body: githubPullRequestActivity.body,
-        state: githubPullRequestActivity.state,
-        occurredAt: githubPullRequestActivity.occurredAt,
-      })
-      .from(githubPullRequestActivity)
-      .where(
-        and(
-          eq(githubPullRequestActivity.pullRequestId, row.id),
-          eq(githubPullRequestActivity.type, 'checks'),
-        ),
-      );
-    const [updated] = await database
-      .update(githubPullRequest)
-      .set({
-        checkStatus: rolledUpCheckStatus(checkActivities) ?? checkStatus(event),
-        repositoryName: repo.repositoryName,
-        syncId: nextSyncId,
-        updatedAt: now,
-      })
-      .where(eq(githubPullRequest.id, row.id))
-      .returning();
-    if (updated !== undefined) {
-      updatedRows.push(updated);
-    }
+    .where(
+      and(
+        eq(githubPullRequest.organizationId, context.repo.organizationId),
+        eq(githubPullRequest.repositorySyncId, context.repo.id),
+        eq(githubPullRequest.headSha, context.headContext.headSha),
+      ),
+    )
+    .orderBy(asc(githubPullRequest.id))
+    .for('update');
+  const updatedPulls: GithubPullRequestRow[] = [];
+  const failed = new Set<string>();
+  for (const pull of pulls) {
+    await upsertPullRequestCheckProjection(database, {
+      repo: context.repo,
+      pull,
+      headContext: context.headContext,
+      now: context.now,
+    });
+    const result = await refreshPullRequestCheckStatus(database, {
+      pull,
+      allowNonFailure: context.headIsAuthoritative,
+      now: context.now,
+    });
+    updatedPulls.push(result.pull);
+    if (result.failed) failed.add(pull.id);
   }
-  return updatedRows;
+  return { pullRequests: updatedPulls, failedTransitionPullRequestIds: failed };
+}
+
+async function upsertPullRequestCheckProjection(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly pull: GithubPullRequestRow;
+    readonly headContext: typeof githubCheckHeadContext.$inferSelect;
+    readonly now: Date;
+  },
+): Promise<void> {
+  const values = {
+    headContextId: context.headContext.id,
+    headSha: context.headContext.headSha,
+    projectedContextVersion: context.headContext.contextVersion,
+    projectedState: context.headContext.state,
+    latestActivityId: context.headContext.latestActivityId,
+    updatedAt: context.now,
+  };
+  await database
+    .insert(githubPullRequestCheckContext)
+    .values({
+      id: randomUUIDv7(),
+      organizationId: context.repo.organizationId,
+      repositorySyncId: context.repo.id,
+      pullRequestId: context.pull.id,
+      contextKey: context.headContext.contextKey,
+      capturedHeadEpoch: context.pull.headEpoch,
+      ...values,
+    })
+    .onConflictDoUpdate({
+      target: [
+        githubPullRequestCheckContext.organizationId,
+        githubPullRequestCheckContext.pullRequestId,
+        githubPullRequestCheckContext.capturedHeadEpoch,
+        githubPullRequestCheckContext.contextKey,
+      ],
+      set: values,
+    });
+}
+
+async function refreshPullRequestCheckStatus(
+  database: GithubDatabase,
+  context: {
+    readonly pull: GithubPullRequestRow;
+    readonly allowNonFailure: boolean;
+    readonly now: Date;
+  },
+): Promise<{ readonly pull: GithubPullRequestRow; readonly failed: boolean }> {
+  const projections = await database
+    .select({ state: githubPullRequestCheckContext.projectedState })
+    .from(githubPullRequestCheckContext)
+    .where(
+      and(
+        eq(githubPullRequestCheckContext.organizationId, context.pull.organizationId),
+        eq(githubPullRequestCheckContext.pullRequestId, context.pull.id),
+        eq(githubPullRequestCheckContext.capturedHeadEpoch, context.pull.headEpoch),
+        eq(githubPullRequestCheckContext.headSha, context.pull.headSha),
+      ),
+    );
+  const projectedCheckStatus = aggregateCheckStates(projections.map((entry) => entry.state));
+  const checkStatus =
+    context.allowNonFailure || projectedCheckStatus === 'failure'
+      ? projectedCheckStatus
+      : context.pull.checkStatus;
+  const [pull] = await database
+    .update(githubPullRequest)
+    .set({ checkStatus, syncId: nextSyncId, updatedAt: context.now })
+    .where(
+      and(
+        eq(githubPullRequest.id, context.pull.id),
+        eq(githubPullRequest.headEpoch, context.pull.headEpoch),
+        eq(githubPullRequest.headSha, context.pull.headSha),
+      ),
+    )
+    .returning();
+  if (pull === undefined) throw new Error('GitHub pull request head changed during projection.');
+  return {
+    pull,
+    failed: context.pull.checkStatus !== 'failure' && checkStatus === 'failure',
+  };
+}
+
+async function bindCurrentHeadContexts(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly pull: GithubPullRequestRow;
+    readonly now: Date;
+  },
+): Promise<{ readonly pull: GithubPullRequestRow; readonly failed: boolean }> {
+  if (context.pull.headSha.length === 0) return { pull: context.pull, failed: false };
+  const [head] = await database
+    .select()
+    .from(githubCheckHeadReconciliation)
+    .where(
+      and(
+        eq(githubCheckHeadReconciliation.organizationId, context.repo.organizationId),
+        eq(githubCheckHeadReconciliation.repositorySyncId, context.repo.id),
+        eq(githubCheckHeadReconciliation.headSha, context.pull.headSha),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  if (head === undefined || !headAllowsContextBinding(head)) {
+    return { pull: context.pull, failed: false };
+  }
+  const contexts = await database
+    .select()
+    .from(githubCheckHeadContext)
+    .where(
+      and(
+        eq(githubCheckHeadContext.organizationId, context.repo.organizationId),
+        eq(githubCheckHeadContext.repositorySyncId, context.repo.id),
+        eq(githubCheckHeadContext.headSha, context.pull.headSha),
+        eq(githubCheckHeadContext.active, true),
+        eq(githubCheckHeadContext.reconciliationState, 'resolved'),
+      ),
+    )
+    .orderBy(asc(githubCheckHeadContext.contextKey))
+    .for('update');
+  if (contexts.length === 0) return { pull: context.pull, failed: false };
+  for (const headContext of contexts) {
+    await upsertPullRequestCheckProjection(database, {
+      repo: context.repo,
+      pull: context.pull,
+      headContext,
+      now: context.now,
+    });
+  }
+  return await refreshPullRequestCheckStatus(database, {
+    pull: context.pull,
+    allowNonFailure: true,
+    now: context.now,
+  });
+}
+
+function headAllowsContextBinding(
+  head: typeof githubCheckHeadReconciliation.$inferSelect,
+): boolean {
+  if (head.status !== 'completed' || head.rerunRequired) return false;
+  if (head.acceptedFetchAttemptId === null) return true;
+  if (head.acceptedJobVersion !== head.jobVersion) return false;
+  if (head.acceptedContextGeneration === null) return false;
+  return head.contextGeneration >= head.acceptedContextGeneration;
 }
 
 function retainedValue<T>(retain: boolean, existing: T | undefined, incoming: T): T {
@@ -534,6 +1212,83 @@ function mirroredState(
   });
 }
 
+function mirroredPullRequestSnapshotDecision(
+  existing: GithubPullRequestRow | undefined,
+  pr: NonNullable<NormalizedGithubEvent['pullRequest']>,
+  occurredAt: Date,
+) {
+  const staleActivity =
+    existing !== undefined && occurredAt.getTime() < existing.lastEventAt.getTime();
+  const complete = pr.externalId.length > 0 || pr.nodeId.length > 0 || pr.headRef.length > 0;
+  const providerUpdatedAt =
+    complete && pr.updatedAt !== null ? eventDate(pr.updatedAt, occurredAt) : null;
+  const staleProviderSnapshot =
+    existing !== undefined &&
+    providerUpdatedAt !== null &&
+    existing.providerUpdatedAt !== null &&
+    providerUpdatedAt.getTime() < existing.providerUpdatedAt.getTime();
+  const equalTimeHeadConflict =
+    existing !== undefined &&
+    complete &&
+    pr.headSha.length > 0 &&
+    existing.headSha.length > 0 &&
+    pr.headSha !== existing.headSha &&
+    providerUpdatedAt !== null &&
+    existing.providerUpdatedAt !== null &&
+    providerUpdatedAt.getTime() === existing.providerUpdatedAt.getTime();
+  const retain = staleProviderSnapshot || !complete || equalTimeHeadConflict;
+  const headChanged =
+    existing !== undefined &&
+    !retain &&
+    COMMIT_SHA_PATTERN.test(pr.headSha) &&
+    pr.headSha !== existing.headSha;
+  return { staleActivity, providerUpdatedAt, equalTimeHeadConflict, retain, headChanged };
+}
+
+function mirroredPullRequestAuthor(
+  existing: GithubPullRequestRow | undefined,
+  pr: NonNullable<NormalizedGithubEvent['pullRequest']>,
+): { readonly authorLogin: string; readonly authorId: string } {
+  if (pr.author !== null) {
+    return { authorLogin: pr.author.login, authorId: String(pr.author.id) };
+  }
+  return { authorLogin: existing?.authorLogin ?? '', authorId: existing?.authorId ?? '' };
+}
+
+async function finalizeMirroredPullRequest(
+  database: GithubDatabase,
+  context: {
+    readonly repo: RepositorySync;
+    readonly event: NormalizedGithubEvent;
+    readonly existing: GithubPullRequestRow | undefined;
+    readonly row: GithubPullRequestRow;
+    readonly incomingHeadSha: string;
+    readonly providerUpdatedAt: Date | null;
+    readonly equalTimeHeadConflict: boolean;
+    readonly headChanged: boolean;
+    readonly now: Date;
+  },
+): Promise<MirroredPullRequestUpsert> {
+  if (
+    context.equalTimeHeadConflict &&
+    context.existing !== undefined &&
+    context.providerUpdatedAt !== null
+  ) {
+    await enqueuePullRequestReconciliation(database, {
+      pull: context.existing,
+      incomingHeadSha: context.incomingHeadSha,
+      providerUpdatedAt: context.providerUpdatedAt,
+      triggerIdentity: context.event.activity.externalId,
+      now: context.now,
+    });
+  }
+  return {
+    row: context.row,
+    headChanged: context.headChanged,
+    created: context.existing === undefined,
+  };
+}
+
 async function upsertMirroredPullRequest(
   database: GithubDatabase,
   context: {
@@ -541,7 +1296,7 @@ async function upsertMirroredPullRequest(
     readonly event: NormalizedGithubEvent;
     readonly now: Date;
   },
-): Promise<GithubPullRequestRow | null> {
+): Promise<MirroredPullRequestUpsert | null> {
   const { repo, event, now } = context;
   const pr = event.pullRequest;
   if (pr === null) return null;
@@ -551,41 +1306,44 @@ async function upsertMirroredPullRequest(
     .where(
       and(eq(githubPullRequest.repositorySyncId, repo.id), eq(githubPullRequest.number, pr.number)),
     )
-    .limit(1);
+    .limit(1)
+    .for('update');
   const occurredAt = eventDate(event.activity.occurredAt ?? pr.updatedAt, now);
-  const stale = existing !== undefined && occurredAt.getTime() < existing.lastEventAt.getTime();
-  const completeSnapshot =
-    pr.externalId.length > 0 || pr.nodeId.length > 0 || pr.headRef.length > 0;
-  const retainSnapshot = stale || !completeSnapshot;
-  const reviewDecision = mirroredReviewDecision(event, existing, stale);
-  const state = mirroredState(retainSnapshot, existing, pr, reviewDecision);
-  let authorLogin = existing?.authorLogin ?? '';
-  let authorId = existing?.authorId ?? '';
-  if (pr.author !== null) {
-    authorLogin = pr.author.login;
-    authorId = String(pr.author.id);
-  }
+  const snapshot = mirroredPullRequestSnapshotDecision(existing, pr, occurredAt);
+  const reviewDecision = mirroredReviewDecision(event, existing, snapshot.staleActivity);
+  const state = mirroredState(snapshot.retain, existing, pr, reviewDecision);
+  const author = mirroredPullRequestAuthor(existing, pr);
   const values = {
     repositoryId: event.repository.externalId,
     repositoryName: repo.repositoryName,
     number: pr.number,
-    nodeId: latestText(retainSnapshot, existing?.nodeId, pr.nodeId),
-    title: latestText(retainSnapshot, existing?.title, pr.title),
-    body: retainedValue(retainSnapshot, existing?.body, pr.body),
-    url: latestText(retainSnapshot, existing?.url, pr.url),
-    headRef: retainedValue(retainSnapshot, existing?.headRef, pr.headRef),
-    headSha: retainedValue(retainSnapshot, existing?.headSha, pr.headSha),
-    baseRef: retainedValue(retainSnapshot, existing?.baseRef, pr.baseRef),
+    nodeId: latestText(snapshot.retain, existing?.nodeId, pr.nodeId),
+    title: latestText(snapshot.retain, existing?.title, pr.title),
+    body: retainedValue(snapshot.retain, existing?.body, pr.body),
+    url: latestText(snapshot.retain, existing?.url, pr.url),
+    headRef: retainedValue(snapshot.retain, existing?.headRef, pr.headRef),
+    headSha: retainedValue(snapshot.retain, existing?.headSha, pr.headSha),
+    headEpoch: snapshot.headChanged ? (existing?.headEpoch ?? 0) + 1 : (existing?.headEpoch ?? 0),
+    providerUpdatedAt: retainedValue(
+      snapshot.retain,
+      existing?.providerUpdatedAt,
+      snapshot.providerUpdatedAt,
+    ),
+    baseRef: retainedValue(snapshot.retain, existing?.baseRef, pr.baseRef),
     state,
-    draft: retainedValue(retainSnapshot, existing?.draft, pr.draft),
-    merged: retainedValue(retainSnapshot, existing?.merged, pr.merged),
-    authorLogin,
-    authorId,
+    draft: retainedValue(snapshot.retain, existing?.draft, pr.draft),
+    merged: retainedValue(snapshot.retain, existing?.merged, pr.merged),
+    authorLogin: author.authorLogin,
+    authorId: author.authorId,
     reviewDecision,
-    checkStatus: existing?.checkStatus ?? 'unknown',
+    checkStatus: snapshot.headChanged ? 'unknown' : (existing?.checkStatus ?? 'unknown'),
     githubCreatedAt: githubDate(pr.createdAt, existing?.githubCreatedAt, now),
-    githubUpdatedAt: githubDate(pr.updatedAt, existing?.githubUpdatedAt, now),
-    lastEventAt: retainedValue(stale, existing?.lastEventAt, occurredAt),
+    githubUpdatedAt: retainedValue(
+      snapshot.retain,
+      existing?.githubUpdatedAt,
+      githubDate(pr.updatedAt, existing?.githubUpdatedAt, now),
+    ),
+    lastEventAt: retainedValue(snapshot.staleActivity, existing?.lastEventAt, occurredAt),
     syncId: nextSyncId,
     updatedAt: now,
   };
@@ -600,10 +1358,21 @@ async function upsertMirroredPullRequest(
     .onConflictDoUpdate({
       target: [githubPullRequest.repositorySyncId, githubPullRequest.number],
       set: values,
-      setWhere: lte(githubPullRequest.lastEventAt, occurredAt),
     })
     .returning();
-  if (row !== undefined) return row;
+  if (row !== undefined) {
+    return await finalizeMirroredPullRequest(database, {
+      repo,
+      event,
+      existing,
+      row,
+      incomingHeadSha: pr.headSha,
+      providerUpdatedAt: snapshot.providerUpdatedAt,
+      equalTimeHeadConflict: snapshot.equalTimeHeadConflict,
+      headChanged: snapshot.headChanged,
+      now,
+    });
+  }
   const [current] = await database
     .select()
     .from(githubPullRequest)
@@ -611,7 +1380,70 @@ async function upsertMirroredPullRequest(
       and(eq(githubPullRequest.repositorySyncId, repo.id), eq(githubPullRequest.number, pr.number)),
     )
     .limit(1);
-  return current ?? null;
+  return current === undefined ? null : { row: current, headChanged: false, created: false };
+}
+
+async function enqueuePullRequestReconciliation(
+  database: GithubDatabase,
+  context: {
+    readonly pull: GithubPullRequestRow;
+    readonly incomingHeadSha: string;
+    readonly providerUpdatedAt: Date;
+    readonly triggerIdentity: string;
+    readonly now: Date;
+  },
+): Promise<void> {
+  const [existing] = await database
+    .select()
+    .from(githubPullRequestReconciliation)
+    .where(
+      and(
+        eq(githubPullRequestReconciliation.organizationId, context.pull.organizationId),
+        eq(githubPullRequestReconciliation.pullRequestId, context.pull.id),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  const conflictingHeadShas = unique([
+    ...(existing?.conflictingHeadShas ?? []),
+    context.pull.headSha,
+    context.incomingHeadSha,
+  ]).sort();
+  const values = {
+    status: 'pending',
+    jobVersion: (existing?.jobVersion ?? 0) + 1,
+    attempts: 0,
+    capturedHeadEpoch: context.pull.headEpoch,
+    conflictingHeadShas,
+    conflictingProviderUpdatedAt: context.providerUpdatedAt,
+    triggerIdentity: context.triggerIdentity,
+    availableAt: context.now,
+    claimToken: null,
+    claimedAt: null,
+    leaseExpiresAt: null,
+    claimedJobVersion: null,
+    claimedHeadEpoch: null,
+    resolvedHeadSha: null,
+    resolvedProviderUpdatedAt: null,
+    lastError: null,
+    updatedAt: context.now,
+  };
+  await database
+    .insert(githubPullRequestReconciliation)
+    .values({
+      id: existing?.id ?? randomUUIDv7(),
+      organizationId: context.pull.organizationId,
+      repositorySyncId: context.pull.repositorySyncId,
+      pullRequestId: context.pull.id,
+      ...values,
+    })
+    .onConflictDoUpdate({
+      target: [
+        githubPullRequestReconciliation.organizationId,
+        githubPullRequestReconciliation.pullRequestId,
+      ],
+      set: values,
+    });
 }
 
 async function upsertPullRequestActivity(
@@ -915,11 +1747,7 @@ function notificationOnlyIssueOutcome(context: ApplyToIssueContext): IssueOutcom
     return { actions: [], notificationEvents, gitLink: null };
   }
   if (event.pullRequest !== null) return null;
-  const notificationEvents =
-    event.checks?.failed === true
-      ? [checksNotification({ linked, event, actor, repo, audienceUserIds })]
-      : [];
-  return { actions: [], notificationEvents, gitLink: null };
+  return { actions: [], notificationEvents: [], gitLink: null };
 }
 
 async function applyToIssue(
@@ -1292,16 +2120,6 @@ function unlinkedPullRequestNotification(context: {
       externalUrl: event.review.url,
     };
   }
-  if (event.checks?.failed === true) {
-    return {
-      ...base,
-      type: 'pr_checks_failed',
-      reason: 'subscribed',
-      title: `Checks failed on ${pull.title}`,
-      body: `${repo.repositoryName}#${pull.number}`,
-      externalUrl: event.activity.url.length === 0 ? pull.url : event.activity.url,
-    };
-  }
   const lifecycle = notificationTypeForState(pull.state as PullRequestState);
   if (lifecycle === null) return null;
   return {
@@ -1311,33 +2129,6 @@ function unlinkedPullRequestNotification(context: {
     title: lifecycle === 'pr_merged' ? `${pull.title} was merged` : `${pull.title} was closed`,
     body: `${repo.repositoryName}#${pull.number}`,
     externalUrl: pull.url,
-  };
-}
-
-function checksNotification(context: {
-  readonly linked: LinkedIssue;
-  readonly event: NormalizedGithubEvent;
-  readonly actor: Actor;
-  readonly repo: RepositorySync;
-  readonly audienceUserIds: readonly string[];
-}): NotificationEvent {
-  const { linked, event, actor, repo, audienceUserIds } = context;
-  const branch = event.checks?.headBranch ?? linked.identifier;
-  return {
-    organizationId: repo.organizationId,
-    type: 'pr_checks_failed',
-    reason: 'subscribed',
-    actor,
-    entityType: 'issue',
-    entityId: linked.id,
-    userIds: [...audienceUserIds],
-    title: `Checks failed on ${branch}`,
-    body: repo.repositoryName,
-    url: `/issue/${linked.identifier}`,
-    externalUrl:
-      event.checks?.prNumbers[0] === undefined
-        ? null
-        : `https://github.com/${repo.repositoryName}/pull/${event.checks.prNumbers[0]}`,
   };
 }
 

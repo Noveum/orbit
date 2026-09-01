@@ -1,13 +1,24 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type NotificationType, STATE_CATEGORY_ORDER, type StateCategory } from '@orbit/shared';
 import { z } from 'zod';
+import {
+  githubContextKey,
+  type NormalizedGithubCheckState,
+  normalizedGithubCheckState,
+} from './checks.ts';
 
 export * from './app.ts';
 export * from './apply.ts';
 export * from './associations.ts';
+export * from './checks.ts';
 export * from './installations.ts';
+export * from './notifications.ts';
+export * from './pull-reconciliation.ts';
+export * from './quarantine.ts';
+export * from './reconciliation.ts';
 export * from './watched.ts';
 export * from './webhook-events.ts';
+export * from './worker.ts';
 
 import { isGithubInstallationEvent } from './webhook-events.ts';
 
@@ -138,10 +149,12 @@ const checkSuiteEventSchema = z.object({
   action: z.string().min(1).max(64),
   check_suite: z.object({
     id: z.number().int().nonnegative().default(0),
+    head_sha: z.string().max(255).default(''),
     status: z.string().max(64).nullable().optional(),
     conclusion: z.string().max(64).nullable().optional(),
     head_branch: z.string().max(1024).nullable().optional(),
     pull_requests: z.array(z.object({ number: z.number().int().positive() })).default([]),
+    updated_at: z.string().datetime().nullable().optional(),
   }),
   repository: repositorySchema,
   sender: githubUserSchema,
@@ -152,6 +165,7 @@ const checkRunEventSchema = z.object({
   check_run: z.object({
     id: z.number().int().nonnegative(),
     name: z.string().max(255).default(''),
+    app: z.object({ id: z.number().int().positive() }).nullable().optional(),
     status: z.string().max(64).nullable().optional(),
     conclusion: z.string().max(64).nullable().optional(),
     html_url: z.string().url().max(2048).nullable().optional(),
@@ -161,6 +175,7 @@ const checkRunEventSchema = z.object({
       .object({ head_branch: z.string().max(1024).nullable().optional() })
       .nullable()
       .optional(),
+    updated_at: z.string().datetime().nullable().optional(),
     completed_at: z.string().datetime().nullable().optional(),
     started_at: z.string().datetime().nullable().optional(),
   }),
@@ -177,6 +192,7 @@ const statusEventSchema = z.object({
   target_url: z.string().url().max(2048).nullable().default(null),
   repository: repositorySchema,
   sender: githubUserSchema,
+  creator: githubUserSchema.nullable().optional(),
   updated_at: z.string().datetime().nullable().optional(),
 });
 
@@ -279,6 +295,52 @@ export interface NormalizedGithubActivity {
   readonly occurredAt: string | null;
 }
 
+export interface NormalizedGithubCheckContext {
+  readonly kind: 'context';
+  readonly sourceKind: 'check_run' | 'commit_status';
+  readonly headSha: string;
+  readonly providerObjectId: string;
+  readonly contextKey: string;
+  readonly providerContext: string;
+  readonly appId: number | null;
+  readonly state: NormalizedGithubCheckState;
+  readonly status: string;
+  readonly conclusion: string;
+  readonly providerUpdatedAt: string | null;
+  readonly url: string;
+  readonly creator: GithubUser | null;
+}
+
+export interface NormalizedGithubCheckReconciliationTrigger {
+  readonly kind: 'reconciliation_trigger';
+  readonly sourceKind: 'check_suite' | 'workflow_run';
+  readonly headSha: string;
+  readonly providerObjectId: string;
+  readonly providerUpdatedAt: string | null;
+}
+
+export type NormalizedGithubCheck =
+  | NormalizedGithubCheckContext
+  | NormalizedGithubCheckReconciliationTrigger;
+
+export type GithubCheckNormalizationFailureCode =
+  | 'invalid_payload'
+  | 'invalid_head_sha'
+  | 'invalid_check_run_app'
+  | 'invalid_check_run_name'
+  | 'invalid_status_context';
+
+export type GithubCheckNormalizationResult =
+  | { readonly status: 'normalized'; readonly value: NormalizedGithubCheck }
+  | {
+      readonly status: 'invalid';
+      readonly failure: {
+        readonly code: GithubCheckNormalizationFailureCode;
+        readonly path: string;
+      };
+    }
+  | { readonly status: 'not_applicable' };
+
 export interface NormalizedGithubEvent {
   readonly action: string;
   readonly repository: { readonly externalId: string; readonly fullName: string };
@@ -296,6 +358,7 @@ export interface NormalizedGithubEvent {
     readonly prNumbers: number[];
     readonly status: string;
     readonly conclusion: string;
+    readonly normalized: NormalizedGithubCheck | null;
   } | null;
   readonly comment: {
     readonly body: string;
@@ -304,6 +367,218 @@ export interface NormalizedGithubEvent {
   } | null;
   readonly activity: NormalizedGithubActivity;
   readonly sender: GithubUser;
+}
+
+const githubCommitShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
+const githubProviderObjectIdSchema = z.number().int().positive();
+const nullableProviderTimestampSchema = z.string().datetime().nullable().optional();
+const checkRunNormalizationEnvelopeSchema = z.object({
+  check_run: z.object({
+    id: githubProviderObjectIdSchema,
+    name: z.unknown(),
+    app: z.unknown(),
+    head_sha: z.unknown(),
+    status: z.string().max(64).nullable().optional(),
+    conclusion: z.string().max(64).nullable().optional(),
+    html_url: z.string().url().max(2048).nullable().optional(),
+    updated_at: nullableProviderTimestampSchema,
+    completed_at: nullableProviderTimestampSchema,
+    started_at: nullableProviderTimestampSchema,
+  }),
+});
+const checkSuiteNormalizationEnvelopeSchema = z.object({
+  check_suite: z.object({
+    id: githubProviderObjectIdSchema,
+    head_sha: z.unknown(),
+    updated_at: nullableProviderTimestampSchema,
+  }),
+});
+const workflowRunNormalizationEnvelopeSchema = z.object({
+  workflow_run: z.object({
+    id: githubProviderObjectIdSchema,
+    head_sha: z.unknown(),
+    updated_at: nullableProviderTimestampSchema,
+  }),
+});
+const statusNormalizationEnvelopeSchema = z.object({
+  id: githubProviderObjectIdSchema,
+  sha: z.unknown(),
+  state: z.string().min(1).max(64),
+  context: z.unknown(),
+  target_url: z.string().url().max(2048).nullable().optional(),
+  creator: githubUserSchema.nullable().optional(),
+  updated_at: nullableProviderTimestampSchema,
+});
+const checkRunAppIdentitySchema = z.object({ id: z.number().int().positive() });
+const checkRunNameIdentitySchema = z.string().min(1).max(255);
+const commitStatusContextIdentitySchema = z.string().min(1).max(255);
+
+function githubCheckNormalizationFailure(
+  code: GithubCheckNormalizationFailureCode,
+  path: string,
+): GithubCheckNormalizationResult {
+  return { status: 'invalid', failure: { code, path } };
+}
+
+function normalizeCheckRun(body: unknown): GithubCheckNormalizationResult {
+  const envelope = checkRunNormalizationEnvelopeSchema.safeParse(body);
+  if (!envelope.success) {
+    const path = envelope.error.issues[0]?.path.join('.') ?? 'check_run';
+    if (path === 'check_run.app') {
+      return githubCheckNormalizationFailure('invalid_check_run_app', 'check_run.app.id');
+    }
+    if (path === 'check_run.name') {
+      return githubCheckNormalizationFailure('invalid_check_run_name', 'check_run.name');
+    }
+    if (path === 'check_run.head_sha') {
+      return githubCheckNormalizationFailure('invalid_head_sha', 'check_run.head_sha');
+    }
+    return githubCheckNormalizationFailure('invalid_payload', path);
+  }
+  const parsed = envelope.data.check_run;
+  const headSha = githubCommitShaSchema.safeParse(parsed.head_sha);
+  if (!headSha.success) {
+    return githubCheckNormalizationFailure('invalid_head_sha', 'check_run.head_sha');
+  }
+  const app = checkRunAppIdentitySchema.safeParse(parsed.app);
+  if (!app.success) {
+    return githubCheckNormalizationFailure('invalid_check_run_app', 'check_run.app.id');
+  }
+  const name = checkRunNameIdentitySchema.safeParse(parsed.name);
+  if (!name.success) {
+    return githubCheckNormalizationFailure('invalid_check_run_name', 'check_run.name');
+  }
+  const status = parsed.status ?? '';
+  const conclusion = parsed.conclusion ?? '';
+  return {
+    status: 'normalized',
+    value: {
+      kind: 'context',
+      sourceKind: 'check_run',
+      headSha: headSha.data,
+      providerObjectId: String(parsed.id),
+      contextKey: githubContextKey(['check_run', String(app.data.id), name.data]),
+      providerContext: name.data,
+      appId: app.data.id,
+      state: normalizedGithubCheckState(status, conclusion),
+      status,
+      conclusion,
+      providerUpdatedAt: parsed.updated_at ?? parsed.completed_at ?? parsed.started_at ?? null,
+      url: parsed.html_url ?? '',
+      creator: null,
+    },
+  };
+}
+
+function normalizeCheckSuite(body: unknown): GithubCheckNormalizationResult {
+  const envelope = checkSuiteNormalizationEnvelopeSchema.safeParse(body);
+  if (!envelope.success) {
+    const path = envelope.error.issues[0]?.path.join('.') ?? 'check_suite';
+    if (path === 'check_suite.head_sha') {
+      return githubCheckNormalizationFailure('invalid_head_sha', 'check_suite.head_sha');
+    }
+    return githubCheckNormalizationFailure('invalid_payload', path);
+  }
+  const parsed = envelope.data.check_suite;
+  const headSha = githubCommitShaSchema.safeParse(parsed.head_sha);
+  if (!headSha.success) {
+    return githubCheckNormalizationFailure('invalid_head_sha', 'check_suite.head_sha');
+  }
+  return {
+    status: 'normalized',
+    value: {
+      kind: 'reconciliation_trigger',
+      sourceKind: 'check_suite',
+      headSha: headSha.data,
+      providerObjectId: String(parsed.id),
+      providerUpdatedAt: parsed.updated_at ?? null,
+    },
+  };
+}
+
+function normalizeWorkflowRun(body: unknown): GithubCheckNormalizationResult {
+  const envelope = workflowRunNormalizationEnvelopeSchema.safeParse(body);
+  if (!envelope.success) {
+    const path = envelope.error.issues[0]?.path.join('.') ?? 'workflow_run';
+    if (path === 'workflow_run.head_sha') {
+      return githubCheckNormalizationFailure('invalid_head_sha', 'workflow_run.head_sha');
+    }
+    return githubCheckNormalizationFailure('invalid_payload', path);
+  }
+  const parsed = envelope.data.workflow_run;
+  const headSha = githubCommitShaSchema.safeParse(parsed.head_sha);
+  if (!headSha.success) {
+    return githubCheckNormalizationFailure('invalid_head_sha', 'workflow_run.head_sha');
+  }
+  return {
+    status: 'normalized',
+    value: {
+      kind: 'reconciliation_trigger',
+      sourceKind: 'workflow_run',
+      headSha: headSha.data,
+      providerObjectId: String(parsed.id),
+      providerUpdatedAt: parsed.updated_at ?? null,
+    },
+  };
+}
+
+function normalizeCommitStatus(body: unknown): GithubCheckNormalizationResult {
+  const envelope = statusNormalizationEnvelopeSchema.safeParse(body);
+  if (!envelope.success) {
+    const path = envelope.error.issues[0]?.path.join('.') ?? 'status';
+    if (path === 'sha') return githubCheckNormalizationFailure('invalid_head_sha', 'sha');
+    if (path === 'context') {
+      return githubCheckNormalizationFailure('invalid_status_context', 'context');
+    }
+    return githubCheckNormalizationFailure('invalid_payload', path);
+  }
+  const parsed = envelope.data;
+  const headSha = githubCommitShaSchema.safeParse(parsed.sha);
+  if (!headSha.success) return githubCheckNormalizationFailure('invalid_head_sha', 'sha');
+  const context = commitStatusContextIdentitySchema.safeParse(parsed.context);
+  if (!context.success) {
+    return githubCheckNormalizationFailure('invalid_status_context', 'context');
+  }
+  const state = normalizedGithubCheckState(parsed.state, parsed.state);
+  return {
+    status: 'normalized',
+    value: {
+      kind: 'context',
+      sourceKind: 'commit_status',
+      headSha: headSha.data,
+      providerObjectId: String(parsed.id),
+      contextKey: githubContextKey(['commit_status', context.data.toLowerCase()]),
+      providerContext: context.data,
+      appId: null,
+      state,
+      status: parsed.state,
+      conclusion: parsed.state,
+      providerUpdatedAt: parsed.updated_at ?? null,
+      url: parsed.target_url ?? '',
+      creator: parsed.creator ?? null,
+    },
+  };
+}
+
+const GITHUB_CHECK_NORMALIZERS: Readonly<
+  Record<string, (body: unknown) => GithubCheckNormalizationResult>
+> = {
+  check_run: normalizeCheckRun,
+  check_suite: normalizeCheckSuite,
+  workflow_run: normalizeWorkflowRun,
+  status: normalizeCommitStatus,
+};
+
+export function normalizeGithubCheckEvent(
+  eventName: string,
+  body: unknown,
+): GithubCheckNormalizationResult {
+  return GITHUB_CHECK_NORMALIZERS[eventName]?.(body) ?? { status: 'not_applicable' };
+}
+
+function normalizedGithubCheck(eventName: string, body: unknown): NormalizedGithubCheck | null {
+  const result = normalizeGithubCheckEvent(eventName, body);
+  return result.status === 'normalized' ? result.value : null;
 }
 
 function normalizePullRequest(pr: z.infer<typeof pullRequestSchema>): NormalizedPullRequest {
@@ -435,10 +710,11 @@ function parseCheckSuiteEvent(body: unknown): NormalizedGithubEvent | null {
         'stale',
       ].includes((parsed.check_suite.conclusion ?? '').toLowerCase()),
       headBranch: parsed.check_suite.head_branch ?? '',
-      headSha: '',
+      headSha: parsed.check_suite.head_sha,
       prNumbers: parsed.check_suite.pull_requests.map((entry) => entry.number),
       status: parsed.check_suite.status ?? '',
       conclusion: parsed.check_suite.conclusion ?? '',
+      normalized: normalizedGithubCheck('check_suite', body),
     },
     comment: null,
     activity: {
@@ -469,6 +745,7 @@ function normalizedCheckEvent(input: {
   readonly prNumbers: number[];
   readonly occurredAt: string | null;
   readonly prefix: string;
+  readonly normalized: NormalizedGithubCheck | null;
 }): NormalizedGithubEvent {
   const state = input.conclusion || input.status || input.action;
   return {
@@ -495,6 +772,7 @@ function normalizedCheckEvent(input: {
       prNumbers: input.prNumbers,
       status: input.status,
       conclusion: input.conclusion,
+      normalized: input.normalized,
     },
     comment: null,
     activity: {
@@ -529,6 +807,7 @@ function parseCheckRunEvent(body: unknown): NormalizedGithubEvent | null {
     prNumbers: parsed.check_run.pull_requests.map((entry) => entry.number),
     occurredAt: parsed.check_run.completed_at ?? parsed.check_run.started_at ?? null,
     prefix: 'check_run',
+    normalized: normalizedGithubCheck('check_run', body),
   });
 }
 
@@ -550,6 +829,7 @@ function parseStatusEvent(body: unknown): NormalizedGithubEvent | null {
     prNumbers: [],
     occurredAt: parsed.updated_at ?? null,
     prefix: `status:${parsed.context}`,
+    normalized: normalizedGithubCheck('status', body),
   });
 }
 
@@ -571,6 +851,7 @@ function parseWorkflowRunEvent(body: unknown): NormalizedGithubEvent | null {
     prNumbers: parsed.workflow_run.pull_requests.map((entry) => entry.number),
     occurredAt: parsed.workflow_run.updated_at ?? parsed.workflow_run.run_started_at ?? null,
     prefix: 'workflow_run',
+    normalized: normalizedGithubCheck('workflow_run', body),
   });
 }
 
