@@ -23,7 +23,9 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
   return { promise, resolve: () => settle?.() };
 }
 
-function oauthFetch(scope = 'chat:write,im:write,users:read.email'): typeof globalThis.fetch {
+function oauthFetch(
+  scope = 'chat:write,im:write,users:read,users:read.email',
+): typeof globalThis.fetch {
   return (async () =>
     new Response(
       JSON.stringify({
@@ -66,11 +68,17 @@ async function mapConnectingUser(): Promise<void> {
     new Response(
       JSON.stringify({
         ok: true,
-        user: {
-          id: 'U0123',
-          real_name: 'Ada Admin',
-          profile: { email: workspace.adminUser.email, display_name: 'Ada' },
-        },
+        members: [
+          {
+            id: 'U0123',
+            deleted: false,
+            is_bot: false,
+            is_app_user: false,
+            real_name: 'Ada Admin',
+            profile: { email: workspace.adminUser.email, display_name: 'Ada' },
+          },
+        ],
+        response_metadata: { next_cursor: '' },
       }),
       { status: 200 },
     )) as unknown as typeof globalThis.fetch;
@@ -93,16 +101,31 @@ describe.serial('completeSlackInstall', () => {
     else process.env['SLACK_ENABLED'] = originalSlackEnabled;
   });
 
-  it('persists the granted scopes and maps the connecting user', async () => {
+  it('persists the granted scopes and maps every current workspace member', async () => {
+    const teammate = await addMember(workspace, 'member', { name: 'Grace Member' });
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
           ok: true,
-          user: {
-            id: 'U0123',
-            real_name: 'Ada Admin',
-            profile: { email: workspace.adminUser.email, display_name: 'Ada' },
-          },
+          members: [
+            {
+              id: 'U0123',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Ada Admin',
+              profile: { email: workspace.adminUser.email, display_name: 'Ada' },
+            },
+            {
+              id: 'U0456',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Grace Member',
+              profile: { email: teammate.user.email, display_name: 'Grace' },
+            },
+          ],
+          response_metadata: { next_cursor: '' },
         }),
         { status: 200 },
       )) as unknown as typeof globalThis.fetch;
@@ -113,14 +136,17 @@ describe.serial('completeSlackInstall', () => {
       .select()
       .from(schema.integration)
       .where(eq(schema.integration.organizationId, workspace.organizationId));
-    const [mapping] = await db
+    const mappings = await db
       .select()
       .from(schema.slackUserMapping)
       .where(eq(schema.slackUserMapping.organizationId, workspace.organizationId));
 
     expect(savedIntegration).toMatchObject({
       externalId: 'default',
-      config: { scopes: ['chat:write', 'im:write', 'users:read.email'], slackTeamId: 'T0123' },
+      config: {
+        scopes: ['chat:write', 'im:write', 'users:read', 'users:read.email'],
+        slackTeamId: 'T0123',
+      },
     });
     expect(hasSlackBotToken(savedIntegration?.credentials)).toBe(true);
     expect(JSON.stringify(savedIntegration?.credentials)).not.toContain('xoxb-test');
@@ -130,20 +156,25 @@ describe.serial('completeSlackInstall', () => {
         integrationId: savedIntegration?.id ?? '',
       }),
     ).toBe('xoxb-test');
-    expect(mapping).toMatchObject({
-      integrationId: savedIntegration?.id,
-      userId: workspace.adminUser.id,
-      slackUserId: 'U0123',
-    });
+    expect(
+      mappings
+        .map((mapping) => ({ userId: mapping.userId, slackUserId: mapping.slackUserId }))
+        .sort((left, right) => left.userId.localeCompare(right.userId)),
+    ).toEqual(
+      [
+        { userId: workspace.adminUser.id, slackUserId: 'U0123' },
+        { userId: teammate.user.id, slackUserId: 'U0456' },
+      ].sort((left, right) => left.userId.localeCompare(right.userId)),
+    );
   });
 
-  it('keeps the installation connected when Slack cannot find the user', async () => {
+  it('surfaces a directory sync failure while keeping the installation connected', async () => {
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ ok: false, error: 'users_not_found' }), {
+      new Response(JSON.stringify({ ok: false, error: 'internal_error' }), {
         status: 200,
       })) as unknown as typeof globalThis.fetch;
 
-    await expect(complete()).resolves.toBeUndefined();
+    await expect(complete()).rejects.toThrow(/internal_error/);
 
     const integrations = await db
       .select()
@@ -157,11 +188,13 @@ describe.serial('completeSlackInstall', () => {
     expect(mappings).toHaveLength(0);
   });
 
-  it('clears a stale installer mapping when Slack no longer finds the user', async () => {
+  it('clears stale mappings after a complete directory has no match', async () => {
     await mapConnectingUser();
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ ok: false, error: 'users_not_found' }), {
-        status: 200,
+      Response.json({
+        ok: true,
+        members: [],
+        response_metadata: { next_cursor: '' },
       })) as unknown as typeof globalThis.fetch;
 
     await complete();
@@ -176,24 +209,26 @@ describe.serial('completeSlackInstall', () => {
     );
   });
 
-  it('clears a stale installer mapping when Slack lookup fails', async () => {
+  it('retains the previous mapping snapshot when the Slack directory request fails', async () => {
     await mapConnectingUser();
     globalThis.fetch = Object.assign(
       (..._args: Parameters<typeof globalThis.fetch>) =>
-        Promise.reject(new Error('Slack lookup unavailable')),
+        Promise.reject(new Error('Slack directory unavailable')),
       { preconnect: globalThis.fetch.preconnect },
     ) satisfies typeof globalThis.fetch;
 
-    await expect(complete()).resolves.toBeUndefined();
+    await expect(complete()).rejects.toThrow('Slack directory unavailable');
 
     const mappings = await db
       .select()
       .from(schema.slackUserMapping)
       .where(eq(schema.slackUserMapping.organizationId, workspace.organizationId));
-    expect(mappings).toEqual([]);
-    expect(await slackDmAvailable(db, workspace.organizationId, workspace.adminUser.id)).toBe(
-      false,
-    );
+    expect(mappings).toHaveLength(1);
+    expect(mappings[0]).toMatchObject({
+      userId: workspace.adminUser.id,
+      slackUserId: 'U0123',
+    });
+    expect(await slackDmAvailable(db, workspace.organizationId, workspace.adminUser.id)).toBe(true);
   });
 
   it('rejects an OAuth response without a team before changing the installation', async () => {
@@ -245,6 +280,12 @@ describe.serial('completeSlackInstall', () => {
         config: { scopes: ['chat:write'], slackTeamId: 'T0123' },
       })
       .returning();
+    globalThis.fetch = (async () =>
+      Response.json({
+        ok: true,
+        members: [],
+        response_metadata: { next_cursor: '' },
+      })) as unknown as typeof globalThis.fetch;
 
     await complete();
 
@@ -256,7 +297,10 @@ describe.serial('completeSlackInstall', () => {
     expect(integrations[0]).toMatchObject({
       id: legacy?.id,
       externalId: 'default',
-      config: { scopes: ['chat:write', 'im:write', 'users:read.email'], slackTeamId: 'T0123' },
+      config: {
+        scopes: ['chat:write', 'im:write', 'users:read', 'users:read.email'],
+        slackTeamId: 'T0123',
+      },
     });
     expect(JSON.stringify(integrations[0]?.credentials)).not.toContain('xoxb-test');
     expect(
@@ -267,7 +311,7 @@ describe.serial('completeSlackInstall', () => {
     ).toBe('xoxb-test');
   });
 
-  it('does not persist a stale team mapping from a concurrent OAuth install', async () => {
+  it('does not persist a stale mapping from an older same-team OAuth install', async () => {
     const newerAdmin = await addMember(workspace, 'admin', { name: 'Grace Admin' });
     const oldLookupStarted = deferred();
     const releaseOldLookup = deferred();
@@ -278,20 +322,32 @@ describe.serial('completeSlackInstall', () => {
         await releaseOldLookup.promise;
         return Response.json({
           ok: true,
-          user: {
-            id: 'U-old-team',
-            real_name: 'Ada Admin',
-            profile: { email: workspace.adminUser.email, display_name: 'Ada' },
-          },
+          members: [
+            {
+              id: 'U-old-team',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Ada Admin',
+              profile: { email: workspace.adminUser.email, display_name: 'Ada' },
+            },
+          ],
+          response_metadata: { next_cursor: '' },
         });
       }
       return Response.json({
         ok: true,
-        user: {
-          id: 'U-new-team',
-          real_name: 'Grace Admin',
-          profile: { email: newerAdmin.user.email, display_name: 'Grace' },
-        },
+        members: [
+          {
+            id: 'U-new-team',
+            deleted: false,
+            is_bot: false,
+            is_app_user: false,
+            real_name: 'Grace Admin',
+            profile: { email: newerAdmin.user.email, display_name: 'Grace' },
+          },
+        ],
+        response_metadata: { next_cursor: '' },
       });
     }) as unknown as typeof globalThis.fetch;
 
@@ -302,7 +358,7 @@ describe.serial('completeSlackInstall', () => {
       redirectUri: 'https://orbit.test/api/integrations/slack/callback',
       clientId: 'client-id',
       clientSecret: 'client-secret',
-      fetch: teamOAuthFetch('T-old', 'xoxb-old-team'),
+      fetch: teamOAuthFetch('T-same', 'xoxb-old-team'),
     });
     await oldLookupStarted.promise;
     await completeSlackInstall({
@@ -312,7 +368,7 @@ describe.serial('completeSlackInstall', () => {
       redirectUri: 'https://orbit.test/api/integrations/slack/callback',
       clientId: 'client-id',
       clientSecret: 'client-secret',
-      fetch: teamOAuthFetch('T-new', 'xoxb-new-team'),
+      fetch: teamOAuthFetch('T-same', 'xoxb-new-team'),
     });
     releaseOldLookup.resolve();
     await olderInstall;
@@ -329,7 +385,7 @@ describe.serial('completeSlackInstall', () => {
     expect(integrations[0]).toMatchObject({
       externalId: 'default',
       connectedById: newerAdmin.user.id,
-      config: { slackTeamId: 'T-new' },
+      config: { slackTeamId: 'T-same' },
     });
     expect(
       decryptSlackBotToken(integrations[0]?.credentials, {
@@ -424,7 +480,11 @@ describe.serial('completeSlackInstall', () => {
   it('rejects a Slack team claimed by another Orbit workspace', async () => {
     const other = await createWorkspace('slack-team-owner');
     globalThis.fetch = (async () =>
-      Response.json({ ok: false, error: 'users_not_found' })) as unknown as typeof globalThis.fetch;
+      Response.json({
+        ok: true,
+        members: [],
+        response_metadata: { next_cursor: '' },
+      })) as unknown as typeof globalThis.fetch;
     await completeSlackInstall({
       organizationId: other.organizationId,
       userId: other.adminUser.id,

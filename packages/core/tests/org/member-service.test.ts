@@ -128,6 +128,63 @@ describe('updateMemberRole', () => {
 });
 
 describe('removeMember', () => {
+  it('removes the Slack identity bound to the workspace membership', async () => {
+    const { user } = await addMember(workspace, 'member');
+    const localMemberId = await memberIdFor(user.id);
+    const integrationId = newId();
+    await db.insert(schema.integration).values({
+      id: integrationId,
+      organizationId: workspace.organizationId,
+      provider: 'slack',
+      externalId: 'default',
+      connectedById: workspace.admin.userId,
+      credentials: { botToken: 'xoxb-member-removal' },
+      config: { scopes: ['chat:write', 'im:write'] },
+    });
+    await db.insert(schema.slackUserMapping).values({
+      id: newId(),
+      organizationId: workspace.organizationId,
+      integrationId,
+      userId: user.id,
+      slackUserId: 'U-REMOVED',
+      slackDisplayName: 'Removed member',
+    });
+    const other = await createWorkspace('Other');
+    await db.insert(schema.member).values({
+      id: newId(),
+      organizationId: other.organizationId,
+      userId: user.id,
+      role: 'member',
+    });
+    const otherIntegrationId = newId();
+    await db.insert(schema.integration).values({
+      id: otherIntegrationId,
+      organizationId: other.organizationId,
+      provider: 'slack',
+      externalId: 'default',
+      connectedById: other.admin.userId,
+      credentials: { botToken: 'xoxb-other-member' },
+      config: { scopes: ['chat:write', 'im:write'] },
+    });
+    await db.insert(schema.slackUserMapping).values({
+      id: newId(),
+      organizationId: other.organizationId,
+      integrationId: otherIntegrationId,
+      userId: user.id,
+      slackUserId: 'U-OTHER',
+      slackDisplayName: 'Other workspace member',
+    });
+
+    await removeMember(workspace.admin, localMemberId);
+
+    expect(
+      await db
+        .select({ organizationId: schema.slackUserMapping.organizationId })
+        .from(schema.slackUserMapping)
+        .where(eq(schema.slackUserMapping.userId, user.id)),
+    ).toEqual([{ organizationId: other.organizationId }]);
+  });
+
   it('unassigns their open issues and drops team memberships', async () => {
     const { user } = await addMember(workspace, 'member');
     const { issue } = await createIssue(workspace.admin, {

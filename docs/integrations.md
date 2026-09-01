@@ -219,14 +219,16 @@ Slack integration behavior:
   replacement claim becomes authoritative, and a late worker cannot finalize
   the superseded attempt. The scheduled worker runs every minute, takes small
   concurrent batches, and stops claiming new work before its runtime deadline.
-- **Current mapping behavior.** OAuth maps only the Orbit user who completes
-  **Connect**, by matching their Orbit email with Slack. Other workspace members
-  remain unmapped, so they keep their other enabled notification channels and
-  cannot enable Slack DMs.
-- **Known mapping gap.** There is currently no administrator mapping screen,
-  workspace-wide backfill, or per-user fallback linking flow. Those are separate
-  follow-up work and are not prerequisites for delivery to users who are
-  already mapped.
+- **Member mapping.** OAuth loads the complete Slack user directory before it
+  maps every current Orbit workspace member whose normalized email has exactly
+  one matching active human Slack user. Ambiguous emails remain unmapped so a
+  private notification cannot be routed to an arbitrary account.
+- **Member resynchronization.** Workspace admins can use **Sync Slack members**
+  in integration settings to refresh a healthy connection without repeating
+  OAuth. Connections with missing directory scopes, unusable credentials, or a
+  reauthorization requirement must reconnect first. Orbit replaces the mapping
+  snapshot atomically only after every Slack directory page succeeds. The
+  settings panel reports how many current workspace members are matched.
 
 ### Note on GitHub sign-in
 

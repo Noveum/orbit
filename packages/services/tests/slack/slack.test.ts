@@ -348,36 +348,394 @@ describe('SlackClient', () => {
     }
   });
 
-  it('looks up a Slack user by email', async () => {
-    const { impl, calls } = stubFetch(200, {
-      ok: true,
-      user: {
-        id: 'U1',
-        real_name: 'Ada Lovelace',
-        profile: { email: 'ADA@example.com', display_name: 'ada' },
-      },
+  it('lists every active human Slack user across pages', async () => {
+    const calls: { url: string; init: FetchInit }[] = [];
+    const impl = asFetchImpl((input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith('cursor=next-page')) {
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U2',
+                deleted: false,
+                is_bot: false,
+                real_name: 'Grace Hopper',
+                profile: { email: ' GRACE@EXAMPLE.COM ', display_name: '' },
+              },
+              {
+                id: 'U-DELETED',
+                deleted: true,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'Former User',
+                profile: { email: 'former@example.com', display_name: 'Former' },
+              },
+              {
+                id: 'U-APP',
+                deleted: false,
+                is_bot: false,
+                is_app_user: true,
+                real_name: 'App User',
+                profile: { email: 'app@example.com', display_name: 'App' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          members: [
+            {
+              id: 'U1',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Ada Lovelace',
+              profile: { email: 'ADA@example.com', display_name: 'ada' },
+            },
+            {
+              id: 'U-BOT',
+              deleted: false,
+              is_bot: true,
+              is_app_user: false,
+              real_name: 'Build Bot',
+              profile: { email: 'bot@example.com', display_name: 'Build' },
+            },
+            {
+              id: 'U-GUEST',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              is_restricted: true,
+              real_name: 'Workspace Guest',
+              profile: { email: 'guest@example.com', display_name: 'Guest' },
+            },
+            {
+              id: 'U-NO-EMAIL',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'No Email',
+              profile: { display_name: 'Mystery' },
+            },
+            {
+              id: 'U-NULL-EMAIL',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Null Email',
+              profile: { email: null, display_name: 'Null' },
+            },
+            {
+              id: 'U-BAD-EMAIL',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Bad Email',
+              profile: { email: 'not-an-email', display_name: 'Bad' },
+            },
+            {
+              id: 'U-SPARSE',
+              is_bot: false,
+              real_name: 'Sparse User',
+              profile: { email: 'sparse@example.com', display_name: 'Sparse' },
+            },
+            {
+              id: 'U-UNCLASSIFIED',
+              deleted: false,
+              real_name: 'Unclassified User',
+              profile: { email: 'unclassified@example.com', display_name: 'Unclassified' },
+            },
+            {
+              id: 'U-NULL-PROFILE',
+              deleted: false,
+              is_bot: false,
+              profile: null,
+            },
+          ],
+          response_metadata: { next_cursor: 'next-page' },
+        }),
+      );
     });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
 
-    await expect(client.lookupUserByEmail('ADA@example.com')).resolves.toEqual({
-      id: 'U1',
-      email: 'ADA@example.com',
-      displayName: 'ada',
-    });
-    expect(calls[0]?.url).toBe('https://slack.com/api/users.lookupByEmail');
-    expect(calls[0]?.init?.body).toContain('ADA@example.com');
+    await expect(client.listUsers()).resolves.toEqual([
+      { id: 'U1', email: 'ada@example.com', displayName: 'ada' },
+      { id: 'U-GUEST', email: 'guest@example.com', displayName: 'Guest' },
+      { id: 'U-SPARSE', email: 'sparse@example.com', displayName: 'Sparse' },
+      { id: 'U2', email: 'grace@example.com', displayName: 'Grace Hopper' },
+    ]);
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://slack.com/api/users.list?limit=200',
+      'https://slack.com/api/users.list?limit=200&cursor=next-page',
+    ]);
+    expect(calls.every((call) => call.init?.method === 'GET')).toBe(true);
+    expect(calls.every((call) => call.init?.body === undefined)).toBe(true);
   });
 
-  it('treats an unmapped Slack email as unavailable', async () => {
-    const { impl } = stubFetch(200, { ok: false, error: 'users_not_found' });
+  it('skips structurally malformed Slack members while retaining valid members', async () => {
+    const { impl } = stubFetch(200, {
+      ok: true,
+      members: [
+        {
+          id: 'U1',
+          deleted: false,
+          is_bot: false,
+          profile: { email: 'ada@example.com', display_name: 'Ada' },
+        },
+        null,
+        {
+          id: 42,
+          deleted: false,
+          is_bot: false,
+          profile: { email: 'wrong-id@example.com', display_name: 'Wrong Id' },
+        },
+        {
+          id: 'U-BROKEN-PROFILE',
+          deleted: false,
+          is_bot: false,
+          profile: 'not-an-object',
+        },
+        {
+          id: 'U2',
+          deleted: false,
+          is_bot: false,
+          profile: { email: 'grace@example.com', display_name: 'Grace' },
+        },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
-    await expect(client.lookupUserByEmail('missing@example.com')).resolves.toBeNull();
+
+    await expect(client.listUsers()).resolves.toEqual([
+      { id: 'U1', email: 'ada@example.com', displayName: 'Ada' },
+      { id: 'U2', email: 'grace@example.com', displayName: 'Grace' },
+    ]);
   });
 
   it('returns a null cursor when slack sends an empty one', async () => {
     const { impl } = stubFetch(200, { ok: true, channels: [], response_metadata: {} });
     const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
     expect((await client.listConversations()).nextCursor).toBeNull();
+  });
+
+  it('rejects a repeated Slack user cursor instead of looping', async () => {
+    let calls = 0;
+    const impl = asFetchImpl(() => {
+      calls += 1;
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          members: [],
+          response_metadata: { next_cursor: 'repeat-me' },
+        }),
+      );
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.listUsers()).rejects.toThrow('repeated cursor');
+    expect(calls).toBe(2);
+  });
+
+  it('bounds a Slack directory with endlessly unique cursors by elapsed time', async () => {
+    let calls = 0;
+    let now = 0;
+    const realDateNow = Date.now;
+    Date.now = () => now;
+    const impl = asFetchImpl(() => {
+      calls += 1;
+      now += 15_001;
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          members: [],
+          response_metadata: { next_cursor: `cursor-${calls}` },
+        }),
+      );
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    try {
+      await expect(client.listUsers()).rejects.toThrow('safe duration limit');
+      expect(calls).toBe(2);
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
+
+  it('stops before requesting a page beyond the configured directory page limit', async () => {
+    let calls = 0;
+    const impl = asFetchImpl(() => {
+      calls += 1;
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          members: [],
+          response_metadata: { next_cursor: calls < 3 ? `cursor-${calls}` : '' },
+        }),
+      );
+    });
+    const client = new SlackClient({
+      token: 'xoxb-test',
+      fetch: impl,
+      userDirectoryPageLimit: 2,
+    });
+
+    await expect(client.listUsers()).rejects.toThrow('safe page limit');
+    expect(calls).toBe(2);
+  });
+
+  it('retries one rate-limited page in the middle of a Slack directory', async () => {
+    const urls: string[] = [];
+    let calls = 0;
+    const impl = asFetchImpl((input) => {
+      calls += 1;
+      urls.push(String(input));
+      if (calls === 1) {
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U1',
+                deleted: false,
+                is_bot: false,
+                profile: { email: 'ada@example.com', display_name: 'Ada' },
+              },
+            ],
+            response_metadata: { next_cursor: 'next-page' },
+          }),
+        );
+      }
+      if (calls === 2) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+            status: 429,
+            headers: { 'content-type': 'application/json', 'retry-after': '0' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          members: [
+            {
+              id: 'U2',
+              deleted: false,
+              is_bot: false,
+              profile: { email: 'grace@example.com', display_name: 'Grace' },
+            },
+          ],
+          response_metadata: { next_cursor: '' },
+        }),
+      );
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.listUsers()).resolves.toEqual([
+      { id: 'U1', email: 'ada@example.com', displayName: 'Ada' },
+      { id: 'U2', email: 'grace@example.com', displayName: 'Grace' },
+    ]);
+    expect(urls).toEqual([
+      'https://slack.com/api/users.list?limit=200',
+      'https://slack.com/api/users.list?limit=200&cursor=next-page',
+      'https://slack.com/api/users.list?limit=200&cursor=next-page',
+    ]);
+  });
+
+  it('allows only one rate-limit retry for an entire Slack directory', async () => {
+    let calls = 0;
+    const impl = asFetchImpl(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [],
+            response_metadata: { next_cursor: 'next-page' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '0' },
+        }),
+      );
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.listUsers()).rejects.toMatchObject({ code: 'ratelimited' });
+    expect(calls).toBe(3);
+  });
+
+  it('does not retry a rate limit beyond the Slack directory time budget', async () => {
+    let calls = 0;
+    const impl = asFetchImpl(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [],
+            response_metadata: { next_cursor: 'next-page' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '31' },
+        }),
+      );
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.listUsers()).rejects.toMatchObject({ code: 'ratelimited' });
+    expect(calls).toBe(2);
+  });
+
+  it('does not retry a rate limit without Retry-After guidance', async () => {
+    let calls = 0;
+    const impl = asFetchImpl(() => {
+      calls += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    });
+    const client = new SlackClient({ token: 'xoxb-test', fetch: impl });
+
+    await expect(client.listUsers()).rejects.toMatchObject({
+      code: 'ratelimited',
+      retryAfterMs: undefined,
+    });
+    expect(calls).toBe(1);
+  });
+
+  it('rejects incomplete successful Slack directory pages', async () => {
+    const payloads = [{ ok: true }, { ok: true, members: [] }];
+
+    for (const payload of payloads) {
+      const client = new SlackClient({ token: 'xoxb-test', fetch: stubFetch(200, payload).impl });
+      await expect(client.listUsers()).rejects.toThrow('unexpected payload');
+    }
+  });
+
+  it('keeps Slack directory errors distinguishable from incomplete successes', async () => {
+    const client = new SlackClient({
+      token: 'xoxb-test',
+      fetch: stubFetch(200, { ok: false, error: 'invalid_auth' }).impl,
+    });
+
+    await expect(client.listUsers()).rejects.toMatchObject({ code: 'invalid_auth' });
   });
 
   it('throws on a slack level error', async () => {

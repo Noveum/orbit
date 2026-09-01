@@ -9,7 +9,11 @@ import {
   notifyMany,
 } from '@orbit/services/notifications';
 import { escapeSlackText, SlackApiError } from '@orbit/services/slack';
-import { dispatchSlackDmResult, SlackDmDispatchError } from '@orbit/services/slack/dispatch';
+import {
+  dispatchSlackDmResult,
+  isSlackReauthorizationError,
+  SlackDmDispatchError,
+} from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
@@ -206,15 +210,7 @@ async function finalizeSlackDmFailure(
   let code = '';
   if (error instanceof SlackDmDispatchError) code = error.slackCode ?? '';
   else if (cause instanceof SlackApiError) code = cause.code;
-  if (
-    [
-      'invalid_auth',
-      'account_inactive',
-      'credential_unavailable',
-      'missing_scope',
-      'token_revoked',
-    ].includes(code)
-  ) {
+  if (code === 'credential_unavailable' || isSlackReauthorizationError(cause)) {
     const reauthorizationMarked = await markSlackReauthorizationRequired(
       database,
       organizationId,

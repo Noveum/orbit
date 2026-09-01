@@ -8,7 +8,8 @@ export function slackConnectStatusOf(value: unknown): SlackConnectStatus | null 
 
 const MESSAGES: Record<SlackConnectStatus, string> = {
   connected: 'Slack is connected. Invite the Orbit bot to a channel, then map it below.',
-  error: 'Orbit could not finish connecting to Slack. Start the connection again.',
+  error:
+    'Orbit could not finish Slack setup. If Slack appears connected below, sync its members; otherwise reconnect it.',
   denied: 'You no longer have permission to connect Slack to this workspace.',
   claimed:
     'That Slack workspace is already connected to another Orbit workspace. Disconnect it there first, or connect a different Slack workspace.',

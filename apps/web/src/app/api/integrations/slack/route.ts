@@ -2,13 +2,15 @@ import { and, db, eq, schema } from '@orbit/db';
 import {
   connectCanonicalSlackChannel,
   disconnectSlackChannel,
+  isSlackReauthorizationError,
   listSlackConversations,
+  SlackApiError,
+  syncSlackUserMappings,
 } from '@orbit/services';
 import { hasSlackBotToken } from '@orbit/services/slack/credentials';
-import { validationFailed } from '@orbit/shared/errors';
+import { conflict, rateLimited, validationFailed } from '@orbit/shared/errors';
 import { assertCan } from '@orbit/shared/policy';
-import { slackConnectChannelSchema, slackDisconnectChannelSchema } from '@orbit/shared/validators';
-import { z } from 'zod';
+import { slackIntegrationActionSchema } from '@orbit/shared/validators';
 import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
 import {
   slackIntegrationEnabledForOrganization,
@@ -16,11 +18,6 @@ import {
   slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
 import { assertTeamInWorkspace } from '@/lib/workspace.ts';
-
-const requestSchema = z.discriminatedUnion('action', [
-  slackConnectChannelSchema.extend({ action: z.literal('connect') }),
-  slackDisconnectChannelSchema.extend({ action: z.literal('disconnect') }),
-]);
 
 export async function GET(): Promise<Response> {
   if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
@@ -72,7 +69,11 @@ export async function POST(request: Request): Promise<Response> {
     if (!slackIntegrationEnabledForOrganization(principal.organizationId))
       return slackIntegrationUnavailable();
     assertCan(principal, 'integration:manage');
-    const input = requestSchema.parse(await readJson(request));
+    const input = slackIntegrationActionSchema.parse(await readJson(request));
+
+    if (input.action === 'sync_members') {
+      return await syncSlackMembers(principal.organizationId, principal.userId);
+    }
 
     if (input.action === 'connect') {
       if (input.teamId !== null) await assertTeamInWorkspace(principal, input.teamId);
@@ -89,6 +90,28 @@ export async function POST(request: Request): Promise<Response> {
     const removed = await disconnectSlackChannel(db, { integrationId, channelId: input.channelId });
     return { removed };
   });
+}
+
+async function syncSlackMembers(
+  organizationId: string,
+  userId: string,
+): Promise<{ readonly eligible: number; readonly mapped: number }> {
+  let result: Awaited<ReturnType<typeof syncSlackUserMappings>>;
+  try {
+    result = await syncSlackUserMappings(db, { organizationId, userId });
+  } catch (error) {
+    if (error instanceof SlackApiError && error.code === 'ratelimited') {
+      throw rateLimited('Slack is busy. Try syncing members again shortly.');
+    }
+    if (isSlackReauthorizationError(error)) {
+      throw validationFailed('Reconnect Slack before syncing members.');
+    }
+    throw error;
+  }
+  if (result.status === 'stale') {
+    throw conflict('Slack changed while members were syncing. Try again.');
+  }
+  return { eligible: result.eligibleMembers, mapped: result.mappedMembers };
 }
 
 async function slackIntegrationId(organizationId: string): Promise<string> {
