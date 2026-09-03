@@ -1,0 +1,58 @@
+name: Publish MCP Registry
+
+on:
+  pull_request:
+    paths:
+      - server.json
+      - .github/workflows/publish-mcp-registry.yml
+  push:
+    branches:
+      - main
+    paths:
+      - server.json
+      - .github/workflows/publish-mcp-registry.yml
+  workflow_dispatch:
+
+concurrency:
+  group: publish-mcp-registry-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate-and-publish:
+    name: Validate and publish Orbit MCP metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install verified MCP publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+        run: |
+          set -euo pipefail
+          ARCHIVE="mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$ARCHIVE" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${ARCHIVE}"
+          echo "${MCP_PUBLISHER_SHA256}  ${ARCHIVE}" | sha256sum --check --strict
+          tar -xzf "$ARCHIVE" mcp-publisher
+          ./mcp-publisher --help >/dev/null
+
+      - name: Validate registry manifest
+        run: ./mcp-publisher validate
+
+      - name: Authenticate with GitHub OIDC
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish Orbit
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: ./mcp-publisher publish
