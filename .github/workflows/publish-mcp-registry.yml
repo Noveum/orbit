@@ -37,6 +37,9 @@ jobs:
           tar -xzf "$ARCHIVE" mcp-publisher
           ./mcp-publisher --help >/dev/null
 
+      - name: Validate registry manifest
+        run: ./mcp-publisher validate
+
       - name: Authenticate with GitHub OIDC
         run: ./mcp-publisher login github-oidc
 
