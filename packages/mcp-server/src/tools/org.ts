@@ -51,6 +51,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       description:
         'Create a team with its own issue prefix, default workflow states and first sprint.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         name: z.string().trim().min(2).max(64).describe('Team name.'),
         key: z
@@ -104,6 +105,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Add somebody to a team',
       description: 'Put a workspace member on a team so they see its issues and sprints.',
       readOnly: false,
+      destructive: false,
       inputSchema: { team: teamRef, person: personRef },
     },
     async (args) => {
@@ -122,6 +124,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Remove somebody from a team',
       description: 'Take a person off a team. They stay in the workspace.',
       readOnly: false,
+      destructive: true,
       inputSchema: { team: teamRef, person: personRef },
     },
     async (args) => {
@@ -140,6 +143,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       description:
         'Remove a member from the workspace entirely. Their issues can be reassigned to somebody else in the same call.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         person: personRef,
         reassignTo: personRef.optional().describe('Who inherits their open issues.'),
@@ -193,6 +197,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Create a saved view',
       description: VIEW_FILTER_GUIDE,
       readOnly: false,
+      destructive: false,
       inputSchema: {
         name: z.string().trim().min(1).max(120).describe('View name.'),
         filter: z.record(z.string(), z.unknown()).describe(VIEW_FILTER_HINT),
@@ -264,6 +269,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Delete a saved view',
       description: 'Remove a saved view.',
       readOnly: false,
+      destructive: true,
       inputSchema: { view: z.string().min(1).describe('View name or id.') },
     },
     async (args) => {

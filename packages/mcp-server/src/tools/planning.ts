@@ -72,6 +72,7 @@ function registerProjectTools(server: McpServer, principal: Principal): void {
       description:
         'Create a project and optionally attach it to one or more teams. Requires a role that can manage projects.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         name: z.string().min(2).max(120).describe('Project name.'),
         summary: z.string().max(500).optional().describe('One line summary.'),

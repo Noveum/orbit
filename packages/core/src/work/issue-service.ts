@@ -2326,17 +2326,19 @@ export async function setRelation(
       .onConflictDoNothing()
       .returning();
 
-    await appendActivities(tx, [
-      {
-        organizationId: principal.organizationId,
-        issueId: source.id,
-        actor,
-        field: 'relation',
-        from: null,
-        to: `${parsed.type} ${target.identifier}`,
-        syncId,
-      },
-    ]);
+    if (relations.length > 0) {
+      await appendActivities(tx, [
+        {
+          organizationId: principal.organizationId,
+          issueId: source.id,
+          actor,
+          field: 'relation',
+          from: null,
+          to: `${parsed.type} ${target.identifier}`,
+          syncId,
+        },
+      ]);
+    }
 
     return {
       relations,
