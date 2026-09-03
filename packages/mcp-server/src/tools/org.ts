@@ -80,6 +80,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Update a team',
       description: 'Rename a team or change its description. The issue prefix cannot change.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         team: teamRef,
         name: z.string().trim().min(2).max(64).optional(),
@@ -122,6 +123,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Remove somebody from a team',
       description: 'Take a person off a team. They stay in the workspace.',
       readOnly: false,
+      destructive: true,
       inputSchema: { team: teamRef, person: personRef },
     },
     async (args) => {
@@ -140,6 +142,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       description:
         'Remove a member from the workspace entirely. Their issues can be reassigned to somebody else in the same call.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         person: personRef,
         reassignTo: personRef.optional().describe('Who inherits their open issues.'),
@@ -228,6 +231,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       description:
         'Rename a saved view, change its layout or grouping, share it, or replace the filter it stores. Read the view first with list_views and send the whole filter state back, because a filter replaces the stored one rather than merging into it.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         view: z.string().min(1).describe('View name or id.'),
         name: z.string().trim().min(1).max(120).optional(),
@@ -264,6 +268,7 @@ export function registerOrgTools(server: McpServer, principal: Principal): void 
       title: 'Delete a saved view',
       description: 'Remove a saved view.',
       readOnly: false,
+      destructive: true,
       inputSchema: { view: z.string().min(1).describe('View name or id.') },
     },
     async (args) => {

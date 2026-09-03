@@ -145,6 +145,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
       description:
         'Change fields on an existing issue. Only the fields you pass are touched. Pass null to assignee, project or cycle to clear it, or an empty reviewers array to clear the reviewer list.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         issue: issueRef,
         title: z.string().min(1).max(255).optional(),
@@ -583,6 +584,7 @@ function registerSetRelation(server: McpServer, principal: Principal): void {
       description:
         'Link two issues. The inverse link is written on the other issue automatically, so "blocks" also records "blocked by".',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         issue: issueRef,
         relatedIssue: issueRef.describe('The issue on the other end of the link.'),
@@ -616,6 +618,7 @@ function registerRemoveRelation(server: McpServer, principal: Principal): void {
       description:
         'Remove a link between two issues. The inverse link on the other issue goes with it, so removing "blocks" also removes "blocked by".',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         issue: issueRef,
         relatedIssue: issueRef.describe('The issue on the other end of the link.'),

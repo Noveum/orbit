@@ -180,6 +180,7 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
       description:
         'Put an issue into a sprint, or pass null to take it out of the sprint it is in. The sprint must belong to the issue team.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         issue: z.string().min(1).describe('Issue identifier like "ENG-42", or an issue id.'),
         cycle: z

@@ -270,6 +270,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Change a document title, body, collection, parent, project or visibility. Only the fields you pass are touched. Filing a document under a collection detaches it from any project, and attaching it to a project unfiles it.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         doc: docRef,
         title: z.string().trim().min(1).max(200).optional(),
@@ -326,6 +327,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Archive a document so it leaves the sidebar and the default listings. The content is kept.',
       readOnly: false,
+      destructive: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
@@ -383,6 +385,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Edit a document comment',
       description: 'Rewrite the body of a comment this user wrote on a document.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         commentId: z.string().min(1).describe('The comment id.'),
         body: z.string().min(1).max(50_000).describe('Replacement Markdown body.'),
@@ -402,6 +405,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Delete a document comment',
       description: 'Remove a comment from a document.',
       readOnly: false,
+      destructive: true,
       inputSchema: { commentId: z.string().min(1).describe('The comment id.') },
     },
     async (args) => {
@@ -464,6 +468,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Rename a document collection',
       description: 'Change the name or the icon of a folder.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         collection: collectionRef,
         name: z.string().trim().min(1).max(120).optional().describe('New collection name.'),
@@ -493,8 +498,9 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       name: 'delete_doc_collection',
       title: 'Delete a document collection',
       description:
-        'Deletes a document collection. The documents inside are never deleted: they move to reassignTo, or become unfiled when you leave it out. This action is refused if the folder holds a document you cannot write.',
+        'Delete a folder. The documents inside stay in the workspace but lose their collection link unless you reassign them to another collection.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         collection: collectionRef,
         reassignTo: collectionRef
@@ -522,6 +528,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'File a document under a collection, nest it under a parent, attach it to a project, or order it against its siblings. One call for what dragging it in the sidebar does.',
       readOnly: false,
+      idempotent: true,
       inputSchema: {
         doc: docRef,
         collection: collectionRef
@@ -606,6 +613,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Delete a document permanently. Pages nested under it are lifted to its own place rather than deleted. Use archive_doc to hide a document instead of destroying it.',
       readOnly: false,
+      destructive: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
