@@ -5,14 +5,56 @@
   "description": "Task management for people and AI agents, with scoped OAuth access to issues, projects, and docs.",
   "repository": {
     "url": "https://github.com/Noveum/orbit",
-    "source": "github"
+    "source": "github",
+    "id": "1308968229",
+    "subfolder": "packages/mcp-server"
   },
   "websiteUrl": "https://orbit.noveum.ai",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/Noveum/orbit/main/apps/web/public/logo.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ],
   "version": "0.1.0",
   "remotes": [
     {
       "type": "streamable-http",
       "url": "https://orbit.noveum.ai/mcp"
     }
-  ]
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "publisher": "Noveum AI",
+      "documentation": "https://github.com/Noveum/orbit/blob/main/docs/mcp.md",
+      "support": "https://github.com/Noveum/orbit/discussions",
+      "keywords": [
+        "task-management",
+        "project-management",
+        "issues",
+        "sprints",
+        "docs",
+        "productivity",
+        "oauth",
+        "mcp"
+      ],
+      "examples": [
+        {
+          "name": "Plan and update work",
+          "description": "Create, assign, prioritize, and update issues across teams and sprints."
+        },
+        {
+          "name": "Summarize delivery",
+          "description": "Summarize completed work, blockers, sprint progress, and project status."
+        },
+        {
+          "name": "Work with project docs",
+          "description": "Read, create, update, comment on, and attach files to Orbit docs."
+        }
+      ]
+    }
+  }
 }
