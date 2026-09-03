@@ -368,6 +368,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Comment on a document',
       description: 'Add a Markdown comment to a document.',
       readOnly: false,
+      destructive: false,
       inputSchema: { doc: docRef, body: z.string().min(1).max(50_000).describe('Markdown body.') },
     },
     async (args) => {
@@ -446,6 +447,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Create a document collection',
       description: 'Create a folder that documents can be filed under.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         name: z.string().trim().min(1).max(120).describe('Collection name.'),
         icon: z.string().trim().min(1).max(32).optional().describe('Lucide icon name.'),

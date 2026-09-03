@@ -88,7 +88,7 @@ export function defineTool<Shape extends z.ZodRawShape>(
       annotations: {
         title: config.title,
         readOnlyHint: config.readOnly,
-        destructiveHint: config.destructive ?? false,
+        destructiveHint: config.destructive ?? !config.readOnly,
         idempotentHint: config.readOnly || (config.idempotent ?? false),
         openWorldHint: config.openWorld ?? false,
       },

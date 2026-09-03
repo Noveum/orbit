@@ -91,6 +91,7 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
       description:
         'Create an issue on a team. The workflow state defaults to the team first unstarted state. Returns the new issue with its identifier such as "ENG-42".',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         team: z.string().min(1).describe('Team key like "ENG", team name, or team id.'),
         title: z.string().min(1).max(255).describe('One line summary of the work.'),
@@ -501,6 +502,7 @@ function registerAddComment(server: McpServer, principal: Principal): void {
       title: 'Comment on an issue',
       description: 'Post a markdown comment on an issue, optionally as a reply to another comment.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         issue: issueRef,
         body: z.string().min(1).max(100_000).describe('Markdown body of the comment.'),

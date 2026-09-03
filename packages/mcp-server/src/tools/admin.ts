@@ -41,6 +41,7 @@ export function registerAdminTools(server: McpServer, principal: Principal): voi
       description:
         'Send a workspace invite to an email address. Requires a role that can invite members. Only admins can invite admins.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         email: z.string().email().describe('Email address to invite.'),
         role: z.enum(ORG_ROLES).default('member').describe('Role the invitee joins with.'),
