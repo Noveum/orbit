@@ -83,10 +83,9 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
     server,
     {
       name: 'edit_comment',
-      title: 'Edit a comment',
+      title: 'Edit an issue comment',
       description: 'Rewrite the body of a comment this user wrote on an issue.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         commentId: z.string().min(1).describe('The comment id.'),
         body: z.string().min(1).max(50_000).describe('Replacement Markdown body.'),
@@ -124,7 +123,6 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       description:
         'Change a project name, summary, status, health, lead or target dates. Only the fields you pass are touched.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         project: projectRef,
         name: z.string().trim().min(1).max(120).optional(),
@@ -196,7 +194,6 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       title: 'Update a milestone',
       description: 'Rename a milestone or move its target date.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         milestoneId: z.string().min(1).describe('The milestone id.'),
         name: z.string().trim().min(1).max(120).optional(),

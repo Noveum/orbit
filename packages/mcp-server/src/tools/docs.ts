@@ -270,7 +270,6 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Change a document title, body, collection, parent, project or visibility. Only the fields you pass are touched. Filing a document under a collection detaches it from any project, and attaching it to a project unfiles it.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         doc: docRef,
         title: z.string().trim().min(1).max(200).optional(),
@@ -386,7 +385,6 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Edit a document comment',
       description: 'Rewrite the body of a comment this user wrote on a document.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         commentId: z.string().min(1).describe('The comment id.'),
         body: z.string().min(1).max(50_000).describe('Replacement Markdown body.'),
@@ -470,7 +468,6 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Rename a document collection',
       description: 'Change the name or the icon of a folder.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         collection: collectionRef,
         name: z.string().trim().min(1).max(120).optional().describe('New collection name.'),

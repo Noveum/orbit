@@ -83,7 +83,6 @@ function registerLabelTools(server: McpServer, principal: Principal): void {
       description:
         'Rename a label, change its colour, or move it between a team and the whole workspace.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         label: labelRef,
         name: z.string().trim().min(1).max(48).optional(),
@@ -174,7 +173,6 @@ function registerStateTools(server: McpServer, principal: Principal): void {
       description:
         'Rename a status, recolour it, or move it to another category. Changing the category re-derives the started, completed and canceled timestamps of every issue sitting in it.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         team: teamRef,
         state: stateRef,
@@ -243,7 +241,6 @@ function registerStateTools(server: McpServer, principal: Principal): void {
       description:
         'Set the board order of a team. Name every status on the team exactly once, first column first. Call list_states to see the current order.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         team: teamRef,
         order: z
