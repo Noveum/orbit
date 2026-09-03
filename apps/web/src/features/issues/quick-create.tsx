@@ -23,7 +23,9 @@ import {
 import { assertUploadable, uploadAttachment } from '@/features/docs/upload.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
 import type { Cycle, Issue, Project } from '@/lib/query/schemas.ts';
+import { useDuplicateIssues } from '@/lib/query/use-duplicate-issues.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { DuplicateSuggestions } from './duplicate-suggestions.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
 import {
   attachPending,
@@ -181,8 +183,11 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
   const [createMore, setCreateMore] = useState(false);
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
+  const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+
+  const { duplicates } = useDuplicateIssues(teamId, title);
 
   const create = useCreateIssue(teamId ?? 'none');
   const update = useUpdateIssue();
@@ -210,6 +215,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     setEstimate(null);
     setCycleId(null);
     setPending([]);
+    setDismissedDuplicates(false);
   }, [open]);
 
   useEffect(() => {
@@ -372,7 +378,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               submit();
             }
           }}
-          className="flex min-h-0 flex-1 flex-col gap-3"
+          className="flex min-h-0 flex-1 flex-col gap-3 pt-1.5"
         >
           <div
             className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1"
@@ -384,7 +390,10 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               data-testid="quick-create-title"
               placeholder="Issue title"
               value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setDismissedDuplicates(false);
+              }}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing) return;
                 if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey)
@@ -392,6 +401,12 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
               }}
               className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none"
             />
+            {!dismissedDuplicates && duplicates.length > 0 ? (
+              <DuplicateSuggestions
+                duplicates={duplicates}
+                onDismiss={() => setDismissedDuplicates(true)}
+              />
+            ) : null}
             <RichTextEditor
               key={composerKey}
               className="shrink-0"

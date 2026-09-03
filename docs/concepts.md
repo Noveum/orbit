@@ -94,6 +94,13 @@ Issues can block, be blocked by, relate to, or duplicate each other. Blocking is
 the one that changes behaviour: an issue blocked by another is flagged wherever
 it appears, so the block is visible before anyone plans around it.
 
+### Duplicate detection
+
+When drafting a new issue, Orbit runs trigram similarity across existing issues
+in the same team. If similar issues already exist, up to four non-blocking
+suggestions appear beneath the title field with their current workflow state,
+allowing quick review before creating a duplicate.
+
 ### Estimates
 
 Points, on the usual scale. Optional. Sprints can track scope by issue count or

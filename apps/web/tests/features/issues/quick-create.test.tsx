@@ -7,7 +7,10 @@ import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
-await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
+await restoreModulesAfterThisFile([
+  '@/lib/query/use-issues.ts',
+  '@/lib/query/use-duplicate-issues.ts',
+]);
 
 const created = mock((_input: Record<string, unknown>) => undefined);
 const patched = mock((_input: Record<string, unknown>) => undefined);
@@ -44,6 +47,21 @@ mock.module('@/lib/query/use-issues.ts', () => ({
       patched(input);
       return await Promise.resolve(newIssue);
     },
+  }),
+}));
+
+let mockDuplicates: Array<{
+  id: string;
+  identifier: string;
+  title: string;
+  state: { id: string; name: string; category: string; color: string };
+  similarity: number;
+}> = [];
+
+mock.module('@/lib/query/use-duplicate-issues.ts', () => ({
+  useDuplicateIssues: (_teamId: string | null, title: string) => ({
+    duplicates: title.toLowerCase().includes('duplicate') ? mockDuplicates : [],
+    loading: false,
   }),
 }));
 
@@ -142,6 +160,7 @@ afterEach(() => {
   cleanup();
   created.mockClear();
   patched.mockClear();
+  mockDuplicates = [];
   inFlight.defer = false;
   inFlight.resume = null;
   inFlight.pending = false;
@@ -943,5 +962,56 @@ describe('the property chips on the new issue dialog', () => {
     open();
 
     expect(screen.queryByTestId('quick-create-description-toolbar')).toBeNull();
+  });
+
+  it('renders duplicate suggestions when similar title is typed and hides on dismiss', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    mockDuplicates = [
+      {
+        id: 'iss_99',
+        identifier: 'ENG-99',
+        title: 'Existing duplicate bug',
+        state: { id: 'st_1', name: 'Todo', category: 'unstarted', color: '#888' },
+        similarity: 0.9,
+      },
+    ];
+    open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Duplicate found');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
+    expect(screen.getByText('ENG-99')).toBeInTheDocument();
+    expect(screen.getByText('Existing duplicate bug')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss similar issues' }));
+    expect(screen.queryByTestId('duplicate-suggestions')).toBeNull();
+
+    await user.type(screen.getByTestId('quick-create-title'), ' more text');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
+  });
+
+  it('resets dismissed suggestions when the dialog reopens', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    workspace = buildWorkspace();
+    mockDuplicates = [
+      {
+        id: 'iss_99',
+        identifier: 'ENG-99',
+        title: 'Existing duplicate bug',
+        state: { id: 'st_1', name: 'Todo', category: 'unstarted', color: '#888' },
+        similarity: 0.9,
+      },
+    ];
+    const harness = open();
+
+    await user.type(screen.getByTestId('quick-create-title'), 'Duplicate found');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss similar issues' }));
+    expect(screen.queryByTestId('duplicate-suggestions')).toBeNull();
+
+    harness.rerender(dialog(undefined, 'team_eng'));
+    await user.type(screen.getByTestId('quick-create-title'), 'Duplicate again');
+    expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
   });
 });
