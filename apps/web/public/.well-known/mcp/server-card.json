@@ -1,0 +1,10 @@
+{
+  "serverInfo": {
+    "name": "Orbit",
+    "version": "0.1.0"
+  },
+  "authentication": {
+    "required": true,
+    "schemes": ["oauth2"]
+  }
+}
