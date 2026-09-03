@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Noveum/orbit",
+  "title": "Orbit",
+  "description": "Task management for people and AI agents, with scoped OAuth access to issues, projects, and docs.",
+  "repository": {
+    "url": "https://github.com/Noveum/orbit",
+    "source": "github"
+  },
+  "websiteUrl": "https://orbit.noveum.ai",
+  "version": "0.1.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://orbit.noveum.ai/mcp"
+    }
+  ]
+}
