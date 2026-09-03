@@ -530,7 +530,6 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'File a document under a collection, nest it under a parent, attach it to a project, or order it against its siblings. One call for what dragging it in the sidebar does.',
       readOnly: false,
-      idempotent: true,
       inputSchema: {
         doc: docRef,
         collection: collectionRef
