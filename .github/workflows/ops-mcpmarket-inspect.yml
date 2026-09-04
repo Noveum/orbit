@@ -1,4 +1,4 @@
-name: One-time ToolRoute inspection
+name: One-time ToolRoute submission
 on:
   push:
     branches: [ops/mcpmarket-inspect-2026-09-04]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  submit:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -16,7 +16,7 @@ jobs:
           npm init -y >/dev/null
           npm install --no-audit --no-fund playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-      - name: Inspect form
+      - name: Submit free listing
         run: |
           cd "$RUNNER_TEMP/browser"
           node <<'NODE'
@@ -24,24 +24,49 @@ jobs:
           (async () => {
             const browser = await chromium.launch({ headless: true });
             const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-            const response = await page.goto('https://toolroute.io/submit', {
-              waitUntil: 'domcontentloaded', timeout: 90000,
+            const writes = [];
+            page.on('response', r => {
+              if (r.request().method() !== 'GET') writes.push({ method: r.request().method(), url: r.url(), status: r.status() });
             });
+            const response = await page.goto('https://toolroute.io/submit', { waitUntil: 'domcontentloaded', timeout: 90000 });
+            if (!response || response.status() !== 200) throw new Error(`Unexpected status ${response?.status()}`);
+            await page.waitForTimeout(2000);
+            const html = await page.content();
+            const body = await page.locator('body').innerText();
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(html)) throw new Error('CAPTCHA detected');
+            if (/stripe|checkout|credit card|pay now|\$\d+/i.test(body)) throw new Error('Payment detected');
+
+            const inputs = page.locator('input');
+            await inputs.nth(0).fill('https://github.com/Noveum/orbit');
+            await inputs.nth(1).fill('Orbit by Noveum');
+            await inputs.nth(2).fill('Noveum AI');
+            await inputs.nth(3).fill('Task management for people and AI agents with workspace-bound OAuth access.');
+            await inputs.nth(4).fill('shashank@noveum.ai');
+            const selects = page.locator('select');
+            await selects.nth(0).selectOption('developer-workflow-code-management');
+            await selects.nth(1).selectOption('devtools');
+            await selects.nth(2).selectOption('streamable-http');
+            await selects.nth(3).selectOption('remote');
+            await selects.nth(4).selectOption('Apache-2.0');
+            await page.locator('textarea').fill(
+              'Hosted endpoint: https://orbit.noveum.ai/mcp. Official MCP Registry: io.github.Noveum/orbit@0.1.0. Orbit exposes more than 70 tools for issues, sprints, projects, docs, notifications, and files. OAuth 2.1 grants are revocable and bound to the authorizing user, client, and workspace. Read-only clients are not offered write tools.'
+            );
+            const submit = page.getByRole('button', { name: 'Submit Server', exact: true });
+            if (!(await submit.isEnabled())) throw new Error('Submit button disabled');
+            await submit.click();
+            await Promise.race([
+              page.waitForURL(u => !u.href.endsWith('/submit'), { timeout: 30000 }).catch(() => null),
+              page.waitForFunction(() => /success|submitted|received|review|already|duplicate|thank/i.test(document.body.innerText), undefined, { timeout: 30000 }).catch(() => null),
+            ]);
             await page.waitForTimeout(2500);
-            const result = await page.evaluate(() => ({
-              status: document.body.innerText.replace(/\s+/g, ' ').slice(0, 5000),
-              forms: [...document.forms].map(f => ({ action: f.action, method: f.method })),
-              fields: [...document.querySelectorAll('input,textarea,select,button')].map((e, i) => ({
-                i, tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'),
-                id: e.id, placeholder: e.getAttribute('placeholder'), value: e.getAttribute('value'),
-                required: e.hasAttribute('required'), text: (e.textContent || '').trim().slice(0, 200),
-                options: e.tagName === 'SELECT' ? [...e.options].map(o => [o.value, o.text]) : null,
-              })),
-              captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
-              paid: /stripe|checkout|credit card|pay now|\$\d+/i.test(document.body.innerText),
-            }));
-            console.log('HTTP', response?.status(), 'URL', page.url());
-            console.log(JSON.stringify(result));
+            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            console.log('FINAL_URL', page.url());
+            console.log('WRITES', JSON.stringify(writes));
+            console.log('FINAL_BODY', finalBody.slice(0, 8000));
+            const failedWrite = writes.some(r => r.status >= 400);
+            if (failedWrite || !/success|submitted|received|review|already|duplicate|thank/i.test(finalBody)) {
+              throw new Error('No confirmed ToolRoute submission response');
+            }
             await browser.close();
           })().catch(e => { console.error(e); process.exit(1); });
           NODE
