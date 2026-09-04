@@ -1,4 +1,4 @@
-name: One-time MyMCPTools form inspection
+name: One-time MyMCPTools free submission
 on:
   push:
     branches: [ops/mcpmarket-inspect-2026-09-04]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  submit:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -16,7 +16,7 @@ jobs:
           npm init -y >/dev/null
           npm install --no-audit --no-fund playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-      - name: Inspect form without submitting
+      - name: Submit free listing
         run: |
           cd "$RUNNER_TEMP/browser"
           node <<'NODE'
@@ -27,40 +27,48 @@ jobs:
               viewport: { width: 1440, height: 1100 }, locale: 'en-US',
               userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
             });
-            let response = null;
-            for (const url of ['https://mymcptools.com/submit', 'https://mymcptools.com/submit-server']) {
-              try {
-                response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-                console.log('NAV', url, response?.status(), page.url());
-                if (response && response.status() < 400) break;
-              } catch (error) { console.error('NAV_ERROR', url, String(error)); }
-            }
-            if (!response) throw new Error('No response');
-            await page.waitForTimeout(3000);
-            const result = await page.evaluate(() => {
-              const labelFor = (element) => {
-                const id = element.id;
-                const direct = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-                return (direct?.textContent ?? element.closest('label')?.textContent ?? '').replace(/\s+/g, ' ').trim();
-              };
-              return {
-                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 10000),
-                forms: [...document.forms].map(f => ({ action: f.action, method: f.method, controls: f.elements.length })),
-                fields: [...document.querySelectorAll('input,textarea,select,button')].map((e, i) => ({
-                  i, tag: e.tagName.toLowerCase(), type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id || null,
-                  placeholder: e.getAttribute('placeholder'), ariaLabel: e.getAttribute('aria-label'), label: labelFor(e),
-                  value: e.getAttribute('value'), required: e.hasAttribute('required'), disabled: e.hasAttribute('disabled'),
-                  checked: e instanceof HTMLInputElement ? e.checked : undefined,
-                  text: (e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-                  options: e instanceof HTMLSelectElement ? [...e.options].map(o => [o.value, o.text]) : null,
-                })),
-                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
-                payment: /stripe|checkout|credit card|pay now|\$\d+/i.test(document.body.innerText),
-                login: /sign in|log in|continue with github|create account/i.test(document.body.innerText),
-              };
+            const writes = [];
+            page.on('response', r => {
+              if (r.request().method() !== 'GET') writes.push({ method: r.request().method(), url: r.url(), status: r.status() });
             });
-            console.log('HTTP', response.status(), 'FINAL', page.url());
-            console.log('RESULT', JSON.stringify(result));
+            const response = await page.goto('https://mymcptools.com/submit', { waitUntil: 'domcontentloaded', timeout: 90000 });
+            if (!response || response.status() !== 200) throw new Error(`Unexpected status ${response?.status()}`);
+            await page.waitForTimeout(2000);
+            const html = await page.content();
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(html)) throw new Error('CAPTCHA detected');
+
+            const freeCard = page.getByRole('button', { name: /Free\$0/i }).first();
+            if ((await freeCard.count()) === 1) await freeCard.click();
+            await page.locator('#name').fill('Orbit by Noveum');
+            await page.locator('#description').fill(
+              'Orbit is a free, Apache-2.0 realtime task manager for software teams and AI agents. It includes issues, boards, sprints, projects, milestones, docs, analytics, GitHub integration, and a hosted Streamable HTTP MCP endpoint with more than 70 tools. OAuth 2.1 grants are revocable and bound to the authorizing user, client, and workspace; read-only grants are not offered write tools. Hosted endpoint: https://orbit.noveum.ai/mcp.'
+            );
+            await page.locator('#github').fill('https://github.com/Noveum/orbit');
+            await page.locator('#website').fill('https://orbit.noveum.ai');
+            await page.locator('#category').selectOption('productivity');
+            await page.locator('#install').selectOption('source');
+            await page.locator('#email').fill('shashank@noveum.ai');
+
+            const submit = page.getByRole('button', { name: 'Submit Server — Free', exact: true });
+            if ((await submit.count()) !== 1 || !(await submit.isEnabled())) throw new Error('Free submit button missing or disabled');
+            const submitText = (await submit.innerText()).trim();
+            if (/featured|\$9|pay|checkout/i.test(submitText)) throw new Error(`Paid submit active: ${submitText}`);
+            console.log('PRE_SUBMIT', JSON.stringify({ submitText, category: await page.locator('#category').inputValue(), install: await page.locator('#install').inputValue() }));
+            await submit.click();
+
+            await Promise.race([
+              page.waitForURL(u => !u.href.endsWith('/submit'), { timeout: 30000 }).catch(() => null),
+              page.waitForFunction(() => /success|submitted|received|review|already|duplicate|thank/i.test(document.body.innerText), undefined, { timeout: 30000 }).catch(() => null),
+            ]);
+            await page.waitForTimeout(3000);
+            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            console.log('FINAL_URL', page.url());
+            console.log('WRITES', JSON.stringify(writes));
+            console.log('FINAL_BODY', finalBody.slice(0, 9000));
+
+            if (/stripe\.com|checkout|credit card|payment details/i.test(page.url() + ' ' + finalBody)) throw new Error('Unexpected payment flow');
+            if (writes.some(r => r.status >= 500)) throw new Error('MyMCPTools backend error');
+            if (!/success|submitted|received|review|already|duplicate|thank/i.test(finalBody)) throw new Error('No confirmed MyMCPTools response');
             await browser.close();
           })().catch(error => { console.error(error); process.exit(1); });
           NODE
