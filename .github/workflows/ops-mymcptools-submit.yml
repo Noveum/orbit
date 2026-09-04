@@ -1,0 +1,136 @@
+name: One-time MyMCPTools free submission
+
+on:
+  push:
+    branches:
+      - ops/mymcptools-submit-2026-09-04
+    paths:
+      - .github/workflows/ops-mymcptools-submit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    name: Submit Orbit to MyMCPTools free review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbit-browser"
+          cd "$RUNNER_TEMP/orbit-browser"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --save-exact playwright >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Submit standard free listing
+        run: |
+          cd "$RUNNER_TEMP/orbit-browser"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            try {
+              const context = await browser.newContext({
+                locale: 'en-US',
+                userAgent:
+                  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+                viewport: { width: 1440, height: 1100 },
+              });
+              const page = await context.newPage();
+              const nonGet = [];
+              page.on('response', (response) => {
+                if (response.request().method() !== 'GET') {
+                  nonGet.push({
+                    method: response.request().method(),
+                    url: response.url(),
+                    status: response.status(),
+                  });
+                }
+              });
+
+              const response = await page.goto('https://mymcptools.com/submit', {
+                waitUntil: 'domcontentloaded',
+                timeout: 60000,
+              });
+              await page.waitForTimeout(2500);
+              if (response?.status() !== 200) {
+                throw new Error(`Submission page returned ${response?.status() ?? 'no response'}`);
+              }
+
+              const bodyBefore = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+              if (/captcha|turnstile|hcaptcha|recaptcha/i.test(bodyBefore)) {
+                throw new Error('CAPTCHA detected; no bypass attempted');
+              }
+              if (!/Free\s*\$0/i.test(bodyBefore) || !/Featured\s*\$9/i.test(bodyBefore)) {
+                throw new Error('Could not distinguish standard free and paid featured tiers');
+              }
+
+              const freeTier = page.getByRole('button', { name: /Free\s*\$0/i });
+              const featuredTier = page.getByRole('button', { name: /Featured\s*\$9/i });
+              if ((await freeTier.count()) !== 1 || (await featuredTier.count()) !== 1) {
+                throw new Error(
+                  `Expected one free and one featured tier; free=${await freeTier.count()} featured=${await featuredTier.count()}`,
+                );
+              }
+              await freeTier.click();
+
+              const honeypot = page.locator('input[name="website_url"]');
+              if ((await honeypot.count()) !== 1) {
+                throw new Error(`Expected one anti-spam website_url field, found ${await honeypot.count()}`);
+              }
+              if ((await honeypot.inputValue()) !== '') {
+                throw new Error('Anti-spam field was unexpectedly populated');
+              }
+
+              await page.locator('input[name="name"]').fill('Orbit by Noveum');
+              await page
+                .locator('textarea[name="description"]')
+                .fill(
+                  'Free realtime task and project management for people and AI agents. Orbit exposes more than 70 OAuth-scoped MCP tools for issues, sprints, projects, docs, notifications, and files; every action uses the authorizing user’s server-side permissions.',
+                );
+              await page.locator('input[name="github"]').fill('https://github.com/Noveum/orbit');
+              await page.locator('input[name="website"]').fill('https://orbit.noveum.ai');
+              await page.locator('select[name="category"]').selectOption('productivity');
+              await page.locator('select[name="install"]').selectOption('source');
+              await page.locator('input[name="email"]').fill('shashank@noveum.ai');
+
+              if ((await honeypot.inputValue()) !== '') {
+                throw new Error('Anti-spam field changed before submission');
+              }
+
+              const submit = page.getByRole('button', { name: /Submit Server — Free/i });
+              if ((await submit.count()) !== 1) {
+                throw new Error(`Expected one free submit button, found ${await submit.count()}`);
+              }
+
+              await submit.click();
+              await page.waitForTimeout(7000);
+              await page.waitForLoadState('networkidle', { timeout: 25000 }).catch(() => undefined);
+
+              const finalUrl = page.url();
+              const bodyAfter = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+              const lower = bodyAfter.toLowerCase();
+              console.log('FINAL_URL', finalUrl);
+              console.log('NON_GET_RESPONSES', JSON.stringify(nonGet));
+              console.log('BODY_EXCERPT', bodyAfter.slice(0, 5000));
+
+              if (/stripe\.com|checkout|payment/.test(finalUrl.toLowerCase())) {
+                throw new Error('Unexpected payment redirect; the standard free tier was selected');
+              }
+              if (/error|failed|invalid|try again/.test(lower)) {
+                throw new Error('Submission page displayed an error state');
+              }
+              if (!/thank|submitted|submission|review|received|success|pending/.test(lower)) {
+                throw new Error('Could not confirm a free submission acknowledgement');
+              }
+            } finally {
+              await browser.close();
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
