@@ -1,4 +1,4 @@
-name: One-time free directory form inspection
+name: One-time MCP.Directory submission
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
-    name: Inspect free public submission forms
+  submit:
+    name: Submit Orbit to MCP.Directory free review
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,120 +24,105 @@ jobs:
           npm install --no-audit --no-fund --save-exact playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
 
-      - name: Inspect forms without submitting
+      - name: Submit free listing and record response
         run: |
           cd "$RUNNER_TEMP/orbit-browser"
           node <<'NODE'
           const { chromium } = require('playwright');
 
           (async () => {
-            const targets = [
-              { name: 'OpenSourceAlternative', url: 'https://opensourcealternative.to/submit' },
-              { name: 'TiloBox', url: 'https://www.tilobox.com/' },
-              { name: 'MCP.Directory', url: 'https://mcp.directory/submit' },
-            ];
-
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
               locale: 'en-US',
               userAgent:
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-              viewport: { width: 1440, height: 1100 },
+              viewport: { width: 1440, height: 1000 },
+            });
+            const page = await context.newPage();
+            const responses = [];
+            page.on('response', (response) => {
+              if (response.request().method() !== 'GET') {
+                responses.push({
+                  method: response.request().method(),
+                  url: response.url(),
+                  status: response.status(),
+                });
+              }
             });
 
-            for (const target of targets) {
-              const page = await context.newPage();
-              console.log(`\n=== ${target.name} ${target.url} ===`);
-              let response = null;
-              try {
-                response = await page.goto(target.url, {
-                  waitUntil: 'domcontentloaded',
-                  timeout: 90000,
-                });
-              } catch (error) {
-                console.error('NAVIGATION_ERROR', String(error));
-              }
-              console.log(
-                `STATUS ${response?.status() ?? 'none'} FINAL ${page.url()} TITLE ${await page.title()}`,
-              );
+            const response = await page.goto('https://mcp.directory/submit', {
+              waitUntil: 'domcontentloaded',
+              timeout: 90000,
+            });
+            if (!response || response.status() !== 200) {
+              throw new Error(`Unexpected submit page status: ${response?.status() ?? 'none'}`);
+            }
+            await page.waitForTimeout(2000);
 
-              await page.waitForTimeout(2500);
-              if (target.name === 'TiloBox') {
-                const candidates = [
-                  page.getByRole('link', { name: /submit a tool/i }).first(),
-                  page.getByRole('button', { name: /submit a tool/i }).first(),
-                  page.getByText(/submit a tool/i).first(),
-                ];
-                for (const candidate of candidates) {
-                  if ((await candidate.count()) > 0 && (await candidate.isVisible().catch(() => false))) {
-                    console.log('TILOBOX_CLICK', await candidate.evaluate((element) => element.outerHTML));
-                    await candidate.click();
-                    await page.waitForTimeout(2000);
-                    break;
-                  }
-                }
-              }
+            const bodyBefore = await page.locator('body').innerText();
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(await page.content())) {
+              throw new Error('CAPTCHA detected; refusing automated submission.');
+            }
+            if (/\$\d+|credit card|checkout|pay now/i.test(bodyBefore)) {
+              throw new Error('Payment step detected; refusing automated submission.');
+            }
 
-              const details = await page.evaluate(() => {
-                const nearestText = (element) => {
-                  const id = element.id;
-                  const label = id
-                    ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
-                    : element.closest('label');
-                  const fieldset = element.closest('fieldset');
-                  return (label?.textContent ?? fieldset?.querySelector('legend')?.textContent ?? '')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-                };
-                return {
-                  finalUrl: location.href,
-                  forms: [...document.forms].map((form) => ({
-                    action: form.action,
-                    method: form.method,
-                    id: form.id || null,
-                    controls: form.elements.length,
-                  })),
-                  controls: [...document.querySelectorAll('input, textarea, select, button')].map(
-                    (element) => ({
-                      tag: element.tagName.toLowerCase(),
-                      type: element.getAttribute('type'),
-                      name: element.getAttribute('name'),
-                      id: element.id || null,
-                      placeholder: element.getAttribute('placeholder'),
-                      ariaLabel: element.getAttribute('aria-label'),
-                      label: nearestText(element),
-                      value: element.getAttribute('value'),
-                      required: element.hasAttribute('required'),
-                      disabled: element.hasAttribute('disabled'),
-                      checked: element instanceof HTMLInputElement ? element.checked : undefined,
-                      text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
-                      options:
-                        element instanceof HTMLSelectElement
-                          ? [...element.options].map((option) => ({
-                              value: option.value,
-                              text: option.text,
-                            }))
-                          : undefined,
-                    }),
-                  ),
-                  links: [...document.querySelectorAll('a')]
-                    .map((link) => ({
-                      text: (link.textContent ?? '').replace(/\s+/g, ' ').trim(),
-                      href: link.href,
-                    }))
-                    .filter((link) => /submit|waitlist|review|tool/i.test(link.text))
-                    .slice(0, 50),
-                  captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(
-                    document.documentElement.innerHTML,
-                  ),
-                  payment: /stripe|checkout|credit card|pay now|\$29|\$39|\$69/i.test(
-                    document.body.innerText,
-                  ),
-                  body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 7000),
-                };
-              });
-              console.log(JSON.stringify(details, null, 2));
-              await page.close();
+            const urlInput = page.locator('input[type="url"]').first();
+            const textInputs = page.locator('input[type="text"]');
+            const emailInput = page.locator('input[type="email"]').first();
+            await urlInput.fill('https://github.com/Noveum/orbit');
+            const textCount = await textInputs.count();
+            if (textCount < 3) {
+              throw new Error(`Expected at least three text inputs, found ${textCount}`);
+            }
+            await textInputs.nth(2).fill(
+              'Task management for people and AI agents, with scoped OAuth access to issues, projects, and docs.',
+            );
+            await emailInput.fill('shashank@noveum.ai');
+
+            const values = await page.evaluate(() =>
+              [...document.querySelectorAll('input')].map((input) => ({
+                type: input.type,
+                placeholder: input.placeholder,
+                value: input.type === 'email' ? '[contact email set]' : input.value,
+                required: input.required,
+              })),
+            );
+            console.log('FIELDS', JSON.stringify(values));
+
+            const submit = page.getByRole('button', { name: 'Submit for Review', exact: true });
+            if ((await submit.count()) !== 1 || !(await submit.isEnabled())) {
+              throw new Error('Free submit button is missing or disabled.');
+            }
+            await submit.click();
+
+            await Promise.race([
+              page.waitForURL((url) => url.href !== 'https://mcp.directory/submit', {
+                timeout: 30000,
+              }).catch(() => null),
+              page
+                .waitForFunction(
+                  () =>
+                    /submitted|success|review|already|duplicate|published|thank/i.test(
+                      document.body.innerText,
+                    ),
+                  undefined,
+                  { timeout: 30000 },
+                )
+                .catch(() => null),
+            ]);
+            await page.waitForTimeout(3000);
+
+            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            console.log('FINAL_URL', page.url());
+            console.log('NON_GET_RESPONSES', JSON.stringify(responses));
+            console.log('FINAL_BODY', finalBody.slice(0, 8000));
+
+            const success = /thank|submitted|submission.*received|under review|already.*listed|duplicate/i.test(
+              finalBody,
+            );
+            if (!success) {
+              throw new Error('No confirmed submission or duplicate response was visible.');
             }
 
             await browser.close();
