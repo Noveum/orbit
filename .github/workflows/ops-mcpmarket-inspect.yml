@@ -1,4 +1,4 @@
-name: One-time MCP Archive free submission
+name: One-time FindMCP free submission
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   submit:
-    name: Submit Orbit to MCP Archive
+    name: Submit Orbit to FindMCP
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -49,12 +49,12 @@ jobs:
               }
             });
 
-            const response = await page.goto('https://mcp-archive.com/submit', {
+            const response = await page.goto('https://findmcp.app/submit', {
               waitUntil: 'domcontentloaded',
               timeout: 90000,
             });
             if (!response || response.status() !== 200) {
-              throw new Error(`Unexpected MCP Archive status: ${response?.status() ?? 'none'}`);
+              throw new Error(`Unexpected FindMCP status: ${response?.status() ?? 'none'}`);
             }
             await page.waitForTimeout(2500);
 
@@ -65,19 +65,26 @@ jobs:
               throw new Error('Payment step detected; refusing automated submission.');
             }
 
-            await page.locator('#name').fill('Orbit by Noveum');
-            await page.locator('#company').fill('Noveum AI');
-            await page.locator('#description').fill(
-              'Orbit is a free, realtime task and project manager for software teams and AI agents. Its hosted Streamable HTTP MCP server exposes more than 70 tools for issues, comments, teams, workflow states, labels, sprints, projects, milestones, docs, views, notifications, attachments, and workspace instructions. Authentication uses OAuth 2.1 with dynamic client registration and PKCE. Grants are bound to the authorizing user, client, and workspace, are revocable, and expose read or write tools according to approved scopes. Every MCP operation uses the same server-side permission policy as the Orbit application. Source: https://github.com/Noveum/orbit. License: Apache-2.0.',
-            );
-            await page.locator('#url').fill('https://orbit.noveum.ai/mcp');
-            await page.locator('#price').fill('Free');
-            await page
-              .locator('#tags')
-              .fill('Project Management, Task Management, Productivity, OAuth, Streamable HTTP, Open Source');
-            await page.locator('#email').fill('shashank@noveum.ai');
+            const description =
+              'Orbit is a free, Apache-2.0 realtime task manager for software teams and AI agents. Its hosted Streamable HTTP MCP endpoint exposes more than 70 tools for issues, sprints, projects, docs, notifications, and files. OAuth grants are bound to the authorizing user, client, and workspace, are revocable, and expose tools according to approved read/write scopes.';
+            const installSnippet = JSON.stringify({
+              mcpServers: {
+                orbit: {
+                  type: 'http',
+                  url: 'https://orbit.noveum.ai/mcp',
+                },
+              },
+            });
 
-            const submit = page.getByRole('button', { name: 'Submit MCP Server', exact: true });
+            await page.locator('#name').fill('Orbit by Noveum');
+            await page.locator('#repoUrl').fill('https://github.com/Noveum/orbit');
+            await page.locator('#description').fill(description);
+            await page.locator('#installSnippet').fill(installSnippet);
+            await page.locator('#category').selectOption('productivity');
+            await page.locator('input[name="transports"][value="http"]').check();
+            await page.locator('#submitterEmail').fill('shashank@noveum.ai');
+
+            const submit = page.getByRole('button', { name: 'Submit for Review', exact: true });
             if ((await submit.count()) !== 1 || !(await submit.isEnabled())) {
               throw new Error('Submit button is missing or disabled.');
             }
@@ -98,10 +105,10 @@ jobs:
             const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
             console.log('FINAL_URL', page.url());
             console.log('NON_GET_RESPONSES', JSON.stringify(responses));
-            console.log('FINAL_BODY', finalBody.slice(0, 8000));
+            console.log('FINAL_BODY', finalBody.slice(0, 9000));
 
             if (!/thank|success|submitted|received|review|already|duplicate/i.test(finalBody)) {
-              throw new Error('No confirmed MCP Archive submission response was visible.');
+              throw new Error('No confirmed FindMCP submission response was visible.');
             }
 
             await browser.close();
