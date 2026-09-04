@@ -1,4 +1,4 @@
-name: One-time Pipeworx inspection
+name: One-time Pipeworx submission
 on:
   push:
     branches: [ops/mcpmarket-inspect-2026-09-04]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  submit:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -16,7 +16,7 @@ jobs:
           npm init -y >/dev/null
           npm install --no-audit --no-fund playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-      - name: Inspect form
+      - name: Submit free directory entry
         run: |
           cd "$RUNNER_TEMP/browser"
           node <<'NODE'
@@ -24,22 +24,43 @@ jobs:
           (async () => {
             const browser = await chromium.launch({ headless: true });
             const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+            const writes = [];
+            page.on('response', r => {
+              if (r.request().method() !== 'GET') writes.push({ method: r.request().method(), url: r.url(), status: r.status() });
+            });
             const response = await page.goto('https://pipeworx.io/submit/', { waitUntil: 'domcontentloaded', timeout: 90000 });
+            if (!response || response.status() !== 200) throw new Error(`Unexpected status ${response?.status()}`);
+            await page.waitForTimeout(2000);
+            const html = await page.content();
+            const body = await page.locator('body').innerText();
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(html)) throw new Error('CAPTCHA detected');
+            if (/credit card|checkout|pay now|\$\d+/i.test(body)) throw new Error('Payment detected');
+
+            await page.locator('input[placeholder="My MCP Server"]').fill('Orbit by Noveum');
+            await page.locator('textarea').first().fill(
+              'Free realtime task and project management for software teams and AI agents. Orbit exposes more than 70 MCP tools for issues, comments, teams, sprints, projects, docs, notifications, and files. OAuth 2.1 grants are revocable and bound to the authorizing user, client, and workspace; read-only grants do not expose write tools.'
+            );
+            await page.locator('select').first().selectOption('productivity');
+            await page.locator('input[placeholder="https://your-server.com/mcp"]').fill('https://orbit.noveum.ai/mcp');
+            await page.locator('input[placeholder="https://github.com/user/repo"]').fill('https://github.com/Noveum/orbit');
+            await page.locator('input[placeholder*="api, tools"]').fill('project-management, task-management, productivity, oauth, streamable-http, open-source');
+            await page.locator('input[placeholder="you@example.com"]').fill('shashank@noveum.ai');
+
+            const submit = page.getByRole('button', { name: 'Submit Server', exact: true });
+            if (!(await submit.isEnabled())) throw new Error('Submit button disabled');
+            await submit.click();
+            await Promise.race([
+              page.waitForURL(u => !u.href.endsWith('/submit/'), { timeout: 30000 }).catch(() => null),
+              page.waitForFunction(() => /success|submitted|received|review|approved|already|duplicate|thank/i.test(document.body.innerText), undefined, { timeout: 30000 }).catch(() => null),
+            ]);
             await page.waitForTimeout(2500);
-            const result = await page.evaluate(() => ({
-              body: document.body.innerText.replace(/\s+/g, ' ').slice(0, 7000),
-              fields: [...document.querySelectorAll('input,textarea,select,button')].map((e, i) => ({
-                i, tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'), id: e.id,
-                placeholder: e.getAttribute('placeholder'), value: e.getAttribute('value'), required: e.hasAttribute('required'),
-                text: (e.textContent || '').trim().slice(0, 300),
-                options: e.tagName === 'SELECT' ? [...e.options].map(o => [o.value, o.text]) : null,
-              })),
-              captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
-              paid: /stripe|checkout|credit card|pay now|\$\d+/i.test(document.body.innerText),
-              login: /sign in|log in|create account|continue with github/i.test(document.body.innerText),
-            }));
-            console.log('HTTP', response?.status(), 'URL', page.url());
-            console.log(JSON.stringify(result));
+            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            console.log('FINAL_URL', page.url());
+            console.log('WRITES', JSON.stringify(writes));
+            console.log('FINAL_BODY', finalBody.slice(0, 9000));
+            if (writes.some(r => r.status >= 400) || !/success|submitted|received|review|approved|already|duplicate|thank/i.test(finalBody)) {
+              throw new Error('No confirmed Pipeworx submission response');
+            }
             await browser.close();
           })().catch(e => { console.error(e); process.exit(1); });
           NODE
