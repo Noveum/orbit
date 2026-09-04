@@ -1,4 +1,4 @@
-name: One-time FindMCP form inspection
+name: One-time MCP Archive free submission
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
-    name: Inspect FindMCP free form
+  submit:
+    name: Submit Orbit to MCP Archive
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,7 +24,7 @@ jobs:
           npm install --no-audit --no-fund --save-exact playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
 
-      - name: Inspect without submitting
+      - name: Submit free listing and record response
         run: |
           cd "$RUNNER_TEMP/orbit-browser"
           node <<'NODE'
@@ -38,62 +38,72 @@ jobs:
               userAgent:
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
             });
-            const response = await page.goto('https://findmcp.app/submit', {
+            const responses = [];
+            page.on('response', (response) => {
+              if (response.request().method() !== 'GET') {
+                responses.push({
+                  method: response.request().method(),
+                  url: response.url(),
+                  status: response.status(),
+                });
+              }
+            });
+
+            const response = await page.goto('https://mcp-archive.com/submit', {
               waitUntil: 'domcontentloaded',
               timeout: 90000,
             });
-            await page.waitForTimeout(3000);
-            const summary = await page.evaluate(() => {
-              const label = (element) => {
-                const id = element.id;
-                const linked = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-                const parent = element.closest('label');
-                const fieldset = element.closest('fieldset');
-                return (
-                  linked?.textContent ??
-                  parent?.textContent ??
-                  fieldset?.querySelector('legend')?.textContent ??
-                  ''
+            if (!response || response.status() !== 200) {
+              throw new Error(`Unexpected MCP Archive status: ${response?.status() ?? 'none'}`);
+            }
+            await page.waitForTimeout(2500);
+
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(await page.content())) {
+              throw new Error('CAPTCHA detected; refusing automated submission.');
+            }
+            if (/stripe|checkout|credit card|pay now|\$\d+/i.test(await page.locator('body').innerText())) {
+              throw new Error('Payment step detected; refusing automated submission.');
+            }
+
+            await page.locator('#name').fill('Orbit by Noveum');
+            await page.locator('#company').fill('Noveum AI');
+            await page.locator('#description').fill(
+              'Orbit is a free, realtime task and project manager for software teams and AI agents. Its hosted Streamable HTTP MCP server exposes more than 70 tools for issues, comments, teams, workflow states, labels, sprints, projects, milestones, docs, views, notifications, attachments, and workspace instructions. Authentication uses OAuth 2.1 with dynamic client registration and PKCE. Grants are bound to the authorizing user, client, and workspace, are revocable, and expose read or write tools according to approved scopes. Every MCP operation uses the same server-side permission policy as the Orbit application. Source: https://github.com/Noveum/orbit. License: Apache-2.0.',
+            );
+            await page.locator('#url').fill('https://orbit.noveum.ai/mcp');
+            await page.locator('#price').fill('Free');
+            await page
+              .locator('#tags')
+              .fill('Project Management, Task Management, Productivity, OAuth, Streamable HTTP, Open Source');
+            await page.locator('#email').fill('shashank@noveum.ai');
+
+            const submit = page.getByRole('button', { name: 'Submit MCP Server', exact: true });
+            if ((await submit.count()) !== 1 || !(await submit.isEnabled())) {
+              throw new Error('Submit button is missing or disabled.');
+            }
+            await submit.click();
+
+            await Promise.race([
+              page.waitForURL((url) => !url.href.endsWith('/submit'), { timeout: 30000 }).catch(() => null),
+              page
+                .waitForFunction(
+                  () => /thank|success|submitted|received|review|already|duplicate/i.test(document.body.innerText),
+                  undefined,
+                  { timeout: 30000 },
                 )
-                  .replace(/\s+/g, ' ')
-                  .trim();
-              };
-              return {
-                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 9000),
-                forms: [...document.forms].map((form) => ({
-                  action: form.action,
-                  method: form.method,
-                  controls: form.elements.length,
-                })),
-                controls: [...document.querySelectorAll('input, textarea, select, button')].map(
-                  (element, index) => ({
-                    index,
-                    tag: element.tagName.toLowerCase(),
-                    type: element.getAttribute('type'),
-                    name: element.getAttribute('name'),
-                    id: element.id || null,
-                    placeholder: element.getAttribute('placeholder'),
-                    ariaLabel: element.getAttribute('aria-label'),
-                    label: label(element),
-                    value: element.getAttribute('value'),
-                    required: element.hasAttribute('required'),
-                    checked: element instanceof HTMLInputElement ? element.checked : undefined,
-                    disabled: element.hasAttribute('disabled'),
-                    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
-                    options:
-                      element instanceof HTMLSelectElement
-                        ? [...element.options].map((option) => ({ value: option.value, text: option.text }))
-                        : undefined,
-                  }),
-                ),
-                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
-                payment: /\$\d+|stripe|checkout|credit card|pay now/i.test(document.body.innerText),
-                login: /sign in|log in|continue with github|create account/i.test(document.body.innerText),
-              };
-            });
-            console.log('HTTP_STATUS', response?.status());
+                .catch(() => null),
+            ]);
+            await page.waitForTimeout(3000);
+
+            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
             console.log('FINAL_URL', page.url());
-            console.log('SUMMARY', JSON.stringify(summary));
+            console.log('NON_GET_RESPONSES', JSON.stringify(responses));
+            console.log('FINAL_BODY', finalBody.slice(0, 8000));
+
+            if (!/thank|success|submitted|received|review|already|duplicate/i.test(finalBody)) {
+              throw new Error('No confirmed MCP Archive submission response was visible.');
+            }
+
             await browser.close();
           })().catch((error) => {
             console.error(error);
