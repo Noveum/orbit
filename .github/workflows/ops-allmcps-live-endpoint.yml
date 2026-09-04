@@ -1,0 +1,97 @@
+name: One-time AllMCPs live endpoint submission
+
+on:
+  push:
+    branches:
+      - ops/allmcps-live-endpoint-2026-09-04
+    paths:
+      - .github/workflows/ops-allmcps-live-endpoint.yml
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    name: Submit hosted Orbit MCP endpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Submit through the public AllMCPs MCP endpoint
+        env:
+          ALLMCPS_MCP_URL: https://allmcps.com/api/mcp
+        run: |
+          node <<'NODE'
+          const endpoint = process.env.ALLMCPS_MCP_URL;
+
+          function decode(text) {
+            const trimmed = text.trim();
+            if (!trimmed) return null;
+            const lines = trimmed
+              .split(/\r?\n/)
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trim());
+            return JSON.parse(lines.length ? lines.at(-1) : trimmed);
+          }
+
+          async function rpc(payload) {
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                accept: 'application/json, text/event-stream',
+              },
+              body: JSON.stringify(payload),
+            });
+            const text = await response.text();
+            console.log(`HTTP ${response.status}`);
+            console.log(text);
+            if (!response.ok) throw new Error(`AllMCPs returned HTTP ${response.status}`);
+            return decode(text);
+          }
+
+          await rpc({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2024-11-05',
+              capabilities: {},
+              clientInfo: { name: 'orbit-live-endpoint-submitter', version: '1.0.0' },
+            },
+          });
+          await rpc({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+
+          const exact = await rpc({
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/call',
+            params: {
+              name: 'search_mcp_servers',
+              arguments: { query: 'https://orbit.noveum.ai/mcp', limit: 20 },
+            },
+          });
+          const existing = JSON.stringify(exact).toLowerCase();
+          if (existing.includes('orbit.noveum.ai/mcp')) {
+            console.log('ORBIT_ALLMCPS_EXISTING_LISTING:', JSON.stringify(exact));
+            process.exit(0);
+          }
+
+          const submitted = await rpc({
+            jsonrpc: '2.0',
+            id: 3,
+            method: 'tools/call',
+            params: {
+              name: 'submit_mcp_server',
+              arguments: {
+                name: 'Orbit by Noveum',
+                url: 'https://orbit.noveum.ai/mcp',
+                email: 'shashank@noveum.ai',
+              },
+            },
+          });
+          if (submitted?.error) throw new Error(JSON.stringify(submitted.error));
+          if (submitted?.result?.isError === true) {
+            throw new Error(`AllMCPs tool error: ${JSON.stringify(submitted.result)}`);
+          }
+          console.log('ORBIT_ALLMCPS_SUBMISSION:', JSON.stringify(submitted?.result ?? submitted));
+          NODE
