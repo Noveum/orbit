@@ -1,119 +1,47 @@
-name: One-time FindMCP free submission
-
+name: One-time ToolRoute inspection
 on:
   push:
-    branches:
-      - ops/mcpmarket-inspect-2026-09-04
-    paths:
-      - .github/workflows/ops-mcpmarket-inspect.yml
-
+    branches: [ops/mcpmarket-inspect-2026-09-04]
+    paths: [.github/workflows/ops-mcpmarket-inspect.yml]
 permissions:
   contents: read
-
 jobs:
-  submit:
-    name: Submit Orbit to FindMCP
+  inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
-      - name: Install Playwright Chromium
+      - name: Install browser
         run: |
-          mkdir -p "$RUNNER_TEMP/orbit-browser"
-          cd "$RUNNER_TEMP/orbit-browser"
+          mkdir -p "$RUNNER_TEMP/browser" && cd "$RUNNER_TEMP/browser"
           npm init -y >/dev/null
-          npm install --no-audit --no-fund --save-exact playwright >/dev/null
+          npm install --no-audit --no-fund playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-
-      - name: Submit free listing and record response
+      - name: Inspect form
         run: |
-          cd "$RUNNER_TEMP/orbit-browser"
+          cd "$RUNNER_TEMP/browser"
           node <<'NODE'
           const { chromium } = require('playwright');
-
           (async () => {
             const browser = await chromium.launch({ headless: true });
-            const page = await browser.newPage({
-              locale: 'en-US',
-              viewport: { width: 1440, height: 1100 },
-              userAgent:
-                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+            const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+            const response = await page.goto('https://toolroute.io/submit', {
+              waitUntil: 'domcontentloaded', timeout: 90000,
             });
-            const responses = [];
-            page.on('response', (response) => {
-              if (response.request().method() !== 'GET') {
-                responses.push({
-                  method: response.request().method(),
-                  url: response.url(),
-                  status: response.status(),
-                });
-              }
-            });
-
-            const response = await page.goto('https://findmcp.app/submit', {
-              waitUntil: 'domcontentloaded',
-              timeout: 90000,
-            });
-            if (!response || response.status() !== 200) {
-              throw new Error(`Unexpected FindMCP status: ${response?.status() ?? 'none'}`);
-            }
             await page.waitForTimeout(2500);
-
-            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(await page.content())) {
-              throw new Error('CAPTCHA detected; refusing automated submission.');
-            }
-            if (/stripe|checkout|credit card|pay now|\$\d+/i.test(await page.locator('body').innerText())) {
-              throw new Error('Payment step detected; refusing automated submission.');
-            }
-
-            const description =
-              'Orbit is a free, Apache-2.0 realtime task manager for software teams and AI agents. Its hosted Streamable HTTP MCP endpoint exposes more than 70 tools for issues, sprints, projects, docs, notifications, and files. OAuth grants are bound to the authorizing user, client, and workspace, are revocable, and expose tools according to approved read/write scopes.';
-            const installSnippet = JSON.stringify({
-              mcpServers: {
-                orbit: {
-                  type: 'http',
-                  url: 'https://orbit.noveum.ai/mcp',
-                },
-              },
-            });
-
-            await page.locator('#name').fill('Orbit by Noveum');
-            await page.locator('#repoUrl').fill('https://github.com/Noveum/orbit');
-            await page.locator('#description').fill(description);
-            await page.locator('#installSnippet').fill(installSnippet);
-            await page.locator('#category').selectOption('productivity');
-            await page.locator('input[name="transports"][value="http"]').check();
-            await page.locator('#submitterEmail').fill('shashank@noveum.ai');
-
-            const submit = page.getByRole('button', { name: 'Submit for Review', exact: true });
-            if ((await submit.count()) !== 1 || !(await submit.isEnabled())) {
-              throw new Error('Submit button is missing or disabled.');
-            }
-            await submit.click();
-
-            await Promise.race([
-              page.waitForURL((url) => !url.href.endsWith('/submit'), { timeout: 30000 }).catch(() => null),
-              page
-                .waitForFunction(
-                  () => /thank|success|submitted|received|review|already|duplicate/i.test(document.body.innerText),
-                  undefined,
-                  { timeout: 30000 },
-                )
-                .catch(() => null),
-            ]);
-            await page.waitForTimeout(3000);
-
-            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
-            console.log('FINAL_URL', page.url());
-            console.log('NON_GET_RESPONSES', JSON.stringify(responses));
-            console.log('FINAL_BODY', finalBody.slice(0, 9000));
-
-            if (!/thank|success|submitted|received|review|already|duplicate/i.test(finalBody)) {
-              throw new Error('No confirmed FindMCP submission response was visible.');
-            }
-
+            const result = await page.evaluate(() => ({
+              status: document.body.innerText.replace(/\s+/g, ' ').slice(0, 5000),
+              forms: [...document.forms].map(f => ({ action: f.action, method: f.method })),
+              fields: [...document.querySelectorAll('input,textarea,select,button')].map((e, i) => ({
+                i, tag: e.tagName, type: e.getAttribute('type'), name: e.getAttribute('name'),
+                id: e.id, placeholder: e.getAttribute('placeholder'), value: e.getAttribute('value'),
+                required: e.hasAttribute('required'), text: (e.textContent || '').trim().slice(0, 200),
+                options: e.tagName === 'SELECT' ? [...e.options].map(o => [o.value, o.text]) : null,
+              })),
+              captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
+              paid: /stripe|checkout|credit card|pay now|\$\d+/i.test(document.body.innerText),
+            }));
+            console.log('HTTP', response?.status(), 'URL', page.url());
+            console.log(JSON.stringify(result));
             await browser.close();
-          })().catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });
+          })().catch(e => { console.error(e); process.exit(1); });
           NODE
