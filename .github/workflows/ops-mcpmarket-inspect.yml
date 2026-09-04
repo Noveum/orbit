@@ -1,4 +1,4 @@
-name: One-time Smithery publishing inspection
+name: One-time free MCP directory inspection
 
 on:
   push:
@@ -12,9 +12,9 @@ permissions:
 
 jobs:
   inspect:
-    name: Inspect Smithery URL publishing flow
+    name: Inspect free MCP submission forms
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Install Playwright Chromium
         run: |
@@ -24,13 +24,24 @@ jobs:
           npm install --no-audit --no-fund --save-exact playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
 
-      - name: Inspect publishing page without authenticating or submitting
+      - name: Inspect forms without submitting
         run: |
           cd "$RUNNER_TEMP/orbit-browser"
           node <<'NODE'
           const { chromium } = require('playwright');
 
           (async () => {
+            const targets = [
+              ['TrackMCP', 'https://www.trackmcp.com/submit-mcp'],
+              ['MCP Archive', 'https://mcp-archive.com/submit'],
+              ['FindMCP', 'https://findmcp.app/submit'],
+              ['Pipeworx', 'https://pipeworx.io/submit/'],
+              ['ToolRoute', 'https://toolroute.io/submit'],
+              ['MCPizy', 'https://mcpizy.com/submit'],
+              ['MyMCPTools', 'https://mymcptools.com/submit'],
+              ['MCPVault', 'https://mcpvault.io/submit'],
+            ];
+
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
               locale: 'en-US',
@@ -38,86 +49,96 @@ jobs:
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
               viewport: { width: 1440, height: 1100 },
             });
-            const page = await context.newPage();
-            const targets = [
-              'https://smithery.ai/new?url=https%3A%2F%2Forbit.noveum.ai%2Fmcp',
-              'https://smithery.ai/new',
-            ];
-            let response = null;
-            for (const target of targets) {
+
+            for (const [name, url] of targets) {
+              const page = await context.newPage();
+              console.log(`\n=== ${name} ${url} ===`);
+              let response = null;
               try {
-                response = await page.goto(target, {
+                response = await page.goto(url, {
                   waitUntil: 'domcontentloaded',
-                  timeout: 90000,
+                  timeout: 75000,
                 });
-                console.log(`NAV ${target} STATUS ${response?.status()} FINAL ${page.url()}`);
-                if (response && response.status() < 500) break;
               } catch (error) {
-                console.error(`NAV_ERROR ${target}`, String(error));
+                console.error('NAVIGATION_ERROR', String(error));
               }
-            }
-            if (!response) throw new Error('Smithery publishing page could not be opened.');
-            await page.waitForTimeout(5000);
+              console.log(
+                `STATUS ${response?.status() ?? 'none'} FINAL ${page.url()} TITLE ${await page.title()}`,
+              );
+              await page.waitForTimeout(2500);
 
-            for (const text of ['URL', 'Publish', 'Continue', 'Sign in', 'Log in']) {
-              const candidate = page.getByRole('button', { name: new RegExp(`^${text}$`, 'i') }).first();
-              if ((await candidate.count()) > 0) {
-                console.log('BUTTON_FOUND', text, await candidate.isVisible().catch(() => false));
-              }
+              const details = await page.evaluate(() => {
+                const labelFor = (element) => {
+                  const id = element.id;
+                  const direct = id
+                    ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
+                    : null;
+                  const parent = element.closest('label');
+                  const fieldset = element.closest('fieldset');
+                  return (
+                    direct?.textContent ??
+                    parent?.textContent ??
+                    fieldset?.querySelector('legend')?.textContent ??
+                    ''
+                  )
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                };
+
+                return {
+                  finalUrl: location.href,
+                  forms: [...document.forms].map((form) => ({
+                    action: form.action,
+                    method: form.method,
+                    id: form.id || null,
+                    controls: form.elements.length,
+                  })),
+                  controls: [...document.querySelectorAll('input, textarea, select, button')].map(
+                    (element) => ({
+                      tag: element.tagName.toLowerCase(),
+                      type: element.getAttribute('type'),
+                      name: element.getAttribute('name'),
+                      id: element.id || null,
+                      placeholder: element.getAttribute('placeholder'),
+                      ariaLabel: element.getAttribute('aria-label'),
+                      label: labelFor(element),
+                      value: element.getAttribute('value'),
+                      required: element.hasAttribute('required'),
+                      disabled: element.hasAttribute('disabled'),
+                      checked: element instanceof HTMLInputElement ? element.checked : undefined,
+                      text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 700),
+                      options:
+                        element instanceof HTMLSelectElement
+                          ? [...element.options].map((option) => ({
+                              value: option.value,
+                              text: option.text,
+                            }))
+                          : undefined,
+                    }),
+                  ),
+                  links: [...document.querySelectorAll('a')]
+                    .map((link) => ({
+                      text: (link.textContent ?? '').replace(/\s+/g, ' ').trim(),
+                      href: link.href,
+                    }))
+                    .filter((link) => /submit|list|publish|sign|login|free|fast|feature|claim/i.test(link.text + ' ' + link.href))
+                    .slice(0, 100),
+                  captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(
+                    document.documentElement.innerHTML,
+                  ),
+                  payment: /stripe|checkout|credit card|pay now|fast.track|featured|\$\d+/i.test(
+                    document.body.innerText,
+                  ),
+                  login: /sign in|log in|continue with github|create account/i.test(
+                    document.body.innerText,
+                  ),
+                  body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 10000),
+                };
+              });
+              console.log(JSON.stringify(details, null, 2));
+              await page.close();
             }
 
-            const details = await page.evaluate(() => {
-              const labelFor = (element) => {
-                const id = element.id;
-                const label = id
-                  ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
-                  : element.closest('label');
-                return (label?.textContent ?? '').replace(/\s+/g, ' ').trim();
-              };
-              return {
-                url: location.href,
-                title: document.title,
-                forms: [...document.forms].map((form) => ({
-                  action: form.action,
-                  method: form.method,
-                  id: form.id || null,
-                  controls: form.elements.length,
-                })),
-                controls: [...document.querySelectorAll('input, textarea, select, button')].map(
-                  (element) => ({
-                    tag: element.tagName.toLowerCase(),
-                    type: element.getAttribute('type'),
-                    name: element.getAttribute('name'),
-                    id: element.id || null,
-                    placeholder: element.getAttribute('placeholder'),
-                    ariaLabel: element.getAttribute('aria-label'),
-                    label: labelFor(element),
-                    value:
-                      element instanceof HTMLInputElement && element.type === 'password'
-                        ? '[redacted]'
-                        : element.getAttribute('value'),
-                    required: element.hasAttribute('required'),
-                    disabled: element.hasAttribute('disabled'),
-                    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
-                    options:
-                      element instanceof HTMLSelectElement
-                        ? [...element.options].map((option) => ({ value: option.value, text: option.text }))
-                        : undefined,
-                  }),
-                ),
-                links: [...document.querySelectorAll('a')]
-                  .map((link) => ({
-                    text: (link.textContent ?? '').replace(/\s+/g, ' ').trim(),
-                    href: link.href,
-                  }))
-                  .filter((link) => /publish|sign|login|github|url|namespace/i.test(link.text + ' ' + link.href))
-                  .slice(0, 100),
-                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 10000),
-                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
-                payment: /stripe|checkout|credit card|pay now|\$\d+/i.test(document.body.innerText),
-              };
-            });
-            console.log(JSON.stringify(details, null, 2));
             await browser.close();
           })().catch((error) => {
             console.error(error);
