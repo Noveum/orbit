@@ -1,0 +1,112 @@
+name: One-time TiloBox form inspection
+
+on:
+  push:
+    branches:
+      - ops/tilobox-submit-2026-09-04
+    paths:
+      - .github/workflows/ops-tilobox-submit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect TiloBox free submission form
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbit-browser"
+          cd "$RUNNER_TEMP/orbit-browser"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --save-exact playwright >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Inspect form without submitting
+        run: |
+          cd "$RUNNER_TEMP/orbit-browser"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({
+              locale: 'en-US',
+              userAgent:
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+              viewport: { width: 1440, height: 1100 },
+            });
+            const page = await context.newPage();
+            const home = await page.goto('https://www.tilobox.com/', {
+              waitUntil: 'networkidle',
+              timeout: 90000,
+            });
+            console.log('HOME', home?.status(), page.url(), await page.title());
+            if (home?.status() !== 200) throw new Error(`Home returned ${home?.status()}`);
+
+            const link = page.getByRole('link', { name: /submit a tool/i }).first();
+            if ((await link.count()) !== 1) throw new Error('Submit a tool link not found');
+            const href = await link.getAttribute('href');
+            if (!href) throw new Error('Submit a tool link had no href');
+            const submitUrl = new URL(href, page.url()).href;
+            console.log('SUBMIT_URL', submitUrl);
+
+            const response = await page.goto(submitUrl, { waitUntil: 'networkidle', timeout: 90000 });
+            console.log('PAGE', response?.status(), page.url(), await page.title());
+            if (response?.status() !== 200) throw new Error(`Submit page returned ${response?.status()}`);
+
+            const details = await page.evaluate(() => {
+              function text(value) {
+                return (value ?? '').replace(/\s+/g, ' ').trim();
+              }
+              function labelFor(element) {
+                const id = element.id;
+                const direct = id
+                  ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
+                  : null;
+                const wrapper = element.closest('label');
+                const described = element.getAttribute('aria-describedby');
+                const description = described ? document.getElementById(described) : null;
+                return text(`${direct?.textContent ?? wrapper?.textContent ?? ''} ${description?.textContent ?? ''}`);
+              }
+              return {
+                forms: [...document.forms].map((form) => ({
+                  action: form.action,
+                  method: form.method,
+                  id: form.id || null,
+                  controls: form.elements.length,
+                })),
+                controls: [...document.querySelectorAll('input, textarea, select, button')].map(
+                  (element) => ({
+                    tag: element.tagName.toLowerCase(),
+                    type: element.getAttribute('type'),
+                    name: element.getAttribute('name'),
+                    id: element.id || null,
+                    placeholder: element.getAttribute('placeholder'),
+                    ariaLabel: element.getAttribute('aria-label'),
+                    label: labelFor(element),
+                    text: text(element.textContent).slice(0, 300),
+                    value: element.getAttribute('value'),
+                    required: element.hasAttribute('required'),
+                    disabled: element.hasAttribute('disabled'),
+                    options:
+                      element instanceof HTMLSelectElement
+                        ? [...element.options].map((option) => ({ value: option.value, text: option.text }))
+                        : undefined,
+                  }),
+                ),
+                body: text(document.body.innerText).slice(0, 5000),
+                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(
+                  `${document.body.innerText} ${document.documentElement.innerHTML}`,
+                ),
+              };
+            });
+            console.log(JSON.stringify(details, null, 2));
+            await browser.close();
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
