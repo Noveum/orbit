@@ -1,4 +1,4 @@
-name: One-time MCP.Directory submission
+name: One-time Smithery publishing inspection
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  submit:
-    name: Submit Orbit to MCP.Directory free review
+  inspect:
+    name: Inspect Smithery URL publishing flow
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,7 +24,7 @@ jobs:
           npm install --no-audit --no-fund --save-exact playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
 
-      - name: Submit free listing and record response
+      - name: Inspect publishing page without authenticating or submitting
         run: |
           cd "$RUNNER_TEMP/orbit-browser"
           node <<'NODE'
@@ -36,95 +36,88 @@ jobs:
               locale: 'en-US',
               userAgent:
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-              viewport: { width: 1440, height: 1000 },
+              viewport: { width: 1440, height: 1100 },
             });
             const page = await context.newPage();
-            const responses = [];
-            page.on('response', (response) => {
-              if (response.request().method() !== 'GET') {
-                responses.push({
-                  method: response.request().method(),
-                  url: response.url(),
-                  status: response.status(),
+            const targets = [
+              'https://smithery.ai/new?url=https%3A%2F%2Forbit.noveum.ai%2Fmcp',
+              'https://smithery.ai/new',
+            ];
+            let response = null;
+            for (const target of targets) {
+              try {
+                response = await page.goto(target, {
+                  waitUntil: 'domcontentloaded',
+                  timeout: 90000,
                 });
+                console.log(`NAV ${target} STATUS ${response?.status()} FINAL ${page.url()}`);
+                if (response && response.status() < 500) break;
+              } catch (error) {
+                console.error(`NAV_ERROR ${target}`, String(error));
               }
+            }
+            if (!response) throw new Error('Smithery publishing page could not be opened.');
+            await page.waitForTimeout(5000);
+
+            for (const text of ['URL', 'Publish', 'Continue', 'Sign in', 'Log in']) {
+              const candidate = page.getByRole('button', { name: new RegExp(`^${text}$`, 'i') }).first();
+              if ((await candidate.count()) > 0) {
+                console.log('BUTTON_FOUND', text, await candidate.isVisible().catch(() => false));
+              }
+            }
+
+            const details = await page.evaluate(() => {
+              const labelFor = (element) => {
+                const id = element.id;
+                const label = id
+                  ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
+                  : element.closest('label');
+                return (label?.textContent ?? '').replace(/\s+/g, ' ').trim();
+              };
+              return {
+                url: location.href,
+                title: document.title,
+                forms: [...document.forms].map((form) => ({
+                  action: form.action,
+                  method: form.method,
+                  id: form.id || null,
+                  controls: form.elements.length,
+                })),
+                controls: [...document.querySelectorAll('input, textarea, select, button')].map(
+                  (element) => ({
+                    tag: element.tagName.toLowerCase(),
+                    type: element.getAttribute('type'),
+                    name: element.getAttribute('name'),
+                    id: element.id || null,
+                    placeholder: element.getAttribute('placeholder'),
+                    ariaLabel: element.getAttribute('aria-label'),
+                    label: labelFor(element),
+                    value:
+                      element instanceof HTMLInputElement && element.type === 'password'
+                        ? '[redacted]'
+                        : element.getAttribute('value'),
+                    required: element.hasAttribute('required'),
+                    disabled: element.hasAttribute('disabled'),
+                    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
+                    options:
+                      element instanceof HTMLSelectElement
+                        ? [...element.options].map((option) => ({ value: option.value, text: option.text }))
+                        : undefined,
+                  }),
+                ),
+                links: [...document.querySelectorAll('a')]
+                  .map((link) => ({
+                    text: (link.textContent ?? '').replace(/\s+/g, ' ').trim(),
+                    href: link.href,
+                  }))
+                  .filter((link) => /publish|sign|login|github|url|namespace/i.test(link.text + ' ' + link.href))
+                  .slice(0, 100),
+                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 10000),
+                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
+                payment: /stripe|checkout|credit card|pay now|\$\d+/i.test(document.body.innerText),
+              };
             });
-
-            const response = await page.goto('https://mcp.directory/submit', {
-              waitUntil: 'domcontentloaded',
-              timeout: 90000,
-            });
-            if (!response || response.status() !== 200) {
-              throw new Error(`Unexpected submit page status: ${response?.status() ?? 'none'}`);
-            }
-            await page.waitForTimeout(2000);
-
-            const bodyBefore = await page.locator('body').innerText();
-            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(await page.content())) {
-              throw new Error('CAPTCHA detected; refusing automated submission.');
-            }
-            if (/\$\d+|credit card|checkout|pay now/i.test(bodyBefore)) {
-              throw new Error('Payment step detected; refusing automated submission.');
-            }
-
-            const urlInput = page.locator('input[type="url"]').first();
-            const textInputs = page.locator('input[type="text"]');
-            const emailInput = page.locator('input[type="email"]').first();
-            await urlInput.fill('https://github.com/Noveum/orbit');
-            const textCount = await textInputs.count();
-            if (textCount < 3) {
-              throw new Error(`Expected at least three text inputs, found ${textCount}`);
-            }
-            await textInputs.nth(2).fill(
-              'Task management for people and AI agents, with scoped OAuth access to issues, projects, and docs.',
-            );
-            await emailInput.fill('shashank@noveum.ai');
-
-            const values = await page.evaluate(() =>
-              [...document.querySelectorAll('input')].map((input) => ({
-                type: input.type,
-                placeholder: input.placeholder,
-                value: input.type === 'email' ? '[contact email set]' : input.value,
-                required: input.required,
-              })),
-            );
-            console.log('FIELDS', JSON.stringify(values));
-
-            const submit = page.getByRole('button', { name: 'Submit for Review', exact: true });
-            if ((await submit.count()) !== 1 || !(await submit.isEnabled())) {
-              throw new Error('Free submit button is missing or disabled.');
-            }
-            await submit.click();
-
-            await Promise.race([
-              page.waitForURL((url) => url.href !== 'https://mcp.directory/submit', {
-                timeout: 30000,
-              }).catch(() => null),
-              page
-                .waitForFunction(
-                  () =>
-                    /submitted|success|review|already|duplicate|published|thank/i.test(
-                      document.body.innerText,
-                    ),
-                  undefined,
-                  { timeout: 30000 },
-                )
-                .catch(() => null),
-            ]);
-            await page.waitForTimeout(3000);
-
-            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
-            console.log('FINAL_URL', page.url());
-            console.log('NON_GET_RESPONSES', JSON.stringify(responses));
-            console.log('FINAL_BODY', finalBody.slice(0, 8000));
-
-            const success = /thank|submitted|submission.*received|under review|already.*listed|duplicate/i.test(
-              finalBody,
-            );
-            if (!success) {
-              throw new Error('No confirmed submission or duplicate response was visible.');
-            }
-
+            console.log(JSON.stringify(details, null, 2));
             await browser.close();
           })().catch((error) => {
             console.error(error);
