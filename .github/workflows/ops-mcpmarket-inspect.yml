@@ -1,16 +1,80 @@
-name: One-time cancellation of Pipeworx form run
+name: One-time MCPizy form inspection
 on:
   push:
     branches: [ops/mcpmarket-inspect-2026-09-04]
     paths: [.github/workflows/ops-mcpmarket-inspect.yml]
 permissions:
-  actions: write
   contents: read
 jobs:
-  cancel:
+  inspect:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
-      - name: Cancel the previous Pipeworx form run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh api --method POST repos/Noveum/orbit/actions/runs/33862329170/cancel || true
+      - name: Install browser
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser" && cd "$RUNNER_TEMP/browser"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+      - name: Inspect form without submitting
+        run: |
+          cd "$RUNNER_TEMP/browser"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({
+              viewport: { width: 1440, height: 1100 },
+              locale: 'en-US',
+              userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+            });
+            let response = null;
+            for (const url of ['https://mcpizy.com/submit', 'https://mcpizy.com/submit-a-server']) {
+              try {
+                response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+                console.log('NAV', url, response?.status(), page.url());
+                if (response && response.status() < 400) break;
+              } catch (error) {
+                console.error('NAV_ERROR', url, String(error));
+              }
+            }
+            if (!response) throw new Error('No MCPizy response');
+            await page.waitForTimeout(3000);
+            const result = await page.evaluate(() => {
+              const labelFor = (element) => {
+                const id = element.id;
+                const direct = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+                const parent = element.closest('label');
+                const fieldset = element.closest('fieldset');
+                return (direct?.textContent ?? parent?.textContent ?? fieldset?.querySelector('legend')?.textContent ?? '')
+                  .replace(/\s+/g, ' ').trim();
+              };
+              return {
+                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 9000),
+                forms: [...document.forms].map(f => ({ action: f.action, method: f.method, controls: f.elements.length })),
+                fields: [...document.querySelectorAll('input,textarea,select,button')].map((e, i) => ({
+                  i,
+                  tag: e.tagName.toLowerCase(),
+                  type: e.getAttribute('type'),
+                  name: e.getAttribute('name'),
+                  id: e.id || null,
+                  placeholder: e.getAttribute('placeholder'),
+                  ariaLabel: e.getAttribute('aria-label'),
+                  label: labelFor(e),
+                  value: e.getAttribute('value'),
+                  required: e.hasAttribute('required'),
+                  disabled: e.hasAttribute('disabled'),
+                  checked: e instanceof HTMLInputElement ? e.checked : undefined,
+                  text: (e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+                  options: e instanceof HTMLSelectElement ? [...e.options].map(o => [o.value, o.text]) : null,
+                })),
+                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
+                payment: /stripe|checkout|credit card|pay now|fast.track|€49|\$49/i.test(document.body.innerText),
+                login: /sign in|log in|continue with github|create account/i.test(document.body.innerText),
+              };
+            });
+            console.log('HTTP', response.status(), 'FINAL', page.url());
+            console.log('RESULT', JSON.stringify(result));
+            await browser.close();
+          })().catch(error => { console.error(error); process.exit(1); });
+          NODE
