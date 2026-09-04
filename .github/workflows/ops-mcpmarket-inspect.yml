@@ -1,4 +1,4 @@
-name: One-time MCP Archive form inspection
+name: One-time FindMCP form inspection
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   inspect:
-    name: Inspect MCP Archive free form
+    name: Inspect FindMCP free form
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -38,7 +38,7 @@ jobs:
               userAgent:
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
             });
-            const response = await page.goto('https://mcp-archive.com/submit', {
+            const response = await page.goto('https://findmcp.app/submit', {
               waitUntil: 'domcontentloaded',
               timeout: 90000,
             });
@@ -48,10 +48,18 @@ jobs:
                 const id = element.id;
                 const linked = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
                 const parent = element.closest('label');
-                return (linked?.textContent ?? parent?.textContent ?? '').replace(/\s+/g, ' ').trim();
+                const fieldset = element.closest('fieldset');
+                return (
+                  linked?.textContent ??
+                  parent?.textContent ??
+                  fieldset?.querySelector('legend')?.textContent ??
+                  ''
+                )
+                  .replace(/\s+/g, ' ')
+                  .trim();
               };
               return {
-                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 7000),
+                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 9000),
                 forms: [...document.forms].map((form) => ({
                   action: form.action,
                   method: form.method,
@@ -65,12 +73,13 @@ jobs:
                     name: element.getAttribute('name'),
                     id: element.id || null,
                     placeholder: element.getAttribute('placeholder'),
+                    ariaLabel: element.getAttribute('aria-label'),
                     label: label(element),
                     value: element.getAttribute('value'),
                     required: element.hasAttribute('required'),
                     checked: element instanceof HTMLInputElement ? element.checked : undefined,
                     disabled: element.hasAttribute('disabled'),
-                    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 400),
+                    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
                     options:
                       element instanceof HTMLSelectElement
                         ? [...element.options].map((option) => ({ value: option.value, text: option.text }))
