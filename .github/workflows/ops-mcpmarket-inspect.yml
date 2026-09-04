@@ -1,4 +1,4 @@
-name: One-time MCPizy form inspection
+name: One-time MCPizy standard submission
 on:
   push:
     branches: [ops/mcpmarket-inspect-2026-09-04]
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect:
+  submit:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -16,7 +16,7 @@ jobs:
           npm init -y >/dev/null
           npm install --no-audit --no-fund playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-      - name: Inspect form without submitting
+      - name: Submit standard free listing
         run: |
           cd "$RUNNER_TEMP/browser"
           node <<'NODE'
@@ -28,53 +28,63 @@ jobs:
               locale: 'en-US',
               userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
             });
-            let response = null;
-            for (const url of ['https://mcpizy.com/submit', 'https://mcpizy.com/submit-a-server']) {
-              try {
-                response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-                console.log('NAV', url, response?.status(), page.url());
-                if (response && response.status() < 400) break;
-              } catch (error) {
-                console.error('NAV_ERROR', url, String(error));
-              }
-            }
-            if (!response) throw new Error('No MCPizy response');
-            await page.waitForTimeout(3000);
-            const result = await page.evaluate(() => {
-              const labelFor = (element) => {
-                const id = element.id;
-                const direct = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-                const parent = element.closest('label');
-                const fieldset = element.closest('fieldset');
-                return (direct?.textContent ?? parent?.textContent ?? fieldset?.querySelector('legend')?.textContent ?? '')
-                  .replace(/\s+/g, ' ').trim();
-              };
-              return {
-                body: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 9000),
-                forms: [...document.forms].map(f => ({ action: f.action, method: f.method, controls: f.elements.length })),
-                fields: [...document.querySelectorAll('input,textarea,select,button')].map((e, i) => ({
-                  i,
-                  tag: e.tagName.toLowerCase(),
-                  type: e.getAttribute('type'),
-                  name: e.getAttribute('name'),
-                  id: e.id || null,
-                  placeholder: e.getAttribute('placeholder'),
-                  ariaLabel: e.getAttribute('aria-label'),
-                  label: labelFor(e),
-                  value: e.getAttribute('value'),
-                  required: e.hasAttribute('required'),
-                  disabled: e.hasAttribute('disabled'),
-                  checked: e instanceof HTMLInputElement ? e.checked : undefined,
-                  text: (e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-                  options: e instanceof HTMLSelectElement ? [...e.options].map(o => [o.value, o.text]) : null,
-                })),
-                captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(document.documentElement.innerHTML),
-                payment: /stripe|checkout|credit card|pay now|fast.track|€49|\$49/i.test(document.body.innerText),
-                login: /sign in|log in|continue with github|create account/i.test(document.body.innerText),
-              };
+            const writes = [];
+            page.on('response', r => {
+              if (r.request().method() !== 'GET') writes.push({ method: r.request().method(), url: r.url(), status: r.status() });
             });
-            console.log('HTTP', response.status(), 'FINAL', page.url());
-            console.log('RESULT', JSON.stringify(result));
+            const response = await page.goto('https://mcpizy.com/submit', { waitUntil: 'domcontentloaded', timeout: 90000 });
+            if (!response || response.status() !== 200) throw new Error(`Unexpected status ${response?.status()}`);
+            await page.waitForTimeout(2000);
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(await page.content())) throw new Error('CAPTCHA detected');
+
+            const standard = page.locator('input[name="tier"][value="standard"]');
+            const fasttrack = page.locator('input[name="tier"][value="fasttrack"]');
+            await standard.check();
+            if (!(await standard.isChecked()) || await fasttrack.isChecked()) {
+              throw new Error('Could not switch exclusively to the standard free tier');
+            }
+
+            await page.locator('input[name="repo"]').fill('https://github.com/Noveum/orbit');
+            await page.waitForTimeout(2500);
+            const name = page.locator('input[name="name"]');
+            await name.waitFor({ state: 'attached' });
+            if (await name.isDisabled()) {
+              await page.waitForFunction(() => {
+                const element = document.querySelector('input[name="name"]');
+                return element && !element.disabled;
+              }, undefined, { timeout: 20000 }).catch(() => null);
+            }
+            if (!(await name.isDisabled()) && (await name.inputValue()).trim().length === 0) {
+              await name.fill('Orbit by Noveum');
+            }
+            await page.locator('input[name="email"]').fill('shashank@noveum.ai');
+
+            const selected = await page.locator('input[name="tier"]:checked').getAttribute('value');
+            const submit = page.locator('button[type="submit"]');
+            const buttonText = (await submit.innerText()).trim();
+            console.log('PRE_SUBMIT', JSON.stringify({ selected, buttonText, name: await name.inputValue(), nameDisabled: await name.isDisabled() }));
+            if (selected !== 'standard') throw new Error(`Paid tier selected: ${selected}`);
+            if (/fast.?track|stripe|pay|\$49|€49/i.test(buttonText)) throw new Error(`Paid button still active: ${buttonText}`);
+            if (!(await submit.isEnabled())) throw new Error('Standard submit button disabled');
+
+            await submit.click();
+            await Promise.race([
+              page.waitForURL(u => !u.href.endsWith('/submit'), { timeout: 30000 }).catch(() => null),
+              page.waitForFunction(() => /success|submitted|received|review|already|duplicate|thank/i.test(document.body.innerText), undefined, { timeout: 30000 }).catch(() => null),
+            ]);
+            await page.waitForTimeout(2500);
+            const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            console.log('FINAL_URL', page.url());
+            console.log('WRITES', JSON.stringify(writes));
+            console.log('FINAL_BODY', finalBody.slice(0, 9000));
+
+            if (/stripe\.com|checkout|payment details|pay now/i.test(page.url() + ' ' + finalBody)) {
+              throw new Error('Unexpected paid flow after standard submission');
+            }
+            if (writes.some(r => r.status >= 500)) throw new Error('MCPizy backend error');
+            if (!/success|submitted|received|review|already|duplicate|thank/i.test(finalBody)) {
+              throw new Error('No confirmed MCPizy submission response');
+            }
             await browser.close();
           })().catch(error => { console.error(error); process.exit(1); });
           NODE
