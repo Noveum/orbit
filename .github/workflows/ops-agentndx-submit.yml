@@ -1,0 +1,142 @@
+name: One-time AgentNDX free submission
+
+on:
+  push:
+    branches:
+      - ops-agentndx-submit-2026-09-04
+    paths:
+      - .github/workflows/ops-agentndx-submit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    name: Submit Orbit to AgentNDX curated review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbit-browser"
+          cd "$RUNNER_TEMP/orbit-browser"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --save-exact playwright >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Submit standard review request
+        run: |
+          cd "$RUNNER_TEMP/orbit-browser"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            try {
+              const context = await browser.newContext({
+                locale: 'en-US',
+                userAgent:
+                  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+                viewport: { width: 1440, height: 1000 },
+              });
+              const page = await context.newPage();
+              const nonGet = [];
+              page.on('response', (response) => {
+                if (response.request().method() !== 'GET') {
+                  nonGet.push({
+                    method: response.request().method(),
+                    url: response.url(),
+                    status: response.status(),
+                  });
+                }
+              });
+
+              const response = await page.goto('https://agentndx.ai/submit/', {
+                waitUntil: 'domcontentloaded',
+                timeout: 60000,
+              });
+              await page.waitForTimeout(2500);
+              if (response?.status() !== 200) {
+                throw new Error(`Submission page returned ${response?.status() ?? 'no response'}`);
+              }
+
+              const bodyBefore = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+              if (/captcha|turnstile|hcaptcha|recaptcha/i.test(bodyBefore)) {
+                throw new Error('CAPTCHA detected; no bypass attempted');
+              }
+              if (!/Submit for Review/i.test(bodyBefore) || !/Get Featured\s*—\s*\$149/i.test(bodyBefore)) {
+                throw new Error('Could not distinguish curated review from paid featured placement');
+              }
+
+              const reportId = page.locator('input[name="report_id"]');
+              if ((await reportId.count()) !== 1 || (await reportId.inputValue()) !== '') {
+                throw new Error('Unexpected hidden report_id state');
+              }
+
+              await page.locator('input[name="name"]').fill('Orbit by Noveum');
+              await page.locator('input[name="github_url"]').fill('https://github.com/Noveum/orbit');
+              await page.locator('input[name="homepage_url"]').fill('https://orbit.noveum.ai');
+
+              const protocols = page.locator('input[name="protocols"]');
+              if ((await protocols.count()) !== 4) {
+                throw new Error(`Expected four protocol choices, found ${await protocols.count()}`);
+              }
+              for (let index = 0; index < 4; index += 1) {
+                const checkbox = protocols.nth(index);
+                const value = await checkbox.getAttribute('value');
+                const label = (await checkbox.locator('xpath=ancestor::label[1]').innerText().catch(() => '')).trim();
+                const isMcp = /^mcp$/i.test(value ?? '') || /^mcp$/i.test(label);
+                if (isMcp) await checkbox.check();
+                else if (await checkbox.isChecked()) await checkbox.uncheck();
+              }
+              const selected = await protocols.evaluateAll((nodes) =>
+                nodes.filter((node) => node.checked).map((node) => node.value),
+              );
+              if (selected.length !== 1 || !selected.some((value) => /^mcp$/i.test(value))) {
+                throw new Error(`Expected only MCP selected, got ${JSON.stringify(selected)}`);
+              }
+
+              await page
+                .locator('textarea[name="description"]')
+                .fill(
+                  'Free realtime task and project management for people and AI agents. The hosted Streamable HTTP endpoint uses OAuth 2.1 with dynamic client registration and PKCE, exposing more than 70 permission-scoped tools for issues, sprints, projects, docs, notifications, and files.',
+                );
+              await page.locator('input[name="contact"]').fill('shashank@noveum.ai');
+
+              const featured = page.getByRole('link', { name: /Get Featured/i });
+              const submit = page.getByRole('button', { name: /Submit for Review/i });
+              if ((await submit.count()) !== 1) {
+                throw new Error(`Expected one review submit button, found ${await submit.count()}`);
+              }
+              if ((await featured.count()) < 1) {
+                throw new Error('Paid featured route was not independently identifiable');
+              }
+
+              await submit.click();
+              await page.waitForTimeout(7000);
+              await page.waitForLoadState('networkidle', { timeout: 25000 }).catch(() => undefined);
+
+              const finalUrl = page.url();
+              const bodyAfter = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+              const lower = bodyAfter.toLowerCase();
+              console.log('FINAL_URL', finalUrl);
+              console.log('NON_GET_RESPONSES', JSON.stringify(nonGet));
+              console.log('BODY_EXCERPT', bodyAfter.slice(0, 5000));
+
+              if (/stripe\.com|checkout|payment/.test(finalUrl.toLowerCase())) {
+                throw new Error('Unexpected payment redirect; paid featuring was not authorized');
+              }
+              if (/error|failed|invalid|try again/.test(lower)) {
+                throw new Error('Submission page displayed an error state');
+              }
+              if (!/thank|submitted|submission|review|received|success|within 48 hours/.test(lower)) {
+                throw new Error('Could not confirm a curated-review acknowledgement');
+              }
+            } finally {
+              await browser.close();
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
