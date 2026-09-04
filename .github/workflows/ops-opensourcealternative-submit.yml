@@ -1,0 +1,147 @@
+name: One-time OpenSourceAlternative free submission
+
+on:
+  push:
+    branches:
+      - ops/opensourcealternative-submit-2026-09-04
+    paths:
+      - .github/workflows/ops-opensourcealternative-submit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    name: Submit Orbit to free waitlist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbit-browser"
+          cd "$RUNNER_TEMP/orbit-browser"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --save-exact playwright >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Inspect and submit free waitlist form
+        run: |
+          cd "$RUNNER_TEMP/orbit-browser"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({
+              locale: 'en-US',
+              userAgent:
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+              viewport: { width: 1440, height: 1100 },
+            });
+            const page = await context.newPage();
+            const nonGet = [];
+            page.on('response', (response) => {
+              if (response.request().method() !== 'GET') {
+                nonGet.push({
+                  method: response.request().method(),
+                  url: response.url(),
+                  status: response.status(),
+                });
+              }
+            });
+
+            const response = await page.goto('https://opensourcealternative.to/submit', {
+              waitUntil: 'networkidle',
+              timeout: 90000,
+            });
+            console.log('PAGE', response?.status(), page.url(), await page.title());
+            if (response?.status() !== 200) {
+              throw new Error(`Submission page returned ${response?.status() ?? 'no response'}`);
+            }
+
+            const before = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(before)) {
+              throw new Error('Submission page requires a CAPTCHA; no bypass attempted');
+            }
+            if (!/submit to waitlist/i.test(before) || !/submit for 48 hour review/i.test(before)) {
+              throw new Error('Expected distinct free and paid submission choices were not present');
+            }
+
+            const controls = await page.evaluate(() =>
+              [...document.querySelectorAll('input, textarea, select, button')].map((element) => ({
+                tag: element.tagName.toLowerCase(),
+                type: element.getAttribute('type'),
+                name: element.getAttribute('name'),
+                id: element.id || null,
+                placeholder: element.getAttribute('placeholder'),
+                required: element.hasAttribute('required'),
+                text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
+              })),
+            );
+            console.log('CONTROLS', JSON.stringify(controls));
+
+            const inputs = page.locator('input:not([type="checkbox"]):not([type="hidden"])');
+            const count = await inputs.count();
+            if (count < 6) throw new Error(`Expected at least six text inputs, found ${count}`);
+
+            async function fillByPlaceholder(pattern, value) {
+              const locator = page.locator(`input[placeholder*="${pattern}" i]`);
+              if ((await locator.count()) !== 1) {
+                throw new Error(`Expected one input containing placeholder ${pattern}, found ${await locator.count()}`);
+              }
+              await locator.fill(value);
+            }
+
+            await fillByPlaceholder('jon@snow.com', 'shashank@noveum.ai');
+            await fillByPlaceholder('cal.com', 'orbit.noveum.ai');
+            await fillByPlaceholder('Cal.com', 'Orbit by Noveum');
+            await fillByPlaceholder('calcom/cal.com', 'Noveum/orbit');
+            await fillByPlaceholder('calendly.com', 'linear.app');
+            await fillByPlaceholder('e.g. Calendly', 'Linear');
+
+            const marketing = page.locator('input[type="checkbox"]');
+            if ((await marketing.count()) > 1) {
+              throw new Error(`Unexpected checkbox count: ${await marketing.count()}`);
+            }
+            if ((await marketing.count()) === 1 && (await marketing.isChecked())) {
+              await marketing.uncheck();
+            }
+            if ((await marketing.count()) === 1 && (await marketing.isChecked())) {
+              throw new Error('Email-updates checkbox remained selected');
+            }
+
+            const paid = page.getByRole('button', { name: /submit for 48 hour review/i });
+            const free = page.getByRole('button', { name: /submit to waitlist/i });
+            if ((await paid.count()) !== 1 || (await free.count()) !== 1) {
+              throw new Error(
+                `Expected one paid and one free button; paid=${await paid.count()} free=${await free.count()}`,
+              );
+            }
+
+            await free.click();
+            await page.waitForTimeout(7000);
+            await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
+
+            const finalUrl = page.url();
+            const after = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            const lower = after.toLowerCase();
+            console.log('FINAL_URL', finalUrl);
+            console.log('NON_GET_RESPONSES', JSON.stringify(nonGet));
+            console.log('BODY_EXCERPT', after.slice(0, 5000));
+
+            if (/stripe\.com|checkout|payment/.test(finalUrl.toLowerCase())) {
+              throw new Error('Unexpected payment redirect; the free waitlist was selected');
+            }
+            if (/error|failed|invalid|try again/.test(lower)) {
+              throw new Error('Submission page displayed an error state');
+            }
+            if (!/thank|submitted|submission|waitlist|received|success/.test(lower)) {
+              throw new Error('Could not confirm a free-waitlist acknowledgement');
+            }
+
+            await browser.close();
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
