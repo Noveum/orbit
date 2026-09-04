@@ -1,4 +1,4 @@
-name: One-time MyMCPTools free submission
+name: One-time MCPizy complete standard submission
 on:
   push:
     branches: [ops/mcpmarket-inspect-2026-09-04]
@@ -16,7 +16,7 @@ jobs:
           npm init -y >/dev/null
           npm install --no-audit --no-fund playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-      - name: Submit free listing
+      - name: Submit complete standard free listing
         run: |
           cd "$RUNNER_TEMP/browser"
           node <<'NODE'
@@ -28,47 +28,76 @@ jobs:
               userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
             });
             const writes = [];
-            page.on('response', r => {
-              if (r.request().method() !== 'GET') writes.push({ method: r.request().method(), url: r.url(), status: r.status() });
+            page.on('response', async r => {
+              if (r.request().method() !== 'GET' && new URL(r.url()).hostname.endsWith('mcpizy.com')) {
+                let body = '';
+                try { body = (await r.text()).slice(0, 2000); } catch {}
+                writes.push({ method: r.request().method(), url: r.url(), status: r.status(), body });
+              }
             });
-            const response = await page.goto('https://mymcptools.com/submit', { waitUntil: 'domcontentloaded', timeout: 90000 });
+            const response = await page.goto('https://mcpizy.com/submit', { waitUntil: 'domcontentloaded', timeout: 90000 });
             if (!response || response.status() !== 200) throw new Error(`Unexpected status ${response?.status()}`);
             await page.waitForTimeout(2000);
-            const html = await page.content();
-            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(html)) throw new Error('CAPTCHA detected');
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(await page.content())) throw new Error('CAPTCHA detected');
 
-            const freeCard = page.getByRole('button', { name: /Free\$0/i }).first();
-            if ((await freeCard.count()) === 1) await freeCard.click();
-            await page.locator('#name').fill('Orbit by Noveum');
-            await page.locator('#description').fill(
-              'Orbit is a free, Apache-2.0 realtime task manager for software teams and AI agents. It includes issues, boards, sprints, projects, milestones, docs, analytics, GitHub integration, and a hosted Streamable HTTP MCP endpoint with more than 70 tools. OAuth 2.1 grants are revocable and bound to the authorizing user, client, and workspace; read-only grants are not offered write tools. Hosted endpoint: https://orbit.noveum.ai/mcp.'
+            const standard = page.locator('input[name="tier"][value="standard"]');
+            const fasttrack = page.locator('input[name="tier"][value="fasttrack"]');
+            await standard.check();
+            if (!(await standard.isChecked()) || await fasttrack.isChecked()) throw new Error('Free tier not exclusively selected');
+
+            await page.locator('input[name="repo"]').fill('https://github.com/Noveum/orbit');
+            await page.waitForTimeout(3000);
+            const name = page.locator('input[name="name"]');
+            await page.waitForFunction(() => {
+              const e = document.querySelector('input[name="name"]');
+              return e && !e.disabled;
+            }, undefined, { timeout: 20000 });
+            await name.fill('Orbit by Noveum');
+
+            const category = page.locator('select[name="category"]');
+            if ((await category.count()) !== 1) throw new Error('Category field not found');
+            const categoryOptions = await category.locator('option').evaluateAll(options => options.map(o => ({ value: o.value, text: o.textContent })));
+            console.log('CATEGORY_OPTIONS', JSON.stringify(categoryOptions));
+            const preferred = categoryOptions.find(o => /productivity/i.test(o.text || '')) ?? categoryOptions.find(o => /developer/i.test(o.text || ''));
+            if (!preferred || !preferred.value) throw new Error('No appropriate category option');
+            await category.selectOption(preferred.value);
+
+            const description = page.locator('textarea[name="description"]');
+            if ((await description.count()) !== 1) throw new Error('Description field not found');
+            await description.fill(
+              'Orbit is a free, Apache-2.0 realtime task manager for software teams and AI agents. It includes issues, boards, sprints, projects, docs, analytics, GitHub integration, and a hosted Streamable HTTP MCP endpoint with more than 70 tools. OAuth 2.1 grants are revocable and bound to the authorizing user, client, and workspace; read-only clients are not offered write tools. Endpoint: https://orbit.noveum.ai/mcp.'
             );
-            await page.locator('#github').fill('https://github.com/Noveum/orbit');
-            await page.locator('#website').fill('https://orbit.noveum.ai');
-            await page.locator('#category').selectOption('productivity');
-            await page.locator('#install').selectOption('source');
-            await page.locator('#email').fill('shashank@noveum.ai');
+            await page.locator('input[name="email"]').fill('shashank@noveum.ai');
 
-            const submit = page.getByRole('button', { name: 'Submit Server — Free', exact: true });
-            if ((await submit.count()) !== 1 || !(await submit.isEnabled())) throw new Error('Free submit button missing or disabled');
-            const submitText = (await submit.innerText()).trim();
-            if (/featured|\$9|pay|checkout/i.test(submitText)) throw new Error(`Paid submit active: ${submitText}`);
-            console.log('PRE_SUBMIT', JSON.stringify({ submitText, category: await page.locator('#category').inputValue(), install: await page.locator('#install').inputValue() }));
+            const submit = page.locator('button[type="submit"]');
+            const buttonText = (await submit.innerText()).trim();
+            console.log('PRE_SUBMIT', JSON.stringify({ tier: await page.locator('input[name="tier"]:checked').getAttribute('value'), buttonText, name: await name.inputValue(), category: await category.inputValue() }));
+            if (/fast.?track|stripe|pay|\$49|€49/i.test(buttonText)) throw new Error(`Paid button active: ${buttonText}`);
+            if (!(await submit.isEnabled())) throw new Error('Free submit button disabled');
+
             await submit.click();
-
             await Promise.race([
-              page.waitForURL(u => !u.href.endsWith('/submit'), { timeout: 30000 }).catch(() => null),
-              page.waitForFunction(() => /success|submitted|received|review|already|duplicate|thank/i.test(document.body.innerText), undefined, { timeout: 30000 }).catch(() => null),
+              page.waitForURL(u => !u.href.endsWith('/submit'), { timeout: 70000 }).catch(() => null),
+              page.waitForFunction(() => /thank you|submitted successfully|submission received|added to.*queue|already submitted|already exists/i.test(document.body.innerText), undefined, { timeout: 70000 }).catch(() => null),
+              page.waitForFunction(() => {
+                const b = document.querySelector('button[type="submit"]');
+                return b && !/sending/i.test(b.textContent || '');
+              }, undefined, { timeout: 70000 }).catch(() => null),
             ]);
             await page.waitForTimeout(3000);
             const finalBody = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            const finalButton = (await submit.count()) ? (await submit.innerText()).trim() : '[gone]';
             console.log('FINAL_URL', page.url());
             console.log('WRITES', JSON.stringify(writes));
-            console.log('FINAL_BODY', finalBody.slice(0, 9000));
+            console.log('FINAL_BUTTON', finalButton);
+            console.log('FINAL_BODY', finalBody.slice(0, 10000));
 
-            if (/stripe\.com|checkout|credit card|payment details/i.test(page.url() + ' ' + finalBody)) throw new Error('Unexpected payment flow');
-            if (writes.some(r => r.status >= 500)) throw new Error('MyMCPTools backend error');
-            if (!/success|submitted|received|review|already|duplicate|thank/i.test(finalBody)) throw new Error('No confirmed MyMCPTools response');
+            if (/stripe\.com|checkout|payment details|pay now/i.test(page.url() + ' ' + finalBody)) throw new Error('Unexpected payment flow');
+            if (writes.length === 0) throw new Error('No MCPizy submission request was observed');
+            if (writes.some(r => r.status >= 400)) throw new Error('MCPizy submission request failed');
+            if (!/thank you|submitted successfully|submission received|queue|already submitted|already exists/i.test(finalBody) && page.url().endsWith('/submit')) {
+              throw new Error('MCPizy did not confirm submission');
+            }
             await browser.close();
           })().catch(error => { console.error(error); process.exit(1); });
           NODE
