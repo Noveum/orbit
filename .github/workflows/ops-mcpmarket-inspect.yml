@@ -1,0 +1,125 @@
+name: One-time directory browser inspection
+
+on:
+  push:
+    branches:
+      - ops/mcpmarket-inspect-2026-09-04
+    paths:
+      - .github/workflows/ops-mcpmarket-inspect.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect free submission forms in Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Playwright Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbit-browser"
+          cd "$RUNNER_TEMP/orbit-browser"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --save-exact playwright >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+
+      - name: Inspect public forms without submitting
+        run: |
+          cd "$RUNNER_TEMP/orbit-browser"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const targets = [
+              'https://mcpmarket.com/submit',
+              'https://mcpservers.org/submit',
+              'https://awesomemcp.io/submit/',
+            ];
+
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({
+              locale: 'en-US',
+              userAgent:
+                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+              viewport: { width: 1440, height: 1000 },
+            });
+
+            for (const url of targets) {
+              const page = await context.newPage();
+              let response = null;
+              try {
+                response = await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
+              } catch (error) {
+                console.error(`NAVIGATION_ERROR ${url}`, error);
+              }
+              console.log(`\n=== ${url} ===`);
+              console.log(
+                `STATUS ${response?.status() ?? 'none'} FINAL ${page.url()} TITLE ${await page.title()}`,
+              );
+
+              const details = await page.evaluate(() => {
+                const labelFor = (element) => {
+                  const id = element.id;
+                  const direct = id
+                    ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
+                    : null;
+                  const parent = element.closest('label');
+                  return (direct?.textContent ?? parent?.textContent ?? '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                };
+                const controls = [...document.querySelectorAll('input, textarea, select, button')].map(
+                  (element) => ({
+                    tag: element.tagName.toLowerCase(),
+                    type: element.getAttribute('type'),
+                    name: element.getAttribute('name'),
+                    id: element.id || null,
+                    placeholder: element.getAttribute('placeholder'),
+                    ariaLabel: element.getAttribute('aria-label'),
+                    label: labelFor(element),
+                    text: (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 240),
+                    value: element.getAttribute('value'),
+                    required: element.hasAttribute('required'),
+                    disabled: element.hasAttribute('disabled'),
+                    checked: element instanceof HTMLInputElement ? element.checked : undefined,
+                    options:
+                      element instanceof HTMLSelectElement
+                        ? [...element.options].map((option) => ({
+                            value: option.value,
+                            text: option.text,
+                          }))
+                        : undefined,
+                  }),
+                );
+                const forms = [...document.forms].map((form) => ({
+                  action: form.action,
+                  method: form.method,
+                  id: form.id || null,
+                  className: form.className,
+                  controls: form.elements.length,
+                }));
+                const frames = [...document.querySelectorAll('iframe')].map((frame) => frame.src);
+                const bodyText = document.body.innerText.replace(/\s+/g, ' ').trim();
+                return {
+                  forms,
+                  controls,
+                  frames,
+                  captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(
+                    bodyText + ' ' + document.documentElement.innerHTML,
+                  ),
+                  payment: /stripe|checkout|credit card|\$29|\$39|\$69|pay now/i.test(bodyText),
+                  bodyExcerpt: bodyText.slice(0, 5000),
+                };
+              });
+
+              console.log(JSON.stringify(details, null, 2));
+              await page.close();
+            }
+
+            await browser.close();
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
