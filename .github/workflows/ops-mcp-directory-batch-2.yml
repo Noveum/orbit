@@ -1,4 +1,4 @@
-name: One-time additional MCP directory inspection
+name: One-time TrackMCP free submission
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
-    name: Inspect additional MCP submission routes
+  submit:
+    name: Submit Orbit to TrackMCP free review
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,103 +24,81 @@ jobs:
           npm install --no-audit --no-fund --save-exact playwright >/dev/null
           npx playwright install --with-deps chromium >/dev/null
 
-      - name: Inspect without submitting
+      - name: Submit free listing
         run: |
           cd "$RUNNER_TEMP/orbit-browser"
           node <<'NODE'
           const { chromium } = require('playwright');
 
           (async () => {
-            const targets = [
-              'https://www.trackmcp.com/submit-mcp',
-              'https://mymcptools.com/submit',
-              'https://agentndx.ai/submit',
-              'https://www.aimcp.info/en/submit',
-              'https://mcpera.com/submit.html',
-              'https://www.mcpinstall.com/submit',
-            ];
             const browser = await chromium.launch({ headless: true });
             const context = await browser.newContext({
               locale: 'en-US',
               userAgent:
                 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-              viewport: { width: 1440, height: 1100 },
+              viewport: { width: 1440, height: 1000 },
+            });
+            const page = await context.newPage();
+            const nonGet = [];
+            page.on('response', (response) => {
+              if (response.request().method() !== 'GET') {
+                nonGet.push({
+                  method: response.request().method(),
+                  url: response.url(),
+                  status: response.status(),
+                });
+              }
             });
 
-            for (const url of targets) {
-              const page = await context.newPage();
-              try {
-                const response = await page.goto(url, {
-                  waitUntil: 'domcontentloaded',
-                  timeout: 45000,
-                });
-                await page.waitForTimeout(4000);
-                console.log(`\n=== ${url} ===`);
-                console.log(
-                  `STATUS ${response?.status() ?? 'none'} FINAL ${page.url()} TITLE ${await page.title()}`,
-                );
-                const details = await page.evaluate(() => {
-                  const compact = (value) => (value ?? '').replace(/\s+/g, ' ').trim();
-                  function labelFor(element) {
-                    const id = element.id;
-                    const direct = id
-                      ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
-                      : null;
-                    const wrapper = element.closest('label');
-                    const previous = element.previousElementSibling;
-                    return compact(
-                      `${direct?.textContent ?? wrapper?.textContent ?? ''} ${
-                        previous?.tagName === 'LABEL' ? previous.textContent : ''
-                      }`,
-                    );
-                  }
-                  const body = compact(document.body.innerText);
-                  return {
-                    forms: [...document.forms].map((form) => ({
-                      action: form.action,
-                      method: form.method,
-                      id: form.id || null,
-                      controls: form.elements.length,
-                    })),
-                    controls: [...document.querySelectorAll('input, textarea, select, button')].map(
-                      (element) => ({
-                        tag: element.tagName.toLowerCase(),
-                        type: element.getAttribute('type'),
-                        name: element.getAttribute('name'),
-                        id: element.id || null,
-                        placeholder: element.getAttribute('placeholder'),
-                        label: labelFor(element),
-                        required: element.hasAttribute('required'),
-                        checked:
-                          element instanceof HTMLInputElement &&
-                          ['checkbox', 'radio'].includes(element.type)
-                            ? element.checked
-                            : undefined,
-                        text: compact(element.textContent).slice(0, 240),
-                        options:
-                          element instanceof HTMLSelectElement
-                            ? [...element.options].map((option) => ({
-                                value: option.value,
-                                text: option.text,
-                              }))
-                            : undefined,
-                      }),
-                    ),
-                    bodyExcerpt: body.slice(0, 6500),
-                    captcha: /captcha|turnstile|hcaptcha|recaptcha/i.test(
-                      `${body} ${document.documentElement.innerHTML}`,
-                    ),
-                    payment: /\$\s*\d+|credit card|checkout|payment required|paid submission/i.test(body),
-                    login: /log in|login|sign in|continue with github|continue with google/i.test(body),
-                  };
-                });
-                console.log(JSON.stringify(details, null, 2));
-              } catch (error) {
-                console.error(`INSPECTION FAILED ${url}:`, error);
-              } finally {
-                await page.close();
-              }
+            const response = await page.goto('https://www.trackmcp.com/submit-mcp', {
+              waitUntil: 'domcontentloaded',
+              timeout: 60000,
+            });
+            await page.waitForTimeout(2500);
+            if (response?.status() !== 200) {
+              throw new Error(`Submission page returned ${response?.status() ?? 'no response'}`);
             }
+
+            const bodyBefore = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            if (/captcha|turnstile|hcaptcha|recaptcha/i.test(bodyBefore)) {
+              throw new Error('CAPTCHA detected; no bypass attempted');
+            }
+            if (!/Always free/i.test(bodyBefore) || !/Get featured\s*\$8\/mo/i.test(bodyBefore)) {
+              throw new Error('Could not distinguish the free form from optional paid featuring');
+            }
+
+            await page.locator('#gh').fill('https://github.com/Noveum/orbit');
+            await page.locator('#em').fill('shashank@noveum.ai');
+
+            const featured = page.getByRole('button', { name: /get featured/i });
+            const submit = page.getByRole('button', { name: /^submit mcp$/i });
+            if ((await featured.count()) !== 1 || (await submit.count()) !== 1) {
+              throw new Error(
+                `Expected one featured and one submit button; featured=${await featured.count()} submit=${await submit.count()}`,
+              );
+            }
+
+            await submit.click();
+            await page.waitForTimeout(7000);
+            await page.waitForLoadState('networkidle', { timeout: 25000 }).catch(() => undefined);
+
+            const finalUrl = page.url();
+            const bodyAfter = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+            const lower = bodyAfter.toLowerCase();
+            console.log('FINAL_URL', finalUrl);
+            console.log('NON_GET_RESPONSES', JSON.stringify(nonGet));
+            console.log('BODY_EXCERPT', bodyAfter.slice(0, 5000));
+
+            if (/stripe\.com|checkout|payment/.test(finalUrl.toLowerCase())) {
+              throw new Error('Unexpected payment redirect; no paid featuring was authorized');
+            }
+            if (/error|failed|invalid|try again/.test(lower)) {
+              throw new Error('Submission page displayed an error state');
+            }
+            if (!/thank|submitted|submission|review|received|success|confirmation/.test(lower)) {
+              throw new Error('Could not confirm a free submission acknowledgement');
+            }
+
             await browser.close();
           })().catch((error) => {
             console.error(error);
