@@ -1,5 +1,6 @@
 import {
   createRealtimeHub,
+  errorFields,
   fromBunSocket,
   logger,
   type RealtimeHubOptions,
@@ -62,7 +63,9 @@ function jsonStatus(status: 'ok' | 'unavailable', code: number): Response {
 export function normalizeRealtimePath(value: string | undefined): string {
   const path = value ?? DEFAULT_REALTIME_PATH;
   if (!path.startsWith('/') || path.includes('?') || path.includes('#')) {
-    throw new TypeError('The realtime path must be an absolute URL path without a query or fragment.');
+    throw new TypeError(
+      'The realtime path must be an absolute URL path without a query or fragment.',
+    );
   }
   return path.length > 1 ? path.replace(/\/+$/, '') : path;
 }
@@ -79,15 +82,21 @@ function normalizedOrigin(value: string): string | null {
 
 export function normalizeAllowedOrigins(values: readonly string[] | undefined): readonly string[] {
   if (values === undefined) return [];
-  const origins = values.map((value) => normalizedOrigin(value));
-  if (origins.some((origin) => origin === null)) {
-    throw new TypeError('Every allowed realtime origin must be an absolute HTTP or HTTPS origin.');
+  const origins: string[] = [];
+  for (const value of values) {
+    const origin = normalizedOrigin(value);
+    if (origin === null) {
+      throw new TypeError(
+        'Every allowed realtime origin must be an absolute HTTP or HTTPS origin.',
+      );
+    }
+    origins.push(origin);
   }
-  return [...new Set(origins as string[])];
+  return [...new Set(origins)];
 }
 
 export function realtimePathMatches(request: Request, path: string): boolean {
-  return new URL(request.url).pathname.replace(/\/+$/, '') === path;
+  return normalizeRealtimePath(new URL(request.url).pathname) === path;
 }
 
 export function realtimeOriginAllowed(
@@ -138,31 +147,38 @@ export async function createRealtimeServer(
     if (options.readinessCheck === undefined) return true;
     try {
       return await options.readinessCheck();
-    } catch {
+    } catch (error: unknown) {
+      logger.warn('readiness check failed', errorFields(error));
       return false;
     }
+  }
+
+  function upgradeRoute(request: Request, self: Server<SocketData>): Response | undefined {
+    if (request.method !== 'GET' || !realtimePathMatches(request, realtimePath)) {
+      return Response.json({ status: 'not_found' }, { status: 404 });
+    }
+    if (!realtimeOriginAllowed(request, allowedOrigins)) {
+      return Response.json({ status: 'forbidden' }, { status: 403 });
+    }
+    return upgrade(request, self);
+  }
+
+  async function httpRoute(request: Request): Promise<Response> {
+    const { pathname } = new URL(request.url);
+    if (request.method === 'GET' && pathname === '/livez') return jsonStatus('ok', 200);
+    if (request.method === 'GET' && (pathname === '/readyz' || pathname === '/health')) {
+      return (await ready()) ? jsonStatus('ok', 200) : jsonStatus('unavailable', 503);
+    }
+    return Response.json({ status: 'not_found' }, { status: 404 });
   }
 
   const server = Bun.serve<SocketData>({
     port: options.port ?? 0,
     hostname: options.host ?? '0.0.0.0',
     websocket,
-    async fetch(request, self) {
-      const url = new URL(request.url);
-      if (isUpgrade(request)) {
-        if (request.method !== 'GET' || !realtimePathMatches(request, realtimePath)) {
-          return Response.json({ status: 'not_found' }, { status: 404 });
-        }
-        if (!realtimeOriginAllowed(request, allowedOrigins)) {
-          return Response.json({ status: 'forbidden' }, { status: 403 });
-        }
-        return upgrade(request, self);
-      }
-      if (request.method === 'GET' && url.pathname === '/livez') return jsonStatus('ok', 200);
-      if (request.method === 'GET' && (url.pathname === '/readyz' || url.pathname === '/health')) {
-        return (await ready()) ? jsonStatus('ok', 200) : jsonStatus('unavailable', 503);
-      }
-      return Response.json({ status: 'not_found' }, { status: 404 });
+    fetch(request, self) {
+      if (isUpgrade(request)) return upgradeRoute(request, self);
+      return httpRoute(request);
     },
   });
 

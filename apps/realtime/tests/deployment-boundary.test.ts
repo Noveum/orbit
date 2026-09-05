@@ -28,6 +28,13 @@ describe('portable realtime deployment boundary', () => {
     expect(realtimePathMatches(new Request('https://orbit.example/mcp'), path)).toBe(false);
   });
 
+  it('lets a root path match the root', () => {
+    const root = normalizeRealtimePath('/');
+    expect(realtimePathMatches(new Request('https://orbit.example/'), root)).toBe(true);
+    expect(realtimePathMatches(new Request('https://orbit.example'), root)).toBe(true);
+    expect(realtimePathMatches(new Request('https://orbit.example/api/ws'), root)).toBe(false);
+  });
+
   it('normalizes and deduplicates allowed browser origins', () => {
     expect(
       normalizeAllowedOrigins([
