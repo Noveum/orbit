@@ -3,10 +3,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import type { Issue, Member } from '@/lib/query/schemas.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
-await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
+await restoreModulesAfterThisFile([
+  '@/features/issues/workspace-provider.tsx',
+  '@/lib/query/use-issues.ts',
+]);
 
 const member: Member = {
   id: 'user_2',
@@ -17,8 +21,11 @@ const member: Member = {
   role: 'member',
 };
 
+const realUseWorkspace = workspaceProvider.useWorkspace;
+
 mock.module('@/features/issues/workspace-provider.tsx', () => ({
-  useWorkspace: () => ({ members: [member] }),
+  ...workspaceProvider,
+  useWorkspace: () => ({ ...realUseWorkspace(), members: [member], states: [] }),
 }));
 
 mock.module('@/lib/query/use-issues.ts', () => ({
