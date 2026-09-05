@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "product": {
+    "name": "Orbit",
+    "directoryName": "Orbit by Noveum",
+    "publisher": "Noveum AI",
+    "contactEmail": "shashank@noveum.ai",
+    "license": "Apache-2.0",
+    "hostedMaturity": "production",
+    "selfHostingMaturity": "preview",
+    "hostedPricing": "free",
+    "hasPaidTiers": false,
+    "hasBillingCode": false
+  },
+  "urls": {
+    "product": "https://orbit.noveum.ai",
+    "repository": "https://github.com/Noveum/orbit",
+    "documentation": "https://noveum.github.io/orbit/",
+    "selfHosting": "https://github.com/Noveum/orbit/blob/main/docs/self-hosting.md",
+    "support": "https://github.com/Noveum/orbit/discussions",
+    "security": "https://github.com/Noveum/orbit/security/policy",
+    "releases": "https://github.com/Noveum/orbit/releases",
+    "mcp": "https://orbit.noveum.ai/mcp",
+    "mcpDocumentation": "https://github.com/Noveum/orbit/blob/main/docs/mcp.md",
+    "mcpServerCard": "https://orbit.noveum.ai/.well-known/mcp/server-card.json"
+  },
+  "mcp": {
+    "registryName": "io.github.Noveum/orbit",
+    "registryVersion": "0.1.0",
+    "transport": "streamable-http",
+    "authentication": "OAuth 2.1 with dynamic client registration and PKCE",
+    "readScope": "orbit.read",
+    "writeScope": "orbit.write"
+  },
+  "copy": {
+    "tagline": "Free task management for people and AI agents",
+    "registryDescription": "Task management for people and AI agents, with scoped OAuth access to issues, projects, and docs.",
+    "directoryShort": "Free, realtime task management with issues, boards, sprints, docs, analytics, and OAuth-scoped MCP access for AI agents.",
+    "directoryMedium": "Orbit is a free, realtime, keyboard-first task manager for software teams and AI agents. It combines issues, boards, sprints, projects, docs, analytics, GitHub integration, and an OAuth-scoped MCP server. The code is Apache-2.0, with no billing code or paid tiers.",
+    "productHunt": "Orbit is a free, realtime, keyboard-first task manager with issues, boards, sprints, projects, docs, analytics, GitHub integration, and an OAuth-scoped MCP server that lets AI agents work with exactly the permissions of the person who authorizes them.",
+    "selfHosted": "Orbit is Apache-2.0 and can be evaluated locally. Provider-neutral production self-hosting is currently Preview; the hosted application is the supported realtime deployment today.",
+    "mcpDirectory": "Orbit lets AI agents read and manage issues, sprints, projects, docs, and files through a remote OAuth-secured MCP server. Grants are workspace-bound, revocable, and scoped; an agent never receives more permission than the person who authorizes it."
+  },
+  "categories": [
+    "Project Management",
+    "Task Management",
+    "Issue Tracking",
+    "Developer Tools",
+    "Team Collaboration"
+  ],
+  "tags": [
+    "project-management",
+    "task-management",
+    "issue-tracking",
+    "kanban",
+    "sprints",
+    "documentation",
+    "realtime",
+    "open-source",
+    "oauth",
+    "mcp",
+    "ai-agents"
+  ],
+  "alternatives": [
+    "Linear",
+    "Jira",
+    "Plane",
+    "OpenProject",
+    "Asana",
+    "ClickUp",
+    "Taiga",
+    "YouTrack",
+    "Leantime",
+    "Redmine"
+  ],
+  "assets": {
+    "logo": "apps/web/public/logo.png",
+    "openGraph": "apps/web/public/og.png",
+    "screenshots": [
+      "docs/assets/screenshots/board-dark.png",
+      "docs/assets/screenshots/issues-dark.png",
+      "docs/assets/screenshots/sprints-dark.png",
+      "docs/assets/screenshots/doc-light.png",
+      "docs/assets/screenshots/analytics-light.png"
+    ]
+  }
+}

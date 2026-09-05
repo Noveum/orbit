@@ -1,0 +1,53 @@
+{
+  "name": "Orbit by Noveum",
+  "thumbnail": {
+    "file": "orbit-product-hunt-thumbnail-240.png",
+    "width": 240,
+    "height": 240
+  },
+  "gallery": [
+    {
+      "file": "01-orbit-hero.png",
+      "width": 1270,
+      "height": 760,
+      "caption": "Task management without the per-seat bill"
+    },
+    {
+      "file": "02-orbit-board.png",
+      "width": 1270,
+      "height": 760,
+      "caption": "Every change appears immediately"
+    },
+    {
+      "file": "03-orbit-sprints.png",
+      "width": 1270,
+      "height": 760,
+      "caption": "Plan work without fighting the tool"
+    },
+    {
+      "file": "04-orbit-docs.png",
+      "width": 1270,
+      "height": 760,
+      "caption": "Docs live beside the work they describe"
+    },
+    {
+      "file": "05-orbit-analytics.png",
+      "width": 1270,
+      "height": 760,
+      "caption": "Understand progress without status-report archaeology"
+    }
+  ],
+  "sourceAssets": {
+    "thumbnail": "apps/web/public/logo.png",
+    "hero": "apps/web/public/og.png",
+    "board": "docs/assets/screenshots/board-dark.png",
+    "sprints": "docs/assets/screenshots/sprints-dark.png",
+    "docs": "docs/assets/screenshots/doc-light.png",
+    "analytics": "docs/assets/screenshots/analytics-light.png"
+  },
+  "generation": {
+    "method": "fit without stretching on a 1270x760 canvas using the source corner background",
+    "containsGeneratedInterfaceContent": false,
+    "requiresVisualReview": true
+  }
+}

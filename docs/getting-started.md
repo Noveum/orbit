@@ -171,7 +171,8 @@ If Postgres will not come up after a schema change went wrong,
 
 **A "Reconnecting to live updates" banner will not go away.** The realtime
 server is not running or `NEXT_PUBLIC_REALTIME_URL` is wrong. Locally it should
-be `ws://localhost:3100`. In production it must not be set at all.
+be `ws://localhost:3100`, and the app connects to `/api/ws` under it. In production
+it must not be set at all.
 
 **Tests deadlock or hit foreign key errors for no reason.** Two test runs are
 sharing a database. Set `ORBIT_TEST_LANE` to something unique in each.
