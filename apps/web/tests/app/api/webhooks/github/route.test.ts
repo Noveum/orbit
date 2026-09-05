@@ -1,6 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
+import {
+  addMember,
+  createWorkspace,
+  resetDatabase,
+  type Workspace,
+} from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
 import {
   bindGithubInstallation,
@@ -24,7 +29,7 @@ const services = await import('@orbit/services');
 const notifications = await import('@orbit/services/notifications');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const nextHeaders = await import('next/headers');
-const realDispatchSlackMessage = services.dispatchSlackMessage;
+const realApplyGithubInstallationEvent = services.applyGithubInstallationEvent;
 const realNotifyMany = notifications.notifyMany;
 const dispatchSlackMessage = mock(
   (
@@ -33,12 +38,14 @@ const dispatchSlackMessage = mock(
   ) => Promise.resolve(0),
 );
 const deliverPendingSlackDms = mock(() => Promise.resolve(0));
+const applyGithubInstallationEvent = mock(services.applyGithubInstallationEvent);
 const notifyMany = mock(notifications.notifyMany);
 let slackEnabledForTest = false;
 const slackCapabilitySpy = spyOn(
   slackCapability,
   'slackIntegrationEnabledForOrganization',
 ).mockImplementation(() => slackEnabledForTest);
+const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
 notifyMany.mockImplementation(realNotifyMany);
 mock.module('@orbit/core', () => ({
   ...core,
@@ -48,11 +55,36 @@ mock.module('@orbit/core', () => ({
     return Promise.resolve(undefined);
   },
 }));
-mock.module('@orbit/services', () => ({ ...services, dispatchSlackMessage }));
+mock.module('@orbit/services', () => ({
+  ...services,
+  applyGithubInstallationEvent,
+  dispatchSlackMessage,
+}));
 mock.module('@orbit/services/notifications', () => ({ ...notifications, notifyMany }));
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
-const { POST } = await import('../../../../../src/app/api/webhooks/github/route.ts');
+const { POST, claimDelivery, finalizeDelivery } = await import(
+  '../../../../../src/app/api/webhooks/github/route.ts'
+);
+
+async function claimForTest(deliveryId: string) {
+  const claim = await claimDelivery(deliveryId, 'pull_request');
+  if (claim instanceof Response) throw new Error(`could not claim ${deliveryId}`);
+  return claim;
+}
+
+async function reclaimDeliveryForTest(deliveryId: string) {
+  await db
+    .update(schema.webhookDelivery)
+    .set({ claimedAt: new Date(Date.now() - 2 * 60 * 1000) })
+    .where(
+      and(
+        eq(schema.webhookDelivery.provider, 'github'),
+        eq(schema.webhookDelivery.deliveryId, deliveryId),
+      ),
+    );
+  return await claimForTest(deliveryId);
+}
 
 function restoreSlackEnvironment(): void {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
@@ -67,12 +99,14 @@ afterAll(() => {
   mock.module('@orbit/services/notifications', () => notifications);
   mock.module('next/headers', () => nextHeaders);
   slackCapabilitySpy.mockRestore();
+  consoleErrorSpy.mockRestore();
   if (existingWebhookSecret === undefined) delete process.env['GITHUB_WEBHOOK_SECRET'];
   else process.env['GITHUB_WEBHOOK_SECRET'] = existingWebhookSecret;
   restoreSlackEnvironment();
 });
 
 const bodySchema = z.union([
+  z.object({ ok: z.literal(true), quarantined: z.literal(true) }),
   z.object({ ok: z.literal(true), actions: z.number(), ignored: z.string() }),
   z.object({ ok: z.literal(true), actions: z.number() }),
   z.object({ ok: z.literal(true), handled: z.boolean() }),
@@ -137,6 +171,7 @@ function pullRequestBody(
   headRef: string,
   state: 'open' | 'closed' = 'open',
   title = 'Rework dashboard',
+  merged = false,
 ): string {
   return JSON.stringify({
     action: state === 'open' ? 'opened' : 'closed',
@@ -145,7 +180,7 @@ function pullRequestBody(
       title,
       html_url: 'https://github.com/acme/web/pull/7',
       draft: false,
-      merged: false,
+      merged,
       state,
       head: { ref: headRef },
       base: { ref: 'main' },
@@ -200,11 +235,42 @@ async function linkCount(): Promise<number> {
   return rows.length;
 }
 
+async function githubEffectCounts() {
+  const [
+    pullRequests,
+    pullRequestActivities,
+    checkActivities,
+    headContexts,
+    sources,
+    inbox,
+    outbox,
+  ] = await Promise.all([
+    db.select().from(schema.githubPullRequest),
+    db.select().from(schema.githubPullRequestActivity),
+    db.select().from(schema.githubCheckActivity),
+    db.select().from(schema.githubCheckHeadContext),
+    db.select().from(schema.notificationSourceEvent),
+    db.select().from(schema.notification),
+    db.select().from(schema.notificationDelivery),
+  ]);
+  return {
+    pullRequests: pullRequests.length,
+    pullRequestActivities: pullRequestActivities.length,
+    checkActivities: checkActivities.length,
+    headContexts: headContexts.length,
+    sources: sources.length,
+    inbox: inbox.length,
+    outbox: outbox.length,
+  };
+}
+
 beforeEach(async () => {
   restoreSlackEnvironment();
   published.length = 0;
   dispatchSlackMessage.mockClear();
   deliverPendingSlackDms.mockClear();
+  applyGithubInstallationEvent.mockClear();
+  applyGithubInstallationEvent.mockImplementation(realApplyGithubInstallationEvent);
   notifyMany.mockClear();
   notifyMany.mockImplementation(realNotifyMany);
   slackEnabledForTest = false;
@@ -270,7 +336,7 @@ describe('POST /api/webhooks/github', () => {
     expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
-  it('passes enabled routing outcomes through without double-delivering', async () => {
+  it('persists enabled routing without synchronously contacting Slack', async () => {
     slackEnabledForTest = true;
     notifyMany.mockImplementationOnce(async () => ({
       actions: [],
@@ -298,32 +364,46 @@ describe('POST /api/webhooks/github', () => {
       signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-broadcast'),
     );
     expect(broadcast.status).toBe(200);
-    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
-  it('escapes external pull request titles in the exact Slack payload', async () => {
+  it('persists shared Slack channel work without synchronous delivery', async () => {
     slackEnabledForTest = true;
-    notifyMany.mockImplementationOnce(async () => ({
-      actions: [],
-      deduped: 0,
-      email: [],
-      notifications: [],
-      slack: [{ userId: 'user-1', notificationId: 'notification-1' }],
-      slackDm: [],
-    }));
-    const title = 'Deploy <!channel> <@U999> <https://evil.example|click>';
+    process.env['SLACK_ENABLED'] = 'true';
+    const recipient = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    await db
+      .update(schema.issue)
+      .set({ assigneeId: recipient.principal.userId })
+      .where(eq(schema.issue.id, issueId));
+    const integrationId = await services.ensureSlackIntegration(db, {
+      organizationId: workspace.organizationId,
+      connectedById: workspace.adminUser.id,
+      botToken: 'xoxb-durable-channel',
+      externalId: 'T-DURABLE-CHANNEL',
+      scopes: ['chat:write'],
+    });
+    await services.connectSlackChannel(db, {
+      organizationId: workspace.organizationId,
+      integrationId,
+      channelId: 'C-DURABLE-CHANNEL',
+      channelName: 'durable-channel',
+      teamId: workspace.teamId,
+    });
 
     const response = await POST(
-      signed(pullRequestBody('orb-3-dashboard', 'closed', title), 'delivery-escaped-title'),
+      signed(
+        pullRequestBody('orb-3-dashboard', 'closed', 'Rework dashboard', true),
+        'delivery-durable-channel',
+      ),
     );
+    const queued = await db
+      .select({ id: schema.notificationDelivery.id })
+      .from(schema.notificationDelivery)
+      .where(eq(schema.notificationDelivery.channel, 'slack'));
 
-    const appUrl = process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000';
     expect(response.status).toBe(200);
-    expect(dispatchSlackMessage).toHaveBeenCalledWith(db, {
-      organizationId: workspace.organizationId,
-      teamIds: [workspace.teamId],
-      text: `Deploy &lt;!channel&gt; &lt;@U999&gt; &lt;https://evil.example|click&gt; was closed: ${new URL('/inbox', `${appUrl}/`).toString()}`,
-    });
+    expect(queued).toHaveLength(1);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
   it('processes GitHub successfully when optional Slack credentials use an old key', async () => {
@@ -345,23 +425,19 @@ describe('POST /api/webhooks/github', () => {
       teamId: workspace.teamId,
     });
     process.env['BETTER_AUTH_SECRET'] = 'github-slack-rotated-key';
-    notifyMany.mockImplementationOnce(async () => ({
-      actions: [],
-      deduped: 0,
-      email: [],
-      notifications: [],
-      slack: [{ userId: workspace.adminUser.id, notificationId: 'notification-old-key' }],
-      slackDm: [],
-    }));
-    dispatchSlackMessage.mockImplementationOnce(realDispatchSlackMessage);
 
     const response = await POST(
       signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-old-slack-key'),
     );
+    const queued = await db
+      .select({ id: schema.notificationDelivery.id })
+      .from(schema.notificationDelivery)
+      .where(eq(schema.notificationDelivery.channel, 'slack'));
 
     expect(response.status).toBe(200);
     expect((await deliveryRow('delivery-old-slack-key'))?.status).toBe('processed');
-    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
+    expect(queued).toHaveLength(1);
+    expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {
@@ -462,11 +538,246 @@ describe('POST /api/webhooks/github', () => {
     expect(published).toHaveLength(0);
   });
 
+  it.each([
+    [
+      'check_run',
+      {
+        action: 'completed',
+        check_run: {
+          id: 501,
+          name: 'build',
+          head_sha: '1111111111111111111111111111111111111111',
+        },
+      },
+      'invalid_check_run_app',
+      'check_run.app.id',
+    ],
+    [
+      'check_run',
+      {
+        action: 'completed',
+        check_run: {
+          id: 502,
+          name: '',
+          app: { id: 25 },
+          head_sha: '1111111111111111111111111111111111111111',
+        },
+      },
+      'invalid_check_run_name',
+      'check_run.name',
+    ],
+    [
+      'check_run',
+      {
+        action: 'completed',
+        check_run: { id: 503, name: 'build', app: { id: 25 }, head_sha: 'wrong' },
+      },
+      'invalid_head_sha',
+      'check_run.head_sha',
+    ],
+    [
+      'check_suite',
+      { action: 'completed', check_suite: { id: 504, head_sha: 'wrong' } },
+      'invalid_head_sha',
+      'check_suite.head_sha',
+    ],
+    [
+      'workflow_run',
+      { action: 'completed', workflow_run: { id: 505, head_sha: 'wrong' } },
+      'invalid_head_sha',
+      'workflow_run.head_sha',
+    ],
+    [
+      'status',
+      { id: 506, sha: '1111111111111111111111111111111111111111', state: 'failure', context: '' },
+      'invalid_status_context',
+      'context',
+    ],
+    [
+      'status',
+      { id: 507, sha: 'wrong', state: 'failure', context: 'build' },
+      'invalid_head_sha',
+      'sha',
+    ],
+  ] as const)(
+    'terminally quarantines malformed %s check identity without effects',
+    async (eventName, checkedPayload, reasonCode, reasonPath) => {
+      process.env['BETTER_AUTH_SECRET'] = 'github-quarantine-test-secret-with-safe-length';
+      const deliveryId = `quarantine-${eventName}-${reasonCode}`;
+      const raw = JSON.stringify({
+        ...checkedPayload,
+        repository: { id: 99, full_name: 'acme/web' },
+        installation: { id: 'install-42' },
+        sender: { login: 'octocat', id: 500 },
+      });
+
+      const response = await POST(signed(raw, deliveryId, eventName));
+      const delivery = await deliveryRow(deliveryId);
+      const [quarantine] = await db
+        .select()
+        .from(schema.webhookDeliveryQuarantine)
+        .where(eq(schema.webhookDeliveryQuarantine.deliveryId, delivery?.id ?? 'missing'));
+
+      expect(response.status).toBe(200);
+      expect(bodySchema.parse(await response.json())).toEqual({ ok: true, quarantined: true });
+      expect(delivery).toMatchObject({
+        status: 'quarantined',
+        error: reasonCode,
+        organizationId: workspace.organizationId,
+      });
+      expect(quarantine).toMatchObject({
+        organizationId: workspace.organizationId,
+        scopeKind: 'organization',
+        reasonCode,
+        reasonPath,
+        disposition: 'awaiting_resolution',
+        diagnostics: {
+          eventName,
+          payloadBytes: Buffer.byteLength(raw, 'utf8'),
+          organizationAttributed: true,
+        },
+      });
+      expect(JSON.stringify(quarantine?.payloadEnvelope)).not.toContain(raw);
+      expect(
+        services.decryptGithubWebhookQuarantinePayload(quarantine?.payloadEnvelope, {
+          deliveryId: delivery?.id ?? 'missing',
+          provider: 'github',
+          providerDeliveryId: deliveryId,
+        }).rawPayload,
+      ).toBe(raw);
+      expect(await githubEffectCounts()).toEqual({
+        pullRequests: 0,
+        pullRequestActivities: 0,
+        checkActivities: 0,
+        headContexts: 0,
+        sources: 0,
+        inbox: 0,
+        outbox: 0,
+      });
+      expect(notifyMany).not.toHaveBeenCalled();
+      expect(published).toHaveLength(0);
+    },
+  );
+
+  it('keeps an unroutable malformed delivery globally scoped and terminal on redelivery', async () => {
+    process.env['BETTER_AUTH_SECRET'] = 'github-quarantine-test-secret-with-safe-length';
+    const raw = JSON.stringify({
+      action: 'completed',
+      check_suite: { id: 508, head_sha: 'wrong' },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'octocat', id: 500 },
+    });
+
+    const first = await POST(signed(raw, 'quarantine-unresolved', 'check_suite'));
+    const repeated = await POST(signed(raw, 'quarantine-unresolved', 'check_suite'));
+    const delivery = await deliveryRow('quarantine-unresolved');
+    const quarantines = await db
+      .select()
+      .from(schema.webhookDeliveryQuarantine)
+      .where(eq(schema.webhookDeliveryQuarantine.deliveryId, delivery?.id ?? 'missing'));
+
+    expect(bodySchema.parse(await first.json())).toEqual({ ok: true, quarantined: true });
+    expect(bodySchema.parse(await repeated.json())).toEqual({ status: 'duplicate' });
+    expect(delivery).toMatchObject({ status: 'quarantined', organizationId: null });
+    expect(quarantines).toHaveLength(1);
+    expect(quarantines[0]).toMatchObject({
+      organizationId: null,
+      scopeKind: 'unresolved',
+      reasonCode: 'invalid_head_sha',
+    });
+    expect(await githubEffectCounts()).toEqual({
+      pullRequests: 0,
+      pullRequestActivities: 0,
+      checkActivities: 0,
+      headContexts: 0,
+      sources: 0,
+      inbox: 0,
+      outbox: 0,
+    });
+  });
+
   it('records the event name it was handed on the delivery row', async () => {
     const raw = pullRequestBody('orb-3-dashboard');
     await POST(signed(raw, 'delivery-named', 'pull_request_review'));
 
     expect((await deliveryRow('delivery-named'))?.event).toBe('pull_request_review');
+  });
+
+  it('rolls back ordinary effects after another worker reclaims its delivery', async () => {
+    let currentClaimToken = '';
+    notifyMany.mockImplementationOnce(async (database, input, options) => {
+      currentClaimToken = (await reclaimDeliveryForTest('delivery-ordinary-claim-lost')).claimToken;
+      return await realNotifyMany(database, input, options);
+    });
+
+    const response = await POST(
+      signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-ordinary-claim-lost'),
+    );
+
+    const sources = await db.select().from(schema.notificationSourceEvent);
+    const recipientEvents = await db.select().from(schema.notification);
+    const providerWork = await db.select().from(schema.notificationDelivery);
+
+    expect(response.status).toBe(500);
+    expect(await linkCount()).toBe(0);
+    expect(sources).toEqual([]);
+    expect(recipientEvents).toEqual([]);
+    expect(providerWork).toEqual([]);
+    expect(published).toHaveLength(0);
+    expect((await deliveryRow('delivery-ordinary-claim-lost'))?.status).toBe('processing');
+    expect((await deliveryRow('delivery-ordinary-claim-lost'))?.claimToken).toBe(currentClaimToken);
+  });
+});
+
+describe('GitHub webhook delivery ownership', () => {
+  it('gives a fresh claimant a durable ownership token', async () => {
+    const claim = await claimForTest('delivery-owner-fresh');
+
+    expect(claim.id).toEqual(expect.any(String));
+    expect(claim.claimToken).toEqual(expect.any(String));
+    expect((await deliveryRow('delivery-owner-fresh'))?.claimToken).toBe(claim.claimToken);
+  });
+
+  it('rotates the ownership token when reclaiming an expired delivery', async () => {
+    const firstClaim = await claimForTest('delivery-owner-reclaimed');
+    await db
+      .update(schema.webhookDelivery)
+      .set({ claimedAt: new Date(Date.now() - 2 * 60 * 1000) })
+      .where(eq(schema.webhookDelivery.id, firstClaim.id));
+
+    const reclaimed = await claimForTest('delivery-owner-reclaimed');
+
+    expect(reclaimed.id).toBe(firstClaim.id);
+    expect(reclaimed.claimToken).not.toBe(firstClaim.claimToken);
+    expect((await deliveryRow('delivery-owner-reclaimed'))?.claimToken).toBe(reclaimed.claimToken);
+  });
+
+  it('does not let a stale claimant finalize a reclaimed delivery', async () => {
+    const staleClaim = await claimForTest('delivery-owner-stale');
+    await db
+      .update(schema.webhookDelivery)
+      .set({ claimedAt: new Date(Date.now() - 2 * 60 * 1000) })
+      .where(eq(schema.webhookDelivery.id, staleClaim.id));
+    const currentClaim = await claimForTest('delivery-owner-stale');
+
+    const finalized = await finalizeDelivery(staleClaim, {
+      status: 'failed',
+      error: null,
+    });
+
+    expect(finalized).toBe(false);
+    expect((await deliveryRow('delivery-owner-stale'))?.status).toBe('processing');
+    expect((await deliveryRow('delivery-owner-stale'))?.claimToken).toBe(currentClaim.claimToken);
+  });
+
+  it('lets the current claimant finalize a delivery only once', async () => {
+    const claim = await claimForTest('delivery-owner-current');
+    const first = await finalizeDelivery(claim, { status: 'processed', error: null });
+    const second = await finalizeDelivery(claim, { status: 'processed', error: null });
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect((await deliveryRow('delivery-owner-current'))?.status).toBe('processed');
   });
 });
 
@@ -546,6 +857,25 @@ describe('POST /api/webhooks/github, installation events', () => {
     expect(installations.map((row) => row.installationId)).toEqual(['install-42']);
     expect(await listGithubCatalogue(db, workspace.organizationId)).toHaveLength(0);
     expect((await deliveryRow('install-deleted'))?.status).toBe('processed');
+  });
+
+  it('rolls back installation effects after another worker reclaims its delivery', async () => {
+    await connectInstallation();
+    let currentClaimToken = '';
+    applyGithubInstallationEvent.mockImplementationOnce(async (database, input) => {
+      const outcome = await realApplyGithubInstallationEvent(database, input);
+      currentClaimToken = (await reclaimDeliveryForTest('install-claim-lost')).claimToken;
+      return outcome;
+    });
+
+    const response = await POST(
+      signed(installationEnvelope('deleted'), 'install-claim-lost', 'installation'),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await listGithubInstallations(db, workspace.organizationId)).toHaveLength(2);
+    expect((await deliveryRow('install-claim-lost'))?.status).toBe('processing');
+    expect((await deliveryRow('install-claim-lost'))?.claimToken).toBe(currentClaimToken);
   });
 
   it('treats a redelivered installation delete as a duplicate', async () => {

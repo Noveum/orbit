@@ -77,6 +77,75 @@ describe('database release', () => {
     expect([...preserved]).toEqual([{ payload: 'preserve me' }]);
   }, 60_000);
 
+  it('restores deferred audit triggers while baselining a schema-pushed catalog', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`drop trigger notification_deduplicated_target_trigger on notification`;
+      await sql`drop function validate_notification_deduplicated_target()`;
+      await sql`drop trigger notification_delivery_deduplicated_target_trigger on notification_delivery`;
+      await sql`drop function validate_notification_delivery_deduplicated_target()`;
+      await sql`drop schema drizzle cascade`;
+    });
+
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const triggers = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<
+        {
+          trigger_name: string;
+          table_name: string;
+          function_name: string;
+          deferrable: boolean;
+          initially_deferred: boolean;
+          enabled: string;
+          constraint_trigger: boolean;
+        }[]
+      >`
+        select
+          trigger.tgname as trigger_name,
+          relation.relname as table_name,
+          procedure.proname as function_name,
+          trigger.tgdeferrable as deferrable,
+          trigger.tginitdeferred as initially_deferred,
+          trigger.tgenabled as enabled,
+          trigger.tgconstraint <> 0 as constraint_trigger
+        from pg_trigger trigger
+        inner join pg_class relation on relation.oid = trigger.tgrelid
+        inner join pg_namespace namespace on namespace.oid = relation.relnamespace
+        inner join pg_proc procedure on procedure.oid = trigger.tgfoid
+        where namespace.nspname = 'public'
+          and trigger.tgname in (
+            'notification_deduplicated_target_trigger',
+            'notification_delivery_deduplicated_target_trigger'
+          )
+        order by trigger.tgname
+      `,
+    );
+
+    expect(result.mode).toBe('baselined');
+    expect([...triggers]).toEqual([
+      {
+        trigger_name: 'notification_deduplicated_target_trigger',
+        table_name: 'notification',
+        function_name: 'validate_notification_deduplicated_target',
+        deferrable: true,
+        initially_deferred: true,
+        enabled: 'O',
+        constraint_trigger: true,
+      },
+      {
+        trigger_name: 'notification_delivery_deduplicated_target_trigger',
+        table_name: 'notification_delivery',
+        function_name: 'validate_notification_delivery_deduplicated_target',
+        deferrable: true,
+        initially_deferred: true,
+        enabled: 'O',
+        constraint_trigger: true,
+      },
+    ]);
+  }, 60_000);
+
   it('reconciles historical data backfills before baselining a legacy database', async () => {
     await resetScratch();
     await migrateScratch();
@@ -114,6 +183,107 @@ describe('database release', () => {
 
     expect(result.mode).toBe('baselined');
     expect(attachment?.upload_expires_at).toBe('2026-08-14 00:15:00+00');
+  }, 60_000);
+
+  it('queues current pull request heads while baselining a catalog-complete database', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        insert into "user" (id, name, email, handle)
+        values ('release-github-user', 'Release GitHub user', 'release-github@example.com', 'release-github')
+      `;
+      await sql`
+        insert into organization (id, name, slug)
+        values ('release-github-org', 'Release GitHub org', 'release-github-org')
+      `;
+      await sql`
+        insert into integration (id, organization_id, provider, external_id, connected_by_id)
+        values (
+          'release-github-integration', 'release-github-org', 'github',
+          'release-github-installation', 'release-github-user'
+        )
+      `;
+      await sql`
+        insert into github_repository_sync (
+          id, organization_id, integration_id, repository_id, repository_name, installation_id
+        ) values (
+          'release-github-repository', 'release-github-org', 'release-github-integration',
+          '99', 'acme/web', 'release-github-installation'
+        )
+      `;
+      await sql`
+        insert into github_pull_request (
+          id, organization_id, repository_sync_id, repository_id, repository_name,
+          number, url, head_sha, state, merged
+        ) values
+          (
+            'release-github-pull-open', 'release-github-org', 'release-github-repository',
+            '99', 'acme/web', 1, 'https://github.com/acme/web/pull/1',
+            '0123456789abcdef0123456789abcdef01234567', 'open', false
+          ),
+          (
+            'release-github-pull-draft', 'release-github-org', 'release-github-repository',
+            '99', 'acme/web', 2, 'https://github.com/acme/web/pull/2',
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'draft', false
+          ),
+          (
+            'release-github-pull-approved', 'release-github-org', 'release-github-repository',
+            '99', 'acme/web', 3, 'https://github.com/acme/web/pull/3',
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'approved', false
+          ),
+          (
+            'release-github-pull-changes', 'release-github-org', 'release-github-repository',
+            '99', 'acme/web', 4, 'https://github.com/acme/web/pull/4',
+            'cccccccccccccccccccccccccccccccccccccccc', 'changes_requested', false
+          ),
+          (
+            'release-github-pull-closed', 'release-github-org', 'release-github-repository',
+            '99', 'acme/web', 5, 'https://github.com/acme/web/pull/5',
+            'dddddddddddddddddddddddddddddddddddddddd', 'closed', false
+          )
+      `;
+      await sql`drop schema drizzle cascade`;
+    });
+
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const jobs = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ head_sha: string; status: string; trigger_kind: string; attempts: number }[]>`
+        select head_sha, status, trigger_kind, attempts
+        from github_check_head_reconciliation
+        where organization_id = 'release-github-org'
+        order by head_sha
+      `,
+    );
+
+    expect(result.mode).toBe('baselined');
+    expect([...jobs]).toEqual([
+      {
+        head_sha: '0123456789abcdef0123456789abcdef01234567',
+        status: 'pending',
+        trigger_kind: 'migration_bootstrap',
+        attempts: 0,
+      },
+      {
+        head_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        status: 'pending',
+        trigger_kind: 'migration_bootstrap',
+        attempts: 0,
+      },
+      {
+        head_sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        status: 'pending',
+        trigger_kind: 'migration_bootstrap',
+        attempts: 0,
+      },
+      {
+        head_sha: 'cccccccccccccccccccccccccccccccccccccccc',
+        status: 'pending',
+        trigger_kind: 'migration_bootstrap',
+        attempts: 0,
+      },
+    ]);
   }, 60_000);
 
   it('refuses to baseline when a historical data invariant cannot be reconciled safely', async () => {

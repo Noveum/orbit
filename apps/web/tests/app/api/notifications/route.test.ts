@@ -1,6 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { mockSession } from '../../../../tests-support.ts';
@@ -15,8 +15,15 @@ interface Signed {
 const signedIn: { value: Signed | null } = { value: null };
 
 mockSession(() => signedIn.value);
+const nextHeaders = await import('next/headers');
+mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
 const notifications = await import('../../../../src/app/api/notifications/route.ts');
+const notificationById = await import('../../../../src/app/api/notifications/[id]/route.ts');
+
+afterAll(() => {
+  mock.module('next/headers', () => nextHeaders);
+});
 
 const pageSchema = z.object({
   notifications: z.array(
@@ -135,6 +142,33 @@ describe('GET /api/notifications', () => {
 
     expect(page.notifications).toHaveLength(4);
     expect(page.nextCursor).not.toBeNull();
+  });
+
+  it('soft dismisses a notification without deleting its event history', async () => {
+    await seed(1);
+    const [created] = await db.select().from(schema.notification);
+    if (created === undefined) throw new Error('the seeded notification is missing');
+
+    const response = await notificationById.DELETE(
+      new Request(`http://orbit.test/api/notifications/${created.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    const [stored] = await db
+      .select()
+      .from(schema.notification)
+      .where(eq(schema.notification.id, created.id));
+    const page = pageSchema.parse(await (await get('http://orbit.test/api/notifications')).json());
+    const repeated = await notificationById.DELETE(
+      new Request(`http://orbit.test/api/notifications/${created.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(repeated.status).toBe(404);
+    expect(stored).toBeDefined();
+    expect(stored?.dismissedAt).toBeInstanceOf(Date);
+    expect(stored?.syncId).toBeGreaterThan(created.syncId);
+    expect(page.notifications).toHaveLength(0);
   });
 
   it('turns a row into what the inbox reads, not the raw record', async () => {

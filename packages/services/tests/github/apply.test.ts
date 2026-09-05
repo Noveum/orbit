@@ -1,23 +1,32 @@
 import { describe, expect, it } from 'bun:test';
+import { db } from '@orbit/db';
 import {
   account,
+  githubCheckActivity,
+  githubCheckHeadContext,
+  githubCheckHeadReconciliation,
   githubPullRequest,
   githubPullRequestActivity,
+  githubPullRequestReconciliation,
   githubRepositorySync,
   gitLink,
   integration,
   issue,
   issueReviewer,
   member,
+  notification,
+  notificationSourceEvent,
   organization,
   team,
   teamMember,
   user,
+  webhookDelivery,
   workflowState,
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { applyGithubEvent, upsertGithubPullRequestHistory } from '../../src/github/apply.ts';
+import { notifyMany } from '../../src/notifications/index.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
 interface Fixture {
@@ -37,6 +46,10 @@ const STATES: readonly { name: string; category: string; position: number }[] = 
   { name: 'Done', category: 'completed', position: 5 },
   { name: 'Canceled', category: 'canceled', position: 6 },
 ];
+
+const HEAD_SHA = '0123456789abcdef0123456789abcdef01234567';
+const NEXT_HEAD_SHA = '123456789abcdef0123456789abcdef012345678';
+const SHARED_HEAD_SHA = '23456789abcdef0123456789abcdef0123456789';
 
 async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixture> {
   const suffix = randomUUIDv7();
@@ -151,31 +164,122 @@ function prEvent(overrides: {
   state?: 'open' | 'closed';
   title?: string;
   headRef?: string;
+  headSha?: string;
   body?: string;
+  number?: number;
+  externalId?: number;
+  updatedAt?: string;
+  author?: { readonly login: string; readonly id: number };
 }): { eventName: string; body: unknown } {
+  const number = overrides.number ?? 7;
   return {
     eventName: 'pull_request',
     body: {
       action: overrides.action ?? 'opened',
       pull_request: {
-        id: 7007,
-        number: 7,
+        id: overrides.externalId ?? 7007,
+        number,
         title: overrides.title ?? 'Rework dashboard',
         body: overrides.body ?? null,
-        html_url: 'https://github.com/acme/web/pull/7',
+        html_url: `https://github.com/acme/web/pull/${number}`,
         draft: overrides.draft ?? false,
         merged: overrides.merged ?? false,
         state: overrides.state ?? 'open',
-        head: { ref: overrides.headRef ?? 'eng-3-dashboard', sha: 'abc123' },
+        head: {
+          ref: overrides.headRef ?? 'eng-3-dashboard',
+          sha: overrides.headSha ?? HEAD_SHA,
+        },
         base: { ref: 'main' },
-        user: { login: 'octocat', id: 500 },
+        user: overrides.author ?? { login: 'octocat', id: 500 },
         created_at: '2026-08-13T01:00:00.000Z',
-        updated_at: '2026-08-13T02:00:00.000Z',
+        updated_at: overrides.updatedAt ?? '2026-08-13T02:00:00.000Z',
       },
       repository: { id: 99, full_name: 'acme/web' },
       sender: { login: 'octocat', id: 500 },
     },
   };
+}
+
+function checkRunEvent(input: {
+  readonly id: number;
+  readonly name: string;
+  readonly conclusion: string;
+  readonly headSha?: string;
+  readonly appId?: number;
+  readonly completedAt?: string;
+  readonly pullRequestNumbers?: readonly number[];
+}): { eventName: string; body: unknown } {
+  return {
+    eventName: 'check_run',
+    body: {
+      action: 'completed',
+      check_run: {
+        id: input.id,
+        name: input.name,
+        app: { id: input.appId ?? 10 },
+        status: 'completed',
+        conclusion: input.conclusion,
+        html_url: `https://github.com/acme/web/actions/runs/${input.id}`,
+        head_sha: input.headSha ?? HEAD_SHA,
+        pull_requests: (input.pullRequestNumbers ?? [7]).map((number) => ({ number })),
+        check_suite: { head_branch: 'eng-3-dashboard' },
+        completed_at: input.completedAt ?? `2026-08-13T05:${input.id}:00.000Z`,
+      },
+      repository: { id: 99, full_name: 'acme/web' },
+      sender: { login: 'ci', id: 3 },
+    },
+  };
+}
+
+function statusEvent(input: {
+  readonly id: number;
+  readonly context: string;
+  readonly state: string;
+  readonly updatedAt: string;
+  readonly headSha?: string;
+}): { eventName: string; body: unknown } {
+  return {
+    eventName: 'status',
+    body: {
+      id: input.id,
+      sha: input.headSha ?? HEAD_SHA,
+      state: input.state,
+      context: input.context,
+      target_url: `https://github.com/acme/web/statuses/${input.id}`,
+      updated_at: input.updatedAt,
+      repository: { id: 99, full_name: 'acme/web' },
+      creator: { login: 'deploy-bot', id: 13 },
+      sender: { login: 'deploy-bot', id: 13 },
+    },
+  };
+}
+
+async function applyCheckEvent(
+  tx: TestTransaction,
+  organizationId: string,
+  event: { readonly eventName: string; readonly body: unknown },
+) {
+  const webhookDeliveryId = `whd_${randomUUIDv7()}`;
+  await tx.insert(webhookDelivery).values({
+    id: webhookDeliveryId,
+    provider: 'github',
+    deliveryId: `delivery_${randomUUIDv7()}`,
+    event: event.eventName,
+    organizationId,
+    status: 'processing',
+  });
+  return await applyGithubEvent(tx, {
+    ...event,
+    organizationId,
+    webhookDeliveryId,
+  });
+}
+
+async function markHeadAuthoritative(tx: TestTransaction, organizationId: string): Promise<void> {
+  await tx
+    .update(githubCheckHeadReconciliation)
+    .set({ status: 'completed' })
+    .where(eq(githubCheckHeadReconciliation.organizationId, organizationId));
 }
 
 async function currentStateName(tx: TestTransaction, issueId: string): Promise<string> {
@@ -321,6 +425,75 @@ describe('applyGithubEvent', () => {
       expect(pulls[0]?.number).toBe(7);
       expect(pulls[0]?.title).toBe('Tidy the dashboard');
       expect(result.ignoredReason).toBeNull();
+      expect(result.teamIds).toEqual([fixture.teamId]);
+      const [reconciliation] = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+      expect(reconciliation?.status).toBe('pending');
+      expect(reconciliation?.triggerKind).toBe('pull_request_mirrored');
+      expect(reconciliation?.jobVersion).toBe(1);
+    });
+  });
+
+  it('waits for a complete pull snapshot before reconciling a comment-first pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, {
+        eventName: 'issue_comment',
+        body: {
+          action: 'created',
+          issue: {
+            number: 7,
+            title: 'Rework dashboard',
+            html_url: 'https://github.com/acme/web/pull/7',
+            pull_request: { url: 'https://api.github.com/repos/acme/web/pulls/7' },
+          },
+          comment: {
+            id: 701,
+            body: 'Please add a regression test.',
+            html_url: 'https://github.com/acme/web/pull/7#issuecomment-701',
+            created_at: '2026-08-13T02:00:00.000Z',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'reviewer', id: 901 },
+        },
+        organizationId: fixture.organizationId,
+        now: new Date('2026-08-13T02:00:00.000Z'),
+      });
+
+      expect(
+        await tx
+          .select()
+          .from(githubCheckHeadReconciliation)
+          .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId)),
+      ).toEqual([]);
+      const [partialPull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(partialPull?.headSha).toBe('');
+      expect(partialPull?.providerUpdatedAt).toBeNull();
+
+      await applyGithubEvent(tx, {
+        ...prEvent({ updatedAt: '2026-08-13T01:00:00.000Z' }),
+        organizationId: fixture.organizationId,
+        now: new Date('2026-08-13T02:01:00.000Z'),
+      });
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      const jobs = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+      expect(pull?.headSha).toBe(HEAD_SHA);
+      expect(pull?.headEpoch).toBe(1);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.headSha).toBe(HEAD_SHA);
+      expect(jobs[0]?.status).toBe('pending');
     });
   });
 
@@ -453,7 +626,7 @@ describe('applyGithubEvent', () => {
     });
   });
 
-  it('notifies a review request and a failed check suite', async () => {
+  it('queues a check suite and notifies on its constituent check transition', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx, 'In Progress');
       const requested = await applyGithubEvent(tx, {
@@ -464,7 +637,7 @@ describe('applyGithubEvent', () => {
             number: 7,
             title: 'Rework dashboard',
             html_url: 'https://github.com/acme/web/pull/7',
-            head: { ref: 'eng-3-dashboard' },
+            head: { ref: 'eng-3-dashboard', sha: HEAD_SHA },
             base: { ref: 'main' },
           },
           repository: { id: 99, full_name: 'acme/web' },
@@ -476,19 +649,42 @@ describe('applyGithubEvent', () => {
         requested.notificationEvents.some((event) => event.type === 'pr_review_requested'),
       ).toBe(true);
 
-      const checks = await applyGithubEvent(tx, {
+      const suite = await applyGithubEvent(tx, {
         eventName: 'check_suite',
         body: {
           action: 'completed',
           check_suite: {
+            id: 80,
             conclusion: 'error',
             head_branch: 'eng-3-dashboard',
+            head_sha: HEAD_SHA,
             pull_requests: [{ number: 7 }],
           },
           repository: { id: 99, full_name: 'acme/web' },
           sender: { login: 'ci', id: 3 },
         },
       });
+      expect(suite.notificationEvents).toEqual([]);
+      const [queuedSuite] = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+      expect(queuedSuite).toMatchObject({
+        headSha: HEAD_SHA,
+        status: 'pending',
+        triggerKind: 'check_suite',
+        triggerIdentity: '80',
+      });
+      const checks = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 81,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+        }),
+      );
       expect(checks.notificationEvents.some((event) => event.type === 'pr_checks_failed')).toBe(
         true,
       );
@@ -498,49 +694,204 @@ describe('applyGithubEvent', () => {
         .where(eq(githubPullRequest.organizationId, fixture.organizationId));
       expect(failedPull?.checkStatus).toBe('failure');
 
-      await applyGithubEvent(tx, {
-        eventName: 'check_run',
-        body: {
-          action: 'completed',
-          check_run: {
-            id: 81,
-            name: 'verify',
-            status: 'completed',
-            conclusion: 'success',
-            html_url: 'https://github.com/acme/web/actions/runs/81',
-            head_sha: '',
-            pull_requests: [{ number: 7 }],
-            check_suite: { head_branch: 'eng-3-dashboard' },
-          },
-          repository: { id: 99, full_name: 'acme/web' },
-          sender: { login: 'ci', id: 3 },
-        },
-      });
-      const [passingPull] = await tx
-        .select()
-        .from(githubPullRequest)
-        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
-      expect(passingPull?.checkStatus).toBe('failure');
-
-      await applyGithubEvent(tx, {
-        eventName: 'check_suite',
-        body: {
-          action: 'completed',
-          check_suite: {
-            conclusion: 'success',
-            head_branch: 'eng-3-dashboard',
-            pull_requests: [{ number: 7 }],
-          },
-          repository: { id: 99, full_name: 'acme/web' },
-          sender: { login: 'ci', id: 3 },
-        },
-      });
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 82,
+          name: 'verify',
+          conclusion: 'success',
+          completedAt: '2026-08-13T06:00:00.000Z',
+        }),
+      );
       const [recoveredPull] = await tx
         .select()
         .from(githubPullRequest)
         .where(eq(githubPullRequest.organizationId, fixture.organizationId));
-      expect(recoveredPull?.checkStatus).toBe('success');
+      expect(recoveredPull?.checkStatus).toBe('failure');
       expect(await currentStateName(tx, fixture.issueId)).toBe('In Review');
+    });
+  });
+
+  it('resets the retry budget and settle window for every new head job version', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      const suiteBody = (id: number) => ({
+        action: 'completed',
+        check_suite: {
+          id,
+          conclusion: 'failure',
+          head_sha: HEAD_SHA,
+          pull_requests: [{ number: 7 }],
+        },
+        repository: { id: 99, full_name: 'acme/web' },
+        sender: { login: 'ci', id: 3 },
+      });
+      await applyGithubEvent(tx, { eventName: 'check_suite', body: suiteBody(180) });
+      await tx
+        .update(githubCheckHeadReconciliation)
+        .set({
+          status: 'failed',
+          attempts: 8,
+          settleDeadline: new Date('2026-08-12T00:00:00.000Z'),
+        })
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+
+      await applyGithubEvent(tx, { eventName: 'check_suite', body: suiteBody(181) });
+
+      const [head] = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+      expect(head?.status).toBe('pending');
+      expect(head?.jobVersion).toBe(3);
+      expect(head?.attempts).toBe(0);
+      expect(head?.settleDeadline).toBeNull();
+      expect(head?.lastError).toBeNull();
+    });
+  });
+
+  it('does not clear a legacy failure before its bootstrap head snapshot is accepted', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await tx
+        .update(githubCheckHeadReconciliation)
+        .set({ status: 'pending', triggerKind: 'migration_bootstrap' })
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+      await tx
+        .update(githubPullRequest)
+        .set({ checkStatus: 'failure' })
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 182,
+          name: 'verify',
+          conclusion: 'success',
+          completedAt: '2026-08-13T06:02:00.000Z',
+        }),
+      );
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.checkStatus).toBe('failure');
+    });
+  });
+
+  it('canonicalizes a failed check notification for every linked pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx, 'In Progress');
+      const stateId = fixture.states['In Progress'];
+      if (stateId === undefined) throw new Error('the in progress state is missing');
+      const secondIssueId = `iss_${randomUUIDv7()}`;
+      await tx.insert(issue).values({
+        id: secondIssueId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamId,
+        number: 4,
+        identifier: 'ENG-4',
+        title: 'Related checks',
+        stateId,
+        creatorId: fixture.assigneeId,
+      });
+
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          headRef: 'eng-3-dashboard',
+          headSha: SHARED_HEAD_SHA,
+          body: 'Fixes ENG-3',
+        }),
+      );
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          number: 8,
+          externalId: 8008,
+          title: 'Related checks',
+          headRef: 'eng-4-related-checks',
+          headSha: SHARED_HEAD_SHA,
+          body: 'Fixes ENG-4',
+          author: { login: 'assignee', id: 900 },
+        }),
+      );
+
+      const result = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 303,
+          name: 'verify',
+          conclusion: 'failure',
+          headSha: SHARED_HEAD_SHA,
+          pullRequestNumbers: [7, 8],
+          completedAt: '2026-08-13T06:00:00.000Z',
+        }),
+      );
+
+      expect(result.notificationEvents).toHaveLength(2);
+      const first = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:7',
+      );
+      const second = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:8',
+      );
+      expect(first?.entityId).toBe(result.pullRequests.find((pull) => pull.number === 7)?.id);
+      expect(first?.userIds).toEqual([fixture.creatorId, fixture.assigneeId]);
+      expect(second?.entityId).toBe(result.pullRequests.find((pull) => pull.number === 8)?.id);
+      expect(second?.userIds).toEqual([fixture.assigneeId]);
+    });
+  });
+
+  it('includes a mapped pull request author in a linked failed-check audience', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const suffix = randomUUIDv7();
+      const authorId = `usr_author_${suffix}`;
+      await tx.insert(user).values({
+        id: authorId,
+        name: 'Pull author',
+        email: `pull-author.${suffix}@orbit.local`,
+        handle: `pull-author-${suffix.toLowerCase()}`,
+      });
+      await tx.insert(account).values({
+        id: `acc_author_${suffix}`,
+        accountId: '901',
+        providerId: 'github',
+        userId: authorId,
+      });
+      await tx.insert(member).values({
+        id: `mem_author_${suffix}`,
+        organizationId: fixture.organizationId,
+        userId: authorId,
+        role: 'member',
+      });
+      await applyGithubEvent(
+        tx,
+        prEvent({ body: 'Fixes ENG-3', author: { login: 'pull-author', id: 901 } }),
+      );
+
+      const failed = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 304,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T06:10:00.000Z',
+        }),
+      );
+
+      expect(failed.notificationEvents).toHaveLength(1);
+      expect(failed.notificationEvents[0]?.userIds.sort()).toEqual(
+        [fixture.creatorId, fixture.assigneeId, authorId].sort(),
+      );
     });
   });
 
@@ -548,6 +899,7 @@ describe('applyGithubEvent', () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       await applyGithubEvent(tx, prEvent({}));
+      await markHeadAuthoritative(tx, fixture.organizationId);
       const checkRun = (input: {
         readonly id: number;
         readonly name: string;
@@ -560,10 +912,11 @@ describe('applyGithubEvent', () => {
           check_run: {
             id: input.id,
             name: input.name,
+            app: { id: 10 },
             status: 'completed',
             conclusion: input.conclusion,
             html_url: `https://github.com/acme/web/actions/runs/${input.id}`,
-            head_sha: 'abc123',
+            head_sha: HEAD_SHA,
             pull_requests: [{ number: 7 }],
             check_suite: { head_branch: 'eng-3-dashboard' },
             completed_at: input.completedAt,
@@ -573,8 +926,9 @@ describe('applyGithubEvent', () => {
         },
       });
 
-      await applyGithubEvent(
+      await applyCheckEvent(
         tx,
+        fixture.organizationId,
         checkRun({
           id: 81,
           name: 'verify',
@@ -582,8 +936,9 @@ describe('applyGithubEvent', () => {
           completedAt: '2026-08-13T05:00:00.000Z',
         }),
       );
-      await applyGithubEvent(
+      await applyCheckEvent(
         tx,
+        fixture.organizationId,
         checkRun({
           id: 82,
           name: 'lint',
@@ -598,8 +953,9 @@ describe('applyGithubEvent', () => {
         .where(eq(githubPullRequest.organizationId, fixture.organizationId));
       expect(pull?.checkStatus).toBe('failure');
 
-      await applyGithubEvent(
+      await applyCheckEvent(
         tx,
+        fixture.organizationId,
         checkRun({
           id: 81,
           name: 'verify',
@@ -607,8 +963,9 @@ describe('applyGithubEvent', () => {
           completedAt: '2026-08-13T07:00:00.000Z',
         }),
       );
-      await applyGithubEvent(
+      await applyCheckEvent(
         tx,
+        fixture.organizationId,
         checkRun({
           id: 81,
           name: 'verify',
@@ -622,6 +979,404 @@ describe('applyGithubEvent', () => {
         .from(githubPullRequest)
         .where(eq(githubPullRequest.organizationId, fixture.organizationId));
       expect(pull?.checkStatus).toBe('success');
+    });
+  });
+
+  it('keeps an old-head failure from changing the current pull request after a force push', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          action: 'synchronize',
+          headSha: NEXT_HEAD_SHA,
+          updatedAt: '2026-08-13T03:00:00.000Z',
+        }),
+      );
+
+      const oldHead = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 91,
+          name: 'verify',
+          conclusion: 'failure',
+          headSha: HEAD_SHA,
+          completedAt: '2026-08-13T04:00:00.000Z',
+        }),
+      );
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.headSha).toBe(NEXT_HEAD_SHA);
+      expect(pull?.checkStatus).toBe('unknown');
+      expect(oldHead.notificationEvents).toEqual([]);
+    });
+  });
+
+  it('binds a check that arrives before its head becomes current', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 97,
+          name: 'verify',
+          conclusion: 'failure',
+          headSha: NEXT_HEAD_SHA,
+          completedAt: '2026-08-13T02:30:00.000Z',
+        }),
+      );
+
+      const synchronized = await applyGithubEvent(
+        tx,
+        prEvent({
+          action: 'synchronize',
+          headSha: NEXT_HEAD_SHA,
+          updatedAt: '2026-08-13T03:00:00.000Z',
+        }),
+      );
+
+      expect(synchronized.pullRequests[0]?.headSha).toBe(NEXT_HEAD_SHA);
+      expect(synchronized.pullRequests[0]?.checkStatus).toBe('failure');
+      expect(
+        synchronized.notificationEvents.filter((event) => event.type === 'pr_checks_failed'),
+      ).toHaveLength(1);
+      const [reconciliation] = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(
+          and(
+            eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId),
+            eq(githubCheckHeadReconciliation.headSha, NEXT_HEAD_SHA),
+          ),
+        );
+      expect(reconciliation?.status).toBe('pending');
+    });
+  });
+
+  it('emits a failure transition only when the current-head aggregate enters failure', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+
+      const firstFailure = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 92,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+        }),
+      );
+      const secondFailure = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 93,
+          name: 'lint',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:01:00.000Z',
+        }),
+      );
+      const partialRecovery = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 94,
+          name: 'verify',
+          conclusion: 'success',
+          completedAt: '2026-08-13T05:02:00.000Z',
+        }),
+      );
+
+      expect(
+        firstFailure.notificationEvents.filter((event) => event.type === 'pr_checks_failed'),
+      ).toHaveLength(1);
+      expect(
+        secondFailure.notificationEvents.filter((event) => event.type === 'pr_checks_failed'),
+      ).toHaveLength(0);
+      expect(
+        partialRecovery.notificationEvents.filter((event) => event.type === 'pr_checks_failed'),
+      ).toHaveLength(0);
+    });
+  });
+
+  it('binds a check received before its pull request is mirrored', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const beforePull = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 95,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T01:30:00.000Z',
+        }),
+      );
+      expect(beforePull.pullRequests).toEqual([]);
+      expect(beforePull.notificationEvents).toEqual([]);
+
+      const mirrored = await applyGithubEvent(tx, prEvent({}));
+      expect(mirrored.pullRequests[0]?.checkStatus).toBe('failure');
+      expect(mirrored.notificationEvents.some((event) => event.type === 'pr_checks_failed')).toBe(
+        true,
+      );
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.headSha).toBe(HEAD_SHA);
+      expect(pull?.checkStatus).toBe('failure');
+    });
+  });
+
+  it('tracks shared-head pull request projections independently', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const stateId = fixture.states['Backlog'];
+      if (stateId === undefined) throw new Error('the backlog state is missing');
+      await tx.insert(issue).values({
+        id: `iss_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamId,
+        number: 4,
+        identifier: 'ENG-4',
+        title: 'Shared head work',
+        stateId,
+        creatorId: fixture.creatorId,
+        assigneeId: fixture.assigneeId,
+      });
+      await applyGithubEvent(tx, prEvent({ body: 'Fixes ENG-3', headSha: SHARED_HEAD_SHA }));
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          number: 8,
+          externalId: 8008,
+          body: 'Fixes ENG-4',
+          headSha: SHARED_HEAD_SHA,
+        }),
+      );
+
+      const result = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 96,
+          name: 'verify',
+          conclusion: 'failure',
+          headSha: SHARED_HEAD_SHA,
+          pullRequestNumbers: [7, 8],
+          completedAt: '2026-08-13T05:05:00.000Z',
+        }),
+      );
+
+      expect(result.pullRequests.map((pull) => pull.number).sort()).toEqual([7, 8]);
+      expect(result.pullRequests.every((pull) => pull.checkStatus === 'failure')).toBe(true);
+      expect(
+        result.notificationEvents.filter((event) => event.type === 'pr_checks_failed'),
+      ).toHaveLength(2);
+      expect(new Set(result.notificationEvents.map((event) => event.source?.subjectKey)).size).toBe(
+        2,
+      );
+    });
+  });
+
+  it('marks an equal-time conflicting context unresolved without changing the pull', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      const occurredAt = '2026-08-13T05:10:00.000Z';
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({ id: 101, name: 'verify', conclusion: 'failure', completedAt: occurredAt }),
+      );
+      const conflict = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({ id: 102, name: 'verify', conclusion: 'success', completedAt: occurredAt }),
+      );
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      const [context] = await tx
+        .select()
+        .from(githubCheckHeadContext)
+        .where(eq(githubCheckHeadContext.organizationId, fixture.organizationId));
+      const [reconciliation] = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+
+      expect(pull?.checkStatus).toBe('failure');
+      expect(context?.state).toBe('failure');
+      expect(context?.reconciliationState).toBe('unresolved');
+      expect(reconciliation?.status).toBe('pending');
+      expect(conflict.notificationEvents).toEqual([]);
+    });
+  });
+
+  it('updates one case-folded commit-status context across creator identity changes', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await markHeadAuthoritative(tx, fixture.organizationId);
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        statusEvent({
+          id: 111,
+          context: 'Deploy/Preview',
+          state: 'pending',
+          updatedAt: '2026-08-13T05:11:00.000Z',
+        }),
+      );
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        statusEvent({
+          id: 112,
+          context: 'deploy/preview',
+          state: 'success',
+          updatedAt: '2026-08-13T05:12:00.000Z',
+        }),
+      );
+
+      const contexts = await tx
+        .select()
+        .from(githubCheckHeadContext)
+        .where(eq(githubCheckHeadContext.organizationId, fixture.organizationId));
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      const activities = await tx
+        .select()
+        .from(githubCheckActivity)
+        .where(eq(githubCheckActivity.organizationId, fixture.organizationId));
+
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]?.state).toBe('success');
+      expect(contexts[0]?.contextVersion).toBe(2);
+      expect(pull?.checkStatus).toBe('success');
+      expect(
+        activities.find((activity) => activity.providerObjectId === '112')?.payload['creator'],
+      ).toEqual({ login: 'deploy-bot', id: 13 });
+    });
+  });
+
+  it('keeps same-name check runs from different apps as separate contexts', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 121,
+          appId: 10,
+          name: 'verify',
+          conclusion: 'success',
+          completedAt: '2026-08-13T05:13:00.000Z',
+        }),
+      );
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 122,
+          appId: 20,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:14:00.000Z',
+        }),
+      );
+
+      const contexts = await tx
+        .select()
+        .from(githubCheckHeadContext)
+        .where(eq(githubCheckHeadContext.organizationId, fixture.organizationId));
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+
+      expect(contexts).toHaveLength(2);
+      expect(new Set(contexts.map((context) => context.contextKey)).size).toBe(2);
+      expect(pull?.checkStatus).toBe('failure');
+    });
+  });
+
+  it('uses one coarse source key for repeated failure transitions on the same head', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await markHeadAuthoritative(tx, fixture.organizationId);
+      const firstFailure = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 131,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:15:00.000Z',
+        }),
+      );
+      await notifyMany(tx, firstFailure.notificationEvents, { slackEnabled: false });
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 132,
+          name: 'verify',
+          conclusion: 'success',
+          completedAt: '2026-08-13T05:16:00.000Z',
+        }),
+      );
+      const secondFailure = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 133,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:17:00.000Z',
+        }),
+      );
+      const repeated = await notifyMany(tx, secondFailure.notificationEvents, {
+        slackEnabled: false,
+      });
+
+      expect(firstFailure.notificationEvents).toHaveLength(1);
+      expect(secondFailure.notificationEvents).toHaveLength(1);
+      expect(secondFailure.notificationEvents[0]?.source?.sourceEventKey).toBe(
+        firstFailure.notificationEvents[0]?.source?.sourceEventKey,
+      );
+      expect(firstFailure.notificationEvents[0]?.source?.sourceEventKey).toBe(
+        `github-pr:99:7:${HEAD_SHA}:checks-failed`,
+      );
+      const sources = await tx
+        .select()
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.organizationId, fixture.organizationId));
+      const recipients = await tx
+        .select()
+        .from(notification)
+        .where(eq(notification.organizationId, fixture.organizationId));
+      expect(sources).toHaveLength(1);
+      expect(recipients).toHaveLength(2);
+      expect(repeated.notifications).toEqual([]);
     });
   });
 
@@ -660,7 +1415,7 @@ describe('applyGithubEvent', () => {
 
   it('notifies an existing linked pull request about a conversation comment', async () => {
     await withRollback(async (tx) => {
-      const fixture = await seed(tx);
+      await seed(tx);
       await applyGithubEvent(tx, prEvent({}));
 
       const result = await applyGithubEvent(tx, {
@@ -689,7 +1444,7 @@ describe('applyGithubEvent', () => {
       expect(result.notificationEvents[0]?.externalUrl).toBe(
         'https://github.com/acme/web/pull/7#issuecomment-1',
       );
-      expect(result.notificationEvents[0]?.entityId).toBe(fixture.issueId);
+      expect(result.notificationEvents[0]?.entityId).toBe(result.pullRequests[0]?.id);
 
       const edited = await applyGithubEvent(tx, {
         eventName: 'issue_comment',
@@ -711,6 +1466,50 @@ describe('applyGithubEvent', () => {
         },
       });
       expect(edited.notificationEvents).toEqual([]);
+    });
+  });
+
+  it('plans one canonical pull request notification across several linked issues', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const stateId = fixture.states['Backlog'];
+      if (stateId === undefined) throw new Error('the backlog state is missing');
+      await tx.insert(issue).values({
+        id: `iss_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamId,
+        number: 4,
+        identifier: 'ENG-4',
+        title: 'Related dashboard work',
+        stateId,
+        creatorId: fixture.creatorId,
+        assigneeId: fixture.assigneeId,
+      });
+
+      const result = await applyGithubEvent(
+        tx,
+        prEvent({
+          action: 'closed',
+          state: 'closed',
+          headRef: 'chore/no-identifier',
+          body: 'Fixes ENG-3\nFixes ENG-4',
+        }),
+      );
+
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.userIds).toEqual([
+        fixture.creatorId,
+        fixture.assigneeId,
+      ]);
+      expect(result.notificationEvents[0]?.entityType).toBe('github_pull_request');
+      expect(result.notificationEvents[0]?.entityId).toBe(result.pullRequests[0]?.id);
+      expect(result.notificationEvents[0]).toMatchObject({
+        source: {
+          sourceEventKey: 'github:99:pr:7:pull_request:7007:closed:2026-08-13T02:00:00.000Z',
+          subjectType: 'github_pull_request',
+          subjectKey: 'github-pr:99:7',
+        },
+      });
     });
   });
 
@@ -792,6 +1591,56 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('keeps each unlinked pull request notification scoped to its author', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          title: 'First unrelated change',
+          headRef: 'chore/first-unrelated',
+          headSha: SHARED_HEAD_SHA,
+          body: 'No Orbit identifier.',
+        }),
+      );
+      await applyGithubEvent(
+        tx,
+        prEvent({
+          number: 8,
+          externalId: 8008,
+          title: 'Second unrelated change',
+          headRef: 'chore/second-unrelated',
+          headSha: SHARED_HEAD_SHA,
+          body: 'No Orbit identifier.',
+          author: { login: 'assignee', id: 900 },
+        }),
+      );
+
+      const result = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 404,
+          name: 'verify',
+          conclusion: 'failure',
+          headSha: SHARED_HEAD_SHA,
+          pullRequestNumbers: [7, 8],
+          completedAt: '2026-08-13T06:00:00.000Z',
+        }),
+      );
+
+      expect(result.notificationEvents).toHaveLength(2);
+      const first = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:7',
+      );
+      const second = result.notificationEvents.find(
+        (event) => event.source?.subjectKey === 'github-pr:99:8',
+      );
+      expect(first?.userIds).toEqual([fixture.creatorId]);
+      expect(second?.userIds).toEqual([fixture.assigneeId]);
+    });
+  });
+
   it('does not notify a mapped GitHub user after they leave the workspace', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -810,6 +1659,68 @@ describe('applyGithubEvent', () => {
 
       expect(result.notificationEvents).toHaveLength(0);
     });
+  });
+
+  it('rechecks team access after a concurrent membership removal', async () => {
+    const fixture = await db.transaction(async (tx) => {
+      const seeded = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      return seeded;
+    });
+    const webhookDeliveryId = `whd_${randomUUIDv7()}`;
+    await db.insert(webhookDelivery).values({
+      id: webhookDeliveryId,
+      provider: 'github',
+      deliveryId: `delivery_${randomUUIDv7()}`,
+      event: 'check_run',
+      organizationId: fixture.organizationId,
+      status: 'processing',
+    });
+    let announceRemoval = (): void => undefined;
+    const removalReady = new Promise<void>((resolve) => {
+      announceRemoval = resolve;
+    });
+    let releaseRemoval = (): void => undefined;
+    const removalRelease = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    const removal = db.transaction(async (tx) => {
+      await tx
+        .delete(teamMember)
+        .where(
+          and(eq(teamMember.teamId, fixture.teamId), eq(teamMember.userId, fixture.assigneeId)),
+        );
+      announceRemoval();
+      await removalRelease;
+    });
+
+    try {
+      await removalReady;
+      const applying = applyGithubEvent(db, {
+        ...checkRunEvent({
+          id: 505,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T06:00:00.000Z',
+        }),
+        organizationId: fixture.organizationId,
+        webhookDeliveryId,
+      });
+      const releaseTimer = setTimeout(releaseRemoval, 50);
+      const result = await applying;
+      clearTimeout(releaseTimer);
+      releaseRemoval();
+      await removal;
+
+      expect(result.notificationEvents).toHaveLength(1);
+      expect(result.notificationEvents[0]?.userIds).toEqual([fixture.creatorId]);
+    } finally {
+      releaseRemoval();
+      await removal.catch(() => undefined);
+      await db.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await db.delete(user).where(eq(user.id, fixture.creatorId));
+      await db.delete(user).where(eq(user.id, fixture.assigneeId));
+    }
   });
 
   it('backfills review, comment, and check history idempotently', async () => {
@@ -1084,7 +1995,7 @@ describe('applyGithubEvent', () => {
             number: 7,
             title: 'Rework dashboard',
             html_url: 'https://github.com/acme/web/pull/7',
-            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            head: { ref: 'eng-3-dashboard', sha: HEAD_SHA },
             base: { ref: 'main' },
             updated_at: input.submittedAt,
           },
@@ -1114,6 +2025,87 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('does not let newer review activity regress an older pull request snapshot', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(
+        tx,
+        prEvent({ headSha: NEXT_HEAD_SHA, updatedAt: '2026-08-13T06:00:00.000Z' }),
+      );
+
+      await applyGithubEvent(tx, {
+        eventName: 'pull_request_review',
+        body: {
+          action: 'submitted',
+          review: {
+            id: 908,
+            state: 'approved',
+            body: 'Looks good',
+            html_url: 'https://github.com/acme/web/pull/7#pullrequestreview-908',
+            user: { login: 'rev', id: 900 },
+            submitted_at: '2026-08-13T07:00:00.000Z',
+          },
+          pull_request: {
+            id: 7007,
+            number: 7,
+            title: 'Stale pull snapshot',
+            body: 'Fixes ENG-3',
+            html_url: 'https://github.com/acme/web/pull/7',
+            draft: false,
+            merged: false,
+            state: 'open',
+            head: { ref: 'eng-3-old', sha: HEAD_SHA },
+            base: { ref: 'main' },
+            user: { login: 'octocat', id: 500 },
+            created_at: '2026-08-13T01:00:00.000Z',
+            updated_at: '2026-08-13T05:00:00.000Z',
+          },
+          repository: { id: 99, full_name: 'acme/web' },
+          sender: { login: 'rev', id: 900 },
+        },
+      });
+
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.headSha).toBe(NEXT_HEAD_SHA);
+      expect(pull?.providerUpdatedAt?.toISOString()).toBe('2026-08-13T06:00:00.000Z');
+      expect(pull?.reviewDecision).toBe('approved');
+      expect(pull?.headEpoch).toBe(0);
+    });
+  });
+
+  it('owns every candidate head before queuing an equal-time pull conflict', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const providerTime = '2026-08-13T06:00:00.000Z';
+      await applyGithubEvent(tx, prEvent({ headSha: HEAD_SHA, updatedAt: providerTime }));
+
+      await applyGithubEvent(
+        tx,
+        prEvent({ action: 'synchronize', headSha: NEXT_HEAD_SHA, updatedAt: providerTime }),
+      );
+
+      const heads = await tx
+        .select()
+        .from(githubCheckHeadReconciliation)
+        .where(eq(githubCheckHeadReconciliation.organizationId, fixture.organizationId));
+      expect(heads.map((head) => head.headSha).sort()).toEqual([HEAD_SHA, NEXT_HEAD_SHA].sort());
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pull?.headSha).toBe(HEAD_SHA);
+      const [conflict] = await tx
+        .select()
+        .from(githubPullRequestReconciliation)
+        .where(eq(githubPullRequestReconciliation.pullRequestId, pull?.id ?? 'missing'));
+      expect(conflict?.status).toBe('pending');
+      expect(conflict?.conflictingHeadShas).toEqual([HEAD_SHA, NEXT_HEAD_SHA].sort());
+    });
+  });
+
   it('does not let a late review reopen a merged link or notify again', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -1130,7 +2122,7 @@ describe('applyGithubEvent', () => {
             draft: false,
             merged: true,
             state: 'closed',
-            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            head: { ref: 'eng-3-dashboard', sha: HEAD_SHA },
             base: { ref: 'main' },
             user: { login: 'octocat', id: 500 },
             updated_at: '2026-08-13T05:00:00.000Z',
@@ -1158,7 +2150,7 @@ describe('applyGithubEvent', () => {
             draft: false,
             merged: false,
             state: 'open',
-            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            head: { ref: 'eng-3-dashboard', sha: HEAD_SHA },
             base: { ref: 'main' },
             user: { login: 'octocat', id: 500 },
             updated_at: '2026-08-13T03:00:00.000Z',
@@ -1190,7 +2182,7 @@ describe('applyGithubEvent', () => {
             html_url: 'https://github.com/acme/web/pull/7',
             merged: true,
             state: 'closed',
-            head: { ref: 'eng-3-dashboard', sha: 'abc123' },
+            head: { ref: 'eng-3-dashboard', sha: HEAD_SHA },
             base: { ref: 'main' },
             updated_at: '2026-08-13T05:00:00.000Z',
           },
@@ -1223,7 +2215,7 @@ describe('applyGithubEvent', () => {
       const [pull] = await tx.select().from(githubPullRequest);
       expect(pull?.state).toBe('merged');
       expect(pull?.merged).toBe(true);
-      expect(pull?.headSha).toBe('abc123');
+      expect(pull?.headSha).toBe(HEAD_SHA);
     });
   });
 
