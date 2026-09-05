@@ -164,6 +164,18 @@ runs across several sprints, and has a lead, a target date and a status.
 **Milestones** divide a project into stages, so progress is measured against
 something real rather than a percentage of a moving total.
 
+**Health and updates** track qualitative project status over time. An update
+captures a health category, markdown notes, the author, and a timestamp:
+
+- **On track** (`on_track`): The project is progressing according to schedule.
+- **At risk** (`at_risk`): Blockers, dependency delays, or capacity risks exist.
+- **Off track** (`off_track`): Key milestones or target dates will be missed without intervention.
+- **No update** (`no_update`): The initial state before a lead posts the first update.
+
+The workspace feed on the Projects page surfaces the latest update from every
+visible project in a single stream, giving leads and stakeholders visibility
+across the workspace without having to inspect each project individually.
+
 The difference from sprints in one line: a sprint is a period of time, a project
 is a body of work. An issue is usually in both.
 
