@@ -16,7 +16,6 @@ import {
   NOTIFICATION_AUDIENCE_BY_REASON,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
-  SLACK_INTEGRATION_ENABLED,
   type SyncAction,
   scopes,
   syncActionSchema,
@@ -27,6 +26,9 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { renderMarkdown } from '../markdown/index.ts';
+import { hasSlackBotToken } from '../slack/credentials.ts';
+import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
+import { slackFeatureEnabled } from '../slack/feature.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -155,7 +157,6 @@ export async function markSlackReauthorizationRequired(
   database: NotificationDatabase,
   organizationId: string,
   integrationId?: string,
-  expectedBotToken?: string,
   expectedIntegrationVersion?: string,
 ): Promise<boolean> {
   const updated = await database
@@ -169,14 +170,9 @@ export async function markSlackReauthorizationRequired(
         eq(integration.organizationId, organizationId),
         eq(integration.provider, 'slack'),
         ...(integrationId === undefined ? [] : [eq(integration.id, integrationId)]),
-        ...(expectedBotToken === undefined
-          ? []
-          : [sql`${integration.credentials}->>'botToken' = ${expectedBotToken}`]),
         ...(expectedIntegrationVersion === undefined
           ? []
-          : [
-              sql`extract(epoch from ${integration.updatedAt})::text = ${expectedIntegrationVersion}`,
-            ]),
+          : [sql`${slackCredentialVersionExpression()} = ${expectedIntegrationVersion}`]),
       ),
     )
     .returning({ id: integration.id });
@@ -188,11 +184,18 @@ export async function claimSlackDmDeliveries(
   limit = 100,
   now = new Date(),
   atomic = false,
+  organizationId?: string,
 ): Promise<(typeof notificationDelivery.$inferSelect)[]> {
   if (atomic && 'transaction' in database) {
-    return await database.transaction((tx) => claimSlackDmDeliveries(tx, limit, now));
+    return await database.transaction((tx) =>
+      claimSlackDmDeliveries(tx, limit, now, false, organizationId),
+    );
   }
   const staleBefore = new Date(now.getTime() - 5 * 60_000);
+  const organizationFilter =
+    organizationId === undefined
+      ? sql``
+      : sql`AND ${notification.organizationId} = ${organizationId}`;
   return await database
     .update(notificationDelivery)
     .set({ status: 'processing', claimedAt: now })
@@ -200,8 +203,11 @@ export async function claimSlackDmDeliveries(
       sql`${notificationDelivery.id} IN (
         SELECT ${notificationDelivery.id}
         FROM ${notificationDelivery}
+        INNER JOIN ${notification}
+          ON ${notification.id} = ${notificationDelivery.notificationId}
         WHERE ${notificationDelivery.channel} = 'slack_dm'
           AND ${notificationDelivery.availableAt} <= ${now.toISOString()}
+          ${organizationFilter}
           AND (
             ${notificationDelivery.status} IN ('pending', 'failed')
             OR (
@@ -215,7 +221,7 @@ export async function claimSlackDmDeliveries(
           ${notificationDelivery.availableAt},
           ${notificationDelivery.createdAt}
         LIMIT ${limit}
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF ${notificationDelivery} SKIP LOCKED
       )`,
     )
     .returning();
@@ -291,7 +297,6 @@ interface Plan {
 }
 
 const slackDmEligibilitySchema = z.object({
-  credentials: z.object({ botToken: z.string().min(1) }),
   config: z.object({
     scopes: z.array(z.string()),
     slackReauthorize: z.boolean().optional(),
@@ -310,7 +315,7 @@ export async function notifyMany(
 ): Promise<NotifyOutcome> {
   const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
-  const slackFeatureEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
+  const slackEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
   const recipientIds = unique(
     parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
@@ -318,9 +323,11 @@ export async function notifyMany(
 
   const recipients = await loadRecipients(database, recipientIds);
   const settings = await loadSettings(database, recipientIds);
-  const slackDmEligibleRecipients = slackFeatureEnabled
-    ? await loadSlackDmEligibleRecipients(database, parsed, recipientIds)
-    : new Map<string, ReadonlySet<string>>();
+  const slackEnabledEvents = slackEnabled ? parsed : [];
+  const slackDmEligibleRecipients =
+    slackEnabledEvents.length > 0
+      ? await loadSlackDmEligibleRecipients(database, slackEnabledEvents, recipientIds)
+      : new Map<string, ReadonlySet<string>>();
   const disabled = disabledPreferenceIndex(
     await database
       .select({
@@ -377,7 +384,7 @@ export async function notifyMany(
         settings.get(userId) ?? DEFAULT_SETTINGS,
         disabled,
         now,
-        slackFeatureEnabled,
+        slackEnabled,
         slackDmEligibleRecipients.get(event.organizationId)?.has(userId) === true,
       );
       if (plan !== null) {
@@ -423,7 +430,7 @@ function slackDeliveryRows(
 }
 
 function resolveSlackFeatureEnabled(value: boolean | undefined): boolean {
-  return value ?? SLACK_INTEGRATION_ENABLED;
+  return value ?? slackFeatureEnabled();
 }
 
 function planFor(
@@ -508,7 +515,7 @@ async function loadSlackDmEligibleRecipients(
   const eligible = new Map<string, Set<string>>();
   for (const row of rows) {
     const parsed = slackDmEligibilitySchema.safeParse(row);
-    if (!parsed.success) continue;
+    if (!(parsed.success && hasSlackBotToken(row.credentials))) continue;
     if (parsed.data.config.slackReauthorize === true) continue;
     const scopes = parsed.data.config.scopes;
     if (!(scopes.includes('chat:write') && scopes.includes('im:write'))) continue;

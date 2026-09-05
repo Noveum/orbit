@@ -193,15 +193,44 @@ export async function refreshedPrincipal(
   };
 }
 
-async function issueScopeAllowed(issueId: string, principal: ConnectionPrincipal) {
+export async function authorizedIssueTeamId(
+  issueId: string,
+  principal: ConnectionPrincipal,
+): Promise<string | null> {
+  const teamId = await issueTeamIdInOrganization(issueId, principal.organizationId);
+  if (teamId === null) return null;
+  if (principal.role !== 'admin' && !principal.teamIds.includes(teamId)) return null;
+  return teamId;
+}
+
+export async function issueTeamIdInOrganization(
+  issueId: string,
+  organizationId: string,
+): Promise<string | null> {
+  return (await issueReachInOrganization(issueId, organizationId))?.teamId ?? null;
+}
+
+export interface IssueReach {
+  readonly teamId: string;
+  readonly syncId: number;
+}
+
+export async function issueReachInOrganization(
+  issueId: string,
+  organizationId: string,
+): Promise<IssueReach | null> {
   const rows = await db
-    .select({ organizationId: schema.issue.organizationId, teamId: schema.issue.teamId })
+    .select({
+      organizationId: schema.issue.organizationId,
+      teamId: schema.issue.teamId,
+      syncId: schema.issue.syncId,
+    })
     .from(schema.issue)
     .where(eq(schema.issue.id, issueId))
     .limit(1);
   const issue = rows[0];
-  if (issue === undefined || issue.organizationId !== principal.organizationId) return false;
-  return principal.role === 'admin' || principal.teamIds.includes(issue.teamId);
+  if (issue === undefined || issue.organizationId !== organizationId) return null;
+  return { teamId: issue.teamId, syncId: issue.syncId };
 }
 
 async function projectScopeAllowed(projectId: string, principal: ConnectionPrincipal) {
@@ -281,7 +310,7 @@ export async function authorizeScope(
     case 'user':
       return id === principal.userId;
     case 'issue':
-      return await issueScopeAllowed(id, principal);
+      return (await authorizedIssueTeamId(id, principal)) !== null;
     case 'project':
       return await projectScopeAllowed(id, principal);
     case 'doc':

@@ -1,7 +1,15 @@
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
+import { slackFeatureEnabled } from '@orbit/services/slack/feature';
 
 export function slackIntegrationEnabled(): boolean {
-  return SLACK_INTEGRATION_ENABLED;
+  return slackFeatureEnabled();
+}
+
+export function slackIntegrationEnabledForOrganization(_organizationId: string): boolean {
+  return slackFeatureEnabled();
+}
+
+export function slackRolloutConfigured(): boolean {
+  return slackFeatureEnabled();
 }
 
 export function slackIntegrationUnavailable(): Response {

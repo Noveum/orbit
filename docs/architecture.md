@@ -131,10 +131,12 @@ because the announcement is the thing that fails when a process dies.
 
 ### Reconnecting
 
-The client tracks the last `syncId` it saw. On reconnect it asks for everything
-since, and gets a replay rather than a refetch. The reconnect banner only
-appears once retries have actually been failing, so a blip does not flash a
-warning at anyone.
+The client tracks the last `syncId` it saw. On reconnect it asks for current
+rows changed since that watermark. Issue list and detail caches are reset and
+refetched because a current-row replay cannot reconstruct a hard delete or the
+team an issue moved from. Durable event recovery for those cases is tracked by
+RT-001. The reconnect banner only appears once retries have actually been
+failing, so a blip does not flash a warning at anyone.
 
 ### Why node, and not Bun
 

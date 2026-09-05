@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, setSystemTime } from 'bun:test';
 import {
   integration,
   issue,
+  member,
   organization,
   slackChannelSync,
   slackUserMapping,
@@ -10,22 +11,35 @@ import {
   workflowState,
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { markSlackReauthorizationRequired } from '../../src/notifications/index.ts';
+import { decryptSlackBotToken, encryptSlackBotToken } from '../../src/slack/credentials.ts';
 import {
   connectSlackChannel,
   disconnectSlackChannel,
   dispatchSlackDm,
   dispatchSlackMessage,
   ensureSlackIntegration,
+  ensureSlackIntegrationWithVersion,
   issueIdentifierFromUrl,
   resolveIssueUnfurls,
   resolveSlackContext,
   resolveSlackTargets,
+  sendSlackUnfurls,
   slackDmAvailable,
+  slackUserMappingSyncReady,
+  syncSlackUserMappings,
   upsertSlackUserMapping,
 } from '../../src/slack/dispatch.ts';
-import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+import { type TestTransaction, testDb, withRollback } from '../../src/test-database.ts';
+
+const originalAuthSecret = process.env['BETTER_AUTH_SECRET'];
+process.env['BETTER_AUTH_SECRET'] ??= 'slack-dispatch-test-secret';
+
+afterAll(() => {
+  if (originalAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = originalAuthSecret;
+});
 
 interface Fixture {
   readonly organizationId: string;
@@ -55,6 +69,12 @@ async function seedWorkspace(tx: TestTransaction, options: WorkspaceOptions): Pr
     name: 'Ada',
     email: `ada.${suffix}@orbit.local`,
     handle: `ada-${suffix.toLowerCase()}`,
+  });
+  await tx.insert(member).values({
+    id: `mem_${suffix}`,
+    organizationId,
+    userId,
+    role: 'admin',
   });
 
   const teamA = `team_a_${suffix}`;
@@ -137,7 +157,106 @@ describe('resolveSlackContext', () => {
   });
 });
 
+describe('slackUserMappingSyncReady', () => {
+  const readyContext = {
+    integrationId: 'int-ready',
+    integrationVersion: 'version-ready',
+    token: 'xoxb-ready',
+    scopes: ['users:read', 'users:read.email'],
+    hasDirectMessageScope: false,
+    reauthorize: false,
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+
+  it('accepts a usable Slack directory context', () => {
+    expect(slackUserMappingSyncReady({ context: readyContext, slackTeamId: 'T-WORKSPACE' })).toBe(
+      true,
+    );
+  });
+
+  for (const readinessCase of [
+    { name: 'missing context', context: null, slackTeamId: 'T-WORKSPACE' },
+    {
+      name: 'missing token',
+      context: { ...readyContext, token: null },
+      slackTeamId: 'T-WORKSPACE',
+    },
+    {
+      name: 'reauthorization required',
+      context: { ...readyContext, reauthorize: true },
+      slackTeamId: 'T-WORKSPACE',
+    },
+    { name: 'missing team id', context: readyContext, slackTeamId: undefined },
+    { name: 'empty team id', context: readyContext, slackTeamId: '' },
+    {
+      name: 'missing users read scope',
+      context: { ...readyContext, scopes: ['users:read.email'] },
+      slackTeamId: 'T-WORKSPACE',
+    },
+    {
+      name: 'missing users email scope',
+      context: { ...readyContext, scopes: ['users:read'] },
+      slackTeamId: 'T-WORKSPACE',
+    },
+  ]) {
+    it(`rejects ${readinessCase.name}`, () => {
+      expect(
+        slackUserMappingSyncReady({
+          context: readinessCase.context,
+          slackTeamId: readinessCase.slackTeamId,
+        }),
+      ).toBe(false);
+    });
+  }
+});
+
 describe('ensureSlackIntegration', () => {
+  it('uses distinct credential versions for reconnects in the same millisecond', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'SameMillisecond',
+        slackTeamId: 'T-same-millisecond',
+        botToken: 'xoxb-old',
+      });
+      const fixedTime = new Date('2026-08-30T12:00:00.000Z');
+      setSystemTime(fixedTime);
+      try {
+        const older = await ensureSlackIntegrationWithVersion(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-older',
+          externalId: 'T-same-millisecond',
+        });
+        const newer = await ensureSlackIntegrationWithVersion(tx, {
+          organizationId: fixture.organizationId,
+          connectedById: fixture.userId,
+          botToken: 'xoxb-newer',
+          externalId: 'T-same-millisecond',
+        });
+
+        expect(older.integrationVersion).not.toBe(newer.integrationVersion);
+        expect(
+          await markSlackReauthorizationRequired(
+            tx,
+            fixture.organizationId,
+            fixture.integrationId,
+            older.integrationVersion,
+          ),
+        ).toBe(false);
+        expect(
+          await markSlackReauthorizationRequired(
+            tx,
+            fixture.organizationId,
+            fixture.integrationId,
+            newer.integrationVersion,
+          ),
+        ).toBe(true);
+      } finally {
+        setSystemTime();
+      }
+    });
+  });
+
   it('reuses a legacy default integration when reconnecting with a team id', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, { name: 'Legacy', botToken: 'xoxb-old' });
@@ -167,11 +286,17 @@ describe('ensureSlackIntegration', () => {
       if (legacy === undefined) throw new Error('Expected the existing integration row.');
       expect(integrationId).toBe(legacy.id);
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({
+      expect(rows[0]).toMatchObject({
         externalId: 'default',
         config: { slackTeamId: 'T0123', scopes: ['im:write'] },
-        credentials: { botToken: 'xoxb-new' },
       });
+      expect(JSON.stringify(rows[0]?.credentials)).not.toContain('xoxb-new');
+      expect(
+        decryptSlackBotToken(rows[0]?.credentials, {
+          organizationId: fixture.organizationId,
+          integrationId,
+        }),
+      ).toBe('xoxb-new');
     });
   });
 
@@ -249,6 +374,12 @@ describe('ensureSlackIntegration', () => {
         email: `${reconnectingUserId}@orbit.local`,
         handle: reconnectingUserId.toLowerCase(),
       });
+      await tx.insert(member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        userId: reconnectingUserId,
+        role: 'admin',
+      });
       await upsertSlackUserMapping(tx, {
         organizationId: fixture.organizationId,
         integrationId: fixture.integrationId,
@@ -281,9 +412,15 @@ describe('ensureSlackIntegration', () => {
         id: fixture.integrationId,
         externalId: 'default',
         connectedById: reconnectingUserId,
-        credentials: { botToken: 'xoxb-new' },
         config: { slackTeamId: 'T-legacy', scopes: ['chat:write'] },
       });
+      expect(JSON.stringify(rows[0]?.credentials)).not.toContain('xoxb-new');
+      expect(
+        decryptSlackBotToken(rows[0]?.credentials, {
+          organizationId: fixture.organizationId,
+          integrationId,
+        }),
+      ).toBe('xoxb-new');
       expect(integrationId).toBe(fixture.integrationId);
       expect(
         await tx
@@ -391,16 +528,21 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         slackTeamId: 'T-acme',
         botToken: 'xoxb-acme',
       });
+      const stale = await resolveSlackContext(tx, fixture.organizationId);
+      if (stale === null) throw new Error('Expected a Slack context.');
       await tx
         .update(integration)
-        .set({ credentials: { botToken: 'xoxb-refreshed' }, updatedAt: new Date() })
+        .set({
+          credentials: { botToken: 'xoxb-refreshed' },
+          updatedAt: new Date(stale.updatedAt.getTime() + 1_000),
+        })
         .where(eq(integration.id, fixture.integrationId));
       expect(
         await markSlackReauthorizationRequired(
           tx,
           fixture.organizationId,
           fixture.integrationId,
-          'xoxb-acme',
+          stale.integrationVersion,
         ),
       ).toBe(false);
       const [after] = await tx
@@ -475,6 +617,857 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
         reauthorize: false,
         updatedAt: expect.any(Date),
       });
+    });
+  });
+});
+
+describe('syncSlackUserMappings', () => {
+  it('waits for member removal before replacing the mapping snapshot', async () => {
+    const fixture = await testDb.transaction(async (tx) => await seed(tx));
+    const teammateId = `usr_${randomUUIDv7()}`;
+    const teammateMemberId = `mem_${randomUUIDv7()}`;
+    let releaseRemoval: () => void = () => undefined;
+    const removalRelease = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    let announceRemoval: () => void = () => undefined;
+    const removalReady = new Promise<void>((resolve) => {
+      announceRemoval = resolve;
+    });
+    let removal: Promise<void> | undefined;
+    let sync: ReturnType<typeof syncSlackUserMappings> | undefined;
+    try {
+      await testDb
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'member-removal-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const teammateEmail = `teammate.${randomUUIDv7()}@orbit.local`;
+      await testDb.insert(user).values({
+        id: teammateId,
+        name: 'Teammate',
+        email: teammateEmail,
+        handle: `teammate-${randomUUIDv7().toLowerCase()}`,
+      });
+      await testDb.insert(member).values({
+        id: teammateMemberId,
+        organizationId: fixture.organizationId,
+        userId: teammateId,
+        role: 'member',
+      });
+      await upsertSlackUserMapping(testDb, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: teammateId,
+        slackUserId: 'U-TEAMMATE',
+        slackDisplayName: 'Teammate',
+      });
+      removal = testDb.transaction(async (tx) => {
+        await tx
+          .select({ id: member.id })
+          .from(member)
+          .where(eq(member.id, teammateMemberId))
+          .for('update');
+        announceRemoval();
+        await removalRelease;
+        await tx
+          .delete(slackUserMapping)
+          .where(
+            and(
+              eq(slackUserMapping.organizationId, fixture.organizationId),
+              eq(slackUserMapping.userId, teammateId),
+            ),
+          );
+        await tx.delete(member).where(eq(member.id, teammateMemberId));
+      });
+      await removalReady;
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U-TEAMMATE',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'Teammate',
+                profile: { email: teammateEmail, display_name: 'Teammate' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+      sync = syncSlackUserMappings(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        fetch,
+      });
+      expect(
+        await Promise.race([
+          sync.then(
+            () => 'settled' as const,
+            () => 'settled' as const,
+          ),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+        ]),
+      ).toBe('blocked');
+
+      releaseRemoval();
+      await removal;
+      await expect(sync).resolves.toEqual({
+        status: 'applied',
+        eligibleMembers: 1,
+        mappedMembers: 0,
+      });
+      expect(
+        await testDb
+          .select({ id: slackUserMapping.id })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.userId, teammateId)),
+      ).toEqual([]);
+    } finally {
+      releaseRemoval();
+      await removal?.catch(() => undefined);
+      await sync?.catch(() => undefined);
+      await testDb.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await testDb.delete(user).where(eq(user.id, fixture.userId));
+      await testDb.delete(user).where(eq(user.id, teammateId));
+    }
+  });
+
+  it('maps every current workspace member and removes mappings for former members', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'sync-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const [admin] = await tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      if (admin === undefined) throw new Error('Expected the workspace administrator.');
+      const teammateId = `usr_${randomUUIDv7()}`;
+      await tx.insert(user).values({
+        id: teammateId,
+        name: 'Grace',
+        email: `grace.${randomUUIDv7()}@orbit.local`,
+        handle: `grace-${randomUUIDv7().toLowerCase()}`,
+      });
+      await tx.insert(member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        userId: teammateId,
+        role: 'member',
+      });
+      const [teammate] = await tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, teammateId));
+      if (teammate === undefined) throw new Error('Expected the workspace teammate.');
+      const formerUserId = `usr_${randomUUIDv7()}`;
+      await tx.insert(user).values({
+        id: formerUserId,
+        name: 'Former',
+        email: `former.${randomUUIDv7()}@orbit.local`,
+        handle: `former-${randomUUIDv7().toLowerCase()}`,
+      });
+      const adminMappingId = `sum_${randomUUIDv7()}`;
+      const teammateMappingId = `sum_${randomUUIDv7()}`;
+      await tx.insert(slackUserMapping).values([
+        {
+          id: adminMappingId,
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          userId: fixture.userId,
+          slackUserId: 'U-ADMIN',
+          slackDisplayName: 'Ada',
+          slackChannelId: 'D-ADMIN',
+        },
+        {
+          id: teammateMappingId,
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          userId: teammateId,
+          slackUserId: 'U-GRACE-OLD',
+          slackDisplayName: 'Grace Old',
+          slackChannelId: 'D-GRACE-OLD',
+        },
+        {
+          id: `sum_${randomUUIDv7()}`,
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          userId: formerUserId,
+          slackUserId: 'U-FORMER',
+          slackDisplayName: 'Former',
+        },
+      ]);
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U-ADMIN',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'Ada',
+                profile: { email: admin.email.toUpperCase(), display_name: 'Ada' },
+              },
+              {
+                id: 'U-GRACE',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'Grace',
+                profile: { email: teammate.email, display_name: 'Grace' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).resolves.toEqual({ status: 'applied', eligibleMembers: 2, mappedMembers: 2 });
+      const mappings = await tx
+        .select({
+          id: slackUserMapping.id,
+          userId: slackUserMapping.userId,
+          slackUserId: slackUserMapping.slackUserId,
+          slackChannelId: slackUserMapping.slackChannelId,
+        })
+        .from(slackUserMapping)
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      expect(mappings.sort((left, right) => left.userId.localeCompare(right.userId))).toEqual(
+        [
+          {
+            id: adminMappingId,
+            userId: fixture.userId,
+            slackUserId: 'U-ADMIN',
+            slackChannelId: 'D-ADMIN',
+          },
+          {
+            id: expect.not.stringContaining(teammateMappingId),
+            userId: teammateId,
+            slackUserId: 'U-GRACE',
+            slackChannelId: null,
+          },
+        ].sort((left, right) => left.userId.localeCompare(right.userId)),
+      );
+    });
+  });
+
+  it('maps a directory larger than PostgreSQL can bind in one insert', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'batch-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const teammates = Array.from({ length: 7300 }, (_, index) => {
+        const suffix = randomUUIDv7();
+        return {
+          id: `usr_${suffix}`,
+          name: `Member ${index}`,
+          email: `batch.${index}.${suffix}@orbit.local`,
+          handle: `batch-${index}-${suffix.toLowerCase()}`,
+        };
+      });
+      await tx.insert(user).values(teammates);
+      await tx.insert(member).values(
+        teammates.map((teammate) => ({
+          id: `mem_${randomUUIDv7()}`,
+          organizationId: fixture.organizationId,
+          userId: teammate.id,
+          role: 'member' as const,
+        })),
+      );
+      const [admin] = await tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      if (admin === undefined) throw new Error('Expected the workspace administrator.');
+      const directory = [
+        { id: 'U-BATCH-ADMIN', email: admin.email, displayName: 'Admin' },
+        ...teammates.map((teammate, index) => ({
+          id: `U-BATCH-${index}`,
+          email: teammate.email,
+          displayName: teammate.name,
+        })),
+      ];
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: directory.map((entry) => ({
+              id: entry.id,
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: entry.displayName,
+              profile: { email: entry.email, display_name: entry.displayName },
+            })),
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).resolves.toEqual({ status: 'applied', eligibleMembers: 7301, mappedMembers: 7301 });
+      const mappings = await tx
+        .select({ id: slackUserMapping.id })
+        .from(slackUserMapping)
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      expect(mappings).toHaveLength(7301);
+    });
+  });
+
+  it('rolls back the old mapping snapshot when a replacement insert fails', async () => {
+    const fixture = await testDb.transaction(async (tx) => await seed(tx));
+    try {
+      await testDb
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'rollback-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const teammateId = `usr_${randomUUIDv7()}`;
+      const teammateEmail = `rollback.${randomUUIDv7()}@orbit.local`;
+      await testDb.insert(user).values({
+        id: teammateId,
+        name: 'Rollback Member',
+        email: teammateEmail,
+        handle: `rollback-${randomUUIDv7().toLowerCase()}`,
+      });
+      await testDb.insert(member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        userId: teammateId,
+        role: 'member',
+      });
+      const [admin] = await testDb
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      if (admin === undefined) throw new Error('Expected the workspace administrator.');
+      const oldMappingId = `sum_${randomUUIDv7()}`;
+      await testDb.insert(slackUserMapping).values({
+        id: oldMappingId,
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-OLD',
+        slackDisplayName: 'Old',
+        slackChannelId: 'D-OLD',
+      });
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [admin.email, teammateEmail].map((email) => ({
+              id: 'U-DUPLICATE',
+              deleted: false,
+              is_bot: false,
+              is_app_user: false,
+              real_name: 'Duplicate',
+              profile: { email, display_name: 'Duplicate' },
+            })),
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(testDb, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).rejects.toThrow('insert into "slack_user_mapping"');
+      expect(
+        await testDb
+          .select({
+            id: slackUserMapping.id,
+            slackUserId: slackUserMapping.slackUserId,
+            slackChannelId: slackUserMapping.slackChannelId,
+          })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([{ id: oldMappingId, slackUserId: 'U-OLD', slackChannelId: 'D-OLD' }]);
+    } finally {
+      await testDb.delete(organization).where(eq(organization.id, fixture.organizationId));
+    }
+  });
+
+  it('keeps every prior mapping when a later Slack directory page is incomplete', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'stable-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-STABLE',
+        slackDisplayName: 'Stable',
+      });
+      await tx
+        .update(slackUserMapping)
+        .set({ slackChannelId: 'D-STABLE' })
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      const [admin] = await tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      if (admin === undefined) throw new Error('Expected the workspace administrator.');
+      let calls = 0;
+      const fetch = (() => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve(
+            Response.json({
+              ok: true,
+              members: [
+                {
+                  id: 'U-REPLACEMENT',
+                  deleted: false,
+                  is_bot: false,
+                  is_app_user: false,
+                  real_name: 'Replacement',
+                  profile: { email: admin.email, display_name: 'Replacement' },
+                },
+              ],
+              response_metadata: { next_cursor: 'page-two' },
+            }),
+          );
+        }
+        return Promise.resolve(Response.json({ ok: true, members: [] }));
+      }) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).rejects.toThrow('unexpected payload');
+      expect(
+        await tx
+          .select({
+            userId: slackUserMapping.userId,
+            slackUserId: slackUserMapping.slackUserId,
+            slackChannelId: slackUserMapping.slackChannelId,
+          })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([{ userId: fixture.userId, slackUserId: 'U-STABLE', slackChannelId: 'D-STABLE' }]);
+    });
+  });
+
+  it('marks the observed integration for reauthorization when its token expires', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'expired-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({ ok: false, error: 'token_expired' }),
+        )) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).rejects.toMatchObject({ code: 'token_expired' });
+      const [stored] = await tx
+        .select({ config: integration.config })
+        .from(integration)
+        .where(eq(integration.id, fixture.integrationId));
+      expect(stored?.config['slackReauthorize']).toBe(true);
+    });
+  });
+
+  it('does not mark replacement credentials for an error from the previous token', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'previous-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const fetch = (async () => {
+        await tx
+          .update(integration)
+          .set({
+            config: {
+              credentialVersion: 'replacement-version',
+              slackTeamId: 'T-WORKSPACE',
+              scopes: ['users:read', 'users:read.email'],
+            },
+          })
+          .where(eq(integration.id, fixture.integrationId));
+        return Response.json({ ok: false, error: 'invalid_auth' });
+      }) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).rejects.toMatchObject({ code: 'invalid_auth' });
+      const [stored] = await tx
+        .select({ config: integration.config })
+        .from(integration)
+        .where(eq(integration.id, fixture.integrationId));
+      expect(stored?.config).toMatchObject({ credentialVersion: 'replacement-version' });
+      expect(stored?.config['slackReauthorize']).toBeUndefined();
+    });
+  });
+
+  it('retains prior mappings when reauthorization is marked during directory loading', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'reauthorize-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-STABLE',
+        slackDisplayName: 'Stable',
+      });
+      const fetch = (async () => {
+        await markSlackReauthorizationRequired(
+          tx,
+          fixture.organizationId,
+          fixture.integrationId,
+          'reauthorize-version',
+        );
+        return Response.json({
+          ok: true,
+          members: [],
+          response_metadata: { next_cursor: '' },
+        });
+      }) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).resolves.toEqual({ status: 'stale' });
+      expect(
+        await tx
+          .select({ slackUserId: slackUserMapping.slackUserId })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([{ slackUserId: 'U-STABLE' }]);
+    });
+  });
+
+  it('rechecks manager authority after loading the Slack directory', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'authority-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-STABLE',
+        slackDisplayName: 'Stable',
+      });
+      const fetch = (async () => {
+        await tx.update(member).set({ role: 'member' }).where(eq(member.userId, fixture.userId));
+        return Response.json({
+          ok: true,
+          members: [],
+          response_metadata: { next_cursor: '' },
+        });
+      }) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).rejects.toMatchObject({ code: 'forbidden' });
+      expect(
+        await tx
+          .select({ slackUserId: slackUserMapping.slackUserId })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([{ slackUserId: 'U-STABLE' }]);
+    });
+  });
+
+  it('does not apply a directory fetched with an older same-team credential version', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'old-version',
+            slackTeamId: 'T-OLD',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-OLD',
+        slackDisplayName: 'Old',
+      });
+      const fetch = (async () => {
+        await tx
+          .update(integration)
+          .set({
+            config: {
+              credentialVersion: 'new-version',
+              slackTeamId: 'T-OLD',
+              scopes: ['users:read', 'users:read.email'],
+            },
+          })
+          .where(eq(integration.id, fixture.integrationId));
+        return Response.json({
+          ok: true,
+          members: [],
+          response_metadata: { next_cursor: '' },
+        });
+      }) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).resolves.toEqual({ status: 'stale' });
+      expect(
+        await tx
+          .select({ slackUserId: slackUserMapping.slackUserId })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([{ slackUserId: 'U-OLD' }]);
+    });
+  });
+
+  it('leaves an ambiguous Orbit email unmapped without changing another workspace', async () => {
+    await withRollback(async (tx) => {
+      const target = await seed(tx);
+      const neighbour = await seedWorkspace(tx, {
+        name: 'Neighbour',
+        slackTeamId: 'default',
+        botToken: 'xoxb-neighbour',
+      });
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'target-version',
+            slackTeamId: 'T-TARGET',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, target.integrationId));
+      const [admin] = await tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, target.userId));
+      if (admin === undefined) throw new Error('Expected the target administrator.');
+      const collidingUserId = 'usr_000_case_collision';
+      await tx.insert(user).values({
+        id: collidingUserId,
+        name: 'Case Collision',
+        email: admin.email.toUpperCase(),
+        handle: `case-collision-${randomUUIDv7().toLowerCase()}`,
+      });
+      await tx.insert(member).values({
+        id: `mem_${randomUUIDv7()}`,
+        organizationId: target.organizationId,
+        userId: collidingUserId,
+        role: 'member',
+      });
+      await upsertSlackUserMapping(tx, {
+        organizationId: neighbour.organizationId,
+        integrationId: neighbour.integrationId,
+        userId: neighbour.userId,
+        slackUserId: 'U-NEIGHBOUR',
+        slackDisplayName: 'Neighbour',
+      });
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U-A',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'Earlier Identity',
+                profile: { email: admin.email.toUpperCase(), display_name: 'Earlier' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: target.organizationId,
+          userId: target.userId,
+          fetch,
+        }),
+      ).resolves.toEqual({ status: 'applied', eligibleMembers: 2, mappedMembers: 0 });
+      expect(
+        await tx
+          .select({ userId: slackUserMapping.userId, slackUserId: slackUserMapping.slackUserId })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, target.integrationId)),
+      ).toEqual([]);
+      expect(
+        await tx
+          .select({ slackUserId: slackUserMapping.slackUserId })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, neighbour.integrationId)),
+      ).toEqual([{ slackUserId: 'U-NEIGHBOUR' }]);
+    });
+  });
+
+  it('leaves an ambiguous Slack email unmapped', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'slack-collision-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      const [admin] = await tx
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      if (admin === undefined) throw new Error('Expected the workspace administrator.');
+      const fetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U-A',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'First Identity',
+                profile: { email: admin.email, display_name: 'First' },
+              },
+              {
+                id: 'U-B',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'Second Identity',
+                profile: { email: admin.email.toUpperCase(), display_name: 'Second' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+
+      await expect(
+        syncSlackUserMappings(tx, {
+          organizationId: fixture.organizationId,
+          userId: fixture.userId,
+          fetch,
+        }),
+      ).resolves.toEqual({ status: 'applied', eligibleMembers: 1, mappedMembers: 0 });
+      expect(
+        await tx
+          .select({ id: slackUserMapping.id })
+          .from(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId)),
+      ).toEqual([]);
     });
   });
 });
@@ -889,6 +1882,49 @@ describe('dispatchSlackMessage never crosses a workspace boundary', () => {
 });
 
 describe('dispatchSlackMessage', () => {
+  it('skips an optional Slack send when stored credentials use an old key', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await connectSlackChannel(tx, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        channelId: 'C-rotated-key',
+        channelName: 'rotated-key',
+        teamId: fixture.teamA,
+      });
+      process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-old-key';
+      const envelope = encryptSlackBotToken({
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        token: 'xoxb-encrypted',
+      });
+      await tx
+        .update(integration)
+        .set({ credentials: { botToken: envelope } })
+        .where(eq(integration.id, fixture.integrationId));
+      process.env['BETTER_AUTH_SECRET'] = 'slack-broadcast-rotated-key';
+      let providerCalls = 0;
+      const fetch = (() => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof globalThis.fetch;
+
+      try {
+        expect(
+          await dispatchSlackMessage(tx, {
+            organizationId: fixture.organizationId,
+            teamIds: [fixture.teamA],
+            text: 'Optional broadcast',
+            fetch,
+          }),
+        ).toBe(0);
+        expect(providerCalls).toBe(0);
+      } finally {
+        process.env['BETTER_AUTH_SECRET'] = originalAuthSecret ?? 'slack-dispatch-test-secret';
+      }
+    });
+  });
+
   it('uses only the canonical integration token and channels when a legacy row coexists', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, {
@@ -1043,7 +2079,421 @@ describe('dispatchSlackMessage', () => {
   });
 });
 
+describe('sendSlackUnfurls', () => {
+  it('does not use reconnected workspace credentials for a stale routed event', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedWorkspace(tx, {
+        name: 'BoundUnfurl',
+        slackTeamId: 'T-A',
+        botToken: 'xoxb-team-a',
+      });
+      await tx
+        .update(integration)
+        .set({ externalId: 'default', config: { slackTeamId: 'T-A' } })
+        .where(eq(integration.id, fixture.integrationId));
+      const observed = await resolveSlackContext(tx, fixture.organizationId, 'default');
+      if (observed === null) throw new Error('Expected a routed Slack integration.');
+      await ensureSlackIntegration(tx, {
+        organizationId: fixture.organizationId,
+        connectedById: fixture.userId,
+        botToken: 'xoxb-team-b',
+        externalId: 'T-B',
+      });
+      let providerCalls = 0;
+      const fetch = (() => {
+        providerCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof globalThis.fetch;
+
+      expect(
+        await sendSlackUnfurls(tx, {
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          slackTeamId: 'T-A',
+          integrationVersion: observed.integrationVersion,
+          channel: 'C-LINKS',
+          ts: '1.0',
+          unfurls: { 'https://orbit.local/issue/ORB-1': { blocks: [] } },
+          fetch,
+        }),
+      ).toBe(false);
+      expect(providerCalls).toBe(0);
+    });
+  });
+});
+
 describe('dispatchSlackDm', () => {
+  it('keeps one credential snapshot for an in-flight private send', async () => {
+    const fixture = await testDb.transaction(async (tx) => await seed(tx));
+    let releaseConversation: () => void = () => undefined;
+    const conversationRelease = new Promise<void>((resolve) => {
+      releaseConversation = resolve;
+    });
+    let announceConversation: () => void = () => undefined;
+    const conversationReady = new Promise<void>((resolve) => {
+      announceConversation = resolve;
+    });
+    const fetch = (async (url: string) => {
+      if (url.endsWith('conversations.open')) {
+        announceConversation();
+        await conversationRelease;
+        return Response.json({ ok: true, channel: { id: 'D-SNAPSHOT' } });
+      }
+      return Response.json({ ok: true, channel: 'D-SNAPSHOT', ts: '1.0' });
+    }) as unknown as typeof globalThis.fetch;
+    let dispatch: Promise<number> | undefined;
+    let rotation: Promise<void> | undefined;
+    try {
+      await testDb
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'snapshot-before',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['chat:write', 'im:write'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(testDb, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-SNAPSHOT',
+        slackDisplayName: 'Snapshot identity',
+      });
+
+      dispatch = dispatchSlackDm(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'Private notification',
+        fetch,
+      });
+      await Promise.race([conversationReady, dispatch.then(() => undefined)]);
+      rotation = testDb.transaction(async (tx) => {
+        await tx
+          .update(integration)
+          .set({
+            credentials: { botToken: 'xoxb-snapshot-after' },
+            config: {
+              credentialVersion: 'snapshot-after',
+              slackTeamId: 'T-WORKSPACE',
+              scopes: ['chat:write', 'im:write'],
+            },
+          })
+          .where(eq(integration.id, fixture.integrationId));
+      });
+      expect(
+        await Promise.race([
+          rotation.then(
+            () => 'settled' as const,
+            () => 'settled' as const,
+          ),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+        ]),
+      ).toBe('blocked');
+
+      releaseConversation();
+      await expect(dispatch).resolves.toBe(1);
+      await rotation;
+      const [current] = await testDb
+        .select({ config: integration.config })
+        .from(integration)
+        .where(eq(integration.id, fixture.integrationId));
+      expect(current?.config['credentialVersion']).toBe('snapshot-after');
+    } finally {
+      releaseConversation();
+      await dispatch?.catch(() => undefined);
+      await rotation?.catch(() => undefined);
+      await testDb.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await testDb.delete(user).where(eq(user.id, fixture.userId));
+    }
+  });
+
+  it('serializes concurrent private sends for the same member mapping', async () => {
+    const fixture = await testDb.transaction(async (tx) => await seed(tx));
+    let releaseConversation: () => void = () => undefined;
+    const conversationRelease = new Promise<void>((resolve) => {
+      releaseConversation = resolve;
+    });
+    let announceConversation: () => void = () => undefined;
+    const conversationReady = new Promise<void>((resolve) => {
+      announceConversation = resolve;
+    });
+    const providerCalls: string[] = [];
+    const fetch = (async (url: string) => {
+      providerCalls.push(url);
+      if (url.endsWith('conversations.open')) {
+        announceConversation();
+        await conversationRelease;
+        return Response.json({ ok: true, channel: { id: 'D-SERIAL' } });
+      }
+      return Response.json({ ok: true, channel: 'D-SERIAL', ts: '1.0' });
+    }) as unknown as typeof globalThis.fetch;
+    let first: Promise<number> | undefined;
+    let second: Promise<number> | undefined;
+    try {
+      await testDb
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'concurrent-dm-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['chat:write', 'im:write'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(testDb, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-SERIAL',
+        slackDisplayName: 'Serial identity',
+      });
+
+      first = dispatchSlackDm(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'First private notification',
+        fetch,
+      });
+      await Promise.race([conversationReady, first.then(() => undefined)]);
+      second = dispatchSlackDm(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'Second private notification',
+        fetch,
+      });
+      expect(
+        await Promise.race([
+          second.then(
+            () => 'settled' as const,
+            () => 'settled' as const,
+          ),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+        ]),
+      ).toBe('blocked');
+      expect(providerCalls.filter((url) => url.endsWith('conversations.open'))).toHaveLength(1);
+
+      releaseConversation();
+      await expect(Promise.all([first, second])).resolves.toEqual([1, 1]);
+      expect(providerCalls.filter((url) => url.endsWith('conversations.open'))).toHaveLength(1);
+      expect(providerCalls.filter((url) => url.endsWith('chat.postMessage'))).toHaveLength(2);
+    } finally {
+      releaseConversation();
+      await first?.catch(() => undefined);
+      await second?.catch(() => undefined);
+      await testDb.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await testDb.delete(user).where(eq(user.id, fixture.userId));
+    }
+  });
+
+  it('uses one replacement snapshot when reconnect wins the lock', async () => {
+    const fixture = await testDb.transaction(async (tx) => await seed(tx));
+    let releaseReplacement: () => void = () => undefined;
+    const replacementRelease = new Promise<void>((resolve) => {
+      releaseReplacement = resolve;
+    });
+    let announceReplacement: () => void = () => undefined;
+    const replacementReady = new Promise<void>((resolve) => {
+      announceReplacement = resolve;
+    });
+    let replacement: Promise<void> | undefined;
+    try {
+      await testDb
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'previous-dm-version',
+            slackTeamId: 'T-PREVIOUS',
+            scopes: ['chat:write', 'im:write'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(testDb, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-PREVIOUS',
+        slackDisplayName: 'Previous identity',
+      });
+      replacement = testDb.transaction(async (tx) => {
+        await tx
+          .update(integration)
+          .set({
+            credentials: { botToken: 'xoxb-replacement' },
+            config: {
+              credentialVersion: 'replacement-dm-version',
+              slackTeamId: 'T-REPLACEMENT',
+              scopes: ['chat:write', 'im:write'],
+            },
+          })
+          .where(eq(integration.id, fixture.integrationId));
+        await tx
+          .delete(slackUserMapping)
+          .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+        await tx.insert(slackUserMapping).values({
+          id: `sum_${randomUUIDv7()}`,
+          organizationId: fixture.organizationId,
+          integrationId: fixture.integrationId,
+          userId: fixture.userId,
+          slackUserId: 'U-REPLACEMENT',
+          slackDisplayName: 'Replacement identity',
+        });
+        announceReplacement();
+        await replacementRelease;
+      });
+      await replacementReady;
+      const providerCalls: { authorization: string; body: Record<string, unknown> }[] = [];
+      const fetch = ((url: string, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string>;
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        providerCalls.push({ authorization: headers['authorization'] ?? '', body });
+        const response = url.endsWith('conversations.open')
+          ? { ok: true, channel: { id: 'D-REPLACEMENT' } }
+          : { ok: true, channel: 'D-REPLACEMENT', ts: '1.0' };
+        return Promise.resolve(Response.json(response));
+      }) as unknown as typeof globalThis.fetch;
+      const delivery = dispatchSlackDm(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'Private notification',
+        fetch,
+      });
+      expect(
+        await Promise.race([
+          delivery.then(
+            () => 'settled' as const,
+            () => 'settled' as const,
+          ),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+        ]),
+      ).toBe('blocked');
+
+      releaseReplacement();
+      await replacement;
+      await expect(delivery).resolves.toBe(1);
+      expect(providerCalls).toEqual([
+        {
+          authorization: 'Bearer xoxb-replacement',
+          body: { users: 'U-REPLACEMENT' },
+        },
+        {
+          authorization: 'Bearer xoxb-replacement',
+          body: { channel: 'D-REPLACEMENT', text: 'Private notification' },
+        },
+      ]);
+    } finally {
+      releaseReplacement();
+      await replacement?.catch(() => undefined);
+      await testDb.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await testDb.delete(user).where(eq(user.id, fixture.userId));
+    }
+  });
+
+  it('serializes a private send against member remapping', async () => {
+    const fixture = await testDb.transaction(async (tx) => await seed(tx));
+    let releaseConversation: () => void = () => undefined;
+    const conversationRelease = new Promise<void>((resolve) => {
+      releaseConversation = resolve;
+    });
+    let announceConversation: () => void = () => undefined;
+    const conversationReady = new Promise<void>((resolve) => {
+      announceConversation = resolve;
+    });
+    let dispatch: Promise<number> | undefined;
+    let sync: ReturnType<typeof syncSlackUserMappings> | undefined;
+    try {
+      await testDb
+        .update(integration)
+        .set({
+          config: {
+            credentialVersion: 'dm-race-version',
+            slackTeamId: 'T-WORKSPACE',
+            scopes: ['chat:write', 'im:write', 'users:read', 'users:read.email'],
+          },
+        })
+        .where(eq(integration.id, fixture.integrationId));
+      await upsertSlackUserMapping(testDb, {
+        organizationId: fixture.organizationId,
+        integrationId: fixture.integrationId,
+        userId: fixture.userId,
+        slackUserId: 'U-OLD',
+        slackDisplayName: 'Old identity',
+      });
+      const [admin] = await testDb
+        .select({ email: user.email })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      if (admin === undefined) throw new Error('Expected the workspace administrator.');
+      const dmFetch = (async (url: string) => {
+        if (url.endsWith('conversations.open')) {
+          announceConversation();
+          await conversationRelease;
+          return Response.json({ ok: true, channel: { id: 'D-OLD' } });
+        }
+        return Response.json({ ok: true, channel: 'D-OLD', ts: '1.0' });
+      }) as unknown as typeof globalThis.fetch;
+      const directoryFetch = (() =>
+        Promise.resolve(
+          Response.json({
+            ok: true,
+            members: [
+              {
+                id: 'U-NEW',
+                deleted: false,
+                is_bot: false,
+                is_app_user: false,
+                real_name: 'New identity',
+                profile: { email: admin.email, display_name: 'New identity' },
+              },
+            ],
+            response_metadata: { next_cursor: '' },
+          }),
+        )) as unknown as typeof globalThis.fetch;
+
+      dispatch = dispatchSlackDm(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        text: 'Private notification',
+        fetch: dmFetch,
+      });
+      await Promise.race([conversationReady, dispatch.then(() => undefined)]);
+      sync = syncSlackUserMappings(testDb, {
+        organizationId: fixture.organizationId,
+        userId: fixture.userId,
+        fetch: directoryFetch,
+      });
+      expect(
+        await Promise.race([
+          sync.then(
+            () => 'settled' as const,
+            () => 'settled' as const,
+          ),
+          new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+        ]),
+      ).toBe('blocked');
+
+      releaseConversation();
+      await expect(dispatch).resolves.toBe(1);
+      await expect(sync).resolves.toEqual({
+        status: 'applied',
+        eligibleMembers: 1,
+        mappedMembers: 1,
+      });
+      const [mapping] = await testDb
+        .select({ slackUserId: slackUserMapping.slackUserId })
+        .from(slackUserMapping)
+        .where(eq(slackUserMapping.integrationId, fixture.integrationId));
+      expect(mapping?.slackUserId).toBe('U-NEW');
+    } finally {
+      releaseConversation();
+      await dispatch?.catch(() => undefined);
+      await sync?.catch(() => undefined);
+      await testDb.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await testDb.delete(user).where(eq(user.id, fixture.userId));
+    }
+  });
+
   it('uses the canonical integration when a legacy Slack row also exists', async () => {
     await withRollback(async (tx) => {
       const fixture = await seedWorkspace(tx, {
@@ -1429,6 +2879,75 @@ describe('resolveIssueUnfurls', () => {
       expect(Object.keys(unfurls)).toEqual([url]);
       expect(JSON.stringify(unfurls[url])).toContain('ENG-42');
       expect(JSON.stringify(unfurls[url])).toContain('In Progress');
+    });
+  });
+
+  it('limits a team mapping to issues in that exact team', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const suffix = fixture.organizationId.slice(4);
+      const stateId = `st_scope_${suffix}`;
+      await tx.insert(workflowState).values({
+        id: stateId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        name: 'Scoped',
+        category: 'started',
+        color: '#888',
+        position: 3,
+      });
+      await tx.insert(issue).values({
+        id: `iss_scope_${suffix}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        number: 43,
+        identifier: 'ENG-43',
+        title: 'Team A only',
+        stateId,
+        creatorId: `usr_${suffix}`,
+      });
+      const url = 'https://orbit.local/issue/ENG-43';
+
+      expect(await resolveIssueUnfurls(tx, fixture.organizationId, [url], fixture.teamB)).toEqual(
+        {},
+      );
+      expect(
+        Object.keys(await resolveIssueUnfurls(tx, fixture.organizationId, [url], fixture.teamA)),
+      ).toEqual([url]);
+    });
+  });
+
+  it('treats an omitted team scope as workspace-wide within the organization', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const other = await seed(tx);
+      const suffix = fixture.organizationId.slice(4);
+      const stateId = `st_workspace_${suffix}`;
+      await tx.insert(workflowState).values({
+        id: stateId,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        name: 'Workspace scoped',
+        category: 'started',
+        color: '#888',
+        position: 3,
+      });
+      await tx.insert(issue).values({
+        id: `iss_workspace_${suffix}`,
+        organizationId: fixture.organizationId,
+        teamId: fixture.teamA,
+        number: 44,
+        identifier: 'ENG-44',
+        title: 'Workspace issue',
+        stateId,
+        creatorId: `usr_${suffix}`,
+      });
+      const url = 'https://orbit.local/issue/ENG-44';
+
+      expect(Object.keys(await resolveIssueUnfurls(tx, fixture.organizationId, [url]))).toEqual([
+        url,
+      ]);
+      expect(await resolveIssueUnfurls(tx, other.organizationId, [url])).toEqual({});
     });
   });
 });

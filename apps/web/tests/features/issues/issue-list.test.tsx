@@ -11,6 +11,9 @@ import * as issuesQuery from '@/lib/query/use-issues.ts';
 import { IssueList, SELECTION_PREFETCH_MS } from '../../../src/features/issues/issue-list.tsx';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),

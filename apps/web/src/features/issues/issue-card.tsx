@@ -30,6 +30,16 @@ export interface IssueCardProps {
   readonly onOpen?: (issueId: string) => void;
 }
 
+function stopControlPointerDown(event: ReactPointerEvent<HTMLElement>) {
+  const target = event.target;
+  if (
+    target instanceof Element &&
+    target.closest('button, input, select, textarea, [role="button"], [role="menuitem"]') !== null
+  ) {
+    event.stopPropagation();
+  }
+}
+
 export function IssueCard({
   issue,
   labels,
@@ -55,6 +65,7 @@ export function IssueCard({
   return (
     <article
       onPointerEnter={warmUnlessDragging}
+      onPointerDown={stopControlPointerDown}
       onFocusCapture={warm}
       data-testid={`issue-card-${issue.identifier}`}
       className={cn(

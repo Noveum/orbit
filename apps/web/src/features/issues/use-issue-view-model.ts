@@ -2,7 +2,7 @@
 
 import { isEmptyFilter } from '@orbit/shared/filters';
 import { useMemo } from 'react';
-import { applyDisplayFilters } from '@/features/filters/display-filter.ts';
+import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { groupIssues, mergeStatesByName, remapTotals } from '@/features/filters/grouping.ts';
 import type { ViewConfig } from '@/features/filters/view-config.ts';
@@ -38,7 +38,7 @@ export function useIssueViewModel({
   scope,
 }: IssueViewModelInput): IssueViewModel {
   const workspace = useWorkspace();
-  const filtered = !isEmptyFilter(config.filter);
+  const queryFiltered = !isEmptyFilter(config.filter);
 
   const enabled = !scopeToTeam || teamId !== null;
   const search = summarySearch(
@@ -126,11 +126,11 @@ export function useIssueViewModel({
     shownCount: shown.issues.length,
     total,
     hiddenByFilters:
-      filtered && summary.data !== undefined && facets.data !== undefined
+      queryFiltered && summary.data !== undefined && facets.data !== undefined
         ? Math.max(0, facets.data.scopeTotal - summary.data.total)
         : 0,
     hiddenByDisplay: shown.hidden,
-    filtered,
+    filtered: queryFiltered || displayFiltersHideRows(config.display),
     facets: facets.data?.facets,
   };
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { db, eq, inArray, schema } from '@orbit/db';
+import { db, eq, inArray, schema, sql } from '@orbit/db';
 import type { ClientMessage, ServerMessage, SyncAction } from '@orbit/shared/events';
 import { serverMessageSchema } from '@orbit/shared/events';
 import { REALTIME_TICKET_TTL_MS, signRealtimeTicket } from '@orbit/shared/events/ticket';
@@ -125,12 +125,18 @@ export async function createIssue(
   teamId: string,
   creatorId: string,
 ): Promise<string> {
+  const [team] = await db
+    .update(schema.team)
+    .set({ issueCounter: sql`${schema.team.issueCounter} + 1` })
+    .where(eq(schema.team.id, teamId))
+    .returning({ issueCounter: schema.team.issueCounter });
+  if (team === undefined) throw new Error('missing realtime test team');
   const stateId = `state_${randomUUID()}`;
   await db.insert(schema.workflowState).values({
     id: stateId,
     organizationId,
     teamId,
-    name: 'Todo',
+    name: `Todo ${stateId.slice(6, 12)}`,
     category: 'unstarted',
     color: '#5A63C8',
   });
@@ -139,7 +145,7 @@ export async function createIssue(
     id: issueId,
     organizationId,
     teamId,
-    number: 1,
+    number: team.issueCounter,
     identifier: `RT-${issueId.slice(6, 12)}`,
     title: 'Realtime issue',
     stateId,
@@ -166,13 +172,14 @@ export async function deleteSessionFor(userId: string): Promise<void> {
 }
 
 export function syncAction(overrides: Partial<SyncAction> & Pick<SyncAction, 'organizationId'>) {
+  const modelId = overrides.modelId ?? 'label_1';
   return {
     syncId: 1,
     scopes: ['org:none'],
     action: 'update',
-    model: 'issue',
-    modelId: 'issue_1',
-    data: { title: 'hello' },
+    model: 'label',
+    modelId,
+    data: { id: modelId, name: 'hello' },
     actor: { type: 'user', id: 'user_1' },
     at: new Date().toISOString(),
     ...overrides,

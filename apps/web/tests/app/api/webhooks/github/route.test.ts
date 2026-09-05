@@ -14,6 +14,8 @@ import { z } from 'zod';
 
 const SECRET = 'a-github-webhook-secret';
 const existingWebhookSecret = process.env['GITHUB_WEBHOOK_SECRET'];
+const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
 process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 
 const published: SyncAction[][] = [];
@@ -22,14 +24,21 @@ const services = await import('@orbit/services');
 const notifications = await import('@orbit/services/notifications');
 const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const nextHeaders = await import('next/headers');
+const realDispatchSlackMessage = services.dispatchSlackMessage;
 const realNotifyMany = notifications.notifyMany;
-const dispatchSlackMessage = mock(() => Promise.resolve(0));
+const dispatchSlackMessage = mock(
+  (
+    _database: Parameters<typeof services.dispatchSlackMessage>[0],
+    _input: Parameters<typeof services.dispatchSlackMessage>[1],
+  ) => Promise.resolve(0),
+);
 const deliverPendingSlackDms = mock(() => Promise.resolve(0));
 const notifyMany = mock(notifications.notifyMany);
 let slackEnabledForTest = false;
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
-  () => slackEnabledForTest,
-);
+const slackCapabilitySpy = spyOn(
+  slackCapability,
+  'slackIntegrationEnabledForOrganization',
+).mockImplementation(() => slackEnabledForTest);
 notifyMany.mockImplementation(realNotifyMany);
 mock.module('@orbit/core', () => ({
   ...core,
@@ -45,6 +54,13 @@ mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers(
 
 const { POST } = await import('../../../../../src/app/api/webhooks/github/route.ts');
 
+function restoreSlackEnvironment(): void {
+  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
+}
+
 afterAll(() => {
   mock.module('@orbit/core', () => core);
   mock.module('@orbit/services', () => services);
@@ -53,6 +69,7 @@ afterAll(() => {
   slackCapabilitySpy.mockRestore();
   if (existingWebhookSecret === undefined) delete process.env['GITHUB_WEBHOOK_SECRET'];
   else process.env['GITHUB_WEBHOOK_SECRET'] = existingWebhookSecret;
+  restoreSlackEnvironment();
 });
 
 const bodySchema = z.union([
@@ -184,6 +201,7 @@ async function linkCount(): Promise<number> {
 }
 
 beforeEach(async () => {
+  restoreSlackEnvironment();
   published.length = 0;
   dispatchSlackMessage.mockClear();
   deliverPendingSlackDms.mockClear();
@@ -306,6 +324,44 @@ describe('POST /api/webhooks/github', () => {
       teamIds: [workspace.teamId],
       text: `Deploy &lt;!channel&gt; &lt;@U999&gt; &lt;https://evil.example|click&gt; was closed: ${new URL('/inbox', `${appUrl}/`).toString()}`,
     });
+  });
+
+  it('processes GitHub successfully when optional Slack credentials use an old key', async () => {
+    slackEnabledForTest = true;
+    process.env['SLACK_ENABLED'] = 'true';
+    process.env['BETTER_AUTH_SECRET'] = 'github-slack-old-key';
+    const integrationId = await services.ensureSlackIntegration(db, {
+      organizationId: workspace.organizationId,
+      connectedById: workspace.adminUser.id,
+      botToken: 'xoxb-encrypted',
+      externalId: 'T-OLD-KEY',
+      scopes: ['chat:write'],
+    });
+    await services.connectSlackChannel(db, {
+      organizationId: workspace.organizationId,
+      integrationId,
+      channelId: 'C-OLD-KEY',
+      channelName: 'old-key',
+      teamId: workspace.teamId,
+    });
+    process.env['BETTER_AUTH_SECRET'] = 'github-slack-rotated-key';
+    notifyMany.mockImplementationOnce(async () => ({
+      actions: [],
+      deduped: 0,
+      email: [],
+      notifications: [],
+      slack: [{ userId: workspace.adminUser.id, notificationId: 'notification-old-key' }],
+      slackDm: [],
+    }));
+    dispatchSlackMessage.mockImplementationOnce(realDispatchSlackMessage);
+
+    const response = await POST(
+      signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-old-slack-key'),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await deliveryRow('delivery-old-slack-key'))?.status).toBe('processed');
+    expect(dispatchSlackMessage).toHaveBeenCalledTimes(1);
   });
 
   it('answers a repeat of a processed delivery with duplicate and applies nothing twice', async () => {

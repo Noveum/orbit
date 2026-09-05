@@ -1,19 +1,18 @@
-import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import type { Workspace } from '@orbit/core/test-support';
 
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-oauth-start-route-test-secret';
 
 const { createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
 const environment = await import('@/lib/env.ts');
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 mock.module('@/lib/env.ts', () => ({
   ...environment,
   absoluteUrl: (path: string) => new URL(path, 'http://localhost:3000').toString(),
   slackAppConfig: () => ({ clientId: 'slack-test-client', clientSecret: 'slack-test-secret' }),
   slackConnectReady: () => true,
 }));
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockReturnValue(true);
 const { mockSession } = await import('../../../../../../tests-support.ts');
 
 interface Session {
@@ -31,6 +30,7 @@ const { GET } = await import('@/app/api/integrations/slack/start/route.ts');
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('SlackOAuth');
+  process.env['SLACK_ENABLED'] = 'true';
   session = {
     user: workspace.adminUser,
     session: { activeOrganizationId: workspace.organizationId },
@@ -40,8 +40,9 @@ beforeAll(async () => {
 afterAll(() => {
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
   mock.module('@/lib/env.ts', () => environment);
-  slackCapabilitySpy.mockRestore();
 });
 
 describe('GET /api/integrations/slack/start', () => {

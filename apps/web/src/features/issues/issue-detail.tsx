@@ -197,11 +197,23 @@ export function IssueDetailView({
   const workspace = useWorkspace();
   const detail = useIssueDetail(identifier, known);
   const issue = detail.data?.issue;
+  const redirectedIdentifier = useRef<string | null>(null);
   const comments = useComments(issue?.id ?? null);
   const update = useUpdateIssue();
   const deletion = useIssueDeletion();
 
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const canonicalIdentifier = issue?.identifier;
+    if (canonicalIdentifier === undefined || canonicalIdentifier === identifier) {
+      redirectedIdentifier.current = null;
+      return;
+    }
+    if (onDeleted !== undefined || redirectedIdentifier.current === canonicalIdentifier) return;
+    redirectedIdentifier.current = canonicalIdentifier;
+    router.replace(`/issue/${encodeURIComponent(canonicalIdentifier)}`);
+  }, [identifier, issue?.identifier, onDeleted, router]);
 
   const teams = workspace.teams;
   const leave = useCallback(() => {

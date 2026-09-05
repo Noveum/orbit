@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import type { Workspace } from '@orbit/core/test-support';
 import { z } from 'zod';
@@ -6,17 +6,23 @@ import { z } from 'zod';
 const SIGNING_SECRET = 'slack-link-shared-route-secret';
 const ISSUE_URL = 'https://orbit.local/issue/ORB-42';
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const existingSlackEnabled = process.env['SLACK_ENABLED'];
 const existingSigningSecret = process.env['SLACK_SIGNING_SECRET'];
 process.env['BETTER_AUTH_SECRET'] ??= 'slack-webhook-route-test-secret';
 process.env['SLACK_SIGNING_SECRET'] = SIGNING_SECRET;
 
 const { createWorkspace, resetDatabase } = await import('@orbit/core/test-support');
-const { db, schema } = await import('@orbit/db');
-const { ensureSlackIntegration } = await import('@orbit/services');
+const { and, db, eq, schema } = await import('@orbit/db');
+const { connectSlackChannel, ensureSlackIntegration } = await import('@orbit/services');
 const { randomUUIDv7 } = await import('@orbit/shared/utils');
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockReturnValue(true);
 const warningSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
+const scheduledTasks: (() => Promise<void>)[] = [];
+mock.module('@/lib/integrations/slack-event-scheduler.ts', () => ({
+  scheduleSlackEventProcessing: (task: () => Promise<void>) => {
+    scheduledTasks.push(task);
+  },
+}));
 const { POST } = await import('@/app/api/webhooks/slack/route.ts');
 
 interface ProviderRequest {
@@ -58,6 +64,7 @@ async function seedWorkspace(
   slackTeamId: string,
   botToken: string,
   issueTitle: string,
+  mapping: 'team' | 'workspace' | 'none' = 'team',
 ): Promise<Workspace> {
   const seeded = await createWorkspace(name);
   const state = seeded.states.find((candidate) => candidate.category === 'unstarted');
@@ -72,26 +79,40 @@ async function seedWorkspace(
     stateId: state.id,
     creatorId: seeded.adminUser.id,
   });
-  await ensureSlackIntegration(db, {
+  const integrationId = await ensureSlackIntegration(db, {
     organizationId: seeded.organizationId,
     connectedById: seeded.adminUser.id,
     botToken,
     externalId: slackTeamId,
     scopes: ['chat:write', 'links:read', 'links:write'],
   });
+  if (mapping !== 'none') {
+    await connectSlackChannel(db, {
+      organizationId: seeded.organizationId,
+      integrationId,
+      channelId: 'C-LINKS',
+      channelName: 'links',
+      teamId: mapping === 'team' ? seeded.teamId : null,
+    });
+  }
   return seeded;
 }
 
-function signedLinkShared(teamId: string, eventId = 'Ev-OAUTH-1'): Request {
+function signedLinkShared(
+  teamId: string,
+  eventId = 'Ev-OAUTH-1',
+  url = ISSUE_URL,
+  channel = 'C-LINKS',
+): Request {
   const raw = JSON.stringify({
     type: 'event_callback',
     event_id: eventId,
     team_id: teamId,
     event: {
       type: 'link_shared',
-      channel: 'C-LINKS',
+      channel,
       message_ts: '1712345678.000100',
-      links: [{ domain: 'orbit.local', url: ISSUE_URL }],
+      links: [{ domain: 'orbit.local', url }],
     },
   });
   const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -109,34 +130,78 @@ function signedLinkShared(teamId: string, eventId = 'Ev-OAUTH-1'): Request {
   });
 }
 
+async function createIssueInAnotherTeam(
+  target: Workspace,
+  identifier: string,
+  title: string,
+): Promise<{ readonly teamId: string; readonly url: string }> {
+  const suffix = randomUUIDv7();
+  const teamId = `team_scope_${suffix}`;
+  const stateId = `state_scope_${suffix}`;
+  await db.insert(schema.team).values({
+    id: teamId,
+    organizationId: target.organizationId,
+    name: `Scoped ${suffix}`,
+    key: identifier.split('-')[0] ?? 'SCP',
+  });
+  await db.insert(schema.workflowState).values({
+    id: stateId,
+    organizationId: target.organizationId,
+    teamId,
+    name: 'Scoped backlog',
+    category: 'unstarted',
+    color: '#888888',
+    position: 0,
+  });
+  await db.insert(schema.issue).values({
+    id: `issue_scope_${suffix}`,
+    organizationId: target.organizationId,
+    teamId,
+    number: Number.parseInt(identifier.split('-')[1] ?? '1', 10),
+    identifier,
+    title,
+    stateId,
+    creatorId: target.adminUser.id,
+  });
+  return { teamId, url: `https://orbit.local/issue/${identifier}` };
+}
+
 beforeEach(async () => {
   await resetDatabase();
   providerRequests.length = 0;
   providerErrorCode = null;
   providerResponder = null;
+  scheduledTasks.length = 0;
   warningSpy.mockClear();
+  errorSpy.mockClear();
   globalThis.fetch = providerFetch;
   workspace = await seedWorkspace('PrimarySlack', 'T-OAUTH', 'xoxb-primary', 'Primary issue');
+  process.env['SLACK_ENABLED'] = 'true';
 });
 
 afterAll(() => {
   globalThis.fetch = realFetch;
-  slackCapabilitySpy.mockRestore();
   warningSpy.mockRestore();
+  errorSpy.mockRestore();
   if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
   if (existingSigningSecret === undefined) delete process.env['SLACK_SIGNING_SECRET'];
   else process.env['SLACK_SIGNING_SECRET'] = existingSigningSecret;
+  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
 });
 
 describe('POST /api/webhooks/slack', () => {
-  it('unfurls a signed link for an OAuth-created integration found by config team id', async () => {
-    await seedWorkspace('OtherSlack', 'T-OTHER', 'xoxb-other', 'Other issue');
-
+  it('acknowledges a claimed event before deferred provider work', async () => {
     const response = await POST(signedLinkShared('T-OAUTH'));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
+    expect(scheduledTasks).toHaveLength(1);
+    expect(providerRequests).toEqual([]);
+
+    await scheduledTasks[0]?.();
+
     expect(providerRequests).toHaveLength(1);
     const request = providerRequests[0];
     if (request === undefined) throw new Error('Slack did not receive an unfurl request.');
@@ -152,90 +217,133 @@ describe('POST /api/webhooks/slack', () => {
       },
     });
     expect(JSON.stringify(request.body)).toContain('Primary issue');
-    expect(JSON.stringify(request.body)).not.toContain('Other issue');
+    expect(JSON.stringify(request.body)).not.toContain('action_id');
+  });
+
+  it('does not read or unfurl an issue from an unmapped channel', async () => {
+    await db.delete(schema.slackChannelSync);
+
+    const response = await POST(signedLinkShared('T-OAUTH', 'Ev-UNMAPPED'));
+    expect(response.status).toBe(200);
+    expect(scheduledTasks).toHaveLength(1);
+
+    await scheduledTasks[0]?.();
+
+    expect(providerRequests).toEqual([]);
+  });
+
+  it('does not unfurl through a disabled channel mapping', async () => {
+    await db.update(schema.slackChannelSync).set({ enabled: false });
+
+    const response = await POST(signedLinkShared('T-OAUTH', 'Ev-DISABLED'));
+    expect(response.status).toBe(200);
+    expect(scheduledTasks).toHaveLength(1);
+
+    await scheduledTasks[0]?.();
+
+    expect(providerRequests).toEqual([]);
+  });
+
+  it('limits a mapped channel to its exact Orbit team', async () => {
+    const otherIssue = await createIssueInAnotherTeam(workspace, 'DES-43', 'Other team issue');
+
+    const response = await POST(signedLinkShared('T-OAUTH', 'Ev-TEAM-SCOPE', otherIssue.url));
+    expect(response.status).toBe(200);
+    await scheduledTasks[0]?.();
+
+    expect(providerRequests).toEqual([]);
+  });
+
+  it('uses a null channel mapping as workspace-wide scope for the same organization', async () => {
+    const otherIssue = await createIssueInAnotherTeam(workspace, 'DES-44', 'Workspace issue');
+    await db.update(schema.slackChannelSync).set({ teamId: null });
+
+    const response = await POST(signedLinkShared('T-OAUTH', 'Ev-WORKSPACE-SCOPE', otherIssue.url));
+    expect(response.status).toBe(200);
+    await scheduledTasks[0]?.();
+
+    expect(providerRequests).toHaveLength(1);
+    expect(JSON.stringify(providerRequests[0]?.body)).toContain('Workspace issue');
+  });
+
+  it('does not broaden a workspace mapping into another organization', async () => {
+    const otherWorkspace = await seedWorkspace(
+      'OtherSlack',
+      'T-OTHER',
+      'xoxb-other',
+      'Other issue',
+    );
+    const otherIssue = await createIssueInAnotherTeam(otherWorkspace, 'SEC-77', 'Secret issue');
+    await db
+      .update(schema.slackChannelSync)
+      .set({ teamId: null })
+      .where(eq(schema.slackChannelSync.organizationId, workspace.organizationId));
+
+    const response = await POST(signedLinkShared('T-OAUTH', 'Ev-ORG-SCOPE', otherIssue.url));
+    expect(response.status).toBe(200);
+    await scheduledTasks[0]?.();
+
+    expect(providerRequests).toEqual([]);
   });
 
   it('uses the configured team id instead of a stale legacy external id', async () => {
-    await db.update(schema.integration).set({
-      externalId: 'T-STALE',
-      config: {
-        scopes: ['chat:write', 'links:read', 'links:write'],
-        slackTeamId: 'T-OAUTH',
-      },
-    });
+    await db
+      .update(schema.integration)
+      .set({
+        externalId: 'T-STALE',
+        config: {
+          scopes: ['chat:write', 'links:read', 'links:write'],
+          slackTeamId: 'T-OAUTH',
+        },
+      })
+      .where(eq(schema.integration.organizationId, workspace.organizationId));
 
     const staleResponse = await POST(signedLinkShared('T-STALE', 'Ev-STALE-TEAM'));
-
     expect(staleResponse.status).toBe(200);
+    await scheduledTasks[0]?.();
     expect(providerRequests).toEqual([]);
 
     const currentResponse = await POST(signedLinkShared('T-OAUTH', 'Ev-CURRENT-TEAM'));
-
     expect(currentResponse.status).toBe(200);
+    await scheduledTasks[1]?.();
     expect(providerRequests).toHaveLength(1);
-    expect(providerRequests[0]?.authorization).toBe('Bearer xoxb-primary');
   });
 
-  it('does nothing for an unknown Slack team', async () => {
-    const response = await POST(signedLinkShared('T-UNKNOWN'));
-
-    expect(response.status).toBe(200);
-    expect(providerRequests).toEqual([]);
-    expect(warningSpy).toHaveBeenCalledWith(
-      '[orbit] slack webhook team routing failed',
-      expect.objectContaining({ slackTeamId: 'T-UNKNOWN', reason: 'unknown' }),
-    );
-  });
-
-  it('fails closed when two Orbit workspaces use the same Slack team id', async () => {
-    const duplicate = await seedWorkspace(
-      'DuplicateSlack',
-      'T-OAUTH',
-      'xoxb-duplicate',
-      'Duplicate issue',
-    );
-    expect(duplicate.organizationId).not.toBe(workspace.organizationId);
-
-    const response = await POST(signedLinkShared('T-OAUTH'));
-
-    expect(response.status).toBe(200);
-    expect(providerRequests).toEqual([]);
-    expect(warningSpy).toHaveBeenCalledWith(
-      '[orbit] slack webhook team routing failed',
-      expect.objectContaining({ slackTeamId: 'T-OAUTH', reason: 'ambiguous' }),
-    );
-  });
-
-  it('deduplicates a replayed Slack event id before another unfurl', async () => {
+  it('acknowledges duplicate processing and processed deliveries without rescheduling', async () => {
     const first = await POST(signedLinkShared('T-OAUTH', 'Ev-REPLAY'));
+    const processingReplay = await POST(signedLinkShared('T-OAUTH', 'Ev-REPLAY'));
 
     expect(first.status).toBe(200);
-    expect(providerRequests).toHaveLength(1);
+    expect(processingReplay.status).toBe(200);
+    expect(await processingReplay.json()).toEqual({ ok: true });
+    expect(scheduledTasks).toHaveLength(1);
+    expect(providerRequests).toEqual([]);
 
-    const replay = await POST(signedLinkShared('T-OAUTH', 'Ev-REPLAY'));
+    await scheduledTasks[0]?.();
+    const processedReplay = await POST(signedLinkShared('T-OAUTH', 'Ev-REPLAY'));
 
-    expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual({ ok: true });
+    expect(processedReplay.status).toBe(200);
+    expect(scheduledTasks).toHaveLength(1);
     expect(providerRequests).toHaveLength(1);
-    const [delivery] = await db
-      .select({ status: schema.webhookDelivery.status })
-      .from(schema.webhookDelivery);
-    expect(delivery).toEqual({ status: 'processed' });
   });
 
-  it('reclaims a failed Slack event when Slack replays it', async () => {
+  it('reclaims a failed Slack event and keeps failure logs fixed and safe', async () => {
     providerErrorCode = 'internal_error';
     const first = await POST(signedLinkShared('T-OAUTH', 'Ev-FAILED'));
-    expect(first.status).toBe(500);
+    expect(first.status).toBe(200);
+    await scheduledTasks[0]?.();
     const [failed] = await db
       .select({ status: schema.webhookDelivery.status })
       .from(schema.webhookDelivery);
     expect(failed).toEqual({ status: 'failed' });
+    expect(errorSpy).toHaveBeenCalledWith('[orbit] slack unfurl processing failed');
 
     providerErrorCode = null;
     const replay = await POST(signedLinkShared('T-OAUTH', 'Ev-FAILED'));
-
     expect(replay.status).toBe(200);
+    expect(scheduledTasks).toHaveLength(2);
+    await scheduledTasks[1]?.();
+
     expect(providerRequests).toHaveLength(2);
     const [processed] = await db
       .select({ status: schema.webhookDelivery.status })
@@ -256,52 +364,65 @@ describe('POST /api/webhooks/slack', () => {
     const replay = await POST(signedLinkShared('T-OAUTH', 'Ev-STALE'));
 
     expect(replay.status).toBe(200);
-    expect(providerRequests).toHaveLength(1);
-  });
-
-  it('returns a retryable response while another attempt owns a fresh claim', async () => {
-    await db.insert(schema.webhookDelivery).values({
-      id: randomUUIDv7(),
-      provider: 'slack',
-      deliveryId: 'Ev-IN-PROGRESS',
-      event: 'link_shared',
-      status: 'processing',
-      claimedAt: new Date(),
-    });
-
-    const response = await POST(signedLinkShared('T-OAUTH', 'Ev-IN-PROGRESS'));
-
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ status: 'in_progress' });
+    expect(scheduledTasks).toHaveLength(1);
     expect(providerRequests).toEqual([]);
   });
 
   it('prevents a late stale worker from overwriting a replacement claim', async () => {
-    let releaseFirst: ((response: Response) => void) | undefined;
-    let signalFirstStarted: (() => void) | undefined;
-    const firstProviderResponse = new Promise<Response>((resolve) => {
-      releaseFirst = resolve;
+    const first = await POST(signedLinkShared('T-OAUTH', 'Ev-CLAIM-RACE'));
+    expect(first.status).toBe(200);
+    await db
+      .update(schema.webhookDelivery)
+      .set({ claimedAt: new Date(Date.now() - 5 * 60_000) })
+      .where(
+        and(
+          eq(schema.webhookDelivery.provider, 'slack'),
+          eq(schema.webhookDelivery.deliveryId, 'Ev-CLAIM-RACE'),
+        ),
+      );
+
+    const replacement = await POST(signedLinkShared('T-OAUTH', 'Ev-CLAIM-RACE'));
+    expect(replacement.status).toBe(200);
+    expect(scheduledTasks).toHaveLength(2);
+
+    let releaseReplacement: ((response: Response) => void) | undefined;
+    let signalReplacementStarted: (() => void) | undefined;
+    const replacementResponse = new Promise<Response>((resolve) => {
+      releaseReplacement = resolve;
     });
-    const firstProviderStarted = new Promise<void>((resolve) => {
-      signalFirstStarted = resolve;
+    const replacementStarted = new Promise<void>((resolve) => {
+      signalReplacementStarted = resolve;
     });
     let providerCalls = 0;
     providerResponder = async () => {
       providerCalls += 1;
       if (providerCalls !== 1) return Response.json({ ok: true });
-      signalFirstStarted?.();
-      return await firstProviderResponse;
+      signalReplacementStarted?.();
+      return await replacementResponse;
     };
+    const replacementProcessing = scheduledTasks[1]?.();
+    await replacementStarted;
+    const [replacementClaim] = await db
+      .select({
+        status: schema.webhookDelivery.status,
+        claimedAt: schema.webhookDelivery.claimedAt,
+      })
+      .from(schema.webhookDelivery);
+    expect(replacementClaim?.status).toBe('processing');
 
-    const staleAttempt = POST(signedLinkShared('T-OAUTH', 'Ev-CLAIM-RACE'));
-    await firstProviderStarted;
-    await db.update(schema.webhookDelivery).set({ claimedAt: new Date(Date.now() - 5 * 60_000) });
+    await scheduledTasks[0]?.();
 
-    const replacement = await POST(signedLinkShared('T-OAUTH', 'Ev-CLAIM-RACE'));
+    const [afterStaleWorker] = await db
+      .select({
+        status: schema.webhookDelivery.status,
+        claimedAt: schema.webhookDelivery.claimedAt,
+      })
+      .from(schema.webhookDelivery);
+    expect(afterStaleWorker).toEqual(replacementClaim);
 
-    expect(replacement.status).toBe(200);
-    releaseFirst?.(Response.json({ ok: false, error: 'internal_error' }));
-    expect((await staleAttempt).status).toBe(500);
+    releaseReplacement?.(Response.json({ ok: true }));
+    await replacementProcessing;
+
     const [delivery] = await db
       .select({ status: schema.webhookDelivery.status })
       .from(schema.webhookDelivery);

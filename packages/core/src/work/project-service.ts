@@ -148,6 +148,26 @@ export async function assertProjectVisible(
   }
 }
 
+async function lockProjectForMutation(
+  executor: Executor,
+  principal: Principal,
+  projectId: string,
+): Promise<void> {
+  const [row] = await executor
+    .select({ id: schema.project.id })
+    .from(schema.project)
+    .where(
+      and(
+        eq(schema.project.id, projectId),
+        eq(schema.project.organizationId, principal.organizationId),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  requireRow(row, 'That project does not exist.');
+  await assertProjectVisible(executor, principal, projectId);
+}
+
 async function replaceProjectTeams(
   executor: Executor,
   projectId: string,
@@ -249,7 +269,7 @@ export async function updateProject(
   const parsed = projectUpdateSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    await assertProjectVisible(tx, principal, projectId);
+    await lockProjectForMutation(tx, principal, projectId);
     const previousReach =
       parsed.teamIds === undefined
         ? null
@@ -434,7 +454,7 @@ export async function addProjectTeam(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
-    await assertProjectVisible(tx, principal, projectId);
+    await lockProjectForMutation(tx, principal, projectId);
     await assertTeamsInOrganization(tx, principal.organizationId, [teamId]);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -465,7 +485,7 @@ export async function removeProjectTeam(
   assertCan(principal, 'project:manage');
 
   return await db.transaction(async (tx) => {
-    await assertProjectVisible(tx, principal, projectId);
+    await lockProjectForMutation(tx, principal, projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     await tx

@@ -5,6 +5,8 @@ import { z } from 'zod';
 export const SLACK_REPLAY_WINDOW_SECONDS = 300;
 export const SLACK_API_BASE = 'https://slack.com/api';
 export const SLACK_REQUEST_TIMEOUT_MS = 10_000;
+const SLACK_USER_DIRECTORY_MAX_PAGES = 5_000;
+const SLACK_USER_DIRECTORY_MAX_DURATION_MS = 30_000;
 
 export function verifySlackSignature(
   rawBody: string,
@@ -80,32 +82,6 @@ export function issueBlocks(issue: SlackIssue): SlackBlock[] {
       ],
     });
   }
-
-  blocks.push({
-    type: 'actions',
-    block_id: `orbit_issue_${issue.identifier}`,
-    elements: [
-      {
-        type: 'button',
-        action_id: 'orbit_open_issue',
-        text: { type: 'plain_text', text: 'Open in Orbit' },
-        url: issue.url,
-      },
-      {
-        type: 'button',
-        action_id: 'orbit_assign_self',
-        value: issue.identifier,
-        text: { type: 'plain_text', text: 'Assign to me' },
-      },
-      {
-        type: 'button',
-        action_id: 'orbit_mark_done',
-        style: 'primary',
-        value: issue.identifier,
-        text: { type: 'plain_text', text: 'Mark done' },
-      },
-    ],
-  });
 
   return blocks;
 }
@@ -211,20 +187,56 @@ const conversationsResponseSchema = slackResponseSchema.extend({
   response_metadata: z.object({ next_cursor: z.string().default('') }).optional(),
 });
 
-const userResponseSchema = slackResponseSchema.extend({
-  user: z
+const conversationResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    channel: z.object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      is_private: z.boolean(),
+      is_archived: z.boolean(),
+      is_member: z.boolean(),
+    }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
+
+const usersResponseSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    members: z.array(z.unknown()),
+    response_metadata: z.object({ next_cursor: z.string() }),
+  }),
+  z.object({
+    ok: z.literal(false),
+    error: z.string().optional(),
+  }),
+]);
+
+const directoryMemberSchema = z.object({
+  id: z.string().min(1),
+  deleted: z.boolean().optional(),
+  is_bot: z.boolean().optional(),
+  is_app_user: z.boolean().optional(),
+  real_name: z.string().nullable().optional(),
+  profile: z
     .object({
-      id: z.string(),
-      real_name: z.string().default(''),
-      profile: z
-        .object({
-          email: z.string().email().optional(),
-          display_name: z.string().default(''),
-        })
-        .default({ display_name: '' }),
+      email: z.string().nullable().optional(),
+      display_name: z.string().nullable().optional(),
     })
+    .nullable()
     .optional(),
 });
+
+type SuccessfulSlackResponse<T extends z.ZodTypeAny> =
+  z.infer<T> extends infer ResponseBody
+    ? ResponseBody extends { ok: false }
+      ? never
+      : ResponseBody
+    : never;
 
 export interface SlackMessageRef {
   readonly channel: string;
@@ -264,10 +276,78 @@ export interface SlackUser {
   readonly displayName: string;
 }
 
+function slackUserFromDirectoryMember(value: unknown): SlackUser | null {
+  const parsedMember = directoryMemberSchema.safeParse(value);
+  if (!parsedMember.success) return null;
+  const member = parsedMember.data;
+  if (member.deleted === true || member.is_bot !== false || member.is_app_user === true)
+    return null;
+  const parsedEmail = z.email().safeParse(member.profile?.email?.trim().toLowerCase());
+  if (!parsedEmail.success) return null;
+  return {
+    id: member.id,
+    email: parsedEmail.data,
+    displayName: member.profile?.display_name || member.real_name || '',
+  };
+}
+
+function nextSlackDirectoryCursor(nextCursor: string, seenCursors: Set<string>): string | null {
+  if (nextCursor.length === 0) return null;
+  if (seenCursors.has(nextCursor)) {
+    throw internal('Slack users.list returned a repeated cursor.');
+  }
+  seenCursors.add(nextCursor);
+  return nextCursor;
+}
+
+function assertSlackDirectoryWithinLimits(
+  pageCount: number,
+  startedAt: number,
+  pageLimit: number,
+): void {
+  if (pageCount >= pageLimit) {
+    throw internal('Slack users.list exceeded the safe page limit.');
+  }
+  if (Date.now() - startedAt >= SLACK_USER_DIRECTORY_MAX_DURATION_MS) {
+    throw internal('Slack users.list exceeded the safe duration limit.');
+  }
+}
+
+function slackDirectoryRetryAfter(error: unknown, startedAt: number): number | null {
+  if (!(error instanceof SlackApiError) || error.code !== 'ratelimited') return null;
+  if (error.retryAfterMs === undefined) return null;
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const remainingMs = SLACK_USER_DIRECTORY_MAX_DURATION_MS - elapsedMs - SLACK_REQUEST_TIMEOUT_MS;
+  return error.retryAfterMs < remainingMs ? error.retryAfterMs : null;
+}
+
+function waitForSlackDirectoryRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+type SlackUserDirectoryPage = SuccessfulSlackResponse<typeof usersResponseSchema>;
+
+async function requestSlackDirectoryPage(
+  request: () => Promise<SlackUserDirectoryPage>,
+  startedAt: number,
+  retryAvailable: boolean,
+): Promise<{ readonly body: SlackUserDirectoryPage; readonly retried: boolean }> {
+  try {
+    return { body: await request(), retried: false };
+  } catch (error) {
+    const retryAfterMs = slackDirectoryRetryAfter(error, startedAt);
+    if (!retryAvailable || retryAfterMs === null) throw error;
+    await waitForSlackDirectoryRetry(retryAfterMs);
+    if (Date.now() - startedAt >= SLACK_USER_DIRECTORY_MAX_DURATION_MS) throw error;
+    return { body: await request(), retried: true };
+  }
+}
+
 export interface SlackClientOptions {
   readonly token: string;
   readonly baseUrl?: string;
   readonly fetch?: typeof globalThis.fetch;
+  readonly userDirectoryPageLimit?: number;
 }
 
 export interface PostMessageInput {
@@ -290,12 +370,18 @@ export class SlackClient {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly userDirectoryPageLimit: number;
 
   constructor(options: SlackClientOptions) {
     if (options.token.length === 0) throw unauthorized('A Slack token is required.');
+    const userDirectoryPageLimit = options.userDirectoryPageLimit ?? SLACK_USER_DIRECTORY_MAX_PAGES;
+    if (!Number.isSafeInteger(userDirectoryPageLimit) || userDirectoryPageLimit < 1) {
+      throw internal('The Slack user directory page limit must be a positive integer.');
+    }
     this.token = options.token;
     this.baseUrl = options.baseUrl ?? SLACK_API_BASE;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.userDirectoryPageLimit = Math.min(userDirectoryPageLimit, SLACK_USER_DIRECTORY_MAX_PAGES);
   }
 
   async postMessage(input: PostMessageInput): Promise<SlackMessageRef> {
@@ -372,29 +458,54 @@ export class SlackClient {
     };
   }
 
-  async lookupUserByEmail(email: string): Promise<SlackUser | null> {
-    let body: z.infer<typeof userResponseSchema>;
-    try {
-      body = await this.call('users.lookupByEmail', userResponseSchema, { email });
-    } catch (error) {
-      if (error instanceof SlackApiError && error.code === 'users_not_found') return null;
-      throw error;
-    }
-    const user = body.user;
-    if (user === undefined) return null;
+  async conversation(channelId: string): Promise<SlackChannel> {
+    const body = await this.callQuery('conversations.info', conversationResponseSchema, {
+      channel: channelId,
+    });
     return {
-      id: user.id,
-      email: user.profile.email ?? null,
-      displayName: user.profile.display_name || user.real_name,
+      id: body.channel.id,
+      name: body.channel.name,
+      isPrivate: body.channel.is_private,
+      isArchived: body.channel.is_archived,
+      isMember: body.channel.is_member,
     };
   }
 
-  private async call<T extends z.ZodTypeAny>(
+  async listUsers(): Promise<SlackUser[]> {
+    const users: SlackUser[] = [];
+    const seenCursors = new Set<string>();
+    const startedAt = Date.now();
+    let pageCount = 0;
+    let cursor: string | null = null;
+    let rateLimitRetryUsed = false;
+    do {
+      assertSlackDirectoryWithinLimits(pageCount, startedAt, this.userDirectoryPageLimit);
+      pageCount += 1;
+      const page = await requestSlackDirectoryPage(
+        () =>
+          this.callQuery('users.list', usersResponseSchema, {
+            limit: '200',
+            ...(cursor === null ? {} : { cursor }),
+          }),
+        startedAt,
+        !rateLimitRetryUsed,
+      );
+      rateLimitRetryUsed ||= page.retried;
+      for (const memberValue of page.body.members) {
+        const user = slackUserFromDirectoryMember(memberValue);
+        if (user !== null) users.push(user);
+      }
+      cursor = nextSlackDirectoryCursor(page.body.response_metadata.next_cursor, seenCursors);
+    } while (cursor !== null);
+    return users;
+  }
+
+  private call<T extends z.ZodTypeAny>(
     method: string,
     schema: T,
     payload: Record<string, unknown>,
-  ): Promise<z.infer<T>> {
-    const response = await this.fetchImpl(`${this.baseUrl}/${method}`, {
+  ): Promise<SuccessfulSlackResponse<T>> {
+    return this.request(method, schema, `${this.baseUrl}/${method}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.token}`,
@@ -403,8 +514,35 @@ export class SlackClient {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
+  }
+
+  private callQuery<T extends z.ZodTypeAny>(
+    method: string,
+    schema: T,
+    payload: Record<string, string>,
+  ): Promise<SuccessfulSlackResponse<T>> {
+    const url = new URL(`${this.baseUrl}/${method}`);
+    for (const [key, value] of Object.entries(payload)) url.searchParams.set(key, value);
+    return this.request(method, schema, url, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
+    });
+  }
+
+  private async request<T extends z.ZodTypeAny>(
+    method: string,
+    schema: T,
+    input: string | URL,
+    init: RequestInit,
+  ): Promise<SuccessfulSlackResponse<T>> {
+    const response = await this.fetchImpl(input, init);
     if (response.status === 429) {
-      const retryAfterSeconds = Number(response.headers.get('retry-after'));
+      const retryAfterHeader = response.headers.get('retry-after');
+      const retryAfterSeconds =
+        retryAfterHeader === null || retryAfterHeader.trim().length === 0
+          ? Number.NaN
+          : Number(retryAfterHeader);
       const retryAfterMs =
         Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
           ? Math.ceil(retryAfterSeconds * 1000)
@@ -417,7 +555,7 @@ export class SlackClient {
     if (!parsed.success) throw internal(`Slack ${method} returned an unexpected payload.`);
     const body = parsed.data as z.infer<typeof slackResponseSchema>;
     if (!body.ok) throw new SlackApiError(method, body.error ?? 'unknown_error');
-    return parsed.data;
+    return parsed.data as SuccessfulSlackResponse<T>;
   }
 }
 

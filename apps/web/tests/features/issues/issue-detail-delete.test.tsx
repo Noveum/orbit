@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import * as realtimeReact from '@orbit/realtime-client/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -11,11 +12,12 @@ import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, IssueDetail, WorkflowState } from '@/lib/query/schemas.ts';
 
 const pushed: string[] = [];
+const replaced: string[] = [];
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({
     push: (path: string) => pushed.push(path),
-    replace: () => undefined,
+    replace: (path: string) => replaced.push(path),
     refresh: () => undefined,
     prefetch: () => undefined,
   }),
@@ -23,6 +25,11 @@ mock.module('next/navigation', () => ({
 }));
 
 const STUBBED = {
+  '@orbit/realtime-client/react': {
+    ...realtimeReact,
+    useDeltaHandler: () => undefined,
+    useScopeSubscription: () => undefined,
+  },
   '@/features/comments/viewer-presence.tsx': { ViewerPresence: () => null },
   '@/features/comments/comment-thread.tsx': { CommentThread: () => null },
   '@/features/pulls/issue-pull-requests.tsx': { IssuePullRequests: () => null },
@@ -155,11 +162,15 @@ function OpenLayer() {
   );
 }
 
-function mountDetail(onDeleted?: () => void, withOpenLayer = false): QueryClient {
+function mountDetail(
+  onDeleted?: () => void,
+  withOpenLayer = false,
+  loaded: IssueDetail = detail,
+): QueryClient {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
   });
-  client.setQueryData(queryKeys.issue('ENG-1'), detail);
+  client.setQueryData(queryKeys.issue('ENG-1'), loaded);
   render(
     <QueryClientProvider client={client}>
       <TooltipProvider>
@@ -191,6 +202,7 @@ const user = userEvent.setup({ pointerEventsCheck: 0 });
 
 beforeEach(() => {
   pushed.length = 0;
+  replaced.length = 0;
   deleted.length = 0;
   serverRefuses = false;
   stubFetch();
@@ -201,6 +213,15 @@ afterEach(() => {
 });
 
 describe('deleting from the issue detail surface', () => {
+  it('replaces a stale full-page identifier with the moved issue identifier', async () => {
+    mountDetail(undefined, false, {
+      ...detail,
+      issue: { ...detail.issue, teamId: 'team_2', identifier: 'DSGN-1' },
+    });
+
+    await waitFor(() => expect(replaced).toEqual(['/issue/DSGN-1']));
+  });
+
   it('offers delete in the header menu and confirms before it fires', async () => {
     mountDetail();
 

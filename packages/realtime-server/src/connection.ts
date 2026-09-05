@@ -22,6 +22,11 @@ export class Connection {
   lastSeenAt = Date.now();
   private readonly pending = new Map<string, SyncAction>();
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  private deltaFlushSuspensionDepth = 0;
+  private authorizationFenceDepth = 0;
+  private authorizationGeneration = 0;
+  private authorizationReady: Promise<void> = Promise.resolve();
+  private releaseAuthorization: (() => void) | undefined;
   private tokens: number;
   private refilledAt = Date.now();
   private throttled = false;
@@ -117,17 +122,73 @@ export class Connection {
 
   queueDelta(action: SyncAction): void {
     if (action.syncId <= this.watermark) return;
-    const key = `${action.model}|${action.modelId}|${action.action}`;
+    const departure =
+      action.model === 'issue' && action.action === 'delete' && action.data['departure'] === true;
+    const key = `${action.model}|${action.modelId}|${action.action}${departure ? `|${action.syncId}` : ''}`;
     const existing = this.pending.get(key);
     if (existing === undefined || existing.syncId <= action.syncId) {
+      this.pending.delete(key);
       this.pending.set(key, action);
     }
-    if (this.flushTimer !== undefined) return;
+    this.scheduleDeltaFlush();
+  }
+
+  suspendDeltaFlush(): void {
+    this.deltaFlushSuspensionDepth += 1;
+    if (this.flushTimer === undefined) return;
+    clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
+  }
+
+  resumeDeltaFlush(retain: (action: SyncAction) => boolean): void {
+    for (const [key, action] of this.pending) {
+      if (!retain(action)) this.pending.delete(key);
+    }
+    if (this.deltaFlushSuspensionDepth > 0) this.deltaFlushSuspensionDepth -= 1;
+    this.scheduleDeltaFlush();
+  }
+
+  suspendAuthorization(): void {
+    this.authorizationGeneration += 1;
+    this.authorizationFenceDepth += 1;
+    if (this.authorizationFenceDepth > 1) return;
+    this.authorizationReady = new Promise((resolve) => {
+      this.releaseAuthorization = resolve;
+    });
+  }
+
+  resumeAuthorization(): void {
+    if (this.authorizationFenceDepth === 0) return;
+    this.authorizationFenceDepth -= 1;
+    if (this.authorizationFenceDepth > 0) return;
+    const release = this.releaseAuthorization;
+    this.releaseAuthorization = undefined;
+    this.authorizationReady = Promise.resolve();
+    release?.();
+  }
+
+  async waitForAuthorization(): Promise<number> {
+    await this.authorizationReady;
+    return this.authorizationGeneration;
+  }
+
+  authorizationIsCurrent(generation: number): boolean {
+    return this.authorizationFenceDepth === 0 && this.authorizationGeneration === generation;
+  }
+
+  private scheduleDeltaFlush(): void {
+    if (
+      this.deltaFlushSuspensionDepth > 0 ||
+      this.flushTimer !== undefined ||
+      this.pending.size === 0
+    )
+      return;
     this.flushTimer = setTimeout(() => this.flushDeltas(), this.limits.batchWindowMs);
     this.flushTimer.unref();
   }
 
   flushDeltas(): void {
+    if (this.deltaFlushSuspensionDepth > 0) return;
     if (this.flushTimer !== undefined) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
@@ -144,6 +205,13 @@ export class Connection {
       this.flushTimer = undefined;
     }
     this.pending.clear();
+    this.deltaFlushSuspensionDepth = 0;
+    this.authorizationFenceDepth = 0;
+    this.authorizationGeneration += 1;
+    const release = this.releaseAuthorization;
+    this.releaseAuthorization = undefined;
+    this.authorizationReady = Promise.resolve();
+    release?.();
     if (this.socket.readyState === SOCKET_OPEN) {
       this.socket.close(code, reason);
       return;

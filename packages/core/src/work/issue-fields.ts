@@ -4,12 +4,8 @@ import { scopes } from '@orbit/shared/events';
 export type IssueRow = typeof schema.issue.$inferSelect;
 export type IssueValues = Partial<typeof schema.issue.$inferInsert>;
 
-export function issueScopes(
-  row: Pick<IssueRow, 'organizationId' | 'teamId' | 'id' | 'projectId'>,
-): string[] {
-  const list = [scopes.team(row.teamId), scopes.issue(row.id)];
-  if (row.projectId !== null) list.push(scopes.project(row.projectId));
-  return list;
+export function issueScopes(row: Pick<IssueRow, 'teamId' | 'id'>): string[] {
+  return [scopes.team(row.teamId), scopes.issue(row.id)];
 }
 
 export function stateTimestamps(category: string, now: Date): IssueValues {

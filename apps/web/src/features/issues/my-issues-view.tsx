@@ -19,7 +19,7 @@ import type { Issue } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 import { useAssignedIssues } from '@/lib/query/use-issues.ts';
 import type { StateResolver } from './board.tsx';
-import { Board, canRegroup } from './board.tsx';
+import { Board, boardVisibilityConfig, canDragBoard, useBoardVisibilityHold } from './board.tsx';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { IssueRow } from './issue-row.tsx';
@@ -83,6 +83,10 @@ export function MyIssuesView() {
     scope,
   });
   const groups = model.groups;
+  const boardVisibility = useBoardVisibilityHold(
+    JSON.stringify([layout, boardVisibilityConfig(config), workspace.userId, workspace.role]),
+    model.shownCount === 0,
+  );
   const resolveState = useMemo(() => mergedStateResolver(workspace.states), [workspace.states]);
 
   if (!workspace.ready) {
@@ -114,6 +118,7 @@ export function MyIssuesView() {
       </div>
 
       <MyIssuesBody
+        boardVisibilityKey={boardVisibility.key}
         loading={loading}
         failed={assigned.isError}
         onRetry={() => {
@@ -135,6 +140,8 @@ export function MyIssuesView() {
         onPeek={setPeekId}
         hasNextPage={hasNextPage}
         sentinel={sentinel}
+        keepBoardMounted={boardVisibility.held}
+        onVisibilityActivityStart={boardVisibility.start}
       />
 
       <HiddenFooter
@@ -159,6 +166,7 @@ export function MyIssuesView() {
 }
 
 interface BodyProps {
+  readonly boardVisibilityKey: string;
   readonly loading: boolean;
   readonly failed: boolean;
   readonly onRetry: () => void;
@@ -176,9 +184,12 @@ interface BodyProps {
   readonly loadingMore: boolean;
   readonly onLoadMore: () => void;
   readonly sentinel: RefObject<HTMLDivElement | null>;
+  readonly keepBoardMounted: boolean;
+  readonly onVisibilityActivityStart: () => () => void;
 }
 
 function MyIssuesBody({
+  boardVisibilityKey,
   loading,
   failed,
   onRetry,
@@ -196,12 +207,14 @@ function MyIssuesBody({
   loadingMore,
   onLoadMore,
   sentinel,
+  keepBoardMounted,
+  onVisibilityActivityStart,
 }: BodyProps) {
   if (failed) {
     return <LoadFailed subject="your issues" onRetry={onRetry} testId="retry-my-issues" />;
   }
 
-  if (model.shownCount === 0) {
+  if (model.shownCount === 0 && !(layout === 'board' && keepBoardMounted)) {
     return (
       <EmptyState
         icon={<CircleDot strokeWidth={1.75} aria-hidden="true" />}
@@ -216,8 +229,9 @@ function MyIssuesBody({
     return (
       <div className="min-h-0 flex-1 overflow-hidden" data-testid="my-issues-board">
         <Board
+          key={boardVisibilityKey}
           groups={groups}
-          draggable={canRegroup(groupBy)}
+          draggable={canDragBoard(workspace.role, groupBy)}
           reorderable={orderBy === 'manual'}
           groupBy={groupBy}
           resolveState={resolveState}
@@ -225,6 +239,8 @@ function MyIssuesBody({
           hasMore={hasNextPage}
           loadingMore={loadingMore}
           onLoadMore={onLoadMore}
+          filtered={model.filtered}
+          onVisibilityActivityStart={onVisibilityActivityStart}
         />
       </div>
     );

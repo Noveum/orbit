@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { db } from '@orbit/db';
 import {
   integration,
@@ -10,12 +10,7 @@ import {
   slackUserMapping,
   user,
 } from '@orbit/db/schema';
-import {
-  NOTIFICATION_CHANNELS,
-  NOTIFICATION_TYPES,
-  SLACK_INTEGRATION_ENABLED,
-  syncActionSchema,
-} from '@orbit/shared';
+import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq, inArray } from 'drizzle-orm';
 import {
@@ -35,7 +30,19 @@ import {
   unreadCount,
   unreadCounters,
 } from '../../src/notifications/index.ts';
+import { slackFeatureEnabled } from '../../src/slack/feature.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
+
+beforeAll(() => {
+  process.env['SLACK_ENABLED'] = 'false';
+});
+
+afterAll(() => {
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
+});
 
 interface Fixture {
   readonly organizationId: string;
@@ -101,7 +108,14 @@ async function seedSlackDmConnection(
     provider: 'slack',
     externalId: 'default',
     connectedById: fixture.actorId,
-    credentials: options.credentials ?? { botToken: 'xoxb-test' },
+    credentials: options.credentials ?? {
+      botToken: {
+        version: 1,
+        iv: 'AAAAAAAAAAAAAAAA',
+        ciphertext: 'AA',
+        tag: 'AAAAAAAAAAAAAAAAAAAAAA',
+      },
+    },
     config: options.config ?? { scopes: ['chat:write', 'im:write'] },
   });
   if (options.mapped === false) return;
@@ -124,7 +138,7 @@ describe('notifyMany', () => {
     expect(defaultPreferences()).toContainEqual({
       channel: 'slack_dm',
       type: 'mention',
-      enabled: SLACK_INTEGRATION_ENABLED,
+      enabled: slackFeatureEnabled(),
     });
   });
 
@@ -400,6 +414,61 @@ describe('notifyMany', () => {
           inArray(user.id, [seeded.fixture.actorId, seeded.fixture.adaId, seeded.fixture.graceId]),
         );
     }
+  });
+
+  it('does not lock the parent notification while claiming a Slack DM delivery', async () => {
+    const claimAt = new Date('2030-01-01T00:00:00.000Z');
+    const seeded = await db.transaction(async (tx) => {
+      const fixture = await seed(tx);
+      await seedSlackDmConnection(tx, fixture);
+      await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId], reason: 'mentioned' })], {
+        slackEnabled: true,
+      });
+      const [delivery] = await tx
+        .select({ notificationId: notificationDelivery.notificationId })
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.userId, fixture.adaId));
+      if (delivery === undefined) throw new Error('Expected a Slack DM delivery.');
+      return { fixture, notificationId: delivery.notificationId };
+    });
+    let announceClaim: () => void = () => undefined;
+    const claimReady = new Promise<void>((resolve) => {
+      announceClaim = resolve;
+    });
+    let releaseClaim: () => void = () => undefined;
+    const claimRelease = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    const claim = db.transaction(async (tx) => {
+      const rows = await claimSlackDmDeliveries(tx, 1, claimAt);
+      announceClaim();
+      await claimRelease;
+      return rows;
+    });
+
+    let unlockedParent: { id: string } | undefined;
+    try {
+      await Promise.race([claimReady, claim.then(() => undefined)]);
+      unlockedParent = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .select({ id: notification.id })
+          .from(notification)
+          .where(eq(notification.id, seeded.notificationId))
+          .for('update', { skipLocked: true });
+        return row;
+      });
+    } finally {
+      releaseClaim();
+      await claim;
+      await db.delete(organization).where(eq(organization.id, seeded.fixture.organizationId));
+      await db
+        .delete(user)
+        .where(
+          inArray(user.id, [seeded.fixture.actorId, seeded.fixture.adaId, seeded.fixture.graceId]),
+        );
+    }
+
+    expect(unlockedParent).toEqual({ id: seeded.notificationId });
   });
 
   it('claims fresh Slack DM work ahead of a retry backlog', async () => {
@@ -1062,7 +1131,7 @@ describe('defaultPreferences', () => {
     expect(
       matrix
         .filter((entry) => entry.channel === 'slack' || entry.channel === 'slack_dm')
-        .every((entry) => entry.enabled === SLACK_INTEGRATION_ENABLED),
+        .every((entry) => entry.enabled === slackFeatureEnabled()),
     ).toBe(true);
     expect(
       matrix
