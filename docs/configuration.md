@@ -67,7 +67,7 @@ explicitly so it cannot block other snapshots or prevent the sprint from closing
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `NEXT_PUBLIC_REALTIME_URL` | unset | **Local development only.** Set it to `ws://localhost:3100` locally |
+| `NEXT_PUBLIC_REALTIME_URL` | unset | **Local development only.** Set it to `ws://localhost:3100` locally; the app connects to `/api/ws` under it |
 | `REALTIME_PORT` | `3100` | Port for `apps/realtime`, which is never deployed |
 
 `NEXT_PUBLIC_REALTIME_URL` is ignored whenever `NODE_ENV` is `production`, where
