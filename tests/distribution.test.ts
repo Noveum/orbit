@@ -15,7 +15,7 @@ interface OrbitManifest {
     readonly hasPaidTiers: boolean;
     readonly hasBillingCode: boolean;
   };
-  readonly urls: Readonly<Record<string, string>>;
+  readonly urls: Readonly<Record<string, string>> & { readonly mcp: string };
   readonly mcp: {
     readonly registryName: string;
     readonly registryVersion: string;
@@ -79,8 +79,7 @@ interface RegistryManifest {
 }
 
 interface ServerCard {
-  readonly name: string;
-  readonly version: string;
+  readonly serverInfo: { readonly name: string; readonly version: string };
 }
 
 const root = new URL('../', import.meta.url);
@@ -94,7 +93,9 @@ function characterCount(value: string): number {
 }
 
 function validDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
 }
 
 const statuses = new Set<SubmissionStatus>([
@@ -163,8 +164,8 @@ describe('distribution metadata', () => {
       type: manifest.mcp.transport,
       url: manifest.urls['mcp'],
     });
-    expect(serverCard.name).toBe(manifest.mcp.registryName);
-    expect(serverCard.version).toBe(manifest.mcp.registryVersion);
+    expect(serverCard.serverInfo.name).toBe(manifest.product.name);
+    expect(serverCard.serverInfo.version).toBe(manifest.mcp.registryVersion);
     expect(manifest.mcp.authentication.toLowerCase()).toContain('oauth');
     expect(manifest.mcp.readScope).toBe('orbit.read');
     expect(manifest.mcp.writeScope).toBe('orbit.write');
@@ -186,9 +187,7 @@ describe('distribution metadata', () => {
     expect(ledger.schemaVersion).toBe(1);
     expect(validDate(ledger.lastVerified)).toBe(true);
     expect(ledger.channels.length).toBeGreaterThan(0);
-    expect(new Set(ledger.channels.map((channel) => channel.id)).size).toBe(
-      ledger.channels.length,
-    );
+    expect(new Set(ledger.channels.map((channel) => channel.id)).size).toBe(ledger.channels.length);
 
     for (const channel of ledger.channels) {
       expect(channel.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
@@ -197,7 +196,8 @@ describe('distribution metadata', () => {
       expect(statuses.has(channel.status)).toBe(true);
 
       if (channel.submittedAt !== undefined) expect(validDate(channel.submittedAt)).toBe(true);
-      if (channel.publicUrl !== undefined) expect(channel.publicUrl.startsWith('https://')).toBe(true);
+      if (channel.publicUrl !== undefined)
+        expect(channel.publicUrl.startsWith('https://')).toBe(true);
       if (channel.status === 'submitted' || channel.status === 'pending') {
         expect(channel.submittedAt).toBeDefined();
         expect(channel.evidence?.trim().length ?? 0).toBeGreaterThan(0);
@@ -216,7 +216,9 @@ describe('distribution metadata', () => {
     }
 
     const serialized = JSON.stringify(ledger).toLowerCase();
-    expect(serialized).not.toMatch(/"(?:password|access_token|refresh_token|session_cookie|api_key)"\s*:/);
+    expect(serialized).not.toMatch(
+      /"(?:password|access_token|refresh_token|session_cookie|api_key)"\s*:/,
+    );
     expect(serialized).not.toContain('mcp-publisher login');
   });
 });
