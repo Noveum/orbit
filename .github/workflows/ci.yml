@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -27,6 +30,10 @@ jobs:
         run: bun run lint
       - name: No-comment policy
         run: bun run check-comments
+      - name: Source byte policy
+        run: bun run check-bytes
+      - name: No Bun built-ins in shipped server code
+        run: bun run check-bun-imports
       - name: One copy of every overridden dependency
         run: bun run check-deps
       - name: Typecheck
@@ -131,8 +138,6 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     env:
       DATABASE_URL: postgres://orbit:orbit@localhost:5433/orbit
       REDIS_URL: redis://localhost:6380

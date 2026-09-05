@@ -18,6 +18,7 @@ export * from './profile.ts';
 export * from './project.ts';
 export * from './team.ts';
 export * from './upload.ts';
+export * from './vercel-preview.ts';
 export * from './view.ts';
 export * from './view-preference.ts';
 export * from './vitals.ts';
