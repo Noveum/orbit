@@ -316,6 +316,7 @@ export function QuickCreateDialog({ open, onOpenChange, defaultTeamId }: QuickCr
     const body = description;
     const held = pending;
     submittingRef.current = true;
+    setDismissedDuplicates(true);
     create.mutate(
       {
         teamId,
