@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
   bigint,
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -143,6 +144,10 @@ export const project = pgTable(
       .on(table.organizationId, table.slug)
       .where(sql`${table.archivedAt} is null`),
     index('project_org_idx').on(table.organizationId),
+    check(
+      'project_health_check',
+      sql`${table.health} in ('on_track', 'at_risk', 'off_track', 'no_update')`,
+    ),
   ],
 );
 
@@ -181,7 +186,13 @@ export const projectUpdate = pgTable(
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('project_update_project_idx').on(table.projectId, table.createdAt)],
+  (table) => [
+    index('project_update_project_idx').on(table.projectId, table.createdAt),
+    check(
+      'project_update_health_check',
+      sql`${table.health} in ('on_track', 'at_risk', 'off_track', 'no_update')`,
+    ),
+  ],
 );
 
 export const milestone = pgTable(
