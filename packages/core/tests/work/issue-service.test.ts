@@ -1301,6 +1301,31 @@ describe('relations', () => {
     ).rejects.toMatchObject({ code: 'validation_failed' });
   });
 
+  it('does not write a second activity row on repeated setRelation', async () => {
+    const blocker = await newIssue('Blocker');
+    const blocked = await newIssue('Blocked');
+
+    const first = await setRelation(workspace.admin, blocker.id, {
+      relatedIssueId: blocked.id,
+      type: 'blocks',
+    });
+    expect(first.relations).toHaveLength(2);
+
+    const retry = await setRelation(workspace.admin, blocker.id, {
+      relatedIssueId: blocked.id,
+      type: 'blocks',
+    });
+    expect(retry.relations).toHaveLength(0);
+    expect(retry.actions).toHaveLength(0);
+
+    const activity = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.issueId, blocker.id));
+    const relationActivity = activity.filter((row) => row.field === 'relation');
+    expect(relationActivity).toHaveLength(1);
+  });
+
   it('returns the related issue rows alongside the link', async () => {
     const blocker = await newIssue('Blocker');
     const blocked = await newIssue('Blocked');

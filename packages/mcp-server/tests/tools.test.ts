@@ -921,5 +921,24 @@ describe('what a token is allowed to do', () => {
   it('still gives a token carrying orbit.write the whole set', async () => {
     const { tools } = await admin.client.listTools();
     expect(tools.map((tool) => tool.name)).toContain('create_issue');
+
+    const destructive = tools.filter(
+      (tool) =>
+        tool.name.startsWith('delete_') ||
+        tool.name.startsWith('remove_') ||
+        tool.name.startsWith('archive_'),
+    );
+    expect(destructive.length).toBeGreaterThan(0);
+    for (const tool of destructive) {
+      expect(tool.annotations?.destructiveHint).toBe(true);
+    }
+
+    const nonDestructive = ['create_issue', 'create_cycle', 'add_comment'];
+    for (const name of nonDestructive) {
+      const tool = tools.find((t) => t.name === name);
+      expect(tool).toBeDefined();
+      expect(tool?.annotations?.destructiveHint).toBe(false);
+      expect(tool?.annotations?.idempotentHint).toBe(false);
+    }
   });
 });
