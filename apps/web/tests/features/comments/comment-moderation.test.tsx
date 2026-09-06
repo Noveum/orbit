@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import type { OrgRole } from '@orbit/shared/constants';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import type { Comment, Member } from '@/lib/query/schemas.ts';
@@ -84,9 +85,12 @@ function show(entry: Comment) {
   return within(screen.getByTestId(`comment-${entry.comment.id}`));
 }
 
+const originalFetch = globalThis.fetch;
+
 afterEach(() => {
   cleanup();
   role = 'guest';
+  globalThis.fetch = originalFetch;
 });
 
 describe('deleting a comment somebody else wrote', () => {
@@ -116,5 +120,28 @@ describe('deleting a comment somebody else wrote', () => {
     const item = show(comment('c_1', 'user_1'));
     expect(item.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(item.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('sends the delete of somebody else comment to the server', async () => {
+    role = 'admin';
+    const requests: { url: string; method: string }[] = [];
+    globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), method: init?.method ?? 'GET' });
+      return Promise.resolve(
+        new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const item = show(comment('c_1', 'user_2'));
+
+    await userEvent
+      .setup({ pointerEventsCheck: 0 })
+      .click(item.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() =>
+      expect(requests).toContainEqual({ url: '/api/comments/c_1', method: 'DELETE' }),
+    );
   });
 });
