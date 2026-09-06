@@ -24,7 +24,7 @@ each role can do everything the one below it can.
 | --- | --- |
 | **Guest** | Read issues, projects and docs. Comment, react |
 | **Contributor** | Everything a guest can, plus create and update issues, upload attachments, manage their own views |
-| **Member** | Everything a contributor can, plus delete issues, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
+| **Member** | Everything a contributor can, plus delete issues, delete anyone's comments, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
 | **Admin** | Everything, plus invite and manage members, manage integrations and manage the workspace |
 
 Every authorization decision goes through `packages/shared/src/policy`, which is

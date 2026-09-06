@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { OrgRole } from '@orbit/shared/constants';
 import { buildDocAnchor } from '@orbit/shared/utils';
 import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -6,9 +7,22 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import type { Member } from '@/lib/query/schemas.ts';
 import { SessionProvider } from '@/lib/realtime/session.tsx';
-import { DocComments } from '../../../src/features/docs/doc-comments.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
+
+const realUseWorkspace = workspaceProvider.useWorkspace;
+let role: OrgRole = 'guest';
+
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
+  ...workspaceProvider,
+  useWorkspace: () => ({ ...realUseWorkspace(), role }),
+}));
+
+const { DocComments } = await import('../../../src/features/docs/doc-comments.tsx');
 
 const members: readonly Member[] = [
   { id: 'user_1', name: 'Ada', email: 'ada@orbit.test', image: null, handle: 'ada', role: 'admin' },
@@ -27,15 +41,16 @@ interface WireComment {
   readonly body: string;
   readonly parentId: string | null;
   readonly anchor: DocCommentAnchor | null;
+  readonly authorId?: string;
 }
 
-function wireComment({ id, body, parentId, anchor }: WireComment) {
+function wireComment({ id, body, parentId, anchor, authorId = 'user_1' }: WireComment) {
   const at = '2026-01-01T00:00:00.000Z';
   return {
     comment: {
       id,
       docId: 'doc_1',
-      authorId: 'user_1',
+      authorId,
       parentId,
       body,
       anchor,
@@ -127,6 +142,39 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  role = 'guest';
+});
+
+describe('deleting a doc comment somebody else wrote', () => {
+  const theirs = wireComment({
+    id: 'c_theirs',
+    body: 'Not mine',
+    parentId: null,
+    anchor: null,
+    authorId: 'user_2',
+  });
+
+  it('is offered to a member, without the edit that stays with the author', async () => {
+    role = 'member';
+    await show([theirs]);
+    const item = within(screen.getByTestId('doc-comment-c_theirs'));
+    expect(item.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(item.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+
+  it('is withheld from a guest', async () => {
+    await show([theirs]);
+    const item = within(screen.getByTestId('doc-comment-c_theirs'));
+    expect(item.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(item.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+
+  it('keeps edit and delete on the author own comment', async () => {
+    await show([comment('c_mine', 'Mine')]);
+    const item = within(screen.getByTestId('doc-comment-c_mine'));
+    expect(item.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(item.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
 });
 
 describe('DocComments', () => {
