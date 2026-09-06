@@ -3,8 +3,8 @@ import {
   NOTIFICATION_TYPES,
   type NotificationChannel,
   type NotificationType,
-  SLACK_INTEGRATION_ENABLED,
 } from '@orbit/shared';
+import { slackFeatureEnabled } from '../slack/feature.ts';
 
 export interface PreferenceRow {
   readonly userId: string;
@@ -37,12 +37,13 @@ export const DEFAULT_SETTINGS: NotificationSettings = {
 
 export function defaultPreferences(): DefaultPreference[] {
   const matrix: DefaultPreference[] = [];
+  const slackEnabled = slackFeatureEnabled();
   for (const channel of NOTIFICATION_CHANNELS) {
     for (const type of NOTIFICATION_TYPES) {
       matrix.push({
         channel,
         type,
-        enabled: channel === 'slack' || channel === 'slack_dm' ? SLACK_INTEGRATION_ENABLED : true,
+        enabled: channel === 'slack' || channel === 'slack_dm' ? slackEnabled : true,
       });
     }
   }

@@ -106,7 +106,7 @@ async function connectSilently(port: number, member: SeedMember): Promise<Socket
 
   socket.write(
     [
-      'GET / HTTP/1.1',
+      'GET /api/ws HTTP/1.1',
       `Host: 127.0.0.1:${port}`,
       'Upgrade: websocket',
       'Connection: Upgrade',
@@ -520,14 +520,20 @@ describe('protocol', () => {
     }
   });
 
-  it('serves health with connection and redis status', async () => {
-    const response = await fetch(`http://127.0.0.1:${server.port}/health`);
-    const body = (await response.json()) as Record<string, unknown>;
-    expect(response.status).toBe(200);
-    expect(body['status']).toBe('ok');
-    expect(body['redis']).toBe('ready');
-    expect(typeof body['connections']).toBe('number');
-    expect(typeof body['subscriptions']).toBe('number');
+  it('answers liveness and readiness without disclosing internals', async () => {
+    for (const path of ['/livez', '/readyz', '/health']) {
+      const response = await fetch(`http://127.0.0.1:${server.port}${path}`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ status: 'ok' });
+    }
+  });
+
+  it('refuses an upgrade on any path other than the realtime path', async () => {
+    const response = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: { connection: 'Upgrade', upgrade: 'websocket' },
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ status: 'not_found' });
   });
 });
 

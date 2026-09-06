@@ -168,10 +168,11 @@ export const integration = pgTable(
       table.provider,
       table.externalId,
     ),
-    index('integration_provider_slack_team_idx').on(
-      table.provider,
-      sql`(${table.config} ->> 'slackTeamId')`,
-    ),
+    uniqueIndex('integration_provider_slack_team_idx')
+      .on(sql`coalesce(${table.config} ->> 'slackTeamId', nullif(${table.externalId}, 'default'))`)
+      .where(
+        sql`${table.provider} = 'slack' and coalesce(${table.config} ->> 'slackTeamId', nullif(${table.externalId}, 'default')) is not null`,
+      ),
     index('integration_provider_external_idx').on(table.provider, table.externalId),
   ],
 );

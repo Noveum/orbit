@@ -1,29 +1,30 @@
-import { z } from 'zod';
+import { slackCallbackSchema } from '@orbit/shared';
 import { absoluteUrl, slackAppConfig } from '@/lib/env.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { consumeOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 import {
-  slackIntegrationEnabled,
+  type SlackCallbackStatus,
+  slackCallbackStatusForFailure,
+} from '@/lib/integrations/slack-callback-status.ts';
+import {
+  slackIntegrationEnabledForOrganization,
   slackIntegrationUnavailable,
+  slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
 
-const callbackSchema = z.object({
-  code: z.string().min(1),
-  state: z.string().min(1),
-});
-
-function settingsRedirect(status: 'connected' | 'error'): Response {
+function settingsRedirect(status: SlackCallbackStatus): Response {
   return Response.redirect(absoluteUrl(`/settings/integrations?slack=${status}`), 302);
 }
 
 export async function GET(request: Request): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   const params = Object.fromEntries(new URL(request.url).searchParams.entries());
-  const parsed = callbackSchema.safeParse(params);
+  const parsed = slackCallbackSchema.safeParse(params);
   if (!parsed.success) return settingsRedirect('error');
 
   const state = await consumeOAuthState(parsed.data.state, integrationStateSecret(), 'slack');
   if (state === null) return settingsRedirect('error');
+  if (!slackIntegrationEnabledForOrganization(state.org)) return slackIntegrationUnavailable();
 
   const config = slackAppConfig();
   try {
@@ -39,6 +40,6 @@ export async function GET(request: Request): Promise<Response> {
     return settingsRedirect('connected');
   } catch (error) {
     console.error('Could not complete the Slack installation.', error);
-    return settingsRedirect('error');
+    return settingsRedirect(slackCallbackStatusForFailure(error));
   }
 }

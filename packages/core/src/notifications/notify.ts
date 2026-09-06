@@ -9,7 +9,11 @@ import {
   notifyMany,
 } from '@orbit/services/notifications';
 import { escapeSlackText, SlackApiError } from '@orbit/services/slack';
-import { dispatchSlackDmResult, SlackDmDispatchError } from '@orbit/services/slack/dispatch';
+import {
+  dispatchSlackDmResult,
+  isSlackReauthorizationError,
+  SlackDmDispatchError,
+} from '@orbit/services/slack/dispatch';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Executor } from '../internal.ts';
 
@@ -23,7 +27,7 @@ type SlackDmFinalizer = (input: {
   readonly providerMessage: Awaited<ReturnType<typeof dispatchSlackDmResult>>;
 }) => Promise<boolean>;
 
-interface SlackDmWorkerOptions {
+export interface SlackDmWorkerOptions {
   readonly concurrency?: number;
   readonly deadlineAt?: Date;
   readonly now?: () => Date;
@@ -65,7 +69,7 @@ export async function deliverPendingSlackDms(
   fetch: typeof globalThis.fetch = globalThis.fetch,
   dispatch: typeof dispatchSlackDmResult = dispatchSlackDmResult,
   finalize?: SlackDmFinalizer,
-  options: SlackDmWorkerOptions = {},
+  options: SlackDmWorkerOptions & { readonly organizationId?: string } = {},
 ): Promise<number> {
   const now = options.now ?? (() => new Date());
   const startedAt = now();
@@ -80,7 +84,13 @@ export async function deliverPendingSlackDms(
   let claimedCount = 0;
   while (claimedCount < maximumDeliveries && now().getTime() < deadlineAt.getTime()) {
     const claimLimit = Math.min(concurrency, maximumDeliveries - claimedCount);
-    const claimed = await claimSlackDmDeliveries(database, claimLimit, now(), true);
+    const claimed = await claimSlackDmDeliveries(
+      database,
+      claimLimit,
+      now(),
+      true,
+      options.organizationId,
+    );
     if (claimed.length === 0) break;
     claimedCount += claimed.length;
     const rows = await database
@@ -131,7 +141,7 @@ async function deliverClaimedSlackDm(
       fetch,
     });
   } catch (error) {
-    console.error('[orbit] Slack DM retry failed', error);
+    console.error('[orbit] Slack DM delivery failed');
     await finalizeSlackDmFailure(database, notification.organizationId, delivery, error, now());
     return 0;
   }
@@ -200,12 +210,11 @@ async function finalizeSlackDmFailure(
   let code = '';
   if (error instanceof SlackDmDispatchError) code = error.slackCode ?? '';
   else if (cause instanceof SlackApiError) code = cause.code;
-  if (['invalid_auth', 'account_inactive', 'missing_scope', 'token_revoked'].includes(code)) {
+  if (code === 'credential_unavailable' || isSlackReauthorizationError(cause)) {
     const reauthorizationMarked = await markSlackReauthorizationRequired(
       database,
       organizationId,
       error instanceof SlackDmDispatchError ? error.integrationId : undefined,
-      error instanceof SlackDmDispatchError ? error.tokenUsed() : undefined,
       error instanceof SlackDmDispatchError ? error.integrationVersion() : undefined,
     );
     if (reauthorizationMarked) {

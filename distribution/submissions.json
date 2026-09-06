@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "lastVerified": "2026-09-04",
+  "channels": [
+    {
+      "id": "official-mcp-registry",
+      "name": "Official MCP Registry",
+      "kind": "mcp-registry",
+      "status": "live",
+      "submittedAt": "2026-09-03",
+      "account": "GitHub OIDC for Noveum/orbit",
+      "evidence": "io.github.Noveum/orbit@0.1.0 published successfully",
+      "publicUrl": "https://registry.modelcontextprotocol.io"
+    },
+    {
+      "id": "glama",
+      "name": "Glama",
+      "kind": "mcp-directory",
+      "status": "pending",
+      "submittedAt": "2026-09-03",
+      "account": "shashank@noveum.ai",
+      "evidence": "Support tickets 130233388 and 130255189",
+      "nextAction": "Wait for indexing or ownership challenge"
+    },
+    {
+      "id": "mcp-so",
+      "name": "MCP.so",
+      "kind": "mcp-directory",
+      "status": "submitted",
+      "submittedAt": "2026-09-04",
+      "account": "Public repository submission endpoint",
+      "evidence": "Noveum/orbit accepted by POST /api/submit-project",
+      "nextAction": "Confirm the public listing after asynchronous summarization"
+    },
+    {
+      "id": "mcp-directory",
+      "name": "MCP.Directory",
+      "kind": "mcp-directory",
+      "status": "submitted",
+      "submittedAt": "2026-09-03",
+      "account": "shashank@noveum.ai",
+      "evidence": "Ingestion and publisher-claim request sent",
+      "nextAction": "Wait for listing or claim instructions"
+    },
+    {
+      "id": "mcp-server-finder",
+      "name": "MCP Server Finder",
+      "kind": "mcp-directory",
+      "status": "submitted",
+      "submittedAt": "2026-09-03",
+      "account": "shashank@noveum.ai",
+      "evidence": "Complete listing request sent",
+      "nextAction": "Wait for response or public listing"
+    },
+    {
+      "id": "tensorblock-mcp-index",
+      "name": "TensorBlock MCP Index",
+      "kind": "mcp-directory",
+      "status": "submitted",
+      "submittedAt": "2026-09-04",
+      "account": "shashank@noveum.ai",
+      "evidence": "Complete submission packet sent to the official contact",
+      "nextAction": "Wait for issue or listing URL"
+    },
+    {
+      "id": "pulsemcp",
+      "name": "PulseMCP",
+      "kind": "mcp-directory",
+      "status": "submitted",
+      "submittedAt": "2026-09-04",
+      "account": "shashank@noveum.ai",
+      "evidence": "Official Registry ingestion verification requested",
+      "nextAction": "Confirm downstream official listing"
+    },
+    {
+      "id": "allmcps",
+      "name": "AllMCPs",
+      "kind": "mcp-directory",
+      "status": "planned",
+      "account": "shashank@noveum.ai",
+      "evidence": "Maintainer confirmed the official submit route",
+      "nextAction": "Complete the public form or submit_mcp_server tool and retain the returned claim URL"
+    },
+    {
+      "id": "smithery",
+      "name": "Smithery",
+      "kind": "mcp-directory",
+      "status": "blocked",
+      "account": "GitHub account required",
+      "evidence": "Orbit server card is live; guessed contact email bounced",
+      "blocker": "Use the authenticated publish or claim flow",
+      "nextAction": "Connect Noveum GitHub and publish the remote endpoint"
+    },
+    {
+      "id": "mcpservers-org",
+      "name": "MCPServers.org",
+      "kind": "mcp-directory",
+      "status": "planned",
+      "account": "shashank@noveum.ai",
+      "blocker": "Public form confirmation has not been captured",
+      "nextAction": "Submit once and record the review URL"
+    },
+    {
+      "id": "cline-marketplace",
+      "name": "Cline MCP Marketplace",
+      "kind": "mcp-directory",
+      "status": "planned",
+      "account": "GitHub maintainer account",
+      "blocker": "External issue creation is not permitted through the connected integration",
+      "nextAction": "Run one clean Cline OAuth test, then submit the prepared issue form"
+    },
+    {
+      "id": "awesome-remote-mcp",
+      "name": "Awesome Remote MCP Servers",
+      "kind": "mcp-list",
+      "status": "planned",
+      "account": "GitHub maintainer account",
+      "blocker": "External repository write is not permitted through the connected integration",
+      "nextAction": "Submit the prepared Project Management row through an issue or pull request"
+    },
+    {
+      "id": "vibe-index",
+      "name": "Vibe Index",
+      "kind": "developer-directory",
+      "status": "blocked",
+      "account": "GitHub account required",
+      "evidence": "Guessed email address bounced and must not be retried",
+      "blocker": "Use the GitHub-authenticated site submission flow"
+    },
+    {
+      "id": "mcp-market",
+      "name": "MCP Market",
+      "kind": "mcp-directory",
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Support confirmed free open-source listings and a separate paid Remote MCP option",
+      "blocker": "No paid Remote MCP purchase is authorized",
+      "nextAction": "Use the free repository listing after support confirms publisher association"
+    },
+    {
+      "id": "selfh-st",
+      "name": "selfh.st",
+      "kind": "self-hosted-directory",
+      "status": "submitted",
+      "submittedAt": "2026-09-03",
+      "account": "shashank@noveum.ai",
+      "evidence": "Complete upstream submission sent with the Preview disclosure",
+      "nextAction": "Wait for listing or editorial response"
+    },
+    {
+      "id": "console-dev",
+      "name": "Console.dev",
+      "kind": "editorial",
+      "status": "pending",
+      "submittedAt": "2026-09-04",
+      "account": "shashank@noveum.ai",
+      "evidence": "Editorial submission acknowledged for newsletter review",
+      "nextAction": "Monitor future newsletters without sending a duplicate pitch"
+    },
+    {
+      "id": "product-hunt",
+      "name": "Product Hunt",
+      "kind": "product-launch",
+      "status": "planned",
+      "account": "Personal maker account required",
+      "evidence": "Complete draft copy and gallery plan are tracked in issue 390",
+      "blocker": "Maker account and final gallery assets need interactive review",
+      "nextAction": "Create a draft only; do not schedule or launch without approval"
+    },
+    {
+      "id": "alternativeto",
+      "name": "AlternativeTo",
+      "kind": "software-directory",
+      "status": "planned",
+      "account": "Personal verified account required",
+      "evidence": "Complete form packet is tracked in issue 387",
+      "nextAction": "Submit to the free review queue and add alternatives only after approval"
+    },
+    {
+      "id": "saashub",
+      "name": "SaaSHub",
+      "kind": "software-directory",
+      "status": "planned",
+      "account": "Verified account required",
+      "evidence": "Complete categories, competitors, and copy packet is tracked in issue 387",
+      "nextAction": "Use the official form and verify with the Noveum domain"
+    },
+    {
+      "id": "tilobox",
+      "name": "TiloBox",
+      "kind": "open-source-directory",
+      "status": "planned",
+      "account": "No account expected",
+      "evidence": "Complete reviewer packet is tracked in issue 387",
+      "nextAction": "Submit through the official human-reviewed form"
+    },
+    {
+      "id": "opensourcealternative",
+      "name": "OpenSourceAlternative.to",
+      "kind": "open-source-directory",
+      "status": "planned",
+      "account": "shashank@noveum.ai",
+      "evidence": "Free-waitlist packet for Linear is tracked in issue 387",
+      "blocker": "Do not purchase the expedited review without explicit approval"
+    },
+    {
+      "id": "libhunt",
+      "name": "LibHunt",
+      "kind": "open-source-directory",
+      "status": "planned",
+      "account": "Login required",
+      "evidence": "Authenticated contribution packet is tracked in issue 387"
+    },
+    {
+      "id": "open-hub",
+      "name": "Black Duck Open Hub",
+      "kind": "open-source-index",
+      "status": "planned",
+      "account": "GitHub login required",
+      "evidence": "Project metadata packet is tracked in issue 387"
+    },
+    {
+      "id": "vercel-community-templates",
+      "name": "Vercel Community Templates",
+      "kind": "deployment-template",
+      "status": "blocked",
+      "evidence": "Former public submission route returned 404",
+      "blocker": "New community-template intake is currently closed",
+      "nextAction": "Monitor for a reopened official submission route"
+    },
+    {
+      "id": "coolify-official",
+      "name": "Coolify Official Service Catalog",
+      "kind": "deployment-catalog",
+      "status": "blocked",
+      "blocker": "Upstream eligibility and production deployment-kit gates are not yet satisfied",
+      "nextAction": "Ship the production Compose path first and re-check current contribution rules"
+    },
+    {
+      "id": "awesome-selfhosted",
+      "name": "Awesome-Selfhosted",
+      "kind": "open-source-list",
+      "status": "blocked",
+      "blocker": "Release-age and provider-neutral production-deployment requirements are not yet satisfied",
+      "nextAction": "Re-check eligibility after the production deployment release and four-month release-age gate"
+    }
+  ]
+}

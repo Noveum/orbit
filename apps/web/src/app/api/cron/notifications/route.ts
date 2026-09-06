@@ -26,6 +26,6 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const delivered = slackIntegrationEnabled() ? await deliverPendingSlackDms(db) : 0;
+  const delivered = slackIntegrationEnabled() ? await deliverPendingSlackDms(db, 100) : 0;
   return Response.json({ delivered });
 }

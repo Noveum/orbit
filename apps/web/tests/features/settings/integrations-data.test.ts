@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import {
   addMember,
   createWorkspace,
@@ -7,6 +7,7 @@ import {
 } from '@orbit/core/test-support';
 import { db, eq, schema } from '@orbit/db';
 import { bindGithubInstallation, replaceGithubRepositories } from '@orbit/services';
+import { encryptSlackBotToken } from '@orbit/services/slack/credentials';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { randomUUIDv7 } from '@orbit/shared/utils';
@@ -20,6 +21,16 @@ const INSTALLATION_ID = '151887625';
 const SECRET_REPOSITORY = 'Noveum/unannounced-acquisition';
 
 let workspace: Workspace;
+const previousAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
+process.env['BETTER_AUTH_SECRET'] ??= 'slack-integrations-data-test-secret';
+
+afterAll(() => {
+  if (previousAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = previousAuthSecret;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
+});
 
 async function seedPrivateCatalogue(): Promise<void> {
   await db.transaction(async (tx) => {
@@ -59,6 +70,7 @@ async function principalWithRole(role: OrgRole): Promise<Principal> {
 }
 
 beforeEach(async () => {
+  delete process.env['SLACK_ENABLED'];
   await resetDatabase();
   workspace = await createWorkspace('Noveum');
   await seedPrivateCatalogue();
@@ -79,6 +91,9 @@ describe('loadIntegrationSettings', () => {
   it('loads only the canonical Slack integration and its channels when enabled', async () => {
     const canonicalIntegrationId = `int_${randomUUIDv7()}`;
     const legacyIntegrationId = `int_${randomUUIDv7()}`;
+    const teammate = await addMember(workspace, 'member', { name: 'Current Slack Member' });
+    const former = await addMember(workspace, 'member', { name: 'Former Slack Member' });
+    await db.delete(schema.member).where(eq(schema.member.userId, former.user.id));
     await db.insert(schema.integration).values([
       {
         id: canonicalIntegrationId,
@@ -86,7 +101,18 @@ describe('loadIntegrationSettings', () => {
         provider: 'slack',
         externalId: 'default',
         connectedById: workspace.adminUser.id,
-        credentials: { botToken: 'xoxb-canonical' },
+        credentials: {
+          botToken: encryptSlackBotToken({
+            organizationId: workspace.organizationId,
+            integrationId: canonicalIntegrationId,
+            token: 'xoxb-current',
+          }),
+        },
+        config: {
+          credentialVersion: 'current-version',
+          slackTeamId: 'T-CANONICAL',
+          scopes: ['users:read', 'users:read.email'],
+        },
         createdAt: new Date('2026-01-01T00:00:00Z'),
       },
       {
@@ -117,13 +143,158 @@ describe('loadIntegrationSettings', () => {
         channelName: 'legacy-private',
       },
     ]);
+    await db.insert(schema.slackUserMapping).values([
+      {
+        id: `sum_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        integrationId: canonicalIntegrationId,
+        userId: workspace.adminUser.id,
+        slackUserId: 'U-CANONICAL-ADMIN',
+        slackDisplayName: 'Admin',
+      },
+      {
+        id: `sum_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        integrationId: canonicalIntegrationId,
+        userId: former.user.id,
+        slackUserId: 'U-CANONICAL-FORMER',
+        slackDisplayName: 'Former',
+      },
+      {
+        id: `sum_${randomUUIDv7()}`,
+        organizationId: workspace.organizationId,
+        integrationId: legacyIntegrationId,
+        userId: teammate.user.id,
+        slackUserId: 'U-LEGACY-TEAMMATE',
+        slackDisplayName: 'Legacy',
+      },
+    ]);
 
-    const settings = await loadIntegrationSettings(workspace.admin, { slackEnabled: true });
+    process.env['SLACK_ENABLED'] = 'true';
+
+    const settings = await loadIntegrationSettings(workspace.admin);
 
     expect(settings.slack?.slackConnected).toBe(true);
     expect(settings.slack?.slackHasToken).toBe(true);
+    expect(settings.slack?.memberSync.ready).toBe(true);
     expect(settings.slack?.channels.map((channel) => channel.channelId)).toEqual(['C-CANONICAL']);
+    expect(settings.slack?.memberSync).toEqual({ eligible: 2, mapped: 1, ready: true });
   });
+
+  it('requires reconnecting before a scope-deficient Slack connection can sync members', async () => {
+    const scopeIntegrationId = `int_${randomUUIDv7()}`;
+    await db.insert(schema.integration).values({
+      id: scopeIntegrationId,
+      organizationId: workspace.organizationId,
+      provider: 'slack',
+      externalId: 'default',
+      connectedById: workspace.adminUser.id,
+      credentials: {
+        botToken: encryptSlackBotToken({
+          organizationId: workspace.organizationId,
+          integrationId: scopeIntegrationId,
+          token: 'xoxb-legacy',
+        }),
+      },
+      config: {
+        credentialVersion: 'legacy-version',
+        slackTeamId: 'T-LEGACY',
+        scopes: ['chat:write'],
+      },
+    });
+    process.env['SLACK_ENABLED'] = 'true';
+
+    const settings = await loadIntegrationSettings(workspace.admin);
+
+    expect(settings.slack?.memberSync.ready).toBe(false);
+  });
+
+  it('requires reconnecting when the stored Slack token cannot be decrypted', async () => {
+    const integrationId = `int_${randomUUIDv7()}`;
+    const activeSecret = process.env['BETTER_AUTH_SECRET'];
+    if (activeSecret === undefined) throw new Error('Expected an active auth secret.');
+    const retiredToken = (() => {
+      process.env['BETTER_AUTH_SECRET'] = 'retired-slack-integrations-data-secret';
+      try {
+        return encryptSlackBotToken({
+          organizationId: workspace.organizationId,
+          integrationId,
+          token: 'xoxb-retired',
+        });
+      } finally {
+        process.env['BETTER_AUTH_SECRET'] = activeSecret;
+      }
+    })();
+    await db.insert(schema.integration).values({
+      id: integrationId,
+      organizationId: workspace.organizationId,
+      provider: 'slack',
+      externalId: 'default',
+      connectedById: workspace.adminUser.id,
+      credentials: { botToken: retiredToken },
+      config: {
+        credentialVersion: 'retired-version',
+        slackTeamId: 'T-RETIRED',
+        scopes: ['users:read', 'users:read.email'],
+      },
+    });
+    process.env['SLACK_ENABLED'] = 'true';
+
+    const settings = await loadIntegrationSettings(workspace.admin);
+
+    expect(settings.slack?.memberSync.ready).toBe(false);
+  });
+
+  for (const readinessCase of [
+    {
+      name: 'requires reconnecting when Slack explicitly marks the connection for reauthorization',
+      config: {
+        credentialVersion: 'reauthorize-version',
+        slackTeamId: 'T-REAUTHORIZE',
+        scopes: ['users:read', 'users:read.email'],
+        slackReauthorize: true,
+      },
+    },
+    {
+      name: 'keeps member sync unavailable when the Slack team id is missing',
+      config: {
+        credentialVersion: 'missing-team-version',
+        scopes: ['users:read', 'users:read.email'],
+      },
+    },
+    {
+      name: 'keeps member sync unavailable when the Slack team id is empty',
+      config: {
+        credentialVersion: 'empty-team-version',
+        slackTeamId: '',
+        scopes: ['users:read', 'users:read.email'],
+      },
+    },
+  ] as const) {
+    it(readinessCase.name, async () => {
+      const integrationId = `int_${randomUUIDv7()}`;
+      await db.insert(schema.integration).values({
+        id: integrationId,
+        organizationId: workspace.organizationId,
+        provider: 'slack',
+        externalId: 'default',
+        connectedById: workspace.adminUser.id,
+        credentials: {
+          botToken: encryptSlackBotToken({
+            organizationId: workspace.organizationId,
+            integrationId,
+            token: 'xoxb-readiness',
+          }),
+        },
+        config: readinessCase.config,
+      });
+      process.env['SLACK_ENABLED'] = 'true';
+
+      const settings = await loadIntegrationSettings(workspace.admin);
+
+      expect(settings.slack?.memberSync.ready).toBe(false);
+    });
+  }
 
   for (const role of ['guest', 'contributor', 'member'] as const) {
     it(`hands a ${role} no repository name at all`, async () => {

@@ -15,7 +15,7 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { publish } from '@/lib/api/handler.ts';
 import { absoluteUrl } from '@/lib/env.ts';
-import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
+import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 
 const SIGNATURE_HEADER = 'x-hub-signature-256';
 const EVENT_HEADER = 'x-github-event';
@@ -115,9 +115,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const slackEnabled = slackIntegrationEnabled();
     const outcome = await db.transaction(async (tx) => {
       const applied = await applyGithubEvent(tx, { eventName, body, organizationId });
+      const slackEnabled =
+        applied.organizationId !== null &&
+        slackIntegrationEnabledForOrganization(applied.organizationId);
       const notified = await notifyMany(tx, applied.notificationEvents, {
         slackEnabled,
         sourceDeliveryId: deliveryId,
@@ -130,13 +132,14 @@ export async function POST(request: Request): Promise<Response> {
         slack: notified.slack,
         ignoredReason: applied.ignoredReason,
         slackText: applied.notificationEvents[0]?.title ?? null,
+        slackEnabled,
       };
     });
 
     await publish(outcome.actions);
 
     if (
-      slackEnabled &&
+      outcome.slackEnabled &&
       outcome.organizationId !== null &&
       outcome.slackText !== null &&
       outcome.slack.length > 0

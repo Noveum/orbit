@@ -2,38 +2,72 @@ import type { Database, Transaction } from '@orbit/db';
 import {
   integration,
   issue,
+  member,
+  organization,
   slackChannelSync,
   slackUserMapping,
   team,
   user,
   workflowState,
 } from '@orbit/db/schema';
-import { conflict, type Priority, parseIssueIdentifier } from '@orbit/shared';
-import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
+import { conflict, type Priority, parseIssueIdentifier, validationFailed } from '@orbit/shared';
+import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
+import { assertCan } from '@orbit/shared/policy';
+import { chunk, randomUUIDv7 } from '@orbit/shared/utils';
+import { and, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
+import {
+  decryptSlackBotToken,
+  encryptSlackBotToken,
+  SlackCredentialUnavailableError,
+} from './credentials.ts';
 import {
   buildUnfurl,
   SlackApiError,
   type SlackBlock,
   SlackClient,
+  type SlackConversations,
   type SlackIssue,
   type SlackMessageRef,
   type SlackUnfurl,
+  type SlackUser,
 } from './index.ts';
 
 export type SlackDatabase = Database | Transaction;
 
-const credentialsSchema = z.object({ botToken: z.string().min(1).optional() });
+const SLACK_TEAM_CLAIMED = 'That Slack workspace is already connected to another Orbit workspace.';
+const SLACK_CHANNEL_UNAVAILABLE = 'Invite Orbit to the Slack channel before mapping it.';
+const SLACK_CHANNEL_ACCESS_ERRORS = new Set(['channel_not_found', 'not_in_channel']);
+const SLACK_REAUTHORIZATION_ERRORS = new Set([
+  'account_inactive',
+  'invalid_auth',
+  'missing_scope',
+  'not_authed',
+  'token_expired',
+  'token_revoked',
+]);
+const SLACK_USER_MAPPING_INSERT_BATCH_SIZE = 500;
+
+export function slackCredentialVersionExpression(): SQL<string> {
+  return sql<string>`coalesce(${integration.config} ->> 'credentialVersion', extract(epoch from ${integration.updatedAt})::text)`;
+}
 
 export interface SlackContext {
   readonly integrationId: string;
   readonly integrationVersion: string;
   readonly token: string | null;
+  readonly credentialUnavailable?: boolean;
   readonly scopes: string[];
   readonly hasDirectMessageScope: boolean;
   readonly reauthorize: boolean;
   readonly updatedAt: Date;
+}
+
+interface SlackContextRow {
+  readonly id: string;
+  readonly credentials: unknown;
+  readonly config: Record<string, unknown>;
+  readonly updatedAt: Date;
+  readonly integrationVersion: string;
 }
 
 export async function resolveSlackContext(
@@ -52,13 +86,27 @@ export async function resolveSlackContext(
       credentials: integration.credentials,
       config: integration.config,
       updatedAt: integration.updatedAt,
-      integrationVersion: sql<string>`extract(epoch from ${integration.updatedAt})::text`,
+      integrationVersion: slackCredentialVersionExpression(),
     })
     .from(integration)
     .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
-  const parsed = credentialsSchema.safeParse(row.credentials);
+  return slackContextFromRow(row, organizationId);
+}
+
+function slackContextFromRow(row: SlackContextRow, organizationId: string): SlackContext {
+  let token: string | null = null;
+  let credentialUnavailable = false;
+  try {
+    token = decryptSlackBotToken(row.credentials, {
+      organizationId,
+      integrationId: row.id,
+    });
+  } catch (error) {
+    if (!(error instanceof SlackCredentialUnavailableError)) throw error;
+    credentialUnavailable = true;
+  }
   const configuredScopes = row.config['scopes'];
   const scopes = Array.isArray(configuredScopes)
     ? configuredScopes.filter((scope): scope is string => typeof scope === 'string')
@@ -67,12 +115,149 @@ export async function resolveSlackContext(
   return {
     integrationId: row.id,
     integrationVersion: row.integrationVersion,
-    token: parsed.success ? (parsed.data.botToken ?? null) : null,
+    token,
+    ...(credentialUnavailable ? { credentialUnavailable: true } : {}),
     scopes,
     hasDirectMessageScope: scopes.includes('im:write') && scopes.includes('chat:write'),
     reauthorize,
     updatedAt: row.updatedAt,
   };
+}
+
+export async function listSlackConversations(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly externalId?: string;
+    readonly cursor?: string;
+  },
+): Promise<SlackConversations> {
+  const context = await resolveSlackContext(
+    database,
+    input.organizationId,
+    input.externalId ?? 'default',
+  );
+  if (context === null || context.token === null) return { channels: [], nextCursor: null };
+  return await new SlackClient({ token: context.token }).listConversations(
+    input.cursor === undefined ? {} : { cursor: input.cursor },
+  );
+}
+
+export async function sendSlackUnfurls(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly integrationId: string;
+    readonly slackTeamId: string;
+    readonly integrationVersion: string;
+    readonly channel: string;
+    readonly ts: string;
+    readonly unfurls: SlackUnfurl;
+    readonly fetch?: typeof globalThis.fetch;
+  },
+): Promise<boolean> {
+  const [current] = await database
+    .select({
+      id: integration.id,
+      credentials: integration.credentials,
+      config: integration.config,
+      updatedAt: integration.updatedAt,
+      integrationVersion: slackCredentialVersionExpression(),
+    })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.id, input.integrationId),
+        eq(integration.organizationId, input.organizationId),
+        eq(integration.provider, 'slack'),
+        eq(slackCredentialVersionExpression(), input.integrationVersion),
+        or(
+          sql`${integration.config} ->> 'slackTeamId' = ${input.slackTeamId}`,
+          and(
+            eq(integration.externalId, input.slackTeamId),
+            sql`not (${integration.config} ? 'slackTeamId')`,
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  if (current === undefined) return false;
+  const context = slackContextFromRow(current, input.organizationId);
+  if (context.token === null) return false;
+  await new SlackClient({
+    token: context.token,
+    ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+  }).unfurl({
+    channel: input.channel,
+    ts: input.ts,
+    unfurls: input.unfurls,
+  });
+  return true;
+}
+
+export async function assertSlackIntegrationManager(
+  database: SlackDatabase,
+  input: { readonly organizationId: string; readonly userId: string },
+): Promise<void> {
+  const [workspace] = await database
+    .select({ deletionRequestedAt: organization.deletionRequestedAt })
+    .from(organization)
+    .where(eq(organization.id, input.organizationId))
+    .limit(1);
+  if (workspace !== undefined) assertSlackWorkspaceAvailable(workspace.deletionRequestedAt);
+  const [membership] = await database
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
+    .limit(1);
+  assertSlackManager(input, membership?.role);
+}
+
+async function assertSlackIntegrationManagerForUpdate(
+  database: Transaction,
+  input: { readonly organizationId: string; readonly userId: string },
+): Promise<void> {
+  const [workspace] = await database
+    .select({ deletionRequestedAt: organization.deletionRequestedAt })
+    .from(organization)
+    .where(eq(organization.id, input.organizationId))
+    .limit(1)
+    .for('update');
+  if (workspace !== undefined) assertSlackWorkspaceAvailable(workspace.deletionRequestedAt);
+  const [membership] = await database
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, input.organizationId), eq(member.userId, input.userId)))
+    .limit(1)
+    .for('update');
+  assertSlackManager(input, membership?.role);
+}
+
+function assertSlackWorkspaceAvailable(deletionRequestedAt: Date | null): void {
+  if (deletionRequestedAt !== null) {
+    throw conflict('Workspace deletion is in progress.', {
+      details: { reason: 'workspace_unavailable' },
+    });
+  }
+}
+
+function assertSlackManager(
+  input: { readonly organizationId: string; readonly userId: string },
+  role: string | undefined,
+): void {
+  assertCan(
+    {
+      organizationId: input.organizationId,
+      userId: input.userId,
+      role: slackOrganizationRole(role),
+      teamIds: [],
+    },
+    'integration:manage',
+  );
+}
+
+function slackOrganizationRole(role: string | undefined): OrgRole {
+  return ORG_ROLES.find((candidate) => candidate === role) ?? 'guest';
 }
 
 export async function upsertSlackUserMapping(
@@ -108,6 +293,270 @@ export async function upsertSlackUserMapping(
     });
 }
 
+export type SlackUserMappingSyncResult =
+  | {
+      readonly status: 'applied';
+      readonly eligibleMembers: number;
+      readonly mappedMembers: number;
+    }
+  | { readonly status: 'stale' };
+
+interface SlackUserMappingSyncContext {
+  readonly integrationId: string;
+  readonly integrationVersion: string;
+  readonly slackTeamId: string;
+  readonly token: string;
+}
+
+interface SlackMemberIdentity {
+  readonly userId: string;
+  readonly email: string;
+}
+
+export function slackUserMappingSyncReady(input: {
+  readonly context: SlackContext | null;
+  readonly slackTeamId: unknown;
+}): input is {
+  readonly context: SlackContext & { readonly token: string };
+  readonly slackTeamId: string;
+} {
+  return (
+    input.context !== null &&
+    input.context.token !== null &&
+    !input.context.reauthorize &&
+    typeof input.slackTeamId === 'string' &&
+    input.slackTeamId.length > 0 &&
+    slackDirectoryScopesPresent(input.context.scopes)
+  );
+}
+
+export async function syncSlackUserMappings(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly userId: string;
+    readonly fetch?: typeof globalThis.fetch;
+  },
+): Promise<SlackUserMappingSyncResult> {
+  await assertSlackIntegrationManager(database, input);
+  const context = await slackUserMappingSyncContext(database, input.organizationId);
+  let slackUsers: SlackUser[];
+  try {
+    slackUsers = await new SlackClient({
+      token: context.token,
+      ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+    }).listUsers();
+  } catch (error) {
+    if (isSlackReauthorizationError(error)) {
+      await markSlackSyncReauthorizationRequired(database, input.organizationId, context);
+    }
+    throw error;
+  }
+  const reconcile = async (tx: Transaction): Promise<SlackUserMappingSyncResult> => {
+    return await reconcileSlackUserMappings(tx, input, context, slackUsers);
+  };
+  if ('transaction' in database) return await database.transaction(reconcile);
+  return await reconcile(database);
+}
+
+export function isSlackReauthorizationError(error: unknown): error is SlackApiError {
+  return error instanceof SlackApiError && SLACK_REAUTHORIZATION_ERRORS.has(error.code);
+}
+
+async function markSlackSyncReauthorizationRequired(
+  database: SlackDatabase,
+  organizationId: string,
+  context: SlackUserMappingSyncContext,
+): Promise<void> {
+  await database
+    .update(integration)
+    .set({
+      config: sql`jsonb_set(${integration.config}, '{slackReauthorize}', 'true'::jsonb)`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(integration.id, context.integrationId),
+        eq(integration.organizationId, organizationId),
+        eq(integration.provider, 'slack'),
+        eq(integration.externalId, 'default'),
+        sql`${slackCredentialVersionExpression()} = ${context.integrationVersion}`,
+      ),
+    );
+}
+
+async function slackUserMappingSyncContext(
+  database: SlackDatabase,
+  organizationId: string,
+): Promise<SlackUserMappingSyncContext> {
+  const [row] = await database
+    .select({
+      id: integration.id,
+      credentials: integration.credentials,
+      config: integration.config,
+      updatedAt: integration.updatedAt,
+      integrationVersion: slackCredentialVersionExpression(),
+    })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.organizationId, organizationId),
+        eq(integration.provider, 'slack'),
+        eq(integration.externalId, 'default'),
+      ),
+    )
+    .limit(1);
+  if (row === undefined) throw validationFailed('Reconnect Slack before syncing members.');
+  const context = slackContextFromRow(row, organizationId);
+  const slackTeamId = row.config['slackTeamId'];
+  const readiness = { context, slackTeamId };
+  if (!slackUserMappingSyncReady(readiness)) {
+    throw validationFailed('Reconnect Slack before syncing members.');
+  }
+  return {
+    integrationId: readiness.context.integrationId,
+    integrationVersion: readiness.context.integrationVersion,
+    slackTeamId: readiness.slackTeamId,
+    token: readiness.context.token,
+  };
+}
+
+async function reconcileSlackUserMappings(
+  database: Transaction,
+  input: { readonly organizationId: string; readonly userId: string },
+  observed: SlackUserMappingSyncContext,
+  slackUsers: readonly SlackUser[],
+): Promise<SlackUserMappingSyncResult> {
+  await assertSlackIntegrationManagerForUpdate(database, input);
+  const [current] = await database
+    .select({
+      config: integration.config,
+      integrationVersion: slackCredentialVersionExpression(),
+    })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.id, observed.integrationId),
+        eq(integration.organizationId, input.organizationId),
+        eq(integration.provider, 'slack'),
+        eq(integration.externalId, 'default'),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  if (
+    current === undefined ||
+    current.integrationVersion !== observed.integrationVersion ||
+    current.config['slackTeamId'] !== observed.slackTeamId ||
+    current.config['slackReauthorize'] === true ||
+    !slackDirectoryScopesPresent(current.config['scopes'])
+  ) {
+    return { status: 'stale' };
+  }
+
+  const memberships = await database
+    .select({ userId: member.userId, email: user.email })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(eq(member.organizationId, input.organizationId))
+    .for('share', { of: member });
+  const existingMappings = await database
+    .select({
+      id: slackUserMapping.id,
+      userId: slackUserMapping.userId,
+      slackUserId: slackUserMapping.slackUserId,
+      slackChannelId: slackUserMapping.slackChannelId,
+      createdAt: slackUserMapping.createdAt,
+    })
+    .from(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.organizationId, input.organizationId),
+        eq(slackUserMapping.integrationId, observed.integrationId),
+      ),
+    )
+    .for('update');
+  const eligibleMembers = memberships.map((membership) => ({
+    userId: membership.userId,
+    email: membership.email.trim().toLowerCase(),
+  }));
+  const matches = unambiguousSlackUserMatches(eligibleMembers, slackUsers);
+  const existingByUserId = new Map(existingMappings.map((mapping) => [mapping.userId, mapping]));
+  const now = new Date();
+
+  await database
+    .delete(slackUserMapping)
+    .where(
+      and(
+        eq(slackUserMapping.organizationId, input.organizationId),
+        eq(slackUserMapping.integrationId, observed.integrationId),
+      ),
+    );
+  if (matches.length > 0) {
+    const mappingValues = matches.map(({ orbitUser, slackUser }) => {
+      const existing = existingByUserId.get(orbitUser.userId);
+      const sameIdentity = existing?.slackUserId === slackUser.id;
+      return {
+        id: sameIdentity ? existing.id : randomUUIDv7(),
+        organizationId: input.organizationId,
+        integrationId: observed.integrationId,
+        userId: orbitUser.userId,
+        slackUserId: slackUser.id,
+        slackDisplayName: slackUser.displayName,
+        slackChannelId: sameIdentity ? existing.slackChannelId : null,
+        createdAt: sameIdentity ? existing.createdAt : now,
+        updatedAt: now,
+      };
+    });
+    for (const mappingBatch of chunk(mappingValues, SLACK_USER_MAPPING_INSERT_BATCH_SIZE)) {
+      await database.insert(slackUserMapping).values(mappingBatch);
+    }
+  }
+  return {
+    status: 'applied',
+    eligibleMembers: eligibleMembers.length,
+    mappedMembers: matches.length,
+  };
+}
+
+function slackDirectoryScopesPresent(value: unknown): boolean {
+  return Array.isArray(value) && value.includes('users:read') && value.includes('users:read.email');
+}
+
+function unambiguousSlackUserMatches(
+  orbitUsers: readonly SlackMemberIdentity[],
+  slackUsers: readonly SlackUser[],
+): { readonly orbitUser: SlackMemberIdentity; readonly slackUser: SlackUser }[] {
+  const orbitByEmail = uniqueByNormalizedEmail(orbitUsers, (entry) => entry.email);
+  const slackByEmail = uniqueByNormalizedEmail(
+    slackUsers.filter(
+      (entry): entry is SlackUser & { readonly email: string } => entry.email !== null,
+    ),
+    (entry) => entry.email,
+  );
+  const matches: { orbitUser: SlackMemberIdentity; slackUser: SlackUser }[] = [];
+  for (const [email, orbitUser] of orbitByEmail) {
+    if (orbitUser === null) continue;
+    const slackUser = slackByEmail.get(email);
+    if (slackUser === undefined || slackUser === null) continue;
+    matches.push({ orbitUser, slackUser });
+  }
+  return matches.sort((left, right) => left.orbitUser.userId.localeCompare(right.orbitUser.userId));
+}
+
+function uniqueByNormalizedEmail<T>(
+  entries: readonly T[],
+  emailOf: (entry: T) => string,
+): Map<string, T | null> {
+  const byEmail = new Map<string, T | null>();
+  for (const entry of entries) {
+    const email = emailOf(entry).trim().toLowerCase();
+    if (email.length === 0) continue;
+    byEmail.set(email, byEmail.has(email) ? null : entry);
+  }
+  return byEmail;
+}
+
 export async function ensureSlackIntegration(
   database: SlackDatabase,
   input: {
@@ -118,13 +567,15 @@ export async function ensureSlackIntegration(
     readonly scopes?: readonly string[];
   },
 ): Promise<string> {
-  if ('transaction' in database) {
-    return await database.transaction(async (tx) => await persistSlackIntegration(tx, input));
-  }
-  return await persistSlackIntegration(database, input);
+  return (await writeSlackIntegration(database, input)).id;
 }
 
-async function persistSlackIntegration(
+export interface SlackIntegrationWrite {
+  readonly id: string;
+  readonly integrationVersion: string;
+}
+
+export async function ensureSlackIntegrationWithVersion(
   database: SlackDatabase,
   input: {
     readonly organizationId: string;
@@ -133,7 +584,47 @@ async function persistSlackIntegration(
     readonly externalId?: string;
     readonly scopes?: readonly string[];
   },
-): Promise<string> {
+): Promise<SlackIntegrationWrite> {
+  return await writeSlackIntegration(database, input);
+}
+
+async function writeSlackIntegration(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly connectedById: string;
+    readonly botToken: string;
+    readonly externalId?: string;
+    readonly scopes?: readonly string[];
+  },
+): Promise<SlackIntegrationWrite> {
+  try {
+    if ('transaction' in database) {
+      return await database.transaction(async (tx) => await persistSlackIntegration(tx, input));
+    }
+    return await persistSlackIntegration(database, input);
+  } catch (error) {
+    if (slackTeamUniqueViolation(error)) {
+      throw conflict(SLACK_TEAM_CLAIMED, { details: { reason: 'slack_team_claimed' } });
+    }
+    throw error;
+  }
+}
+
+async function persistSlackIntegration(
+  database: Transaction,
+  input: {
+    readonly organizationId: string;
+    readonly connectedById: string;
+    readonly botToken: string;
+    readonly externalId?: string;
+    readonly scopes?: readonly string[];
+  },
+): Promise<SlackIntegrationWrite> {
+  await assertSlackIntegrationManagerForUpdate(database, {
+    organizationId: input.organizationId,
+    userId: input.connectedById,
+  });
   await database.execute(
     sql`select pg_advisory_xact_lock(hashtext(${`slack-integration:${input.organizationId}`}))`,
   );
@@ -147,25 +638,35 @@ async function persistSlackIntegration(
   if (existingRows.length > 1) {
     throw conflict('This workspace has multiple Slack integrations and cannot reconnect safely.');
   }
+  await assertSlackTeamUnclaimed(database, input.organizationId, input.externalId);
   const existing = existingRows[0];
+  const credentialVersion = randomUUIDv7();
   if (existing === undefined) {
+    const integrationId = randomUUIDv7();
     const [created] = await database
       .insert(integration)
       .values({
-        id: randomUUIDv7(),
+        id: integrationId,
         organizationId: input.organizationId,
         provider: 'slack',
         externalId: 'default',
         connectedById: input.connectedById,
-        credentials: { botToken: input.botToken },
+        credentials: {
+          botToken: encryptSlackBotToken({
+            organizationId: input.organizationId,
+            integrationId,
+            token: input.botToken,
+          }),
+        },
         config: {
+          credentialVersion,
           ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
           ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
         },
       })
       .returning({ id: integration.id });
     if (created === undefined) throw new Error('Could not persist the Slack integration.');
-    return created.id;
+    return { id: created.id, integrationVersion: credentialVersion };
   }
 
   const configuredSlackTeamId = existing.config['slackTeamId'];
@@ -182,6 +683,7 @@ async function persistSlackIntegration(
   const slackTeamId = input.externalId ?? previousSlackTeamId;
   const config = {
     ...previousConfig,
+    credentialVersion,
     ...(slackTeamId === undefined ? {} : { slackTeamId }),
     ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
   };
@@ -190,14 +692,55 @@ async function persistSlackIntegration(
     .set({
       externalId: 'default',
       connectedById: input.connectedById,
-      credentials: { botToken: input.botToken },
+      credentials: {
+        botToken: encryptSlackBotToken({
+          organizationId: input.organizationId,
+          integrationId: existing.id,
+          token: input.botToken,
+        }),
+      },
       config,
       updatedAt: new Date(),
     })
     .where(eq(integration.id, existing.id))
     .returning({ id: integration.id });
   if (updated === undefined) throw new Error('Could not persist the Slack integration.');
-  return updated.id;
+  return { id: updated.id, integrationVersion: credentialVersion };
+}
+
+async function assertSlackTeamUnclaimed(
+  database: SlackDatabase,
+  organizationId: string,
+  slackTeamId: string | undefined,
+): Promise<void> {
+  if (slackTeamId === undefined) return;
+  const [claimed] = await database
+    .select({ organizationId: integration.organizationId })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.provider, 'slack'),
+        ne(integration.organizationId, organizationId),
+        sql`coalesce(${integration.config} ->> 'slackTeamId', nullif(${integration.externalId}, 'default')) = ${slackTeamId}`,
+      ),
+    )
+    .limit(1);
+  if (claimed !== undefined) {
+    throw conflict(SLACK_TEAM_CLAIMED, { details: { reason: 'slack_team_claimed' } });
+  }
+}
+
+function slackTeamUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as Record<string, unknown>;
+  if (
+    record['code'] === '23505' &&
+    (record['constraint_name'] === 'integration_provider_slack_team_idx' ||
+      record['constraint'] === 'integration_provider_slack_team_idx')
+  ) {
+    return true;
+  }
+  return slackTeamUniqueViolation(record['cause']);
 }
 
 export async function connectSlackChannel(
@@ -241,6 +784,79 @@ export async function connectSlackChannel(
         updatedAt: new Date(),
       },
     });
+}
+
+export async function connectCanonicalSlackChannel(
+  database: SlackDatabase,
+  input: {
+    readonly organizationId: string;
+    readonly userId: string;
+    readonly channelId: string;
+    readonly teamId: string | null;
+    readonly fetch?: typeof globalThis.fetch;
+  },
+): Promise<string> {
+  const context = await resolveSlackContext(database, input.organizationId, 'default');
+  if (context === null || context.token === null) {
+    throw validationFailed('Connect Slack before mapping a channel.');
+  }
+  let channel: Awaited<ReturnType<SlackClient['conversation']>>;
+  try {
+    channel = await new SlackClient({
+      token: context.token,
+      ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+    }).conversation(input.channelId);
+  } catch (error) {
+    if (error instanceof SlackApiError && SLACK_CHANNEL_ACCESS_ERRORS.has(error.code)) {
+      throw validationFailed(SLACK_CHANNEL_UNAVAILABLE);
+    }
+    throw error;
+  }
+  if (!channel.isMember) {
+    throw validationFailed(SLACK_CHANNEL_UNAVAILABLE);
+  }
+  const persist = async (transaction: Transaction): Promise<void> => {
+    await assertSlackIntegrationManagerForUpdate(transaction, {
+      organizationId: input.organizationId,
+      userId: input.userId,
+    });
+    const [current] = await transaction
+      .select({
+        id: integration.id,
+        integrationVersion: slackCredentialVersionExpression(),
+      })
+      .from(integration)
+      .where(
+        and(
+          eq(integration.id, context.integrationId),
+          eq(integration.organizationId, input.organizationId),
+          eq(integration.provider, 'slack'),
+          eq(integration.externalId, 'default'),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (
+      current === undefined ||
+      current.id !== context.integrationId ||
+      current.integrationVersion !== context.integrationVersion
+    ) {
+      throw conflict('Slack was reconnected while the channel was being verified. Try again.');
+    }
+    await connectSlackChannel(transaction, {
+      organizationId: input.organizationId,
+      integrationId: context.integrationId,
+      channelId: channel.id,
+      channelName: channel.name,
+      teamId: input.teamId,
+    });
+  };
+  if ('transaction' in database) {
+    await database.transaction(async (transaction) => await persist(transaction));
+  } else {
+    await persist(database);
+  }
+  return channel.id;
 }
 
 export async function disconnectSlackChannel(
@@ -327,6 +943,16 @@ export async function resolveSlackDmTarget(
   readonly slackUserId: string;
 } | null> {
   const context = await resolveSlackContext(database, organizationId, 'default');
+  return await resolveSlackDmTargetWithContext(database, organizationId, userId, context);
+}
+
+async function resolveSlackDmTargetWithContext(
+  database: SlackDatabase,
+  organizationId: string,
+  userId: string,
+  context: SlackContext | null,
+  lockMapping = false,
+): ReturnType<typeof resolveSlackDmTarget> {
   if (
     context === null ||
     context.token === null ||
@@ -334,13 +960,20 @@ export async function resolveSlackDmTarget(
     !context.hasDirectMessageScope
   )
     return null;
-  const [mapping] = await database
+  const query = database
     .select({
       id: slackUserMapping.id,
       slackChannelId: slackUserMapping.slackChannelId,
       slackUserId: slackUserMapping.slackUserId,
     })
     .from(slackUserMapping)
+    .innerJoin(
+      member,
+      and(
+        eq(member.organizationId, slackUserMapping.organizationId),
+        eq(member.userId, slackUserMapping.userId),
+      ),
+    )
     .where(
       and(
         eq(slackUserMapping.integrationId, context.integrationId),
@@ -349,6 +982,7 @@ export async function resolveSlackDmTarget(
       ),
     )
     .limit(1);
+  const [mapping] = lockMapping ? await query.for('update', { of: slackUserMapping }) : await query;
   return mapping === undefined
     ? null
     : {
@@ -360,7 +994,6 @@ export async function resolveSlackDmTarget(
 }
 
 export class SlackDmDispatchError extends Error {
-  readonly #integrationToken: string;
   readonly #integrationVersion: string;
   readonly integrationId: string;
   readonly slackCode: string | undefined;
@@ -369,15 +1002,13 @@ export class SlackDmDispatchError extends Error {
   constructor(context: SlackContext, cause: unknown) {
     super(cause instanceof Error ? cause.message : 'Slack DM dispatch failed');
     this.name = 'SlackDmDispatchError';
-    this.#integrationToken = context.token ?? '';
     this.#integrationVersion = context.integrationVersion;
     this.integrationId = context.integrationId;
     this.slackCode = cause instanceof SlackApiError ? cause.code : undefined;
+    if (cause instanceof SlackCredentialUnavailableError) {
+      this.slackCode = 'credential_unavailable';
+    }
     this.cause = cause;
-  }
-
-  tokenUsed(): string {
-    return this.#integrationToken;
   }
 
   integrationVersion(): string {
@@ -389,11 +1020,61 @@ export async function dispatchSlackDmResult(
   database: SlackDatabase,
   input: DispatchSlackDmInput,
 ): Promise<SlackDmDispatchResult> {
-  const target = await resolveSlackDmTarget(database, input.organizationId, input.userId);
+  const dispatch = async (tx: Transaction): Promise<SlackDmDispatchResult> => {
+    return await dispatchSlackDmResultLocked(tx, input);
+  };
+  if ('transaction' in database) {
+    const outcome = await database.transaction(async (tx) => {
+      try {
+        return { status: 'delivered' as const, result: await dispatch(tx) };
+      } catch (error) {
+        return { status: 'failed' as const, error };
+      }
+    });
+    if (outcome.status === 'failed') throw outcome.error;
+    return outcome.result;
+  }
+  return await dispatch(database);
+}
+
+async function dispatchSlackDmResultLocked(
+  database: Transaction,
+  input: DispatchSlackDmInput,
+): Promise<SlackDmDispatchResult> {
+  const [contextRow] = await database
+    .select({
+      id: integration.id,
+      credentials: integration.credentials,
+      config: integration.config,
+      updatedAt: integration.updatedAt,
+      integrationVersion: slackCredentialVersionExpression(),
+    })
+    .from(integration)
+    .where(
+      and(
+        eq(integration.organizationId, input.organizationId),
+        eq(integration.provider, 'slack'),
+        eq(integration.externalId, 'default'),
+      ),
+    )
+    .limit(1)
+    .for('share');
+  const observedContext =
+    contextRow === undefined ? null : slackContextFromRow(contextRow, input.organizationId);
+  if (observedContext?.credentialUnavailable === true) {
+    throw new SlackDmDispatchError(observedContext, new SlackCredentialUnavailableError());
+  }
+  const target = await resolveSlackDmTargetWithContext(
+    database,
+    input.organizationId,
+    input.userId,
+    observedContext,
+    true,
+  );
   if (target === null) return { delivered: 0, channel: null, ts: null };
-  const { context } = target;
+  const { context: targetContext } = target;
   const client = new SlackClient({
-    token: context.token,
+    token: targetContext.token,
     ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
   });
   try {
@@ -407,7 +1088,7 @@ export async function dispatchSlackDmResult(
         .where(
           and(
             eq(slackUserMapping.id, target.mappingId),
-            eq(slackUserMapping.integrationId, context.integrationId),
+            eq(slackUserMapping.integrationId, targetContext.integrationId),
             eq(slackUserMapping.organizationId, input.organizationId),
             eq(slackUserMapping.userId, input.userId),
           ),
@@ -430,7 +1111,7 @@ export async function dispatchSlackDmResult(
         .where(
           and(
             eq(slackUserMapping.id, target.mappingId),
-            eq(slackUserMapping.integrationId, context.integrationId),
+            eq(slackUserMapping.integrationId, targetContext.integrationId),
             eq(slackUserMapping.organizationId, input.organizationId),
             eq(slackUserMapping.userId, input.userId),
           ),
@@ -443,7 +1124,7 @@ export async function dispatchSlackDmResult(
     }
     return { delivered: 1, channel: message.channel, ts: message.ts };
   } catch (error) {
-    throw new SlackDmDispatchError(context, error);
+    throw new SlackDmDispatchError(targetContext, error);
   }
 }
 
@@ -515,7 +1196,10 @@ export async function loadSlackIssue(
   organizationId: string,
   identifier: string,
   url: string,
+  teamId?: string,
 ): Promise<SlackIssue | null> {
+  const filters = [eq(issue.organizationId, organizationId), eq(issue.identifier, identifier)];
+  if (teamId !== undefined) filters.push(eq(issue.teamId, teamId));
   const [row] = await database
     .select({
       identifier: issue.identifier,
@@ -530,7 +1214,7 @@ export async function loadSlackIssue(
     .innerJoin(workflowState, eq(workflowState.id, issue.stateId))
     .innerJoin(team, eq(team.id, issue.teamId))
     .leftJoin(user, eq(user.id, issue.assigneeId))
-    .where(and(eq(issue.organizationId, organizationId), eq(issue.identifier, identifier)))
+    .where(and(...filters))
     .limit(1);
   if (row === undefined) return null;
   return {
@@ -549,12 +1233,13 @@ export async function resolveIssueUnfurls(
   database: SlackDatabase,
   organizationId: string,
   urls: readonly string[],
+  teamId?: string,
 ): Promise<SlackUnfurl> {
   const unfurls: SlackUnfurl = {};
   for (const url of urls) {
     const identifier = issueIdentifierFromUrl(url);
     if (identifier === null) continue;
-    const issueForUnfurl = await loadSlackIssue(database, organizationId, identifier, url);
+    const issueForUnfurl = await loadSlackIssue(database, organizationId, identifier, url, teamId);
     if (issueForUnfurl === null) continue;
     Object.assign(unfurls, buildUnfurl(url, issueForUnfurl));
   }

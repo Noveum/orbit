@@ -11,6 +11,10 @@ import {
 } from '@/features/settings/integrations-data.ts';
 import { IntegrationsPanel } from '@/features/settings/integrations-panel.tsx';
 import { loadMcpConnections } from '@/features/settings/mcp-data.ts';
+import {
+  SlackConnectNotice,
+  slackConnectStatusOf,
+} from '@/features/settings/slack-connect-notice.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { mcpServerUrl } from '@/lib/env.ts';
 
@@ -23,6 +27,7 @@ export default async function IntegrationsSettingsPage({
   const query = await searchParams;
   const githubStatus =
     githubConnectStatusOf(query['github']) ?? (misroutedGithubInstall(query) ? 'misrouted' : null);
+  const slackStatus = slackConnectStatusOf(query['slack']);
   const [settings, mcpConnections, deliveries] = await Promise.all([
     loadIntegrationSettings(principal),
     loadMcpConnections(principal.userId),
@@ -39,6 +44,7 @@ export default async function IntegrationsSettingsPage({
         </p>
       </div>
       {githubStatus === null ? null : <GithubConnectNotice status={githubStatus} />}
+      {slackStatus === null ? null : <SlackConnectNotice status={slackStatus} />}
       <IntegrationsPanel
         settings={settings}
         canManage={can(principal, 'integration:manage')}

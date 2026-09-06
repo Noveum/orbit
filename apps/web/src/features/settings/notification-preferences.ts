@@ -1,10 +1,11 @@
 import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationSettings } from '@orbit/services/notifications';
 import { DEFAULT_SETTINGS } from '@orbit/services/notifications';
+import { hasSlackBotToken } from '@orbit/services/slack/credentials';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { notificationPreferencesUpdateSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
-import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
+import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 
 export const CLOCK_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -14,7 +15,6 @@ export const notificationSettingsSchema = notificationPreferencesUpdateSchema.ex
 });
 
 const slackDmConnectionSchema = z.object({
-  credentials: z.object({ botToken: z.string().min(1) }),
   config: z.object({
     scopes: z.array(z.string()),
     slackReauthorize: z.boolean().optional(),
@@ -41,7 +41,7 @@ export async function loadNotificationPreferences(
     .where(eq(schema.notificationSetting.userId, userId))
     .limit(1);
 
-  const slackEnabled = slackIntegrationEnabled();
+  const slackEnabled = slackIntegrationEnabledForOrganization(organizationId);
   const [slack] = slackEnabled
     ? await db
         .select({
@@ -63,7 +63,7 @@ export async function loadNotificationPreferences(
   if (slack !== undefined) {
     const parsedSlack = slackDmConnectionSchema.safeParse(slack);
     if (
-      !parsedSlack.success ||
+      !(parsedSlack.success && hasSlackBotToken(slack.credentials)) ||
       parsedSlack.data.config.slackReauthorize === true ||
       !parsedSlack.data.config.scopes.includes('im:write') ||
       !parsedSlack.data.config.scopes.includes('chat:write')

@@ -11,7 +11,9 @@
     "./github": "./src/github/index.ts",
     "./notifications": "./src/notifications/index.ts",
     "./slack": "./src/slack/index.ts",
-    "./slack/dispatch": "./src/slack/dispatch.ts"
+    "./slack/credentials": "./src/slack/credentials.ts",
+    "./slack/dispatch": "./src/slack/dispatch.ts",
+    "./slack/feature": "./src/slack/feature.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -1,16 +1,18 @@
 import { and, db, eq, lt, or, schema, sql } from '@orbit/db';
 import {
   resolveIssueUnfurls,
-  resolveSlackContext,
-  SlackClient,
+  sendSlackUnfurls,
+  slackCredentialVersionExpression,
   verifySlackSignature,
 } from '@orbit/services';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { slackEventSchema } from '@orbit/shared/validators';
 import {
-  slackIntegrationEnabled,
+  slackIntegrationEnabledForOrganization,
   slackIntegrationUnavailable,
+  slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
+import { scheduleSlackEventProcessing } from '@/lib/integrations/slack-event-scheduler.ts';
 
 const SIGNATURE_HEADER = 'x-slack-signature';
 const TIMESTAMP_HEADER = 'x-slack-request-timestamp';
@@ -18,7 +20,7 @@ export const maxDuration = 60;
 const SLACK_EVENT_CLAIM_TIMEOUT_MS = (maxDuration + 15) * 1000;
 
 export async function POST(request: Request): Promise<Response> {
-  if (!slackIntegrationEnabled()) return slackIntegrationUnavailable();
+  if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   const signingSecret = process.env['SLACK_SIGNING_SECRET'] ?? '';
   const raw = await request.text();
   const signature = request.headers.get(SIGNATURE_HEADER) ?? '';
@@ -46,14 +48,18 @@ export async function POST(request: Request): Promise<Response> {
   if (event.event.type === 'link_shared') {
     const claim = await claimSlackEvent(event.event_id, event.event.type);
     if (claim instanceof Response) return claim;
-    return await processLinkShared(
-      event.event_id,
-      claim.claimedAt,
-      event.team_id,
-      event.event.channel,
-      event.event.message_ts,
-      event.event.links,
+    scheduleSlackEventProcessing(
+      async () =>
+        await processLinkShared(
+          event.event_id,
+          claim.claimedAt,
+          event.team_id,
+          event.event.channel,
+          event.event.message_ts,
+          event.event.links,
+        ),
     );
+    return Response.json({ ok: true });
   }
   return Response.json({ ok: true });
 }
@@ -100,14 +106,7 @@ async function claimSlackEvent(
     )
     .returning({ id: schema.webhookDelivery.id });
   if (reclaimed.length === 1) return { claimedAt };
-  const [current] = await db
-    .select({ status: schema.webhookDelivery.status })
-    .from(schema.webhookDelivery)
-    .where(deliveryMatch(deliveryId))
-    .limit(1);
-  return current?.status === 'processed' || current?.status === 'ignored'
-    ? Response.json({ ok: true })
-    : Response.json({ status: 'in_progress' }, { status: 409 });
+  return Response.json({ ok: true });
 }
 
 async function processLinkShared(
@@ -117,7 +116,7 @@ async function processLinkShared(
   channel: string | undefined,
   ts: string | undefined,
   links: readonly { url: string }[] | undefined,
-): Promise<Response> {
+): Promise<void> {
   try {
     const organizationId = await unfurlLinks(slackTeamId, channel, ts, links);
     await db
@@ -128,17 +127,16 @@ async function processLinkShared(
         ...(organizationId === null ? {} : { organizationId }),
       })
       .where(deliveryClaimMatch(deliveryId, claimedAt));
-    return Response.json({ ok: true });
-  } catch (error) {
-    await db
-      .update(schema.webhookDelivery)
-      .set({
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'Slack unfurl processing failed.',
-      })
-      .where(deliveryClaimMatch(deliveryId, claimedAt));
-    console.error('[orbit] slack unfurl failed', error);
-    return Response.json({ error: 'processing failed' }, { status: 500 });
+  } catch {
+    try {
+      await db
+        .update(schema.webhookDelivery)
+        .set({ status: 'failed', error: 'Slack unfurl processing failed.' })
+        .where(deliveryClaimMatch(deliveryId, claimedAt));
+    } catch {
+      console.error('[orbit] slack unfurl failure finalization failed');
+    }
+    console.error('[orbit] slack unfurl processing failed');
   }
 }
 
@@ -168,8 +166,9 @@ async function unfurlLinks(
 
   const integrationRows = await db
     .select({
+      integrationId: schema.integration.id,
       organizationId: schema.integration.organizationId,
-      externalId: schema.integration.externalId,
+      integrationVersion: slackCredentialVersionExpression(),
     })
     .from(schema.integration)
     .where(
@@ -187,27 +186,42 @@ async function unfurlLinks(
     .limit(2);
   const integrationRow = integrationRows[0];
   if (integrationRows.length !== 1 || integrationRow === undefined) {
-    console.warn('[orbit] slack webhook team routing failed', {
-      slackTeamId,
-      reason: integrationRow === undefined ? 'unknown' : 'ambiguous',
-    });
+    console.warn('[orbit] slack webhook team routing failed');
     return null;
   }
+  if (!slackIntegrationEnabledForOrganization(integrationRow.organizationId)) return null;
 
-  const context = await resolveSlackContext(
-    db,
-    integrationRow.organizationId,
-    integrationRow.externalId,
-  );
-  if (context === null || context.token === null) return integrationRow.organizationId;
+  const mappings = await db
+    .select({ teamId: schema.slackChannelSync.teamId })
+    .from(schema.slackChannelSync)
+    .where(
+      and(
+        eq(schema.slackChannelSync.organizationId, integrationRow.organizationId),
+        eq(schema.slackChannelSync.integrationId, integrationRow.integrationId),
+        eq(schema.slackChannelSync.channelId, channel),
+        eq(schema.slackChannelSync.enabled, true),
+      ),
+    )
+    .limit(2);
+  const mapping = mappings[0];
+  if (mappings.length !== 1 || mapping === undefined) return integrationRow.organizationId;
 
   const unfurls = await resolveIssueUnfurls(
     db,
     integrationRow.organizationId,
     links.map((link) => link.url),
+    mapping.teamId ?? undefined,
   );
   if (Object.keys(unfurls).length === 0) return integrationRow.organizationId;
 
-  await new SlackClient({ token: context.token }).unfurl({ channel, ts, unfurls });
+  await sendSlackUnfurls(db, {
+    organizationId: integrationRow.organizationId,
+    integrationId: integrationRow.integrationId,
+    slackTeamId,
+    integrationVersion: integrationRow.integrationVersion,
+    channel,
+    ts,
+    unfurls,
+  });
   return integrationRow.organizationId;
 }

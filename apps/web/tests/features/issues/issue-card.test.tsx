@@ -6,9 +6,20 @@ import { fireEvent, render as renderRaw, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { groupIssues } from '@/features/filters/grouping.ts';
+import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { planDrop } from '../../../src/features/issues/board.tsx';
 import { IssueCard } from '../../../src/features/issues/issue-card.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
+
+const realUseWorkspace = workspaceProvider.useWorkspace;
+
+mock.module('@/features/issues/workspace-provider.tsx', () => ({
+  ...workspaceProvider,
+  useWorkspace: realUseWorkspace,
+}));
 
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

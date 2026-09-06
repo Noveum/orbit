@@ -1,16 +1,11 @@
-import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { SLACK_INTEGRATION_ENABLED } from '@orbit/shared/constants';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { z } from 'zod';
 
 const SECRET = 'a-notifications-cron-secret-that-is-long-enough';
 const previousSecret = process.env['CRON_SECRET'];
 const core = await import('@orbit/core');
-const slackCapability = await import('@/lib/integrations/slack-capability.ts');
 const deliverPendingSlackDms = mock(() => Promise.resolve(3));
-let slackEnabledForTest = true;
-const slackCapabilitySpy = spyOn(slackCapability, 'slackIntegrationEnabled').mockImplementation(
-  () => slackEnabledForTest,
-);
+const previousSlackEnabled = process.env['SLACK_ENABLED'];
 
 mock.module('@orbit/core', () => ({ ...core, deliverPendingSlackDms }));
 
@@ -19,8 +14,9 @@ const { GET, maxDuration } = await import('../../../../../src/app/api/cron/notif
 afterAll(() => {
   if (previousSecret === undefined) delete process.env['CRON_SECRET'];
   else process.env['CRON_SECRET'] = previousSecret;
+  if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
+  else process.env['SLACK_ENABLED'] = previousSlackEnabled;
   mock.module('@orbit/core', () => core);
-  slackCapabilitySpy.mockRestore();
 });
 
 function request(authorization?: string): Request {
@@ -31,32 +27,22 @@ function request(authorization?: string): Request {
 
 beforeEach(() => {
   process.env['CRON_SECRET'] = SECRET;
-  slackEnabledForTest = true;
+  process.env['SLACK_ENABLED'] = 'true';
   deliverPendingSlackDms.mockClear();
   deliverPendingSlackDms.mockImplementation(() => Promise.resolve(3));
 });
 
 describe('GET /api/cron/notifications', () => {
-  it('runs the durable Slack DM worker for an authorized request', async () => {
+  it('runs the durable Slack DM worker across every organization', async () => {
     const response = await GET(request(`Bearer ${SECRET}`));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ delivered: 3 });
-    expect(deliverPendingSlackDms).toHaveBeenCalledTimes(1);
+    expect(deliverPendingSlackDms).toHaveBeenCalledWith(expect.anything(), 100);
   });
 
   it('does not run Slack delivery when the integration is disabled', async () => {
-    slackEnabledForTest = false;
-
-    const response = await GET(request(`Bearer ${SECRET}`));
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ delivered: 0 });
-    expect(deliverPendingSlackDms).not.toHaveBeenCalled();
-  });
-
-  it('keeps the worker dormant under the shipped capability', async () => {
-    slackEnabledForTest = SLACK_INTEGRATION_ENABLED;
+    process.env['SLACK_ENABLED'] = 'false';
 
     const response = await GET(request(`Bearer ${SECRET}`));
 
