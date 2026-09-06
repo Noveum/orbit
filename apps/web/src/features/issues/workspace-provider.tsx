@@ -66,8 +66,7 @@ export function toOrgRole(value: string | undefined): OrgRole {
   return ORG_ROLES.find((role) => role === value) ?? 'guest';
 }
 
-export function orderStates(states: readonly WorkflowState[] | undefined | null): WorkflowState[] {
-  if (!states) return [];
+export function orderStates(states: readonly WorkflowState[]): WorkflowState[] {
   return [...states].sort((left, right) => {
     const leftOrder = STATE_CATEGORY_ORDER[left.category as StateCategory] ?? 99;
     const rightOrder = STATE_CATEGORY_ORDER[right.category as StateCategory] ?? 99;
@@ -77,12 +76,11 @@ export function orderStates(states: readonly WorkflowState[] | undefined | null)
 }
 
 export function statesForTeam(
-  states: readonly WorkflowState[] | undefined | null,
+  states: readonly WorkflowState[],
   teamId: string | null,
 ): WorkflowState[] {
   if (teamId === null) return [];
-  const available = states ?? [];
-  return orderStates(available.filter((state) => state.teamId === teamId));
+  return orderStates(states.filter((state) => state.teamId === teamId));
 }
 
 export function teamKeyFromPath(pathname: string): string | null {

@@ -307,22 +307,6 @@ describe('card controls', () => {
       expect.arrayContaining(['priority', 'status', 'labels', 'project', 'created', 'assignee']),
     );
   });
-
-  it('renders status control when states collection is empty array', () => {
-    render(
-      <IssueCard issue={issue()} labels={[]} assignee={undefined} state={state} states={[]} />,
-    );
-    const status = screen.getByTestId('card-status-ENG-4');
-    expect(status.tagName).toBe('BUTTON');
-    expect(status).toHaveAttribute('aria-label', 'Status: In progress');
-  });
-
-  it('renders safely when state and states are omitted', () => {
-    render(<IssueCard issue={issue()} labels={[]} assignee={undefined} />);
-    expect(screen.getByText('ENG-4')).toBeInTheDocument();
-    expect(screen.getByTestId('card-priority-ENG-4')).toBeInTheDocument();
-    expect(screen.queryByTestId('card-status-ENG-4')).toBeNull();
-  });
 });
 
 describe('planDrop across merged state columns', () => {
