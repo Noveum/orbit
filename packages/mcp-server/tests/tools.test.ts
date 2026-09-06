@@ -922,16 +922,31 @@ describe('what a token is allowed to do', () => {
     const { tools } = await admin.client.listTools();
     expect(tools.map((tool) => tool.name)).toContain('create_issue');
 
-    const destructive = tools.filter(
-      (tool) =>
-        tool.name.startsWith('delete_') ||
-        tool.name.startsWith('remove_') ||
-        tool.name.startsWith('archive_'),
-    );
-    expect(destructive.length).toBeGreaterThan(0);
-    for (const tool of destructive) {
-      expect(tool.annotations?.destructiveHint).toBe(true);
-    }
+    const expectedDestructive = [
+      'archive_cycle',
+      'archive_doc',
+      'archive_doc_template',
+      'archive_initiative',
+      'archive_project',
+      'archive_view',
+      'archive_workspace',
+      'delete_cycle',
+      'delete_doc',
+      'delete_doc_template',
+      'delete_issue',
+      'delete_status',
+      'delete_tag',
+      'delete_view',
+      'delete_webhook',
+      'remove_member',
+      'revoke_invitation',
+    ];
+
+    const actualDestructive = tools
+      .filter((tool) => tool.annotations?.destructiveHint === true)
+      .map((tool) => tool.name)
+      .sort();
+    expect(actualDestructive).toEqual(expectedDestructive);
 
     const nonDestructive = ['create_issue', 'create_cycle', 'add_comment'];
     for (const name of nonDestructive) {
