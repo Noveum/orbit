@@ -152,6 +152,27 @@ What a sprint gives you:
 - **Burndown** of remaining work against time.
 - **Carryover**, meaning what did not finish when you complete the sprint.
 
+### Lead time and cycle time
+
+The sprint analytics flow-time card summarizes completed issues associated with
+the selected sprint. It shows the median (`p50`) and the 85th percentile (`p85`)
+in calendar days. Unfinished and canceled issues do not contribute a duration.
+
+- **Lead time** runs from the issue's creation time to its durable completion
+  time. It starts at creation even when the issue joined the sprint later.
+- **Cycle time** runs from the issue's `startedAt` time to its durable completion
+  time. Orbit omits an issue from this calculation when it has no start time.
+
+Orbit also omits either duration when its end is earlier than its start. If no
+valid durations remain, the corresponding metric is unavailable.
+
+Lead time uses the creation timestamp from the current issue row. Cycle time
+uses the current mutable `startedAt` column. For an active sprint, Orbit labels
+that cycle-time coverage `current-column`. For a completed sprint, it labels the
+coverage `reconstructed-current-column` because close outcomes preserve the
+completion time but not the first start time. Editing `startedAt` later can
+therefore change a completed sprint's historical cycle-time distribution.
+
 Completing a sprint asks what to do with unfinished issues: move them to the
 next sprint, or back to the backlog.
 
