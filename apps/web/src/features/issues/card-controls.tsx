@@ -22,23 +22,26 @@ const TRIGGER =
 export function StatusControl({
   issue,
   state,
+  states,
   disabled = false,
 }: {
   readonly issue: Issue;
   readonly state: WorkflowState | undefined;
+  readonly states?: readonly WorkflowState[] | undefined;
   readonly disabled?: boolean;
 }) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
+  const availableStates = states ?? workspace?.states ?? [];
 
   const options = useMemo<PropertyOption[]>(
     () =>
-      statesForTeam(workspace.states, issue.teamId).map((entry) => ({
+      statesForTeam(availableStates, issue.teamId).map((entry) => ({
         id: entry.id,
         label: entry.name,
         icon: <StateGlyph category={entry.category} color={entry.color} />,
       })),
-    [workspace.states, issue.teamId],
+    [availableStates, issue.teamId],
   );
 
   const glyph =
@@ -121,23 +124,26 @@ export function PriorityControl({
 export function AssigneeControl({
   issue,
   assignee,
+  members,
 }: {
   readonly issue: Issue;
   readonly assignee: Member | undefined;
+  readonly members?: readonly Member[] | undefined;
 }) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
+  const availableMembers = members ?? workspace?.members ?? [];
 
   const options = useMemo<PropertyOption[]>(
     () => [
       { id: '', label: 'No assignee' },
-      ...workspace.members.map((member) => ({
+      ...availableMembers.map((member) => ({
         id: member.id,
         label: member.name,
         icon: <Avatar name={member.name} src={member.image} size="xs" />,
       })),
     ],
-    [workspace.members],
+    [availableMembers],
   );
 
   return (

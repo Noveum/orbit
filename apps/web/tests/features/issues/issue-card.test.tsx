@@ -296,6 +296,12 @@ describe('card controls', () => {
       expect.arrayContaining(['priority', 'status', 'labels', 'project', 'created', 'assignee']),
     );
   });
+
+  it('renders safely when states are missing or empty', () => {
+    render(<IssueCard issue={issue()} labels={[]} assignee={undefined} states={[]} />);
+    expect(screen.getByText('ENG-4')).toBeInTheDocument();
+    expect(screen.getByTestId('card-priority-ENG-4')).toBeInTheDocument();
+  });
 });
 
 describe('planDrop across merged state columns', () => {

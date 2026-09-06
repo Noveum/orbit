@@ -6,7 +6,10 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { Issue, Member } from '@/lib/query/schemas.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
-await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
+await restoreModulesAfterThisFile([
+  '@/lib/query/use-issues.ts',
+  '@/features/issues/workspace-provider.tsx',
+]);
 
 const member: Member = {
   id: 'user_2',
@@ -17,8 +20,12 @@ const member: Member = {
   role: 'member',
 };
 
+const realWorkspace = await import('@/features/issues/workspace-provider.tsx');
+const originalUseWorkspace = realWorkspace.useWorkspace;
+
 mock.module('@/features/issues/workspace-provider.tsx', () => ({
-  useWorkspace: () => ({ members: [member] }),
+  ...realWorkspace,
+  useWorkspace: () => ({ ...originalUseWorkspace(), members: [member] }),
 }));
 
 mock.module('@/lib/query/use-issues.ts', () => ({

@@ -20,6 +20,8 @@ export interface IssueCardProps {
   readonly assignee: Member | undefined;
   readonly reviewers?: readonly Member[];
   readonly state?: WorkflowState | undefined;
+  readonly states?: readonly WorkflowState[] | undefined;
+  readonly members?: readonly Member[] | undefined;
   readonly creator?: Member | undefined;
   readonly project?: { readonly name: string; readonly color: string } | undefined;
   readonly cycle?: { readonly name: string } | undefined;
@@ -46,6 +48,8 @@ export function IssueCard({
   assignee,
   reviewers = [],
   state,
+  states,
+  members,
   creator,
   project,
   cycle,
@@ -79,7 +83,9 @@ export function IssueCard({
     >
       <div className="flex items-center gap-2 text-2xs text-faint">
         {shows('priority') ? <PriorityControl issue={issue} disabled={dragging} /> : null}
-        {shows('status') ? <StatusControl issue={issue} state={state} disabled={dragging} /> : null}
+        {shows('status') ? (
+          <StatusControl issue={issue} state={state} states={states} disabled={dragging} />
+        ) : null}
         {shows('identifier') ? (
           <span data-numeric className="truncate whitespace-nowrap font-medium">
             {issue.identifier}
@@ -116,7 +122,12 @@ export function IssueCard({
         />
         <ReviewerAvatars reviewers={reviewers} size="sm" />
         {shows('assignee') ? (
-          <CardAssigneeSlot issue={issue} assignee={assignee} dragging={dragging} />
+          <CardAssigneeSlot
+            issue={issue}
+            assignee={assignee}
+            members={members}
+            dragging={dragging}
+          />
         ) : null}
       </div>
     </article>
@@ -146,14 +157,16 @@ function CardLabels({ labels }: { labels: readonly Label[] }) {
 function CardAssigneeSlot({
   issue,
   assignee,
+  members,
   dragging,
 }: {
   issue: Issue;
   assignee: Member | undefined;
+  members?: readonly Member[] | undefined;
   dragging: boolean;
 }) {
   if (dragging) return <CardAssignee assignee={assignee} />;
-  return <AssigneeControl issue={issue} assignee={assignee} />;
+  return <AssigneeControl issue={issue} assignee={assignee} members={members} />;
 }
 
 function CardAssignee({ assignee }: { assignee: Member | undefined }) {
