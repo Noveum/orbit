@@ -155,6 +155,34 @@ What a sprint gives you:
 Completing a sprint asks what to do with unfinished issues: move them to the
 next sprint, or back to the backlog.
 
+## Analytics
+
+Analytics reads the same issues, sprints and projects as the rest of the app,
+never a separate store. The sprint lens shows two duration metrics, and each
+says what it measures next to the number.
+
+**Lead time** runs from when an issue was created to when it was durably
+completed. It is measured on the issue row as it exists now, so a deleted
+issue has no lead time.
+
+**Cycle time** runs from when an issue first moved into a started state to
+when it was completed, using the issue's current `startedAt`. That column can
+change after the fact, so on a sprint that has already closed the value is
+labelled reconstructed rather than frozen: a closed sprint keeps the current
+start, not the first one.
+
+Both are shown as p50 and p85 alongside the number of issues behind them,
+because a median over three issues is not a median.
+
+**Coverage** says how far to trust a sprint's numbers. *Captured* means every
+active membership fact was recorded as it happened. *Observed* means some
+entries were bootstrapped or arrived without a state, so planned scope comes
+from membership rather than being inferred from the current state. *Frozen*
+means every relevant issue has an outcome and a final snapshot exists. A
+completed sprint with partial history is reconstructed from what is available.
+
+Unestimated work counts as one point until it is estimated.
+
 ## Projects and milestones
 
 Projects group related work that does not fit inside one team or one sprint.
