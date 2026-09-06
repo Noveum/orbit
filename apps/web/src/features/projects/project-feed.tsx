@@ -41,7 +41,7 @@ export function ProjectUpdatesFeed({
             <div className="flex flex-wrap items-center gap-2">
               <Link
                 href={`/projects/${update.projectSlug}`}
-                className="font-medium text-sm text-text transition-colors hover:text-accent"
+                className="font-medium text-sm text-text hover:text-accent"
               >
                 {update.projectName}
               </Link>

@@ -13,7 +13,7 @@ import { NewProjectDialog } from '@/features/projects/new-project-dialog.tsx';
 import { ProjectUpdatesFeed } from '@/features/projects/project-feed.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
 import { cn } from '@/lib/cn.ts';
-import { rowHover } from '@/lib/interaction.ts';
+import { rowHover, tabHover } from '@/lib/interaction.ts';
 
 export const metadata: Metadata = { title: 'Projects' };
 
@@ -73,8 +73,8 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
               href="/projects"
               aria-current={isFeed ? undefined : 'page'}
               className={cn(
-                'rounded-md px-2.5 py-1 text-2xs font-medium transition-colors',
-                isFeed ? 'text-faint hover:text-muted' : 'bg-surface-2 text-text shadow-xs',
+                'rounded-md px-2.5 py-1 text-2xs font-medium',
+                isFeed ? cn('text-faint', tabHover) : 'bg-surface-2 text-text shadow-xs',
               )}
             >
               Projects
@@ -83,8 +83,8 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
               href="/projects?view=feed"
               aria-current={isFeed ? 'page' : undefined}
               className={cn(
-                'rounded-md px-2.5 py-1 text-2xs font-medium transition-colors',
-                isFeed ? 'bg-surface-2 text-text shadow-xs' : 'text-faint hover:text-muted',
+                'rounded-md px-2.5 py-1 text-2xs font-medium',
+                isFeed ? 'bg-surface-2 text-text shadow-xs' : cn('text-faint', tabHover),
               )}
             >
               Updates
