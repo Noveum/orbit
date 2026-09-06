@@ -12,7 +12,7 @@ let workspace: Workspace;
 
 beforeEach(async () => {
   await resetDatabase();
-  workspace = await createWorkspace('Orbit Testing');
+  workspace = await createWorkspace('Nova');
 });
 
 describe('findDuplicateIssues', () => {
@@ -76,7 +76,7 @@ describe('findDuplicateIssues', () => {
   });
 
   it('enforces workspace tenant isolation', async () => {
-    const otherWorkspace = await createWorkspace('Other Org');
+    const otherWorkspace = await createWorkspace('Vega');
     const { issue: otherIssue } = await createIssue(otherWorkspace.admin, {
       teamId: otherWorkspace.teamId,
       title: 'Shared standard bug report title',

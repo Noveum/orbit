@@ -1,6 +1,8 @@
 'use client';
 
 import { ExternalLink, X } from 'lucide-react';
+import { cn } from '@/lib/cn.ts';
+import { revealOnHover, tabHover } from '@/lib/interaction.ts';
 import type { DuplicateIssueMatch } from '@/lib/query/schemas.ts';
 import { StateGlyph } from './state-glyph.tsx';
 
@@ -23,7 +25,7 @@ export function DuplicateSuggestions({ duplicates, onDismiss }: DuplicateSuggest
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss similar issues"
-          className="rounded p-0.5 text-faint transition-colors hover:text-text"
+          className={cn('rounded p-0.5 text-faint', tabHover)}
         >
           <X className="size-3" aria-hidden="true" />
         </button>
@@ -42,10 +44,7 @@ export function DuplicateSuggestions({ duplicates, onDismiss }: DuplicateSuggest
                 {issue.identifier}
               </span>
               <span className="truncate">{issue.title}</span>
-              <ExternalLink
-                className="size-2.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                aria-hidden="true"
-              />
+              <ExternalLink className={cn('size-2.5 shrink-0', revealOnHover)} aria-hidden="true" />
             </a>
             <div className="flex shrink-0 items-center gap-1 text-faint">
               <StateGlyph category={issue.state.category} color={issue.state.color} />
