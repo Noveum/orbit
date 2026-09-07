@@ -207,7 +207,7 @@ export function connectClient(
 }
 
 export function connectWithTicket(port: number, ticket: string): Promise<TestClient> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/`);
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/api/ws`);
   const messages: ServerMessage[] = [];
   const listeners = new Set<() => void>();
   let closeCode: number | undefined;

@@ -28,7 +28,7 @@
     "build": "bun run --filter '*' build",
     "dev": "bun run --filter '*' dev",
     "typecheck": "tsc -p scripts/tsconfig.json --noEmit && bun run --filter '*' typecheck",
-    "test": "bun test ./tests/*.test.ts && bun run --filter '*' test",
+    "test": "bun test scripts && bun test ./tests/*.test.ts && bun run --filter '*' test",
     "test:e2e": "bun run --filter '@orbit/web' test:e2e",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

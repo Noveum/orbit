@@ -8,6 +8,9 @@ import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { emptyFacets } from '@/lib/query/schemas.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 let search = '';
 

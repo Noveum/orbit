@@ -46,7 +46,7 @@ it('reconnects and resubscribes after the server drops the socket', async () => 
   const received: SyncAction[] = [];
 
   const client = createRealtimeClient({
-    url: `ws://127.0.0.1:${port}`,
+    url: `ws://127.0.0.1:${port}/api/ws`,
     fetchTicket: () => Promise.resolve(ticketFor(member, organizationId)),
     maxBackoffMs: 500,
     onStatus: (status) => statuses.push(status),

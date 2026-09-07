@@ -21,6 +21,7 @@ gated behind a plan.
 | Write or run the tests | [Testing](testing.md) |
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |
 | See what is coming | [Roadmap](roadmap.md) |
+| Operate gated Vercel Preview deployments | [Vercel Preview deployment gate](VERCEL_BUILD_GATE.md) |
 | Contribute | [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md) |
 
 ## The five minute version

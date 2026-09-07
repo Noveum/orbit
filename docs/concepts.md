@@ -24,7 +24,7 @@ each role can do everything the one below it can.
 | --- | --- |
 | **Guest** | Read issues, projects and docs. Comment, react |
 | **Contributor** | Everything a guest can, plus create and update issues, upload attachments, manage their own views |
-| **Member** | Everything a contributor can, plus delete issues, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
+| **Member** | Everything a contributor can, plus delete issues, delete anyone's comments, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
 | **Admin** | Everything, plus invite and manage members, manage integrations and manage the workspace |
 
 Every authorization decision goes through `packages/shared/src/policy`, which is
@@ -94,6 +94,13 @@ Issues can block, be blocked by, relate to, or duplicate each other. Blocking is
 the one that changes behaviour: an issue blocked by another is flagged wherever
 it appears, so the block is visible before anyone plans around it.
 
+### Duplicate detection
+
+When drafting a new issue, Orbit runs trigram similarity across existing issues
+in the same team. If similar issues already exist, up to four non-blocking
+suggestions appear beneath the title field with their current workflow state,
+allowing quick review before creating a duplicate.
+
 ### Estimates
 
 Points, on the usual scale. Optional. Sprints can track scope by issue count or
@@ -152,6 +159,27 @@ What a sprint gives you:
 - **Burndown** of remaining work against time.
 - **Carryover**, meaning what did not finish when you complete the sprint.
 
+### Lead time and cycle time
+
+The sprint analytics flow-time card summarizes completed issues associated with
+the selected sprint. It shows the median (`p50`) and the 85th percentile (`p85`)
+in calendar days. Unfinished and canceled issues do not contribute a duration.
+
+- **Lead time** runs from the issue's creation time to its durable completion
+  time. It starts at creation even when the issue joined the sprint later.
+- **Cycle time** runs from the issue's `startedAt` time to its durable completion
+  time. Orbit omits an issue from this calculation when it has no start time.
+
+Orbit also omits either duration when its end is earlier than its start. If no
+valid durations remain, the corresponding metric is unavailable.
+
+Lead time uses the creation timestamp from the current issue row. Cycle time
+uses the current mutable `startedAt` column. For an active sprint, Orbit labels
+that cycle-time coverage `current-column`. For a completed sprint, it labels the
+coverage `reconstructed-current-column` because close outcomes preserve the
+completion time but not the first start time. Editing `startedAt` later can
+therefore change a completed sprint's historical cycle-time distribution.
+
 Completing a sprint asks what to do with unfinished issues: move them to the
 next sprint, or back to the backlog.
 
@@ -163,6 +191,18 @@ runs across several sprints, and has a lead, a target date and a status.
 
 **Milestones** divide a project into stages, so progress is measured against
 something real rather than a percentage of a moving total.
+
+**Health and updates** track qualitative project status over time. An update
+captures a health category, markdown notes, the author, and a timestamp:
+
+- **On track** (`on_track`): The project is progressing according to schedule.
+- **At risk** (`at_risk`): Blockers, dependency delays, or capacity risks exist.
+- **Off track** (`off_track`): Key milestones or target dates will be missed without intervention.
+- **No update** (`no_update`): The initial state before a lead posts the first update.
+
+The workspace feed on the Projects page surfaces the latest update from every
+visible project in a single stream, giving leads and stakeholders visibility
+across the workspace without having to inspect each project individually.
 
 The difference from sprints in one line: a sprint is a period of time, a project
 is a body of work. An issue is usually in both.

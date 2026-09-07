@@ -33,9 +33,15 @@ function servedLocally(origin: string): boolean {
   }
 }
 
+function withRealtimePath(configured: string): string {
+  const url = new URL(configured);
+  if (url.pathname === '/') url.pathname = REALTIME_PATH;
+  return url.toString();
+}
+
 export function resolveRealtimeUrl(configured: string, origin: string): string {
   if (origin.length === 0) return '';
-  if (configured.length > 0 && servedLocally(origin)) return configured;
+  if (configured.length > 0 && servedLocally(origin)) return withRealtimePath(configured);
   const url = new URL(REALTIME_PATH, origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
