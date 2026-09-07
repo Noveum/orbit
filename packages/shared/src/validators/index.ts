@@ -1,3 +1,4 @@
+export * from './ai.ts';
 export * from './analytics.ts';
 export * from './auth.ts';
 export * from './avatar.ts';
