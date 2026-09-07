@@ -47,6 +47,24 @@ function indexPredicate(table: PgTable, name: string): string {
 }
 
 describe('notification conversation expansion schema', () => {
+  it('isolates Slack roots by provider namespace, destination and conversation', () => {
+    expect(schema.slackNotificationThread).toBeDefined();
+    const indexes = getTableConfig(schema.slackNotificationThread).indexes;
+    const namespace = indexes.find(
+      (entry) => entry.config.name === 'slack_notification_thread_namespace_unique',
+    );
+    expect(
+      namespace?.config.columns.map((column) => ('name' in column ? column.name : null)),
+    ).toEqual([
+      'integration_id',
+      'slack_team_id',
+      'slack_app_id',
+      'destination_kind',
+      'destination_id',
+      'conversation_key',
+    ]);
+  });
+
   it('stores a tenant-scoped conversation summary and durable recipient counters', () => {
     expect(columnNames(schema.notificationConversation)).toEqual(
       expect.arrayContaining([

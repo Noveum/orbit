@@ -1591,6 +1591,29 @@ describe('applyGithubEvent', () => {
     });
   });
 
+  it('does not notify an unlinked reviewer after losing repository team access', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx
+        .delete(teamMember)
+        .where(
+          and(eq(teamMember.teamId, fixture.teamId), eq(teamMember.userId, fixture.assigneeId)),
+        );
+      const requested = prEvent({
+        action: 'review_requested',
+        headRef: 'chore/unlinked',
+        title: 'Unlinked work',
+        body: 'No Orbit identifier.',
+      });
+      const body = requested.body as Record<string, unknown>;
+      body['requested_reviewer'] = { login: 'assignee', id: 900 };
+      const result = await applyGithubEvent(tx, requested);
+      expect(result.notificationEvents.flatMap((event) => event.userIds)).not.toContain(
+        fixture.assigneeId,
+      );
+    });
+  });
+
   it('keeps each unlinked pull request notification scoped to its author', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -1723,6 +1746,46 @@ describe('applyGithubEvent', () => {
     }
   });
 
+  it('does not replace current-head CI with historical checks', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const applied = await applyGithubEvent(tx, prEvent({}));
+      const pullRequestId = applied.pullRequests[0]?.id;
+      if (pullRequestId === undefined) throw new Error('the mirrored pull request is missing');
+      await tx
+        .update(githubPullRequest)
+        .set({ checkStatus: 'success' })
+        .where(eq(githubPullRequest.id, pullRequestId));
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [
+          {
+            externalId: 'check_run:old:failure',
+            type: 'checks',
+            actor: { login: 'github-actions', id: 0 },
+            body: 'old-head-only-job',
+            url: 'https://github.com/acme/web/actions/runs/1',
+            state: 'failure',
+            path: null,
+            line: null,
+            occurredAt: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+      });
+      await upsertGithubPullRequestHistory(tx, {
+        organizationId: fixture.organizationId,
+        pullRequestId,
+        entries: [],
+      });
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.id, pullRequestId));
+      expect(pull?.checkStatus).toBe('success');
+    });
+  });
+
   it('backfills review, comment, and check history idempotently', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
@@ -1797,7 +1860,7 @@ describe('applyGithubEvent', () => {
         .from(githubPullRequest)
         .where(eq(githubPullRequest.id, pullRequestId));
       expect(pull?.state).toBe('approved');
-      expect(pull?.checkStatus).toBe('success');
+      expect(pull?.checkStatus).toBe('unknown');
       expect(pull?.historySyncedAt).not.toBeNull();
     });
   });
@@ -1898,7 +1961,7 @@ describe('applyGithubEvent', () => {
     });
   });
 
-  it('keeps persisted review and check rollups when a later history page omits them', async () => {
+  it('keeps persisted review decisions without treating historical checks as current', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       const applied = await applyGithubEvent(tx, prEvent({}));
@@ -1967,7 +2030,7 @@ describe('applyGithubEvent', () => {
         .from(githubPullRequest)
         .where(eq(githubPullRequest.id, pullRequestId));
       expect(pull?.reviewDecision).toBe('changes_requested');
-      expect(pull?.checkStatus).toBe('failure');
+      expect(pull?.checkStatus).toBe('unknown');
     });
   });
 

@@ -164,6 +164,19 @@ function verifyLedger(rows: readonly LedgerRow[], migrations: readonly Migration
   return migrations.length - rows.length;
 }
 
+async function reconcileNotificationAuditReplacements(
+  tx: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  for (const migration of migrations) {
+    for (const statement of migration.sql) {
+      if (statement.trimStart().startsWith('CREATE OR REPLACE FUNCTION validate_notification_')) {
+        await tx.unsafe(statement);
+      }
+    }
+  }
+}
+
 async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
@@ -178,6 +191,7 @@ async function baselineLedger(
     if (notificationAuditMigration !== undefined) {
       await reconcileNotificationAuditArtifacts(tx, notificationAuditMigration);
     }
+    await reconcileNotificationAuditReplacements(tx, pendingMigrations);
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
       await tx`
         update attachment

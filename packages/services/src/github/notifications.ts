@@ -120,6 +120,7 @@ function linkedIssueCandidateIds(
 
 function authorizedAudienceIds(input: {
   readonly organizationId: string;
+  readonly repositoryTeamId: string | null;
   readonly linked: readonly LinkedIssueAudience[];
   readonly authorUserId: string | null;
   readonly subscriptions: ReadonlyMap<string, readonly string[]>;
@@ -134,7 +135,15 @@ function authorizedAudienceIds(input: {
       input.roles,
       input.teamsByUser,
     );
-    if (principal !== null && isInOrganization(principal, input.organizationId)) {
+    const allowed =
+      principal !== null &&
+      (input.linked.length > 0 || input.repositoryTeamId === null
+        ? isInOrganization(principal, input.organizationId)
+        : isInTeam(principal, {
+            id: input.repositoryTeamId,
+            organizationId: input.organizationId,
+          }));
+    if (allowed) {
       authorized.add(input.authorUserId);
     }
   }
@@ -157,6 +166,7 @@ async function authorizedFailureAudience(
   organizationId: string,
   linked: readonly LinkedIssueAudience[],
   authorUserId: string | null,
+  repositoryTeamId: string | null,
 ): Promise<string[]> {
   const subscriptions = await linkedIssueSubscribers(
     database,
@@ -171,9 +181,13 @@ async function authorizedFailureAudience(
     .select({ userId: member.userId, role: member.role })
     .from(member)
     .where(and(eq(member.organizationId, organizationId), inArray(member.userId, candidateIds)))
-    .orderBy(asc(member.userId));
+    .orderBy(asc(member.userId))
+    .for('update');
   const roles = new Map(memberships.map((entry) => [entry.userId, entry.role]));
-  const teamIds = unique(linked.map((entry) => entry.teamId)).sort();
+  const teamIds = unique([
+    ...linked.map((entry) => entry.teamId),
+    ...(repositoryTeamId === null ? [] : [repositoryTeamId]),
+  ]).sort();
   const teamMemberships =
     teamIds.length === 0
       ? []
@@ -181,7 +195,8 @@ async function authorizedFailureAudience(
           .select({ userId: teamMember.userId, teamId: teamMember.teamId })
           .from(teamMember)
           .where(and(inArray(teamMember.userId, candidateIds), inArray(teamMember.teamId, teamIds)))
-          .orderBy(asc(teamMember.teamId), asc(teamMember.userId));
+          .orderBy(asc(teamMember.teamId), asc(teamMember.userId))
+          .for('update');
   const teamsByUser = new Map<string, Set<string>>();
   for (const entry of teamMemberships) {
     const teams = teamsByUser.get(entry.userId) ?? new Set<string>();
@@ -190,6 +205,7 @@ async function authorizedFailureAudience(
   }
   return authorizedAudienceIds({
     organizationId,
+    repositoryTeamId,
     linked,
     authorUserId,
     subscriptions,
@@ -237,6 +253,7 @@ export async function githubCheckFailureTransitionEvents(
       transition.organizationId,
       linked,
       authorUserId,
+      repository.teamId,
     );
     let teamIds = linked.map((entry) => entry.teamId);
     if (linked.length === 0 && repository.teamId !== null) teamIds = [repository.teamId];

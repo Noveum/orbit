@@ -484,6 +484,9 @@ export const notificationDelivery = pgTable(
         table.organizationId,
         table.sourceEventId,
         table.channel,
+        sql`coalesce(${table.integrationId}, '')`,
+        sql`coalesce(${table.slackTeamId}, '')`,
+        sql`coalesce(${table.slackAppId}, '')`,
         table.destinationKind,
         table.destinationId,
       )
@@ -565,6 +568,13 @@ export const notificationDelivery = pgTable(
                 )
                 or
                 (
+                  ${table.destinationKind} = 'user'
+                  and ${table.channel} = 'email'
+                  and ${table.notificationId} is not null
+                  and ${table.userId} is not null
+                )
+                or
+                (
                   ${table.destinationKind} = 'shared_channel'
                   and ${table.channel} = 'slack'
                   and ${table.notificationId} is null
@@ -596,6 +606,68 @@ export const notificationDelivery = pgTable(
       'notification_delivery_provider_payload_check',
       sql`${table.providerPayloadHash} is null or ${table.providerPayload} is not null`,
     ),
+  ],
+);
+
+export const slackNotificationThread = pgTable(
+  'slack_notification_thread',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    integrationId: text('integration_id').notNull(),
+    slackTeamId: text('slack_team_id').notNull(),
+    slackAppId: text('slack_app_id').notNull(),
+    credentialGeneration: bigint('credential_generation', { mode: 'number' }).notNull().default(0),
+    destinationKind: text('destination_kind').notNull(),
+    destinationId: text('destination_id').notNull(),
+    conversationKey: text('conversation_key').notNull(),
+    channelId: text('channel_id'),
+    rootTs: text('root_ts'),
+    state: text('state').notNull().default('creating'),
+    createdByDeliveryId: text('created_by_delivery_id'),
+    claimToken: text('claim_token'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(sql`nextval('sync_id_seq')`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('slack_notification_thread_namespace_unique').on(
+      table.integrationId,
+      table.slackTeamId,
+      table.slackAppId,
+      table.destinationKind,
+      table.destinationId,
+      table.conversationKey,
+    ),
+    index('slack_notification_thread_state_idx').on(table.organizationId, table.state),
+    foreignKey({
+      name: 'slack_notification_thread_org_integration_fk',
+      columns: [table.organizationId, table.integrationId],
+      foreignColumns: [integration.organizationId, integration.id],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'slack_notification_thread_org_delivery_fk',
+      columns: [table.organizationId, table.createdByDeliveryId],
+      foreignColumns: [notificationDelivery.organizationId, notificationDelivery.id],
+    }).onDelete('restrict'),
+    check(
+      'slack_notification_thread_destination_check',
+      sql`${table.destinationKind} in ('user', 'shared_channel')`,
+    ),
+    check(
+      'slack_notification_thread_state_check',
+      sql`${table.state} in ('creating', 'ready', 'blocked', 'ambiguous', 'archived')`,
+    ),
+    check(
+      'slack_notification_thread_ready_check',
+      sql`${table.state} <> 'ready' or (${table.channelId} is not null and ${table.rootTs} is not null)`,
+    ),
+    check('slack_notification_thread_generation_check', sql`${table.credentialGeneration} >= 0`),
   ],
 );
 

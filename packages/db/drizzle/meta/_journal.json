@@ -155,6 +155,20 @@
       "when": 1788268141469,
       "tag": "0021_material_triton",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788824994442,
+      "tag": "0022_overconfident_galactus",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788825114390,
+      "tag": "0023_far_jack_power",
+      "breakpoints": true
     }
   ]
 }

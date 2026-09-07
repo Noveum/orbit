@@ -78,6 +78,21 @@ async function seedCanonicalRows(sql: postgres.Sql): Promise<void> {
 }
 
 describe('notification conversation expansion migration', () => {
+  it('validates the final survivor state after linking legacy rows in one transaction', async () => {
+    await resetScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await seedCanonicalRows(sql);
+      await sql.begin(async (tx) => {
+        await tx`insert into notification (id, organization_id, user_id, type, actor_id, actor_name, entity_type, entity_id, title, url) values ('legacy-survivor', 'org-1', 'user-1', 'comment_created', 'actor-1', 'Actor', 'issue', 'issue-1', 'Comment', '/issue/ISS-1')`;
+        await tx`update notification set source_event_id = 'source-2' where id = 'legacy-survivor'`;
+        await tx`insert into notification (id, organization_id, user_id, type, actor_id, actor_name, entity_type, entity_id, title, url, surface_in_inbox, deduplicated_into_notification_id) values ('legacy-audit', 'org-1', 'user-1', 'comment_created', 'actor-1', 'Actor', 'issue', 'issue-1', 'Comment', '/issue/ISS-1', false, 'legacy-survivor')`;
+      });
+      const rows =
+        await sql`select id from notification where deduplicated_into_notification_id = 'legacy-survivor'`;
+      expect(rows).toHaveLength(1);
+    });
+  }, 60_000);
+
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);

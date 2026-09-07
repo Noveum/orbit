@@ -434,6 +434,21 @@ async function githubCheckFailureNotifications(
       unique(
         [...unlinkedCandidates.values()].filter((userId): userId is string => userId !== null),
       ),
+      context.repo.teamId,
+    ),
+  );
+  const authorizedLinkedAuthors = new Set(
+    await authorizedWorkspaceUsers(
+      database,
+      context.repo.organizationId,
+      unique(
+        pulls
+          .filter((pull) => (linkedIssueIdsByPull.get(pull.id)?.length ?? 0) > 0)
+          .flatMap((pull) => {
+            const candidate = unlinkedCandidates.get(pull.id);
+            return candidate === undefined || candidate === null ? [] : [candidate];
+          }),
+      ),
     ),
   );
   const issueById = new Map(context.issues.map((entry) => [entry.id, entry]));
@@ -447,7 +462,11 @@ async function githubCheckFailureNotifications(
     const linkedIssueIds = linkedIssueIdsByPull.get(pull.id) ?? [];
     const linkedUserIds = linkedIssueIds.flatMap((issueId) => context.audiences.get(issueId) ?? []);
     const unlinkedCandidate = unlinkedCandidates.get(pull.id) ?? null;
-    const userIds = checkFailureUserIds(linkedUserIds, unlinkedCandidate, authorizedUnlinked);
+    const userIds = checkFailureUserIds(
+      linkedUserIds,
+      unlinkedCandidate,
+      linkedIssueIds.length === 0 ? authorizedUnlinked : authorizedLinkedAuthors,
+    );
     const teamIds = unique([
       ...context.defaultTeamIds,
       ...linkedIssueIds.flatMap((issueId) => {
@@ -1487,76 +1506,17 @@ async function upsertPullRequestActivity(
     });
 }
 
-interface CheckStatusEntry {
-  readonly externalId: string;
+interface PersistedHistoryEntry {
   readonly type: string;
-  readonly body: string;
   readonly state: string;
   readonly occurredAt: string | Date;
-}
-
-function checkStatusKey(entry: CheckStatusEntry): string {
-  const name = entry.body.trim().toLowerCase();
-  if (name.length > 0) return name;
-  if (entry.externalId.startsWith('check_suite:')) {
-    return entry.externalId.split(':').slice(0, 2).join(':');
-  }
-  return entry.externalId;
-}
-
-function checkOccurredAt(entry: CheckStatusEntry): number {
-  const value = entry.occurredAt instanceof Date ? entry.occurredAt : new Date(entry.occurredAt);
-  return value.getTime();
-}
-
-function rolledUpCheckStatus(entries: readonly CheckStatusEntry[]): string | null {
-  const checks = entries.filter((entry) => entry.type === 'checks');
-  if (checks.length === 0) return null;
-  const latestByName = new Map<string, CheckStatusEntry>();
-  for (const entry of checks) {
-    const key = checkStatusKey(entry);
-    const current = latestByName.get(key);
-    const entryTime = checkOccurredAt(entry);
-    const currentTime = current === undefined ? Number.NEGATIVE_INFINITY : checkOccurredAt(current);
-    if (
-      current === undefined ||
-      entryTime > currentTime ||
-      (entryTime === currentTime && entry.externalId > current.externalId)
-    ) {
-      latestByName.set(key, entry);
-    }
-  }
-  const states = [...latestByName.values()].map((entry) => entry.state.toLowerCase());
-  if (
-    states.some((state) =>
-      [
-        'failure',
-        'error',
-        'timed_out',
-        'cancelled',
-        'action_required',
-        'startup_failure',
-        'stale',
-      ].includes(state),
-    )
-  ) {
-    return 'failure';
-  }
-  if (
-    states.some((state) =>
-      ['queued', 'in_progress', 'requested', 'waiting', 'pending'].includes(state),
-    )
-  ) {
-    return 'pending';
-  }
-  return states.every((state) => ['success', 'neutral', 'skipped'].includes(state))
-    ? 'success'
-    : 'unknown';
-}
-
-interface PersistedHistoryEntry extends CheckStatusEntry {
   readonly actorId: string;
   readonly actorLogin: string;
+}
+
+function reviewOccurredAt(entry: PersistedHistoryEntry): number {
+  const value = entry.occurredAt instanceof Date ? entry.occurredAt : new Date(entry.occurredAt);
+  return value.getTime();
 }
 
 function historyReviewDecision(
@@ -1569,7 +1529,7 @@ function historyReviewDecision(
         entry.type === 'review' &&
         ['approved', 'changes_requested', 'dismissed'].includes(entry.state.toLowerCase()),
     )
-    .sort((left, right) => checkOccurredAt(left) - checkOccurredAt(right));
+    .sort((left, right) => reviewOccurredAt(left) - reviewOccurredAt(right));
   if (decisions.length === 0) return current;
 
   const byReviewer = new Map<string, string>();
@@ -1653,7 +1613,7 @@ export async function upsertGithubPullRequestHistory(
     .where(
       and(
         eq(githubPullRequestActivity.pullRequestId, pull.id),
-        inArray(githubPullRequestActivity.type, ['review', 'checks']),
+        eq(githubPullRequestActivity.type, 'review'),
       ),
     )
     .orderBy(asc(githubPullRequestActivity.occurredAt));
@@ -1670,7 +1630,6 @@ export async function upsertGithubPullRequestHistory(
     .set({
       state,
       reviewDecision,
-      checkStatus: rolledUpCheckStatus(persistedHistory) ?? pull.checkStatus,
       historySyncedAt: now,
       historyRefreshClaimedAt: null,
       syncId: nextSyncId,
@@ -2042,6 +2001,7 @@ async function unlinkedPullRequestNotifications(
       database,
       repo.organizationId,
       unique([...candidatesByPull.values()].filter((userId): userId is string => userId !== null)),
+      repo.teamId,
     ),
   );
 
@@ -2224,6 +2184,7 @@ async function authorizedWorkspaceUsers(
   database: GithubDatabase,
   organizationId: string,
   userIds: readonly string[],
+  repositoryTeamId: string | null = null,
 ): Promise<string[]> {
   if (userIds.length === 0) return [];
   const rows = await database
@@ -2232,15 +2193,31 @@ async function authorizedWorkspaceUsers(
     .where(and(eq(member.organizationId, organizationId), inArray(member.userId, [...userIds])))
     .orderBy(asc(member.userId))
     .for('update');
+  const teamRows =
+    repositoryTeamId === null
+      ? []
+      : await database
+          .select({ userId: teamMember.userId })
+          .from(teamMember)
+          .where(
+            and(eq(teamMember.teamId, repositoryTeamId), inArray(teamMember.userId, [...userIds])),
+          )
+          .orderBy(asc(teamMember.userId))
+          .for('update');
+  const teamUsers = new Set(teamRows.map((entry) => entry.userId));
   return unique(
     rows.flatMap((row) => {
       const principal: Principal = {
         userId: row.userId,
         organizationId,
         role: policyRole(row.role),
-        teamIds: [],
+        teamIds: repositoryTeamId !== null && teamUsers.has(row.userId) ? [repositoryTeamId] : [],
       };
-      return isInOrganization(principal, organizationId) ? [row.userId] : [];
+      const allowed =
+        repositoryTeamId === null
+          ? isInOrganization(principal, organizationId)
+          : isInTeam(principal, { id: repositoryTeamId, organizationId });
+      return allowed ? [row.userId] : [];
     }),
   );
 }

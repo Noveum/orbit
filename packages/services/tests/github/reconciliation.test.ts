@@ -13,6 +13,7 @@ import {
   notification,
   notificationSourceEvent,
   organization,
+  team,
   user,
   webhookDelivery,
 } from '@orbit/db/schema';
@@ -20,7 +21,10 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { applyGithubEvent } from '../../src/github/apply.ts';
 import { githubContextKey } from '../../src/github/checks.ts';
-import { notifyGithubCheckFailureTransitions } from '../../src/github/notifications.ts';
+import {
+  githubCheckFailureTransitionEvents,
+  notifyGithubCheckFailureTransitions,
+} from '../../src/github/notifications.ts';
 import { reconcileNextGithubCheckHead } from '../../src/github/reconciliation.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
@@ -329,6 +333,35 @@ describe('reconcileNextGithubCheckHead', () => {
         .from(githubCheckHeadReconciliation)
         .where(eq(githubCheckHeadReconciliation.id, fixture.reconciliationId));
       expect(head?.status).toBe('completed');
+    });
+  });
+
+  it('excludes an unlinked author without repository team access during reconciliation', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedReconciliation(tx, { withPull: true });
+      const teamId = randomUUIDv7();
+      await tx.insert(team).values({
+        id: teamId,
+        organizationId: fixture.organizationId,
+        name: 'Private',
+        key: 'PRV',
+      });
+      await tx
+        .update(githubRepositorySync)
+        .set({ teamId })
+        .where(eq(githubRepositorySync.id, fixture.repositorySyncId));
+      const observed: string[] = [];
+      await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => snapshot([{ id: '143', name: 'verify', state: 'failure' }]),
+        acceptFailureTransitions: async (database, transitions) => {
+          const events = await githubCheckFailureTransitionEvents(database, transitions, NOW);
+          observed.push(...events.flatMap((event) => event.userIds));
+        },
+      });
+      expect(observed).toEqual([]);
     });
   });
 
