@@ -923,23 +923,23 @@ describe('what a token is allowed to do', () => {
     expect(tools.map((tool) => tool.name)).toContain('create_issue');
 
     const expectedDestructive = [
-      'archive_cycle',
       'archive_doc',
-      'archive_doc_template',
-      'archive_initiative',
+      'archive_issue',
       'archive_project',
-      'archive_view',
-      'archive_workspace',
-      'delete_cycle',
+      'delete_comment',
       'delete_doc',
-      'delete_doc_template',
+      'delete_doc_collection',
+      'delete_doc_comment',
       'delete_issue',
-      'delete_status',
-      'delete_tag',
+      'delete_label',
+      'delete_milestone',
+      'delete_project',
+      'delete_sprint',
+      'delete_state',
       'delete_view',
-      'delete_webhook',
       'remove_member',
-      'revoke_invitation',
+      'remove_relation',
+      'remove_team_member',
     ];
 
     const actualDestructive = tools
