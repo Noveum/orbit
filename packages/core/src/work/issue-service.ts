@@ -2665,6 +2665,101 @@ export async function findDuplicateIssues(
   }));
 }
 
+async function removeExistingDuplicates(
+  tx: Executor,
+  organizationId: string,
+  source: IssueRow,
+  actor: Actor,
+  syncId: number,
+): Promise<SyncAction[]> {
+  const existingDuplicates = await tx
+    .select()
+    .from(schema.issueRelation)
+    .where(
+      and(
+        eq(schema.issueRelation.organizationId, organizationId),
+        or(
+          and(
+            eq(schema.issueRelation.issueId, source.id),
+            eq(schema.issueRelation.type, 'duplicate_of'),
+          ),
+          and(
+            eq(schema.issueRelation.relatedIssueId, source.id),
+            eq(schema.issueRelation.type, 'duplicated_by'),
+          ),
+        ),
+      ),
+    );
+
+  if (existingDuplicates.length === 0) return [];
+
+  await tx.delete(schema.issueRelation).where(
+    and(
+      eq(schema.issueRelation.organizationId, organizationId),
+      inArray(
+        schema.issueRelation.id,
+        existingDuplicates.map((row) => row.id),
+      ),
+    ),
+  );
+
+  return existingDuplicates.map((row) =>
+    buildSyncAction({
+      syncId,
+      organizationId,
+      scopes: [scopes.team(source.teamId), scopes.issue(source.id)],
+      action: 'delete',
+      model: 'issue_relation',
+      modelId: row.id,
+      data: { id: row.id, issueId: row.issueId, relatedIssueId: row.relatedIssueId },
+      actor,
+    }),
+  );
+}
+
+async function transferSubscriptions(
+  tx: Executor,
+  organizationId: string,
+  source: IssueRow,
+  target: IssueRow,
+  actor: Actor,
+  syncId: number,
+): Promise<SyncAction[]> {
+  const existingSubs = await tx
+    .select({ userId: schema.issueSubscription.userId })
+    .from(schema.issueSubscription)
+    .where(eq(schema.issueSubscription.issueId, source.id));
+
+  const subUserIds = existingSubs.map((sub) => sub.userId);
+  if (subUserIds.length === 0) return [];
+
+  await subscribeUsers(tx, target.id, subUserIds, syncId);
+  await tx.delete(schema.issueSubscription).where(eq(schema.issueSubscription.issueId, source.id));
+
+  return subUserIds.flatMap((userId) => [
+    buildSyncAction({
+      syncId,
+      organizationId,
+      scopes: [scopes.user(userId)],
+      action: 'delete',
+      model: 'issue_subscription',
+      modelId: `${source.id}:${userId}`,
+      data: { issueId: source.id, userId, syncId },
+      actor,
+    }),
+    buildSyncAction({
+      syncId,
+      organizationId,
+      scopes: [scopes.user(userId)],
+      action: 'insert',
+      model: 'issue_subscription',
+      modelId: `${target.id}:${userId}`,
+      data: { issueId: target.id, userId, identifier: target.identifier, syncId },
+      actor,
+    }),
+  ]);
+}
+
 export async function markAsDuplicate(
   principal: Principal,
   issueId: string,
@@ -2701,6 +2796,14 @@ export async function markAsDuplicate(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const now = new Date();
+
+    const oldRelationDeleteActions = await removeExistingDuplicates(
+      tx,
+      principal.organizationId,
+      source,
+      actor,
+      syncId,
+    );
 
     const relations = await tx
       .insert(schema.issueRelation)
@@ -2756,45 +2859,14 @@ export async function markAsDuplicate(
       }
     }
 
-    const existingSubs = await tx
-      .select({ userId: schema.issueSubscription.userId })
-      .from(schema.issueSubscription)
-      .where(eq(schema.issueSubscription.issueId, source.id));
-
-    const subUserIds = existingSubs.map((sub) => sub.userId);
-    const subActions: SyncAction[] = [];
-
-    if (subUserIds.length > 0) {
-      await subscribeUsers(tx, target.id, subUserIds, syncId);
-      await tx
-        .delete(schema.issueSubscription)
-        .where(eq(schema.issueSubscription.issueId, source.id));
-
-      for (const userId of subUserIds) {
-        subActions.push(
-          buildSyncAction({
-            syncId,
-            organizationId: principal.organizationId,
-            scopes: [scopes.user(userId)],
-            action: 'delete',
-            model: 'issue_subscription',
-            modelId: `${source.id}:${userId}`,
-            data: { issueId: source.id, userId, syncId },
-            actor,
-          }),
-          buildSyncAction({
-            syncId,
-            organizationId: principal.organizationId,
-            scopes: [scopes.user(userId)],
-            action: 'insert',
-            model: 'issue_subscription',
-            modelId: `${target.id}:${userId}`,
-            data: { issueId: target.id, userId, identifier: target.identifier, syncId },
-            actor,
-          }),
-        );
-      }
-    }
+    const subActions = await transferSubscriptions(
+      tx,
+      principal.organizationId,
+      source,
+      target,
+      actor,
+      syncId,
+    );
 
     const activitiesToAppend: Parameters<typeof appendActivities>[1] = [
       {
@@ -2858,7 +2930,7 @@ export async function markAsDuplicate(
     return {
       issue: updatedIssue,
       relations,
-      actions: [issueAction, ...relationActions, ...subActions],
+      actions: [issueAction, ...relationActions, ...subActions, ...oldRelationDeleteActions],
     };
   });
 }

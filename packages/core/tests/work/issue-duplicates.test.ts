@@ -164,4 +164,35 @@ describe('markAsDuplicate', () => {
       markAsDuplicate(workspace.admin, issue.id, { survivorIssueId: issue.id }),
     ).rejects.toThrow();
   });
+
+  it('replaces previous survivor relation when marked as duplicate of a new survivor', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivorA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue A',
+    });
+    const { issue: survivorB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue B',
+    });
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorA.id });
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorB.id });
+
+    const dupRelations = await listRelatedIssues(workspace.admin, duplicate.id);
+    expect(dupRelations).toHaveLength(1);
+    expect(dupRelations[0]?.type).toBe('duplicate_of');
+    expect(dupRelations[0]?.issue.id).toBe(survivorB.id);
+
+    const survivorARelations = await listRelatedIssues(workspace.admin, survivorA.id);
+    expect(survivorARelations).toHaveLength(0);
+
+    const survivorBRelations = await listRelatedIssues(workspace.admin, survivorB.id);
+    expect(survivorBRelations).toHaveLength(1);
+    expect(survivorBRelations[0]?.type).toBe('duplicated_by');
+    expect(survivorBRelations[0]?.issue.id).toBe(duplicate.id);
+  });
 });
