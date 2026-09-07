@@ -27,6 +27,7 @@ import {
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
+  issueMarkDuplicateSchema,
   issueMoveSchema,
   issueRelationSchema,
   issueSummaryQuerySchema,
@@ -2662,4 +2663,202 @@ export async function findDuplicateIssues(
     },
     similarity: Number(row.similarity),
   }));
+}
+
+export async function markAsDuplicate(
+  principal: Principal,
+  issueId: string,
+  input: unknown,
+): Promise<{ issue: IssueRow; relations: IssueRelationRow[]; actions: SyncAction[] }> {
+  assertCan(principal, 'issue:update');
+  const parsed = issueMarkDuplicateSchema.parse(input);
+  if (parsed.survivorIssueId === issueId) {
+    throw validationFailed('An issue cannot be marked as a duplicate of itself.');
+  }
+
+  return await db.transaction(async (tx) => {
+    const source = await loadIssue(tx, principal, issueId);
+    const target = await loadIssue(tx, principal, parsed.survivorIssueId);
+
+    const canceledStates = await tx
+      .select()
+      .from(schema.workflowState)
+      .where(
+        and(
+          eq(schema.workflowState.teamId, source.teamId),
+          eq(schema.workflowState.category, 'canceled'),
+        ),
+      )
+      .orderBy(asc(schema.workflowState.position));
+
+    const canceledState =
+      canceledStates.find((state) => state.name.toLowerCase() === 'duplicate') ?? canceledStates[0];
+
+    if (canceledState === undefined) {
+      throw validationFailed('The team has no canceled status.');
+    }
+
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const now = new Date();
+
+    const relations = await tx
+      .insert(schema.issueRelation)
+      .values([
+        {
+          id: newId(),
+          organizationId: principal.organizationId,
+          issueId: source.id,
+          relatedIssueId: target.id,
+          type: 'duplicate_of',
+          syncId,
+        },
+        {
+          id: newId(),
+          organizationId: principal.organizationId,
+          issueId: target.id,
+          relatedIssueId: source.id,
+          type: 'duplicated_by',
+          syncId,
+        },
+      ])
+      .onConflictDoNothing()
+      .returning();
+
+    const stateChanged = source.stateId !== canceledState.id;
+    let updatedIssue = source;
+    let sourceState: { id: string; name: string } | undefined;
+    if (stateChanged) {
+      const [sourceStateRow] = await tx
+        .select({ id: schema.workflowState.id, name: schema.workflowState.name })
+        .from(schema.workflowState)
+        .where(eq(schema.workflowState.id, source.stateId))
+        .limit(1);
+      sourceState = sourceStateRow;
+
+      const [updatedRow] = await tx
+        .update(schema.issue)
+        .set({
+          stateId: canceledState.id,
+          ...stateTimestamps('canceled', now),
+          updatedAt: now,
+          syncId,
+        })
+        .where(
+          and(
+            eq(schema.issue.id, source.id),
+            eq(schema.issue.organizationId, principal.organizationId),
+          ),
+        )
+        .returning();
+      if (updatedRow !== undefined) {
+        updatedIssue = updatedRow;
+      }
+    }
+
+    const existingSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(eq(schema.issueSubscription.issueId, source.id));
+
+    const subUserIds = existingSubs.map((sub) => sub.userId);
+    const subActions: SyncAction[] = [];
+
+    if (subUserIds.length > 0) {
+      await subscribeUsers(tx, target.id, subUserIds, syncId);
+      await tx
+        .delete(schema.issueSubscription)
+        .where(eq(schema.issueSubscription.issueId, source.id));
+
+      for (const userId of subUserIds) {
+        subActions.push(
+          buildSyncAction({
+            syncId,
+            organizationId: principal.organizationId,
+            scopes: [scopes.user(userId)],
+            action: 'delete',
+            model: 'issue_subscription',
+            modelId: `${source.id}:${userId}`,
+            data: { issueId: source.id, userId, syncId },
+            actor,
+          }),
+          buildSyncAction({
+            syncId,
+            organizationId: principal.organizationId,
+            scopes: [scopes.user(userId)],
+            action: 'insert',
+            model: 'issue_subscription',
+            modelId: `${target.id}:${userId}`,
+            data: { issueId: target.id, userId, identifier: target.identifier, syncId },
+            actor,
+          }),
+        );
+      }
+    }
+
+    const activitiesToAppend: Parameters<typeof appendActivities>[1] = [
+      {
+        organizationId: principal.organizationId,
+        issueId: source.id,
+        actor,
+        field: 'relation',
+        from: null,
+        to: `duplicate_of ${target.identifier}`,
+        syncId,
+      },
+      {
+        organizationId: principal.organizationId,
+        issueId: target.id,
+        actor,
+        field: 'relation',
+        from: null,
+        to: `duplicated_by ${source.identifier}`,
+        syncId,
+      },
+    ];
+
+    if (stateChanged) {
+      activitiesToAppend.push({
+        organizationId: principal.organizationId,
+        issueId: source.id,
+        actor,
+        field: 'stateId',
+        from: sourceState ?? source.stateId,
+        to: { id: canceledState.id, name: canceledState.name },
+        syncId,
+      });
+    }
+
+    await appendActivities(tx, activitiesToAppend);
+
+    const relationActions = relations.map((row) =>
+      buildSyncAction({
+        syncId,
+        organizationId: principal.organizationId,
+        scopes: relationScopes(row, source, target),
+        action: 'insert',
+        model: 'issue_relation',
+        modelId: row.id,
+        data: row,
+        actor,
+      }),
+    );
+
+    const issueAction = buildSyncAction({
+      syncId,
+      organizationId: principal.organizationId,
+      scopes: [scopes.team(updatedIssue.teamId), scopes.issue(updatedIssue.id)],
+      action: 'update',
+      model: 'issue',
+      modelId: updatedIssue.id,
+      data: updatedIssue,
+      actor,
+    });
+
+    return {
+      issue: updatedIssue,
+      relations,
+      actions: [issueAction, ...relationActions, ...subActions],
+    };
+  });
 }

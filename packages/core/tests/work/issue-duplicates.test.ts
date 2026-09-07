@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { db } from '@orbit/db';
+import { listActivity } from '../../src/activity/activity-service.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -6,7 +8,14 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
-import { archiveIssue, createIssue, findDuplicateIssues } from '../../src/work/issue-service.ts';
+import {
+  archiveIssue,
+  createIssue,
+  findDuplicateIssues,
+  listRelatedIssues,
+  listSubscribers,
+  markAsDuplicate,
+} from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
 
@@ -102,5 +111,57 @@ describe('findDuplicateIssues', () => {
     });
 
     expect(duplicates).toEqual([]);
+  });
+});
+
+describe('markAsDuplicate', () => {
+  it('marks issue as duplicate, updates state, repoints subscribers and records activities', async () => {
+    const { issue: survivor } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Original Bug Report',
+    });
+
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Bug Report',
+    });
+
+    const result = await markAsDuplicate(workspace.admin, duplicate.id, {
+      survivorIssueId: survivor.id,
+    });
+
+    expect(result.issue.id).toBe(duplicate.id);
+
+    const dupRelations = await listRelatedIssues(workspace.admin, duplicate.id);
+    expect(dupRelations).toHaveLength(1);
+    expect(dupRelations[0]?.type).toBe('duplicate_of');
+    expect(dupRelations[0]?.issue.id).toBe(survivor.id);
+
+    const survRelations = await listRelatedIssues(workspace.admin, survivor.id);
+    expect(survRelations).toHaveLength(1);
+    expect(survRelations[0]?.type).toBe('duplicated_by');
+    expect(survRelations[0]?.issue.id).toBe(duplicate.id);
+
+    const survivorSubs = await listSubscribers(workspace.admin, survivor.id);
+    expect(survivorSubs.map((s) => s.userId)).toContain(workspace.admin.userId);
+
+    const dupSubs = await listSubscribers(workspace.admin, duplicate.id);
+    expect(dupSubs).toHaveLength(0);
+
+    const survivorActivities = await listActivity(db, workspace.admin, survivor.id);
+    const linkActivity = survivorActivities.find((a) => a.field === 'relation');
+    expect(linkActivity).toBeDefined();
+    expect(linkActivity?.toValue).toBe(`duplicated_by ${duplicate.identifier}`);
+  });
+
+  it('rejects marking an issue as duplicate of itself', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Self Duplicate Test',
+    });
+
+    expect(
+      markAsDuplicate(workspace.admin, issue.id, { survivorIssueId: issue.id }),
+    ).rejects.toThrow();
   });
 });
