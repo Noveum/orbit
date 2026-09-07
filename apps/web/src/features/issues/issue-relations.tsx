@@ -37,9 +37,10 @@ export function groupRelations(
 
 export interface IssueRelationsProps {
   readonly issue: Issue;
+  readonly canMarkDuplicate?: boolean;
 }
 
-export function IssueRelations({ issue }: IssueRelationsProps) {
+export function IssueRelations({ issue, canMarkDuplicate = true }: IssueRelationsProps) {
   const relations = useIssueRelations(issue.id);
   const link = useSetRelation(issue.id);
   const unlink = useRemoveRelation(issue.id);
@@ -68,18 +69,20 @@ export function IssueRelations({ issue }: IssueRelationsProps) {
       <div className="flex items-center gap-2">
         <h2 className="text-2xs text-faint uppercase tracking-wide">Links</h2>
         <div className="ml-auto flex items-center gap-1">
-          <IssuePicker
-            open={pickingDuplicate}
-            onOpenChange={setPickingDuplicate}
-            excludedIds={[issue.id, ...linkedIds]}
-            testId="mark-duplicate-picker"
-            placeholder="Search for survivor issue"
-            onPick={(picked) => markDuplicate.mutate(picked.id)}
-          >
-            <Button size="sm" variant="ghost" data-testid="mark-as-duplicate">
-              Mark duplicate
-            </Button>
-          </IssuePicker>
+          {canMarkDuplicate && (
+            <IssuePicker
+              open={pickingDuplicate}
+              onOpenChange={setPickingDuplicate}
+              excludedIds={[issue.id, ...linkedIds]}
+              testId="mark-duplicate-picker"
+              placeholder="Search for survivor issue"
+              onPick={(picked) => markDuplicate.mutate(picked.id)}
+            >
+              <Button size="sm" variant="ghost" data-testid="mark-as-duplicate">
+                Mark duplicate
+              </Button>
+            </IssuePicker>
+          )}
           <IssuePicker
             open={picking}
             onOpenChange={setPicking}

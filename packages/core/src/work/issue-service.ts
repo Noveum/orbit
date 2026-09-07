@@ -2673,8 +2673,14 @@ async function removeExistingDuplicates(
   syncId: number,
 ): Promise<SyncAction[]> {
   const existingDuplicates = await tx
-    .select()
+    .select({
+      id: schema.issueRelation.id,
+      issueId: schema.issueRelation.issueId,
+      relatedIssueId: schema.issueRelation.relatedIssueId,
+      teamId: schema.issue.teamId,
+    })
     .from(schema.issueRelation)
+    .innerJoin(schema.issue, eq(schema.issueRelation.issueId, schema.issue.id))
     .where(
       and(
         eq(schema.issueRelation.organizationId, organizationId),
@@ -2707,7 +2713,7 @@ async function removeExistingDuplicates(
     buildSyncAction({
       syncId,
       organizationId,
-      scopes: [scopes.team(source.teamId), scopes.issue(source.id)],
+      scopes: [scopes.team(row.teamId), scopes.issue(row.issueId)],
       action: 'delete',
       model: 'issue_relation',
       modelId: row.id,
@@ -2796,6 +2802,22 @@ export async function markAsDuplicate(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const now = new Date();
+
+    const [existingDuplicateOf] = await tx
+      .select()
+      .from(schema.issueRelation)
+      .where(
+        and(
+          eq(schema.issueRelation.organizationId, principal.organizationId),
+          eq(schema.issueRelation.issueId, source.id),
+          eq(schema.issueRelation.type, 'duplicate_of'),
+        ),
+      )
+      .limit(1);
+
+    if (existingDuplicateOf !== undefined && existingDuplicateOf.relatedIssueId === target.id) {
+      return { issue: source, relations: [existingDuplicateOf], actions: [] };
+    }
 
     const oldRelationDeleteActions = await removeExistingDuplicates(
       tx,

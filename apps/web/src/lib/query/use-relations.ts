@@ -2,12 +2,11 @@
 
 import type { IssueRelationType } from '@orbit/shared/constants';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { z } from 'zod';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import { queryKeys } from './keys.ts';
 import type { IssueRelation } from './schemas.ts';
-import { issueRelationListSchema } from './schemas.ts';
+import { issueRelationListSchema, issueResponseSchema } from './schemas.ts';
 
 export interface RelationInput {
   readonly relatedIssueId: string;
@@ -102,7 +101,7 @@ export function useMarkDuplicate(issueId: string) {
     mutationFn: async (survivorIssueId: string) => {
       return await apiFetch(
         `/api/issues/${encodeURIComponent(issueId)}/duplicate`,
-        z.object({ issue: z.record(z.string(), z.unknown()) }),
+        issueResponseSchema,
         {
           method: 'POST',
           body: { survivorIssueId },

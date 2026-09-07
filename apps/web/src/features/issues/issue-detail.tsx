@@ -1,6 +1,7 @@
 'use client';
 
 import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
+import { permissionsFor } from '@orbit/shared/policy';
 import { Bell, BellOff, Check } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -247,12 +248,14 @@ export function IssueDetailView({
     enabled: issue !== undefined && deletion?.allowed === true,
   });
 
+  const canMarkDuplicate = permissionsFor(workspace.role).includes('issue:update');
+
   useHotkey('shift+m', () => setPickingDuplicate(true), {
     label: 'Mark as duplicate of...',
     section: 'Issues',
     scope: 'issues',
     priority: HOTKEY_PRIORITY.layer,
-    enabled: issue !== undefined,
+    enabled: issue !== undefined && canMarkDuplicate,
   });
 
   if (detail.isPending) {
@@ -370,7 +373,7 @@ export function IssueDetailView({
             <>
               <AttachmentGallery attachments={detail.data.attachments} />
               <SubIssues issue={issue} subIssues={detail.data.subIssues} />
-              <IssueRelations issue={issue} />
+              <IssueRelations issue={issue} canMarkDuplicate={canMarkDuplicate} />
             </>
           )}
 
