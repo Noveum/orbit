@@ -127,6 +127,21 @@ async function baselineLedger(
         set health = 'no_update'
         where health not in ('on_track', 'at_risk', 'off_track', 'no_update')
       `;
+      await tx`
+        do $$
+        begin
+          if not exists (
+            select 1 from pg_constraint where conname = 'project_health_check'
+          ) then
+            alter table project add constraint project_health_check check (health in ('on_track', 'at_risk', 'off_track', 'no_update'));
+          end if;
+          if not exists (
+            select 1 from pg_constraint where conname = 'project_update_health_check'
+          ) then
+            alter table project_update add constraint project_update_health_check check (health in ('on_track', 'at_risk', 'off_track', 'no_update'));
+          end if;
+        end $$;
+      `;
     }
     await tx`create schema if not exists drizzle`;
     await tx`
