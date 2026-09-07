@@ -15,6 +15,7 @@ import {
   listRelatedIssues,
   listSubscribers,
   markAsDuplicate,
+  subscribe,
 } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
@@ -126,11 +127,16 @@ describe('markAsDuplicate', () => {
       title: 'Duplicate Bug Report',
     });
 
+    const member = await addMember(workspace, 'member');
+    await subscribe(member.principal, duplicate.id);
+
     const result = await markAsDuplicate(workspace.admin, duplicate.id, {
       survivorIssueId: survivor.id,
     });
 
     expect(result.issue.id).toBe(duplicate.id);
+    expect(result.issue.stateId).not.toBe(duplicate.stateId);
+    expect(result.issue.canceledAt).not.toBeNull();
 
     const dupRelations = await listRelatedIssues(workspace.admin, duplicate.id);
     expect(dupRelations).toHaveLength(1);
@@ -143,7 +149,9 @@ describe('markAsDuplicate', () => {
     expect(survRelations[0]?.issue.id).toBe(duplicate.id);
 
     const survivorSubs = await listSubscribers(workspace.admin, survivor.id);
-    expect(survivorSubs.map((s) => s.userId)).toContain(workspace.admin.userId);
+    const survivorSubIds = survivorSubs.map((s) => s.userId);
+    expect(survivorSubIds).toContain(workspace.admin.userId);
+    expect(survivorSubIds).toContain(member.user.id);
 
     const dupSubs = await listSubscribers(workspace.admin, duplicate.id);
     expect(dupSubs).toHaveLength(0);
