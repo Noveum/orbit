@@ -1,2 +1,4 @@
+UPDATE "project" SET "health" = 'no_update' WHERE "health" NOT IN ('on_track', 'at_risk', 'off_track', 'no_update');--> statement-breakpoint
+UPDATE "project_update" SET "health" = 'no_update' WHERE "health" NOT IN ('on_track', 'at_risk', 'off_track', 'no_update');--> statement-breakpoint
 ALTER TABLE "project" ADD CONSTRAINT "project_health_check" CHECK ("project"."health" in ('on_track', 'at_risk', 'off_track', 'no_update'));--> statement-breakpoint
 ALTER TABLE "project_update" ADD CONSTRAINT "project_update_health_check" CHECK ("project_update"."health" in ('on_track', 'at_risk', 'off_track', 'no_update'));

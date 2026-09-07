@@ -1,3 +1,4 @@
+import { PROJECT_HEALTHS } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -17,6 +18,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
 import { organization, team } from './org.ts';
+
+const healthListSql = sql.raw(PROJECT_HEALTHS.map((health) => `'${health}'`).join(', '));
 
 export const workflowState = pgTable(
   'workflow_state',
@@ -144,10 +147,7 @@ export const project = pgTable(
       .on(table.organizationId, table.slug)
       .where(sql`${table.archivedAt} is null`),
     index('project_org_idx').on(table.organizationId),
-    check(
-      'project_health_check',
-      sql`${table.health} in ('on_track', 'at_risk', 'off_track', 'no_update')`,
-    ),
+    check('project_health_check', sql`${table.health} in (${healthListSql})`),
   ],
 );
 
@@ -188,10 +188,7 @@ export const projectUpdate = pgTable(
   },
   (table) => [
     index('project_update_project_idx').on(table.projectId, table.createdAt),
-    check(
-      'project_update_health_check',
-      sql`${table.health} in ('on_track', 'at_risk', 'off_track', 'no_update')`,
-    ),
+    check('project_update_health_check', sql`${table.health} in (${healthListSql})`),
   ],
 );
 

@@ -18,7 +18,9 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
-const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([1786217938315, 1786623194883, 1788083189965]);
+const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
+  1786217938315, 1786623194883, 1788083189965, 1788724695585,
+]);
 
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>
@@ -113,6 +115,18 @@ async function baselineLedger(
           'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
         );
       }
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1788724695585)) {
+      await tx`
+        update project
+        set health = 'no_update'
+        where health not in ('on_track', 'at_risk', 'off_track', 'no_update')
+      `;
+      await tx`
+        update project_update
+        set health = 'no_update'
+        where health not in ('on_track', 'at_risk', 'off_track', 'no_update')
+      `;
     }
     await tx`create schema if not exists drizzle`;
     await tx`

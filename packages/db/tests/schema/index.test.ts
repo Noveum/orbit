@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { readFile } from 'node:fs/promises';
+import { PROJECT_HEALTHS } from '@orbit/shared';
 import { SYNC_MODELS } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { getTableColumns, type SQL, type Table } from 'drizzle-orm';
@@ -470,7 +471,6 @@ describe('domain invariants', () => {
     const organizationId = randomUUIDv7();
     const projectId = randomUUIDv7();
     const authorId = randomUUIDv7();
-    const allowedHealths = ['on_track', 'at_risk', 'off_track', 'no_update'] as const;
     await expect(
       db.transaction(async (tx) => {
         await tx.insert(schema.organization).values({
@@ -484,7 +484,7 @@ describe('domain invariants', () => {
           email: `${authorId}@example.com`,
           handle: authorId.slice(0, 16),
         });
-        for (const health of allowedHealths) {
+        for (const health of PROJECT_HEALTHS) {
           await tx.insert(schema.project).values({
             id: randomUUIDv7(),
             organizationId,
@@ -500,7 +500,7 @@ describe('domain invariants', () => {
           slug: 'base-project',
           health: 'on_track',
         });
-        for (const health of allowedHealths) {
+        for (const health of PROJECT_HEALTHS) {
           await tx.insert(schema.projectUpdate).values({
             id: randomUUIDv7(),
             organizationId,
@@ -512,6 +512,31 @@ describe('domain invariants', () => {
         }
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('normalises legacy health values before adding constraints in the migration', async () => {
+    const migration = (
+      await readFile(new URL('../../drizzle/0017_typical_freak.sql', import.meta.url), 'utf8')
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    const projectNorm = migration.indexOf(
+      "UPDATE \"project\" SET \"health\" = 'no_update' WHERE \"health\" NOT IN ('on_track', 'at_risk', 'off_track', 'no_update');",
+    );
+    const updateNorm = migration.indexOf(
+      "UPDATE \"project_update\" SET \"health\" = 'no_update' WHERE \"health\" NOT IN ('on_track', 'at_risk', 'off_track', 'no_update');",
+    );
+    const projectConstraint = migration.indexOf(
+      'ALTER TABLE "project" ADD CONSTRAINT "project_health_check"',
+    );
+    const updateConstraint = migration.indexOf(
+      'ALTER TABLE "project_update" ADD CONSTRAINT "project_update_health_check"',
+    );
+
+    expect(projectNorm).toBeGreaterThanOrEqual(0);
+    expect(updateNorm).toBeGreaterThanOrEqual(0);
+    expect(projectConstraint).toBeGreaterThan(projectNorm);
+    expect(updateConstraint).toBeGreaterThan(updateNorm);
   });
 });
 
