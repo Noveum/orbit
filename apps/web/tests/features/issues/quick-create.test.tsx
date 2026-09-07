@@ -8,6 +8,7 @@ import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile([
+  '@/features/issues/workspace-provider.tsx',
   '@/lib/query/use-issues.ts',
   '@/lib/query/use-duplicate-issues.ts',
 ]);

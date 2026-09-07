@@ -5,6 +5,9 @@ import { DropdownMenu, DropdownMenuContent } from '@/components/ui/dropdown-menu
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import type { Issue, Member } from '@/lib/query/schemas.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 const toast = mock();
 

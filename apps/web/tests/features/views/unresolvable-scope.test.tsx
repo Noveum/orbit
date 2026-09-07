@@ -11,7 +11,9 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { View } from '@/lib/query/schemas.ts';
 import { bootstrapSchema, viewListSchema } from '@/lib/query/schemas.ts';
-import { mockSession } from '../../../tests-support.ts';
+import { mockSession, restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 const ORIGIN = 'http://localhost:3000';
 
