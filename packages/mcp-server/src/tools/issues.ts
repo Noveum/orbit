@@ -11,6 +11,7 @@ import {
   listIssues,
   listLabels,
   listRelatedIssues,
+  markAsDuplicate,
   moveIssue,
   readAttachment,
   removeRelation,
@@ -642,6 +643,37 @@ function registerRemoveRelation(server: McpServer, principal: Principal): void {
   );
 }
 
+function registerMarkIssueDuplicate(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'mark_issue_duplicate',
+      title: 'Mark an issue as duplicate',
+      description:
+        'Mark an issue as a duplicate of another issue. Moves the duplicate issue to the team canceled state, records the duplicate_of relation, and transfers subscribers to the survivor issue.',
+      readOnly: false,
+      inputSchema: {
+        issue: issueRef.describe('The duplicate issue identifier or id.'),
+        survivorIssue: issueRef.describe('The survivor issue identifier or id.'),
+      },
+    },
+    async (args) => {
+      const issue = await getIssue(principal, args.issue);
+      const survivor = await getIssue(principal, args.survivorIssue);
+      const result = await markAsDuplicate(principal, issue.id, {
+        survivorIssueId: survivor.id,
+      });
+      await publish(result.actions);
+      return {
+        issue: issue.identifier,
+        survivorIssue: survivor.identifier,
+        relations: await issueRelationViews(principal, issue.id),
+        deltas: deltaViews(result.actions),
+      };
+    },
+  );
+}
+
 const MAX_ATTACHMENT_READ_BYTES = 256 * 1024;
 
 function describeAttachment(file: {
@@ -840,6 +872,7 @@ export function registerIssueTools(server: McpServer, principal: Principal): voi
   registerListIssueComments(server, principal);
   registerSetRelation(server, principal);
   registerRemoveRelation(server, principal);
+  registerMarkIssueDuplicate(server, principal);
   registerAttachFile(server, principal);
   registerListIssueAttachments(server, principal);
   registerReadAttachment(server, principal);

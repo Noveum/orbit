@@ -21,9 +21,12 @@ import type { Issue, Member, Team } from '@/lib/query/schemas.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
 import { useIssueDetail, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { useMarkDuplicate } from '@/lib/query/use-relations.ts';
+import { DuplicateBanner } from './duplicate-banner.tsx';
 import { IssueActionsMenu } from './issue-actions.tsx';
 import { IssueCopyActions } from './issue-copy-actions.tsx';
 import { DELETE_ISSUE_BINDING, useIssueDeletion } from './issue-deletion.tsx';
+import { IssuePicker } from './issue-picker.tsx';
 import { IssueProperties } from './issue-properties.tsx';
 import { IssueRelations } from './issue-relations.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -233,12 +236,23 @@ export function IssueDetailView({
     [deletion, issue, leave],
   );
 
+  const [pickingDuplicate, setPickingDuplicate] = useState(false);
+  const markDuplicate = useMarkDuplicate(issue?.id ?? '');
+
   useHotkey(DELETE_ISSUE_BINDING, askToDelete, {
     label: 'Delete issue',
     section: 'Issues',
     scope: 'issues',
     priority: HOTKEY_PRIORITY.layer,
     enabled: issue !== undefined && deletion?.allowed === true,
+  });
+
+  useHotkey('shift+m', () => setPickingDuplicate(true), {
+    label: 'Mark as duplicate of...',
+    section: 'Issues',
+    scope: 'issues',
+    priority: HOTKEY_PRIORITY.layer,
+    enabled: issue !== undefined,
   });
 
   if (detail.isPending) {
@@ -286,6 +300,19 @@ export function IssueDetailView({
 
   return (
     <div className="flex h-full min-h-0 flex-col lg:flex-row" data-testid="issue-detail">
+      {pickingDuplicate ? (
+        <IssuePicker
+          open={pickingDuplicate}
+          onOpenChange={setPickingDuplicate}
+          excludedIds={[issue.id]}
+          testId="mark-duplicate-dialog"
+          placeholder="Search for survivor issue"
+          onPick={(picked) => markDuplicate.mutate(picked.id)}
+        >
+          <span className="sr-only">Mark duplicate picker</span>
+        </IssuePicker>
+      ) : null}
+
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         <header className="flex items-center gap-2 border-border border-b px-5 py-2.5">
           <span data-numeric className="text-2xs text-faint">
@@ -321,6 +348,7 @@ export function IssueDetailView({
         </header>
 
         <div className="mx-auto flex max-w-3xl flex-col gap-6 px-5 py-6">
+          <DuplicateBanner issueId={issue.id} />
           <IssueTitle
             key={`${issue.id}:title`}
             issue={issue}

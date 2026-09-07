@@ -14,7 +14,12 @@ import { Button } from '@/components/ui/button.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover, rowHover } from '@/lib/interaction.ts';
 import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
-import { useIssueRelations, useRemoveRelation, useSetRelation } from '@/lib/query/use-relations.ts';
+import {
+  useIssueRelations,
+  useMarkDuplicate,
+  useRemoveRelation,
+  useSetRelation,
+} from '@/lib/query/use-relations.ts';
 import { IssuePicker } from './issue-picker.tsx';
 
 export { RELATION_LABELS };
@@ -38,7 +43,9 @@ export function IssueRelations({ issue }: IssueRelationsProps) {
   const relations = useIssueRelations(issue.id);
   const link = useSetRelation(issue.id);
   const unlink = useRemoveRelation(issue.id);
+  const markDuplicate = useMarkDuplicate(issue.id);
   const [picking, setPicking] = useState(false);
+  const [pickingDuplicate, setPickingDuplicate] = useState(false);
   const [linkType, setLinkType] = useState<IssueRelationType>('blocks');
 
   const refetch = relations.refetch;
@@ -60,7 +67,19 @@ export function IssueRelations({ issue }: IssueRelationsProps) {
     <section className="flex flex-col gap-1" data-testid="issue-relations">
       <div className="flex items-center gap-2">
         <h2 className="text-2xs text-faint uppercase tracking-wide">Links</h2>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <IssuePicker
+            open={pickingDuplicate}
+            onOpenChange={setPickingDuplicate}
+            excludedIds={[issue.id, ...linkedIds]}
+            testId="mark-duplicate-picker"
+            placeholder="Search for survivor issue"
+            onPick={(picked) => markDuplicate.mutate(picked.id)}
+          >
+            <Button size="sm" variant="ghost" data-testid="mark-as-duplicate">
+              Mark duplicate
+            </Button>
+          </IssuePicker>
           <IssuePicker
             open={picking}
             onOpenChange={setPicking}

@@ -425,6 +425,26 @@ describe('issues', () => {
     expect(errorPayload(failure).code).toBe('not_found');
   });
 
+  it('marks an issue as duplicate of another issue via MCP', async () => {
+    const survivor = await newIssue('Survivor issue');
+    const duplicate = await newIssue('Duplicate issue');
+
+    const result = await admin.result('mark_issue_duplicate', {
+      issue: duplicate.identifier,
+      survivorIssue: survivor.identifier,
+    });
+
+    expect(result['issue']).toBe(duplicate.identifier);
+    expect(result['survivorIssue']).toBe(survivor.identifier);
+
+    const survivorDetails = await admin.result('get_issue', { issue: survivor.identifier });
+    expect(relationsOf(survivorDetails)).toContainEqual({
+      type: 'duplicated_by',
+      identifier: duplicate.identifier,
+      title: 'Duplicate issue',
+    });
+  });
+
   it('makes an issue a sub issue and detaches it again', async () => {
     const parent = await newIssue('Epic parent');
     const child = await newIssue('Loose task');
