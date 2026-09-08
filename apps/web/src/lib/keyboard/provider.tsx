@@ -26,6 +26,16 @@ export function useHotkeyList(): readonly HotkeyEntry[] {
   return useSyncExternalStore(registry.subscribe, registry.getSnapshot, registry.getSnapshot);
 }
 
+function shouldIgnoreKeyDown(event: KeyboardEvent): boolean {
+  return (
+    event.defaultPrevented ||
+    typeof event.key !== 'string' ||
+    event.key.length === 0 ||
+    isModifierKey(event.key) ||
+    activatesFocusedControl(event, event.target)
+  );
+}
+
 export function HotkeyProvider({ children }: { children: ReactNode }) {
   const [registry] = useState(() => new HotkeyRegistry());
 
@@ -33,9 +43,7 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
     let buffer: BufferedStep[] = [];
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      if (isModifierKey(event.key)) return;
-      if (activatesFocusedControl(event, event.target)) return;
+      if (shouldIgnoreKeyDown(event)) return;
       const editable = isEditableTarget(event.target);
       const now = Date.now();
       buffer = editable ? [] : pruneBuffer(buffer, now, SEQUENCE_TIMEOUT_MS);
