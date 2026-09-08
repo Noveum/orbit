@@ -41,7 +41,7 @@ import {
 import type { DocHeading } from './outline.ts';
 import { SplitPane } from './split-pane.tsx';
 import { type DocCommenting, useDocAnchors } from './use-doc-anchors.ts';
-import { type EditorMode, useDocPreferences } from './use-doc-preferences.ts';
+import { type EditorMode, READING_WIDTH_CLASS, useDocPreferences } from './use-doc-preferences.ts';
 import { useDocUploads } from './use-doc-uploads.ts';
 
 const SNIPPET_ITEMS: readonly { name: SnippetName; label: string; icon: typeof Bold }[] = [
@@ -291,7 +291,7 @@ export function DocEditor({
   const bootstrap = useBootstrap(null);
   const cmRef = useRef<MarkdownCodeEditorHandle>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
-  const { mode, setMode, toolbar, toggleToolbar } = useDocPreferences();
+  const { mode, setMode, toolbar, toggleToolbar, width } = useDocPreferences();
   const [preview, setPreview] = useState(false);
   const { uploading, percent, upload, uploadEach } = useDocUploads(docId);
 
@@ -385,8 +385,8 @@ export function DocEditor({
         <div className="flex h-11 shrink-0 items-center border-border border-b px-6">
           {modeSwitch}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-8 py-8" data-testid="doc-reading-preview">
-          <DocBody html={html} className="mx-auto max-w-[45rem]" />
+        <div className="min-h-0 flex-1 overflow-y-auto py-8" data-testid="doc-reading-preview">
+          <DocBody html={html} className={cn('mx-auto px-8', READING_WIDTH_CLASS[width])} />
         </div>
       </div>
     );
