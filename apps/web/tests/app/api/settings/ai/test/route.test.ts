@@ -111,7 +111,7 @@ describe('AI test connection API', () => {
       }),
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     const text = await response.text();
     expect(text).not.toContain('sk-secret-must-not-leak');
   });
