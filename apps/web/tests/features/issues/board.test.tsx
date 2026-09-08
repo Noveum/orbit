@@ -21,6 +21,9 @@ import { boardSearch } from '@/lib/query/issue-search.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { BoardPage, Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { seedBoardColumns } from '@/lib/query/use-issues.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 const push = mock();
 const nativeFetch = globalThis.fetch;

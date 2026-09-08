@@ -2,6 +2,7 @@ import type { Database } from '@orbit/db';
 import { and, asc, count, db, desc, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
+  DUPLICATE_SIMILARITY_THRESHOLD,
   ISSUE_RELATION_TYPES,
   type IssueRelationType,
   REBALANCE_THRESHOLD,
@@ -21,6 +22,7 @@ import {
   truncate,
 } from '@orbit/shared/utils';
 import {
+  duplicateIssueQuerySchema,
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
@@ -58,7 +60,7 @@ import {
   issueScopes,
   stateTimestamps,
 } from './issue-fields.ts';
-import { buildIssueWhere } from './issue-query.ts';
+import { buildIssueWhere, visibleTeamFilters } from './issue-query.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { replaceReviewersFor, reviewerIdsByIssue } from './reviewer-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
@@ -2565,4 +2567,67 @@ export async function listSubscribers(
         eq(schema.issue.organizationId, principal.organizationId),
       ),
     );
+}
+
+export interface DuplicateIssueMatch {
+  readonly id: string;
+  readonly identifier: string;
+  readonly title: string;
+  readonly state: {
+    readonly id: string;
+    readonly name: string;
+    readonly category: string;
+    readonly color: string;
+  };
+  readonly similarity: number;
+}
+
+export async function findDuplicateIssues(
+  principal: Principal,
+  input: unknown,
+): Promise<DuplicateIssueMatch[]> {
+  assertCan(principal, 'issue:read');
+  const query = duplicateIssueQuerySchema.parse(input);
+  const term = query.title.trim();
+  if (term.length < 3) return [];
+
+  const similarityExpr = sql<number>`similarity(${schema.issue.title}, ${term})`;
+
+  const rows = await db
+    .select({
+      id: schema.issue.id,
+      identifier: schema.issue.identifier,
+      title: schema.issue.title,
+      stateId: schema.workflowState.id,
+      stateName: schema.workflowState.name,
+      stateCategory: schema.workflowState.category,
+      stateColor: schema.workflowState.color,
+      similarity: similarityExpr,
+    })
+    .from(schema.issue)
+    .innerJoin(schema.workflowState, eq(schema.workflowState.id, schema.issue.stateId))
+    .where(
+      and(
+        eq(schema.issue.organizationId, principal.organizationId),
+        eq(schema.issue.teamId, query.teamId),
+        isNull(schema.issue.archivedAt),
+        ...visibleTeamFilters(principal),
+        sql`similarity(${schema.issue.title}, ${term}) >= ${DUPLICATE_SIMILARITY_THRESHOLD}`,
+      ),
+    )
+    .orderBy(desc(similarityExpr), desc(schema.issue.createdAt), desc(schema.issue.id))
+    .limit(query.limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    identifier: row.identifier,
+    title: row.title,
+    state: {
+      id: row.stateId,
+      name: row.stateName,
+      category: row.stateCategory,
+      color: row.stateColor,
+    },
+    similarity: Number(row.similarity),
+  }));
 }

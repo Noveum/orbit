@@ -9,7 +9,11 @@ const PACKAGE_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 const GUARDED = [SESSION_MODULE, PRINCIPAL_MODULE] as const;
 
-const MUST_BE_RESTORED = ['@/lib/query/use-issue-search.ts', '@/lib/query/use-issues.ts'] as const;
+const MUST_BE_RESTORED = [
+  '@/features/issues/workspace-provider.tsx',
+  '@/lib/query/use-issue-search.ts',
+  '@/lib/query/use-issues.ts',
+] as const;
 
 interface Candidate {
   readonly label: string;
@@ -37,6 +41,10 @@ function stubs(source: string, specifier: string): boolean {
   return new RegExp(`mock\\.module\\(\\s*['"\`]${asPattern(specifier)}['"\`]`).test(source);
 }
 
+function packageAlias(specifier: string): string {
+  return specifier.replace(/^(?:\.\.\/)+src\//, '@/');
+}
+
 function stringConstantsIn(source: string): Map<string, string> {
   return new Map(
     [...source.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`]([^'"`]+)['"`]/g)].map(
@@ -53,7 +61,7 @@ function timesStubbed(source: string, specifier: string): number {
   )) {
     const named = call[2];
     const reached = call[1] ?? (named === undefined ? undefined : constants.get(named));
-    if (reached === specifier) seen += 1;
+    if (reached !== undefined && packageAlias(reached) === specifier) seen += 1;
   }
   return seen;
 }
@@ -61,7 +69,9 @@ function timesStubbed(source: string, specifier: string): number {
 function specifiersHandedToTheHelper(source: string): Set<string> {
   return new Set(
     [...source.matchAll(/restoreModulesAfterThisFile\(\s*\[([^\]]*)\]/g)].flatMap((call) =>
-      [...(call[1] ?? '').matchAll(/['"`]([^'"`]+)['"`]/g)].map((entry) => entry[1] ?? ''),
+      [...(call[1] ?? '').matchAll(/['"`]([^'"`]+)['"`]/g)].map((entry) =>
+        packageAlias(entry[1] ?? ''),
+      ),
     ),
   );
 }

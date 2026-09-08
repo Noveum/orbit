@@ -230,9 +230,10 @@ follow-up work.
 - [ ] **CI-002: Immutable CI inputs.** **Status: open.** Pin actions and container
   images, declare least-privilege workflow permissions, and avoid persisted
   credentials.
-- [ ] **REL-002: Repeatable releases.** **Status: open.** Define versioning and
-  compatibility, publish changelogs, signed artifacts, images, SBOMs, provenance,
-  and upgrade notes.
+- [ ] **REL-002: Repeatable releases.** **Status: partial.** Dated source tags,
+  a backfilled changelog, compatibility limits, and upgrade and rollback steps
+  are documented in [Releases and upgrades](releases.md). Signed artifacts,
+  container images, SBOMs, and provenance remain outstanding.
 - [ ] **CFG-001: One configuration contract.** **Status: open; #290 handles one
   database setting.** Consolidate capability-aware validation and add a `doctor`
   command that reports missing requirements.

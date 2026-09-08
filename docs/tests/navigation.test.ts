@@ -16,6 +16,9 @@ describe('documentationNavigation', () => {
       { text: 'Testing', link: '/testing' },
       { text: 'Troubleshooting', link: '/troubleshooting' },
       { text: 'Roadmap', link: '/roadmap' },
+      { text: 'Changelog', link: 'https://github.com/Noveum/orbit/blob/main/CHANGELOG.md' },
+      { text: 'Releases and upgrades', link: '/releases' },
+      { text: 'Vercel Preview deployment gate', link: '/VERCEL_BUILD_GATE' },
       {
         text: 'CONTRIBUTING.md',
         link: 'https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md',

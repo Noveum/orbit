@@ -40,7 +40,7 @@ async function readJson(page: Page, path: string): Promise<unknown> {
 }
 
 async function signIn(page: Page): Promise<void> {
-  await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   const result = await page.evaluate(
     async ({ url, email }) => {
       const response = await fetch(url, {
@@ -123,6 +123,21 @@ async function buildShots(page: Page): Promise<Shot[]> {
   const shots: Shot[] = [
     { name: 'board', path: '/team/ENG/board', caption: 'Board' },
     { name: 'issues', path: '/team/ENG/issues', caption: 'Issue list' },
+    {
+      name: 'duplicate-suggestions',
+      path: '/team/ENG/issues',
+      caption: 'Similar issues during creation',
+      act: async (target) => {
+        const body = await readJson(target, '/api/issues?teamKey=ENG&limit=1');
+        const issue = isRecord(body) && Array.isArray(body['issues']) ? body['issues'][0] : null;
+        if (!isRecord(issue) || typeof issue['title'] !== 'string') {
+          throw new Error('A seeded Engineering issue is required for duplicate suggestions.');
+        }
+        await target.getByRole('button', { name: 'New issue', exact: true }).click();
+        await target.getByTestId('quick-create-title').fill(issue['title']);
+        await target.getByTestId('duplicate-suggestions').waitFor();
+      },
+    },
     { name: 'sprints', path: '/sprints', caption: 'Sprints' },
     { name: 'standup', path: '/standup', caption: 'Standup' },
     { name: 'analytics', path: '/analytics', caption: 'Analytics', settleMs: 1800 },
@@ -147,7 +162,7 @@ async function buildShots(page: Page): Promise<Shot[]> {
       caption: 'Analytics exact chart value',
       settleMs: 1800,
       act: async (target) => {
-        const point = target.locator('[data-testid^="plot-hit-"]').last();
+        const point = target.getByTestId('plot-day-hit').first();
         await point.hover({ force: true });
         await target.getByRole('tooltip').waitFor();
       },
@@ -162,10 +177,13 @@ async function buildShots(page: Page): Promise<Shot[]> {
         await target.getByTestId('filter-field-project').click();
         await target.locator('[data-testid^="filter-value-"]').first().click();
         await target.keyboard.press('Escape');
+        await target.getByTestId('delivery-completed').waitFor();
+        await target.getByText('Refreshing', { exact: true }).waitFor({ state: 'hidden' });
         await target.getByRole('button', { name: 'Scope' }).click();
       },
     },
     { name: 'projects', path: '/projects', caption: 'Projects' },
+    { name: 'project-updates', path: '/projects?view=feed', caption: 'Project updates' },
     { name: 'inbox', path: '/inbox', caption: 'Inbox' },
     { name: 'my-issues', path: '/my-issues', caption: 'My issues' },
     { name: 'docs-list', path: '/docs', caption: 'Docs' },
@@ -247,7 +265,11 @@ async function capture(browser: Browser, theme: Theme, shots: readonly Shot[]): 
       await page.goto(`${BASE}${shot.path}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await settle(page, shot.settleMs ?? 1200);
       if (shot.act !== undefined) await shot.act(page);
-      await page.screenshot({ path: file, animations: 'disabled' });
+      await page.screenshot({
+        path: file,
+        animations: 'disabled',
+        style: 'nextjs-portal { display: none; }',
+      });
       written.push(file);
       console.log(`  ${label}`);
     } catch (error) {
@@ -258,6 +280,14 @@ async function capture(browser: Browser, theme: Theme, shots: readonly Shot[]): 
 
   await context.close();
   return written;
+}
+
+export function verifyCaptureCount(captured: number, expected: number): void {
+  if (expected === 0 || captured !== expected) {
+    throw new Error(
+      'Screenshot capture incomplete. Resolve every skipped screen before publishing.',
+    );
+  }
 }
 
 async function main(): Promise<void> {
@@ -284,6 +314,7 @@ async function main(): Promise<void> {
   }
   await browser.close();
   console.log(`\nWrote ${total} images to ${RELATIVE_OUT}`);
+  verifyCaptureCount(total, shots.length * THEMES.length);
 }
 
 if (import.meta.main) await main();
