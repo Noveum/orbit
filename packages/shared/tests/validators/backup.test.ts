@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { DomainError } from '../../src/errors/index.ts';
 import {
   type BackupManifest,
   backupManifestSchema,
@@ -65,7 +66,27 @@ describe('backupManifestSchema', () => {
     expect(parsed.counts.workspaces).toBe(1);
   });
 
-  it('rejects an invalid format version', () => {
+  it('accepts supported format version 1.0.0 and rejects out of range versions', () => {
+    const accepted = backupManifestSchema.parse({
+      ...validManifest,
+      formatVersion: '1.0.0',
+    });
+    expect(accepted.formatVersion).toBe('1.0.0');
+
+    expect(() =>
+      backupManifestSchema.parse({
+        ...validManifest,
+        formatVersion: '1.0.1',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      backupManifestSchema.parse({
+        ...validManifest,
+        formatVersion: '1.1.0',
+      }),
+    ).toThrow();
+
     expect(() =>
       backupManifestSchema.parse({
         ...validManifest,
@@ -141,6 +162,6 @@ describe('configuration safety and extraction', () => {
       validateConfigurationSafety({
         BETTER_AUTH_SECRET: 'secret',
       }),
-    ).toThrow();
+    ).toThrow(DomainError);
   });
 });

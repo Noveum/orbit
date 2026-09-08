@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import postgres from 'postgres';
+import { DomainError } from '@orbit/shared';
 import { captureStorageObjects } from '../../src/backup/storage.ts';
 import type { StorageDriver, StoredObject, UploadTarget } from '../../src/storage/types.ts';
 
@@ -59,66 +60,69 @@ function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
 
 describe('captureStorageObjects', () => {
   it('captures referenced storage objects into destination directory', async () => {
-    const databaseUrl = process.env['DATABASE_URL'];
-    if (databaseUrl === undefined) return;
-
     const tempDir = await mkdtemp(join(tmpdir(), 'orbit-storage-test-'));
     try {
-      const store = new Map<string, Uint8Array>();
+      const testBytes = new TextEncoder().encode('hello world backup storage content');
+      const expectedSha256 = createHash('sha256').update(testBytes).digest('hex');
+      const testKey = 'org_test/issue/att_123/file.txt';
+
+      const store = new Map<string, Uint8Array>([[testKey, testBytes]]);
       const driver = createMockDriver(store);
       const result = await captureStorageObjects({
-        databaseUrl,
+        records: [
+          {
+            id: 'att-123',
+            storage_key: testKey,
+            size: testBytes.byteLength,
+            content_type: 'text/plain',
+          },
+        ],
         outputObjectsDir: tempDir,
         driver,
       });
 
       expect(Array.isArray(result.objects)).toBe(true);
+      expect(result.objects.length).toBe(1);
+      expect(result.objects[0]?.key).toBe(testKey);
+      expect(result.objects[0]?.sha256).toBe(expectedSha256);
+      expect(result.objects[0]?.bytes).toBe(testBytes.byteLength);
+      expect(result.objects[0]?.contentType).toBe('text/plain');
+
+      const written = await readFile(join(tempDir, testKey));
+      expect(new Uint8Array(written)).toEqual(testBytes);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it('throws descriptive error when referenced object is missing', async () => {
-    const databaseUrl = process.env['DATABASE_URL'];
-    if (databaseUrl === undefined) return;
-
-    const sql = postgres(databaseUrl, { max: 1, idle_timeout: 10, prepare: false });
-    const testKey = `test-missing-${Date.now()}`;
-    const testId = `att-test-${Date.now()}`;
-    const [userRow] = await sql<{ id: string }[]>`select id from "user" limit 1`;
-    const [orgRow] = await sql<{ id: string }[]>`select id from organization limit 1`;
-
-    if (userRow === undefined || orgRow === undefined) {
-      await sql.end({ timeout: 5 });
-      return;
-    }
-
-    await sql`
-      insert into attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, status, uploaded_by_id)
-      values (${testId}, ${orgRow.id}, 'issue', 'issue-1', 'test.txt', 'text/plain', 10, ${testKey}, 'ready', ${userRow.id})
-    `;
-
     const tempDir = await mkdtemp(join(tmpdir(), 'orbit-missing-test-'));
     try {
+      const testKey = `test-missing-${Date.now()}`;
       const store = new Map<string, Uint8Array>();
       const driver = createMockDriver(store);
 
-      let thrownError: Error | undefined;
+      let thrownError: unknown;
       try {
         await captureStorageObjects({
-          databaseUrl,
+          records: [
+            {
+              id: 'att-missing-1',
+              storage_key: testKey,
+              size: 10,
+              content_type: 'text/plain',
+            },
+          ],
           outputObjectsDir: tempDir,
           driver,
         });
       } catch (err) {
-        thrownError = err as Error;
+        thrownError = err;
       }
 
-      expect(thrownError).toBeDefined();
-      expect(thrownError?.message).toContain(testKey);
+      expect(thrownError).toBeInstanceOf(DomainError);
+      expect((thrownError as DomainError).message).toContain(testKey);
     } finally {
-      await sql`delete from attachment where id = ${testId}`;
-      await sql.end({ timeout: 5 });
       await rm(tempDir, { recursive: true, force: true });
     }
   });

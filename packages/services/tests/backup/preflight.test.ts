@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { releaseDatabase } from '@orbit/db/migration-release';
+import { resolveTestDatabaseUrl } from '../../../../scripts/test-env.ts';
 import { verifyPreflight } from '../../src/backup/preflight.ts';
 
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
 
 describe('verifyPreflight', () => {
   it('succeeds against compatible live database', async () => {
-    const databaseUrl = process.env['DATABASE_URL'];
-    if (databaseUrl === undefined) return;
+    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 

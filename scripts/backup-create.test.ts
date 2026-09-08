@@ -42,4 +42,22 @@ describe('backup create CLI args', () => {
     expect(args.orbitVersion).toBe('1.2.3');
     expect(args.sourceRevision).toBe('git-sha-xyz');
   });
+
+  it('emits json error and exits nonzero when database url is missing and --json is passed', () => {
+    const env = {
+      ...process.env,
+      DATABASE_URL: '',
+      DIRECT_URL: '',
+    };
+    const proc = Bun.spawnSync(['bun', 'scripts/backup/create.ts', '--json'], {
+      env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(proc.exitCode).toBe(1);
+    const stderrText = proc.stderr.toString();
+    const parsed = JSON.parse(stderrText) as { status: string; error: string };
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('DATABASE_URL or DIRECT_URL is required');
+  });
 });

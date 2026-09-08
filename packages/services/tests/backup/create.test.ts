@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { releaseDatabase } from '@orbit/db/migration-release';
+import { resolveTestDatabaseUrl } from '../../../../scripts/test-env.ts';
 import { createBackup } from '../../src/backup/create.ts';
 
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
@@ -28,8 +29,7 @@ describe('createBackup', () => {
   });
 
   it('marks incomplete backup atomically when pg_dump fails or is missing', async () => {
-    const databaseUrl = process.env['DATABASE_URL'];
-    if (databaseUrl === undefined) return;
+    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 

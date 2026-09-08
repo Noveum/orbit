@@ -7,6 +7,7 @@ import {
   CURRENT_BACKUP_FORMAT_VERSION,
   extractBackupConfiguration,
   validateConfigurationSafety,
+  validationFailed,
 } from '@orbit/shared';
 import { createStorageDriver, storageDriver } from '../storage/index.ts';
 import { dumpDatabase } from './database.ts';
@@ -20,12 +21,12 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
   const databaseUrl = options.databaseUrl ?? env['DIRECT_URL'] ?? env['DATABASE_URL'];
 
   if (databaseUrl === undefined || databaseUrl.length === 0) {
-    throw new Error('DATABASE_URL or DIRECT_URL is required to create a backup.');
+    throw validationFailed('DATABASE_URL or DIRECT_URL is required to create a backup.');
   }
 
   const destinationDir = options.destinationDir;
   if (destinationDir.length === 0) {
-    throw new Error('Destination directory path must not be empty.');
+    throw validationFailed('Destination directory path must not be empty.');
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -41,6 +42,7 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
 
     const snapshot = await openCoordinatedSnapshot(databaseUrl);
     let dumpResult: Awaited<ReturnType<typeof dumpDatabase>>;
+    let storageResult: Awaited<ReturnType<typeof captureStorageObjects>>;
     try {
       dumpResult = await dumpDatabase({
         databaseUrl,
@@ -51,19 +53,19 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
         snapshotId: snapshot.snapshotId,
         counts: snapshot.counts,
       });
+
+      const driver =
+        options.env === undefined
+          ? storageDriver()
+          : createStorageDriver(options.env as NodeJS.ProcessEnv);
+      storageResult = await captureStorageObjects({
+        records: snapshot.records,
+        outputObjectsDir: join(workingDir, 'objects'),
+        driver,
+      });
     } finally {
       await snapshot.release();
     }
-
-    const driver =
-      options.env === undefined
-        ? storageDriver()
-        : createStorageDriver(options.env as NodeJS.ProcessEnv);
-    const storageResult = await captureStorageObjects({
-      records: snapshot.records,
-      outputObjectsDir: join(workingDir, 'objects'),
-      driver,
-    });
 
     const configuration = extractBackupConfiguration(env);
     validateConfigurationSafety(configuration);

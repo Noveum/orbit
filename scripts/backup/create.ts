@@ -1,5 +1,4 @@
 import { resolve } from 'node:path';
-import { createBackup } from '../../packages/services/src/backup/index.ts';
 
 export interface ParsedArgs {
   readonly destination: string;
@@ -62,11 +61,25 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv);
 
   if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
-    process.stderr.write('Error: DATABASE_URL or DIRECT_URL is required to create a backup.\n');
+    if (args.json) {
+      process.stderr.write(
+        `${JSON.stringify(
+          {
+            status: 'error',
+            error: 'DATABASE_URL or DIRECT_URL is required to create a backup.',
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else {
+      process.stderr.write('Error: DATABASE_URL or DIRECT_URL is required to create a backup.\n');
+    }
     process.exit(1);
   }
 
   try {
+    const { createBackup } = await import('../../packages/services/src/backup/index.ts');
     const result = await createBackup({
       destinationDir: args.destination,
       databaseUrl: args.databaseUrl,

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { internal } from '@orbit/shared';
 import postgres from 'postgres';
 import { assertSafeKey } from '../storage/key.ts';
 import type { StorageDriver } from '../storage/types.ts';
@@ -53,7 +54,7 @@ export async function captureStorageObjects(
     const safeKey = assertSafeKey(record.storage_key);
     const data = await driver.get(safeKey);
     if (data === null) {
-      throw new Error(
+      throw internal(
         `Referenced object "${safeKey}" for attachment "${record.id}" was not found in object storage.`,
       );
     }

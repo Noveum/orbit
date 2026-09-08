@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validationFailed } from '../errors/index.ts';
 
 export const CURRENT_BACKUP_FORMAT_VERSION = '1.0.0';
 export const MIN_SUPPORTED_BACKUP_FORMAT_VERSION = '1.0.0';
@@ -73,7 +74,7 @@ export const backupEncryptionSchema = z.object({
 export type BackupEncryption = z.infer<typeof backupEncryptionSchema>;
 
 export const backupManifestSchema = z.object({
-  formatVersion: z.string().regex(/^1\.\d+\.\d+$/),
+  formatVersion: z.literal(CURRENT_BACKUP_FORMAT_VERSION),
   orbitVersion: z.string().min(1),
   sourceRevision: z.string().min(1),
   imageDigests: z.record(z.string(), z.string()).default({}),
@@ -117,7 +118,7 @@ export function extractBackupConfiguration(
 export function validateConfigurationSafety(config: Record<string, string>): void {
   for (const key of Object.keys(config)) {
     if (!isAllowedBackupConfigKey(key)) {
-      throw new Error(`Configuration key "${key}" is not permitted in backup manifest.`);
+      throw validationFailed(`Configuration key "${key}" is not permitted in backup manifest.`);
     }
   }
 }

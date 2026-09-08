@@ -1,6 +1,9 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, open } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { internal, validationFailed } from '@orbit/shared';
 import postgres from 'postgres';
 import type { DatabaseDumpResult } from './types.ts';
 
@@ -21,7 +24,7 @@ export function parseDatabaseConnection(connectionUrl: string): ParsedConnection
   const database = parsed.pathname.replace(/^\//, '');
 
   if (host.length === 0 || user.length === 0 || database.length === 0) {
-    throw new Error('DATABASE_URL must include host, username, and database name.');
+    throw validationFailed('DATABASE_URL must include host, username, and database name.');
   }
 
   return { host, port, user, password, database };
@@ -104,48 +107,71 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
     ...(password === undefined ? {} : { PGPASSWORD: password }),
   };
 
-  let proc: ReturnType<typeof Bun.spawn>;
-  try {
-    proc = Bun.spawn([binary, ...args], {
-      env,
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-  } catch (error) {
-    throw new Error(`Failed to spawn "${binary}": ${String(error)}`);
-  }
-
-  const hash = createHash('sha256');
-  let byteCount = 0;
-
-  const fileHandle = await open(outputFile, 'w', 0o600);
-  try {
-    const reader = proc.stdout.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      byteCount += value.byteLength;
-      hash.update(value);
-      await fileHandle.write(value);
+  return new Promise((resolve, reject) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(internal(`Failed to spawn "${binary}": ${String(error)}`, error));
+      return;
     }
-  } finally {
-    await fileHandle.close();
-  }
 
-  const stderrText = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+    if (child.stdout === null) {
+      reject(internal('pg_dump stdout stream is not available'));
+      return;
+    }
 
-  if (exitCode !== 0) {
-    throw new Error(`pg_dump exited with nonzero status code ${exitCode}: ${stderrText.trim()}`);
-  }
+    const hash = createHash('sha256');
+    let byteCount = 0;
 
-  return {
-    file: 'database.dump',
-    sha256: hash.digest('hex'),
-    bytes: byteCount,
-    databaseVersion,
-    migrationLedger: ledger,
-    counts,
-  };
+    const fileStream = createWriteStream(outputFile, { mode: 0o600 });
+    let stderrText = '';
+
+    if (child.stderr !== null) {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk: string) => {
+        stderrText += chunk;
+      });
+    }
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      byteCount += chunk.length;
+      hash.update(chunk);
+    });
+
+    fileStream.on('error', (err) => {
+      child.stdout?.unpipe(fileStream);
+      child.stdout?.destroy();
+      child.kill('SIGTERM');
+      reject(err);
+    });
+
+    child.on('error', (err) => {
+      fileStream.destroy();
+      reject(internal(`Failed to spawn "${binary}": ${err.message}`, err));
+    });
+
+    child.on('close', (code) => {
+      fileStream.end(() => {
+        if (code === 0) {
+          resolve({
+            file: 'database.dump',
+            sha256: hash.digest('hex'),
+            bytes: byteCount,
+            databaseVersion,
+            migrationLedger: ledger,
+            counts,
+          });
+        } else {
+          reject(
+            internal(
+              `pg_dump exited with nonzero status code ${code ?? 'unknown'}: ${stderrText.trim()}`,
+            ),
+          );
+        }
+      });
+    });
+
+    child.stdout.pipe(fileStream);
+  });
 }
