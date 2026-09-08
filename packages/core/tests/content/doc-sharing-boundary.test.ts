@@ -39,15 +39,19 @@ it('revokes links and notifies previous readers without carrying private content
   expect(await getPublishedDoc(doc.publishToken ?? '')).not.toBeNull();
   const closed = await shareDoc(workspace.admin, doc.id, { visibility: 'private' });
   expect(await getPublishedDoc(doc.publishToken ?? '')).toBeNull();
-  expect(closed.actions[0]?.scopes).toContain(scopes.user(reader.user.id));
-  expect(closed.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true });
+  const removal = closed.actions.find((action) => action.data['revoked'] === true);
+  expect(removal?.scopes).toEqual([scopes.user(reader.user.id)]);
+  expect(removal?.data).toEqual({ id: doc.id, accessChanged: true, revoked: true });
+  expect(closed.actions[0]?.data['revoked']).toBe(false);
   await expect(getDoc(reader.principal, doc.id)).rejects.toMatchObject({ code: 'not_found' });
   await setDocAccess(workspace.admin, doc.id, {
     grants: [{ subjectType: 'user', subjectId: reader.user.id, level: 'read' }],
   });
   expect((await getDoc(reader.principal, doc.id)).access).toBe('read');
   const revoked = await setDocAccess(workspace.admin, doc.id, { grants: [] });
-  expect(revoked.actions[0]?.scopes).toContain(scopes.user(reader.user.id));
+  expect(revoked.actions.find((action) => action.data['revoked'] === true)?.scopes).toEqual([
+    scopes.user(reader.user.id),
+  ]);
   await expect(getDoc(reader.principal, doc.id)).rejects.toMatchObject({ code: 'not_found' });
 });
 

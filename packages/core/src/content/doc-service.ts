@@ -157,22 +157,30 @@ async function docAudience(executor: Executor, doc: DocRow): Promise<string[]> {
   ].map(scopes.user);
 }
 
-function accessChangedAction(
+function accessChangedActions(
   doc: DocRow,
   syncId: number,
   actor: Actor,
+  previousAudience: readonly string[],
   audience: readonly string[],
-): SyncAction {
-  return buildSyncAction({
-    syncId,
-    organizationId: doc.organizationId,
-    scopes: [...new Set([scopes.doc(doc.id), ...audience])],
-    action: 'update',
-    model: 'doc',
-    modelId: doc.id,
-    data: { id: doc.id, accessChanged: true },
-    actor,
-  });
+): SyncAction[] {
+  const current = new Set(audience);
+  const revoked = previousAudience.filter((scope) => !current.has(scope));
+  const action = (targets: string[], removed: boolean) =>
+    buildSyncAction({
+      syncId,
+      organizationId: doc.organizationId,
+      scopes: targets,
+      action: 'update',
+      model: 'doc',
+      modelId: doc.id,
+      data: { id: doc.id, accessChanged: true, revoked: removed },
+      actor,
+    });
+  return [
+    action([...new Set([scopes.doc(doc.id), ...audience])], false),
+    ...(revoked.length > 0 ? [action(revoked, true)] : []),
+  ];
 }
 
 function docAnnouncement(row: DocRow): Record<string, unknown> {
@@ -1274,18 +1282,21 @@ async function snapshotVersion(
   });
 }
 
-async function updatedDocAction(
+async function updatedDocActions(
   executor: Executor,
   current: DocRow,
   doc: DocRow,
   syncId: number,
   actor: Actor,
-): Promise<SyncAction> {
-  if (current.visibility === doc.visibility) return docAction(doc, syncId, actor, 'update');
-  return accessChangedAction(doc, syncId, actor, [
-    ...(await docAudience(executor, current)),
-    ...(await docAudience(executor, doc)),
-  ]);
+): Promise<SyncAction[]> {
+  if (current.visibility === doc.visibility) return [docAction(doc, syncId, actor, 'update')];
+  return accessChangedActions(
+    doc,
+    syncId,
+    actor,
+    await docAudience(executor, current),
+    await docAudience(executor, doc),
+  );
 }
 
 export async function updateDoc(
@@ -1348,7 +1359,7 @@ export async function updateDoc(
     return {
       doc,
       actions: [
-        await updatedDocAction(tx, current, doc, syncId, actor),
+        ...(await updatedDocActions(tx, current, doc, syncId, actor)),
         ...descendants.map((row) => docAction(row, syncId, actor, 'update')),
         ...notifications,
       ],
@@ -1554,12 +1565,13 @@ export async function shareDoc(
     return {
       doc,
       publishToken,
-      actions: [
-        accessChangedAction(doc, syncId, actor, [
-          ...previousAudience,
-          ...(await docAudience(tx, doc)),
-        ]),
-      ],
+      actions: accessChangedActions(
+        doc,
+        syncId,
+        actor,
+        previousAudience,
+        await docAudience(tx, doc),
+      ),
     };
   });
 }
@@ -1854,12 +1866,13 @@ export async function setDocAccess(
     const actor = await principalActor(tx, principal);
     return {
       grants: saved,
-      actions: [
-        accessChangedAction(row, syncId, actor, [
-          ...previousAudience,
-          ...(await docAudience(tx, row)),
-        ]),
-      ],
+      actions: accessChangedActions(
+        row,
+        syncId,
+        actor,
+        previousAudience,
+        await docAudience(tx, row),
+      ),
     };
   });
 }
