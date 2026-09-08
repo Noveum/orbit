@@ -153,13 +153,17 @@ describe('persisted document navigation', () => {
   ];
   afterEach(cleanup);
 
-  it('starts every folder and nested page collapsed, even for the active page', () => {
+  it('starts every folder and nested page collapsed, even for the active page', async () => {
+    const user = userEvent.setup();
     render(tree(nested, [], 'child'));
     expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
       'aria-expanded',
       'false',
     );
     expect(screen.queryByText('Handbook')).toBeNull();
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
+    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Onboarding')).toBeNull();
   });
 
   it('persists expanded folders and pages across reloads', async () => {

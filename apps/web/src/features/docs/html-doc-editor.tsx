@@ -8,6 +8,7 @@ import { tabHover } from '@/lib/interaction.ts';
 import { HtmlCodeEditor } from './editor/html-code-editor.tsx';
 import { HtmlPreview } from './html-preview.tsx';
 import { SplitPane } from './split-pane.tsx';
+import { useDocPreferences } from './use-doc-preferences.ts';
 
 const SPLIT_STORAGE_KEY = 'orbit:docs:html-split';
 
@@ -60,7 +61,9 @@ function HtmlDocDock({ children }: { readonly children: React.ReactNode }) {
 }
 
 export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEditorProps) {
-  const [view, setView] = useState<HtmlView>('split');
+  const { mode, setMode } = useDocPreferences();
+  const [editView, setEditView] = useState<Exclude<HtmlView, 'preview'>>('split');
+  const view = mode === 'preview' ? 'preview' : editView;
   const showSource = view !== 'preview';
   const showPreview = view !== 'source';
 
@@ -81,7 +84,10 @@ export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEdito
                 tabHover,
                 view === entry.id ? 'bg-surface-2 text-text' : 'text-muted',
               )}
-              onClick={() => setView(entry.id)}
+              onClick={() => {
+                setMode(entry.id === 'preview' ? 'preview' : 'markdown');
+                if (entry.id !== 'preview') setEditView(entry.id);
+              }}
             >
               <Icon className="size-3.5" aria-hidden="true" />
               {entry.label}

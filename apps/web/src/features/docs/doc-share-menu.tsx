@@ -186,7 +186,11 @@ export function DocShareMenu({
                   key={choice.value}
                   type="button"
                   aria-pressed={active}
-                  disabled={!canManageAccess || share.isPending}
+                  disabled={
+                    !canManageAccess ||
+                    share.isPending ||
+                    (isPublished(choice.value) && !canPublish)
+                  }
                   data-testid={`doc-visibility-${choice.value}`}
                   onClick={() => share.mutate({ visibility: choice.value })}
                   className={cn(
@@ -235,7 +239,7 @@ export function DocShareMenu({
                 variant="ghost"
                 size="sm"
                 data-testid="doc-rotate-link"
-                disabled={!canManageAccess || share.isPending}
+                disabled={!(canManageAccess && canPublish) || share.isPending}
                 className="self-start"
                 onClick={() => share.mutate({ visibility: doc.visibility, rotateToken: true })}
               >

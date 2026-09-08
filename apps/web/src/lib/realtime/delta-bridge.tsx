@@ -582,6 +582,8 @@ function recordOwnIssueEcho(client: QueryClient, action: SyncAction): void {
 
 function resetDocAccess(client: QueryClient, action: SyncAction): void {
   if (action.model !== 'doc' || action.data['revoked'] !== true) return;
+  client.resetQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
+  client.resetQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(noop);
   client.resetQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(noop);
   client.resetQueries({ queryKey: [DOC_COMMENTS_ROOT, action.modelId] }).catch(noop);
 }

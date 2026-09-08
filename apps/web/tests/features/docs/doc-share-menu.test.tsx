@@ -228,3 +228,12 @@ describe('sharing authority in the interface', () => {
     expect(screen.getByTestId('doc-copy-link')).toBeEnabled();
   });
 });
+
+it('disables publishing and rotation after an author loses publishing permission', async () => {
+  await openShare(doc('link', 'token'), false);
+  for (const visibility of ['members', 'link', 'public']) {
+    expect(choiceFor(visibility)).toBeDisabled();
+  }
+  expect(screen.getByTestId('doc-rotate-link')).toBeDisabled();
+  expect(choiceFor('private')).not.toBeDisabled();
+});

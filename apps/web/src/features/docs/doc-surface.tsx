@@ -253,14 +253,17 @@ function LoadedDoc({
             <DocShareMenu
               doc={detail.doc}
               canPublish={canPublish}
-              canManageAccess={canManageDocAccess(
-                {
-                  userId: workspace.userId ?? '',
-                  role: workspace.role,
-                  organizationId: detail.doc.organizationId,
-                },
-                detail.doc,
-              )}
+              canManageAccess={
+                canWriteDocs &&
+                canManageDocAccess(
+                  {
+                    userId: workspace.userId ?? '',
+                    role: workspace.role,
+                    organizationId: detail.doc.organizationId,
+                  },
+                  detail.doc,
+                )
+              }
             />
           ) : null
         }
