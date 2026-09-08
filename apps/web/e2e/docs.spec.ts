@@ -202,15 +202,15 @@ test.fixme('a doc is written, attached to, published, and read without a session
   await watching.close();
 
   await author.getByTestId('doc-share').click();
-  await author.getByTestId('doc-visibility-public').click();
-  await expect(author.getByTestId('doc-visibility-public')).toHaveAttribute('aria-pressed', 'true');
+  await author.getByTestId('doc-visibility-link').click();
+  await expect(author.getByTestId('doc-visibility-link')).toHaveAttribute('aria-pressed', 'true');
 
-  const link = author.getByTestId('doc-copy-public-link-url');
+  const link = author.getByTestId('doc-copy-link-url');
   await expect(link).toBeVisible({ timeout: 30_000 });
   const publishedUrl = ((await link.textContent()) ?? '').trim();
   expect(publishedUrl).toContain('/d/');
   expect(new URL(publishedUrl).pathname).toMatch(/^\/d\/e2e-doc-\d+-[0-9a-f]{32,}$/);
-  await expect(author.getByTestId('doc-copy-link-url')).toContainText('/docs/');
+  await expect(author.getByTestId('doc-copy-link-url')).toContainText('/d/');
   await author.keyboard.press('Escape');
 
   for (const scheme of ['light', 'dark'] as const) {

@@ -29,7 +29,7 @@ test('private access requires an invitation even for admins and revocation clear
     reader.getByRole('heading', { name: 'Private launch decisions', exact: true }),
   ).toBeVisible();
   await reader.getByTestId('doc-share').filter({ visible: true }).click();
-  await expect(reader.getByTestId('doc-visibility-public')).toBeDisabled();
+  await expect(reader.getByTestId('doc-visibility-link')).toBeDisabled();
   await reader.keyboard.press('Escape');
   await owner.locator('[data-testid^="doc-access-remove-"]').first().click();
   await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(0);
@@ -81,7 +81,7 @@ test('folders, resized panes, writing, preview and published links work together
   await page.getByTestId('doc-share').filter({ visible: true }).click();
   await expect(page.getByTestId('doc-visibility-private')).toHaveAttribute('aria-pressed', 'true');
   await page.getByTestId('doc-visibility-link').click();
-  const published = page.getByTestId('doc-copy-public-link-url');
+  const published = page.getByTestId('doc-copy-link-url');
   await expect(published).toBeVisible();
   const url = (await published.innerText()).trim();
   const anonymousContext = await browser.newContext();

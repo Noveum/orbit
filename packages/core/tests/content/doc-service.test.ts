@@ -437,6 +437,20 @@ describe('visibility modes', () => {
     expect(rotated.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true, revoked: false });
   });
 
+  it('uses the same workspace document for view and edit access without exposing it anonymously', async () => {
+    const doc = await newDoc('Workspace handbook');
+    const member = await addMember(workspace, 'member', { name: 'Casey' });
+    await shareDoc(workspace.admin, doc.id, { visibility: 'members' });
+    expect((await getDoc(member.principal, doc.id)).access).toBe('read');
+    await expect(updateDoc(member.principal, doc.id, { content: 'Changed' })).rejects.toMatchObject(
+      { code: 'forbidden' },
+    );
+    await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    expect((await getDoc(member.principal, doc.id)).access).toBe('write');
+    await updateDoc(member.principal, doc.id, { content: 'Changed' });
+    expect((await getDoc(member.principal, doc.id)).doc.content).toBe('Changed');
+  });
+
   it('mints a members link that only a signed-in workspace member can open', async () => {
     const doc = await newDoc('Internal brief');
     const shared = await shareDoc(workspace.admin, doc.id, { visibility: 'members' });

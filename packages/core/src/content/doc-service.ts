@@ -1105,7 +1105,7 @@ async function docMentionNotifications(
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docCreateSchema.parse(input);
-  if (isPublished(parsed.visibility)) assertCan(principal, 'doc:publish');
+  if (isExternallyShared(parsed.visibility)) assertCan(principal, 'doc:publish');
 
   return await db.transaction(async (tx) => {
     await assertPlacement(tx, principal, parsed);
@@ -1280,7 +1280,7 @@ export async function updateDoc(
 ): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
   const parsed = docUpdateSchema.parse(input);
-  if (parsed.visibility !== undefined && isPublished(parsed.visibility)) {
+  if (parsed.visibility !== undefined && isExternallyShared(parsed.visibility)) {
     assertCan(principal, 'doc:publish');
   }
 
@@ -1511,7 +1511,7 @@ export async function shareDoc(
 ): Promise<SharedDoc> {
   assertCan(principal, 'doc:write');
   const { visibility, rotateToken } = docShareSchema.parse(input);
-  if (isPublished(visibility)) assertCan(principal, 'doc:publish');
+  if (isExternallyShared(visibility)) assertCan(principal, 'doc:publish');
 
   return await db.transaction(async (tx) => {
     const current = await loadReadableDoc(tx, principal, docId);

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import { DOC_VISIBILITIES } from '@orbit/shared/constants';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
@@ -96,12 +95,14 @@ describe('the share dialog', () => {
     expect(screen.getByTestId('doc-share')).toHaveTextContent('Share');
   });
 
-  it('offers every visibility in one place, with no second menu', async () => {
+  it('offers exactly three audiences without duplicate workspace or public choices', async () => {
     await openShare(doc('public', 'token_1'));
 
-    for (const visibility of DOC_VISIBILITIES.filter((value) => value !== 'team')) {
+    for (const visibility of ['private', 'workspace', 'link']) {
       expect(choiceFor(visibility)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId('doc-visibility-members')).toBeNull();
+    expect(screen.queryByTestId('doc-visibility-public')).toBeNull();
   });
 
   it('marks only the state the doc is actually in', async () => {
@@ -120,21 +121,25 @@ describe('the share dialog', () => {
     expect(shareMutate).toHaveBeenCalledWith({ visibility: 'private' });
   });
 
-  it('never claims a public doc is the unlisted link, so public can still be narrowed', async () => {
+  it('changes search indexing without introducing another public audience', async () => {
     const user = await openShare(doc('public', 'token_1'));
-
-    expect(choiceFor('link')).toHaveAttribute('aria-pressed', 'false');
-    await user.click(choiceFor('link'));
-
+    expect(choiceFor('link')).toHaveAttribute('aria-pressed', 'true');
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Allow search engines to find this page' }),
+    );
     expect(shareMutate).toHaveBeenCalledWith({ visibility: 'link' });
   });
 
-  it('still moves when the choice already matches, so a click is never swallowed', async () => {
-    const user = await openShare(doc('link', 'token_1'));
+  it('keeps the current permission when the selected audience is clicked', async () => {
+    const user = await openShare(doc('members', 'token_1'));
+    await user.click(choiceFor('workspace'));
+    expect(shareMutate).not.toHaveBeenCalled();
+  });
 
-    await user.click(choiceFor('link'));
-
-    expect(shareMutate).toHaveBeenCalledWith({ visibility: 'link' });
+  it('changes workspace permissions inside the same audience without publishing permission', async () => {
+    const user = await openShare(doc('workspace'), false);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Workspace access' }), 'members');
+    expect(shareMutate).toHaveBeenCalledWith({ visibility: 'members' });
   });
 
   it('hides the outside world from someone who cannot publish', async () => {
@@ -167,24 +172,23 @@ describe('copying a link to a doc', () => {
     expect(clipboard.value).toContain('/docs/doc_1');
   });
 
-  it('offers the published link alongside the workspace one once a doc is shared out', async () => {
+  it('copies one public link once a doc is shared out', async () => {
     const user = await openShare(doc('link', 'token_1'));
     const clipboard = stubClipboard();
 
-    await user.click(screen.getByTestId('doc-copy-public-link'));
+    await user.click(screen.getByTestId('doc-copy-link'));
 
     expect(clipboard.value).toContain('/d/delta-protocol-token_1');
   });
 
-  it('names the signed-in published url a members link, not a workspace link', async () => {
+  it('uses the same workspace audience and document link for view-only access', async () => {
     const user = await openShare(doc('members', 'token_1'));
     const clipboard = stubClipboard();
-
-    expect(screen.getByText('Members link')).toBeInTheDocument();
-    expect(screen.getByText('Reset the members link')).toBeInTheDocument();
-    await user.click(screen.getByTestId('doc-copy-public-link'));
-
-    expect(clipboard.value).toContain('/d/delta-protocol-token_1');
+    expect(choiceFor('workspace')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('combobox', { name: 'Workspace access' })).toHaveValue('members');
+    expect(screen.queryByTestId('doc-rotate-link')).toBeNull();
+    await user.click(screen.getByTestId('doc-copy-link'));
+    expect(clipboard.value).toContain('/docs/doc_1');
   });
 
   it('keeps the public link and its reset out of sight while the doc has none', async () => {
@@ -208,9 +212,9 @@ describe('shareTrigger', () => {
     expect(shareTrigger('private')).toBe('Private');
     expect(shareTrigger('team')).toBe('Private');
     expect(shareTrigger('workspace')).toBe('Workspace');
-    expect(shareTrigger('members')).toBe('Members');
-    expect(shareTrigger('link')).toBe('Unlisted');
-    expect(shareTrigger('public')).toBe('Public');
+    expect(shareTrigger('members')).toBe('Workspace');
+    expect(shareTrigger('link')).toBe('Anyone with the link');
+    expect(shareTrigger('public')).toBe('Anyone with the link');
   });
 });
 
@@ -231,9 +235,8 @@ describe('sharing authority in the interface', () => {
 
 it('disables publishing and rotation after an author loses publishing permission', async () => {
   await openShare(doc('link', 'token'), false);
-  for (const visibility of ['members', 'link', 'public']) {
-    expect(choiceFor(visibility)).toBeDisabled();
-  }
+  expect(choiceFor('link')).toBeDisabled();
+  expect(screen.getByRole('checkbox')).toBeDisabled();
   expect(screen.getByTestId('doc-rotate-link')).toBeDisabled();
   expect(choiceFor('private')).not.toBeDisabled();
 });
