@@ -193,33 +193,32 @@ function tokenFor(visibility: string, current: string | null): string | null {
   return current ?? newToken();
 }
 
+function docGrantSubjectFilter(executor: Executor, principal: Principal): SQL | undefined {
+  return or(
+    and(eq(schema.docAccess.subjectType, 'user'), eq(schema.docAccess.subjectId, principal.userId)),
+    and(
+      eq(schema.docAccess.subjectType, 'team'),
+      inArray(
+        schema.docAccess.subjectId,
+        executor
+          .select({ teamId: schema.teamMember.teamId })
+          .from(schema.teamMember)
+          .where(eq(schema.teamMember.userId, principal.userId)),
+      ),
+    ),
+  );
+}
+
 export function docReadFilter(principal: Principal): SQL {
   const open = inArray(schema.doc.visibility, ['workspace', 'members', 'link', 'public']);
-
   const grants = db
     .select({ docId: schema.docAccess.docId })
     .from(schema.docAccess)
-    .where(
-      or(
-        and(
-          eq(schema.docAccess.subjectType, 'user'),
-          eq(schema.docAccess.subjectId, principal.userId),
-        ),
-        principal.teamIds.length === 0
-          ? sql`false`
-          : and(
-              eq(schema.docAccess.subjectType, 'team'),
-              inArray(schema.docAccess.subjectId, [...principal.teamIds]),
-            ),
-      ),
-    );
-
-  const clause = or(
-    open,
-    eq(schema.doc.authorId, principal.userId),
-    inArray(schema.doc.id, grants),
+    .where(docGrantSubjectFilter(db, principal));
+  return (
+    or(open, eq(schema.doc.authorId, principal.userId), inArray(schema.doc.id, grants)) ??
+    sql`false`
   );
-  return clause ?? sql`false`;
 }
 
 async function grantedDocIds(
@@ -232,21 +231,7 @@ async function grantedDocIds(
     .select({ docId: schema.docAccess.docId })
     .from(schema.docAccess)
     .where(
-      and(
-        inArray(schema.docAccess.docId, [...docIds]),
-        or(
-          and(
-            eq(schema.docAccess.subjectType, 'user'),
-            eq(schema.docAccess.subjectId, principal.userId),
-          ),
-          principal.teamIds.length === 0
-            ? sql`false`
-            : and(
-                eq(schema.docAccess.subjectType, 'team'),
-                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
-              ),
-        ),
-      ),
+      and(inArray(schema.docAccess.docId, [...docIds]), docGrantSubjectFilter(executor, principal)),
     );
   return rows.map((row) => row.docId);
 }
@@ -264,18 +249,7 @@ async function batchedWriteGrantedDocIds(
       and(
         inArray(schema.docAccess.docId, [...docIds]),
         eq(schema.docAccess.level, 'write'),
-        or(
-          and(
-            eq(schema.docAccess.subjectType, 'user'),
-            eq(schema.docAccess.subjectId, principal.userId),
-          ),
-          principal.teamIds.length === 0
-            ? sql`false`
-            : and(
-                eq(schema.docAccess.subjectType, 'team'),
-                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
-              ),
-        ),
+        docGrantSubjectFilter(executor, principal),
       ),
     );
   return rows.map((row) => row.docId);
@@ -1766,7 +1740,8 @@ export async function listDocAccess(
   docId: string,
 ): Promise<(typeof schema.docAccess.$inferSelect)[]> {
   assertCan(principal, 'doc:read');
-  await loadReadableDoc(db, principal, docId);
+  const doc = await loadReadableDoc(db, principal, docId);
+  assertMayShare(principal, doc);
   return await db
     .select()
     .from(schema.docAccess)

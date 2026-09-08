@@ -4,7 +4,7 @@ import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan } from '@orbit/shared/policy';
+import { assertCan, canManageDocAccess } from '@orbit/shared/policy';
 import { docUrl } from '@orbit/shared/utils';
 import { docAccessDecisionSchema, docAccessRequestSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
@@ -128,7 +128,7 @@ export async function listDocAccessRequests(
 ): Promise<DocAccessRequestRow[]> {
   assertCan(principal, 'doc:read');
   const doc = await loadDocForRequest(db, principal, docId);
-  if (doc.authorId !== principal.userId) {
+  if (!canManageDocAccess(principal, doc)) {
     throw forbidden('Only the author can see who asked for access.');
   }
   return await db
@@ -163,7 +163,7 @@ export async function decideDocAccessRequest(
     if (request.status !== 'pending') throw conflict('That request was already answered.');
 
     const doc = await loadDocForRequest(tx, principal, request.docId);
-    if (doc.authorId !== principal.userId) {
+    if (!canManageDocAccess(principal, doc)) {
       throw forbidden('Only the author can answer a request for access.');
     }
 

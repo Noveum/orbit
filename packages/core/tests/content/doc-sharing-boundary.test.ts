@@ -4,6 +4,7 @@ import {
   createDoc,
   getDoc,
   getPublishedDoc,
+  listDocAccess,
   listDocs,
   setDocAccess,
   shareDoc,
@@ -74,4 +75,33 @@ it('does not let a published link confer editing or sharing authority', async ()
       updateDoc(reader.principal, doc.id, { visibility: 'workspace' }),
     ).rejects.toMatchObject({ code: 'forbidden' });
   }
+});
+
+it('keeps the access list private to the author', async () => {
+  const workspace = await createWorkspace('Example');
+  const reader = await addMember(workspace, 'member');
+  const { doc } = await createDoc(workspace.admin, {
+    title: 'Shared page',
+    visibility: 'workspace',
+  });
+  await expect(listDocAccess(reader.principal, doc.id)).rejects.toMatchObject({
+    code: 'forbidden',
+  });
+  expect(await listDocAccess(workspace.admin, doc.id)).toEqual([]);
+});
+
+it('uses direct membership rather than a stale or admin-expanded team list', async () => {
+  const workspace = await createWorkspace('Example');
+  const author = await addMember(workspace, 'member');
+  const outsider = await addMember(workspace, 'admin', { teamIds: [] });
+  const { doc } = await createDoc(author.principal, { title: 'Team notes' });
+  await setDocAccess(author.principal, doc.id, {
+    grants: [{ subjectType: 'team', subjectId: workspace.teamId, level: 'write' }],
+  });
+  const expanded = { ...outsider.principal, teamIds: [workspace.teamId] };
+  expect(await listDocs(expanded)).toEqual([]);
+  await expect(getDoc(expanded, doc.id)).rejects.toMatchObject({ code: 'not_found' });
+  await expect(updateDoc(expanded, doc.id, { title: 'Changed' })).rejects.toMatchObject({
+    code: 'not_found',
+  });
 });

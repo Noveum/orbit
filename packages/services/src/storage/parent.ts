@@ -1,14 +1,4 @@
-import {
-  and,
-  type Database,
-  eq,
-  inArray,
-  isNull,
-  or,
-  schema,
-  sql,
-  type Transaction,
-} from '@orbit/db';
+import { and, type Database, eq, inArray, isNull, or, schema, type Transaction } from '@orbit/db';
 import { isExternallyShared } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
 import { assertCan, canReadDoc, canWriteDoc, isInTeam, type Principal } from '@orbit/shared/policy';
@@ -57,15 +47,19 @@ interface DocAccessRow {
   readonly archivedAt: Date | null;
 }
 
-function subjectMatches(principal: Principal): SQL | undefined {
+function subjectMatches(executor: StorageExecutor, principal: Principal): SQL | undefined {
   return or(
     and(eq(schema.docAccess.subjectType, 'user'), eq(schema.docAccess.subjectId, principal.userId)),
-    principal.teamIds.length === 0
-      ? sql`false`
-      : and(
-          eq(schema.docAccess.subjectType, 'team'),
-          inArray(schema.docAccess.subjectId, [...principal.teamIds]),
-        ),
+    and(
+      eq(schema.docAccess.subjectType, 'team'),
+      inArray(
+        schema.docAccess.subjectId,
+        executor
+          .select({ teamId: schema.teamMember.teamId })
+          .from(schema.teamMember)
+          .where(eq(schema.teamMember.userId, principal.userId)),
+      ),
+    ),
   );
 }
 
@@ -94,7 +88,7 @@ async function docAllowing(
       and(
         eq(schema.docAccess.docId, docId),
         level === 'write' ? eq(schema.docAccess.level, 'write') : undefined,
-        subjectMatches(principal),
+        subjectMatches(executor, principal),
       ),
     )
     .limit(1);
