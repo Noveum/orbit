@@ -476,10 +476,12 @@ function progressAfterBatch(
   batch: ConversationBackfillBatchResult,
   now: Date,
 ): ConversationBackfillProgress {
+  const highWaterMark =
+    batch.highWaterMark === undefined ? current.highWaterMark : batch.highWaterMark;
   return {
     ...current,
     cursor: batch.cursor,
-    highWaterMark: batch.highWaterMark ?? current.highWaterMark,
+    highWaterMark: current.phase === 'tail' && batch.processedRows > 0 ? null : highWaterMark,
     status: batch.done ? 'completed' : 'running',
     processedRows: current.processedRows + batch.processedRows,
     passNumber: batch.passNumber ?? current.passNumber,
@@ -2172,6 +2174,7 @@ async function processTailBatch(
     return {
       processedRows: sources.processedRows,
       cursor: null,
+      highWaterMark: null,
       passNumber,
       done: false,
     };
@@ -2181,6 +2184,7 @@ async function processTailBatch(
     return {
       processedRows: recipients.processedRows,
       cursor: null,
+      highWaterMark: null,
       passNumber,
       done: false,
     };
@@ -2190,6 +2194,7 @@ async function processTailBatch(
     return {
       processedRows: deliveries.processedRows,
       cursor: null,
+      highWaterMark: null,
       passNumber,
       done: false,
     };
@@ -2199,6 +2204,7 @@ async function processTailBatch(
     return {
       processedRows: conversations.processedRows,
       cursor: null,
+      highWaterMark: null,
       passNumber,
       done: false,
     };

@@ -123,8 +123,8 @@
 - [x] Dual-write live events and every legacy mutation before backfill begins.
 - [x] Implement deterministic historical recipient and delivery survivor selection.
 - [x] Add resumable backfill and verification commands with bounded batches and persisted progress.
-- [ ] Run focused service, database, and compatibility tests.
-- [ ] Commit as `feat(inbox): add durable conversations`.
+- [x] Run focused service, database, and compatibility tests.
+- [x] Commit conversation implementation in `3f5d7db6` and access regressions in `aaf1a867`.
 
 ### Task 5: Cut over API, realtime, MCP, and the inbox UI
 
@@ -154,8 +154,8 @@
 - [x] Publish conversation upserts and replace client-side badge arithmetic with server counters.
 - [x] Render one list row per conversation and event history in the detail pane.
 - [x] Group document comments, replies, mentions, and document changes under `orbit-doc:<id>:activity`.
-- [ ] Run focused unit tests and Playwright.
-- [ ] Commit as `feat(inbox): switch to conversation threads`.
+- [x] Run focused unit tests and Playwright.
+- [x] Commit grouped API, realtime, MCP and UI implementation in `3f5d7db6` and `aaf1a867`.
 
 ### Task 6: Deliver ordered Slack threads and notification email
 
@@ -182,8 +182,8 @@
 - [x] Render a useful root summary and compact event replies with `reply_broadcast: false`.
 - [x] Add the notification-email Resend worker without changing transactional email.
 - [x] Add actionable integration diagnostics and admin versus personal preference copy.
-- [ ] Run focused provider and cron tests.
-- [ ] Commit as `feat(slack): thread notification conversations`.
+- [x] Run focused provider and cron tests.
+- [x] Commit provider implementation in `3f5d7db6`, with verification fixes in `aaf1a867` and `f5bad8f1`.
 
 ### Task 7: Verify, document, preview, and review
 
@@ -198,7 +198,7 @@
 - Produces: reproducible light and dark screenshots of grouped inbox and Slack message fixtures
 
 - [x] Document current notification types, audience rules, Slack channel versus direct-message behavior, and exact-email member matching.
-- [ ] Capture grouped PR, document-comment, and Slack-thread fixtures in light and dark themes.
+- [x] Capture grouped PR and document-comment fixtures in light and dark themes, plus a labeled local Slack-thread formatter preview.
 - [ ] Run focused tests, `bun run verify`, `bun run docs:build`, and `git diff --check`.
 - [ ] Merge current `main`, rerun every check, resolve Greptile and CodeRabbit threads, and keep the PR draft until review is complete.
-- [ ] Update the PR with screenshots, migration order, production smoke checks, and rollback switches.
+- [x] Update the PR with screenshots, migration order, production smoke checks, and rollback switches.

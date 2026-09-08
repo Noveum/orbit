@@ -1,7 +1,20 @@
 import { z } from 'zod';
 
+export const notificationTitleSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .transform((title) =>
+    title.length <= 255
+      ? title
+      : `${title
+          .slice(0, 254)
+          .replace(/[\uD800-\uDBFF]$/u, '')
+          .trimEnd()}…`,
+  );
+
 export const notificationProviderPayloadSchema = z.object({
-  title: z.string().min(1).max(255),
+  title: notificationTitleSchema,
   body: z.string().max(100_000).default(''),
   url: z.string().min(1).max(2048),
   externalUrl: z.string().max(2048).nullable().optional(),
@@ -10,7 +23,7 @@ export const notificationProviderPayloadSchema = z.object({
 export const notificationEmailPayloadSchema = z.object({
   from: z.string().min(1).max(320),
   to: z.string().email().max(254),
-  subject: z.string().min(1).max(255),
+  subject: notificationTitleSchema,
   text: z.string().min(1).max(120_000),
 });
 

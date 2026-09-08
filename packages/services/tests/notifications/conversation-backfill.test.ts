@@ -447,6 +447,47 @@ class MemoryBackfillStore implements ConversationBackfillStore {
 }
 
 describe('resumable conversation backfill', () => {
+  for (const reset of [undefined, null]) {
+    it(`requires two new empty sweeps after a lower-ID late row with ${String(reset)} watermark`, async () => {
+      let progress: ConversationBackfillProgress | null = null;
+      let calls = 0;
+      const checkpoints: (string | null)[] = [];
+      const watermark = JSON.stringify(['n_99', 'd_99']);
+      const store: ConversationBackfillStore = {
+        listOrganizationIds: async () => ['org_tail'],
+        readProgress: async () => progress,
+        writeProgress: (value) => {
+          progress = value;
+          checkpoints.push(value.highWaterMark);
+          return Promise.resolve();
+        },
+        processBatch: () => {
+          calls += 1;
+          if (calls === 2)
+            return Promise.resolve({
+              processedRows: 1,
+              cursor: 'n_01',
+              ...(reset === undefined ? {} : { highWaterMark: reset }),
+              done: false,
+            });
+          return Promise.resolve({
+            processedRows: 0,
+            cursor: null,
+            highWaterMark: watermark,
+            done: progress?.highWaterMark === watermark,
+          });
+        },
+      };
+      await runResumableConversationBackfill(store, {
+        phases: ['tail'],
+        maxBatches: 5,
+        now: april,
+      });
+      expect(calls).toBe(4);
+      expect(checkpoints).toEqual([null, watermark, null, watermark, watermark]);
+    });
+  }
+
   it('persists each organization cursor and resumes a failed phase without replaying completed work', async () => {
     const batches = new Map<string, readonly ConversationBackfillBatchResult[]>([
       [

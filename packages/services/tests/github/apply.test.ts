@@ -294,6 +294,46 @@ async function currentStateName(tx: TestTransaction, issueId: string): Promise<s
 }
 
 describe('applyGithubEvent', () => {
+  for (const title of ['L'.repeat(256), `${'L'.repeat(236)}😀${'z'.repeat(18)}`]) {
+    it('ingests a maximum-length pull title without rejecting its prefixed check notification', async () => {
+      await withRollback(async (tx) => {
+        const fixture = await seed(tx);
+        await applyGithubEvent(tx, prEvent({ title }));
+        const result = await applyCheckEvent(
+          tx,
+          fixture.organizationId,
+          checkRunEvent({
+            id: 1,
+            name: 'verify',
+            conclusion: 'failure',
+            completedAt: '2026-08-13T05:00:00.000Z',
+          }),
+        );
+        expect(result.notificationEvents).toHaveLength(1);
+        const outcome = await notifyMany(tx, result.notificationEvents, { slackEnabled: false });
+        expect(outcome.notifications.length).toBeGreaterThan(0);
+        for (const event of outcome.notifications) {
+          expect(event.title.length).toBeLessThanOrEqual(255);
+          expect(event.title).toStartWith('Checks failed on ');
+          expect(event.title).not.toMatch(/[\uD800-\uDBFF]…$/u);
+          expect(event.externalUrl).toBe('https://github.com/acme/web/actions/runs/1');
+          expect(event.url).toBe(result.notificationEvents[0]?.url ?? '');
+        }
+        const [stored] = await tx
+          .select()
+          .from(githubPullRequest)
+          .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+        expect(stored?.title).toBe(title);
+        const [source] = await tx
+          .select()
+          .from(notificationSourceEvent)
+          .where(eq(notificationSourceEvent.organizationId, fixture.organizationId));
+        expect(source?.subjectKey).toBe('github-pr:99:7');
+        expect(source?.payload?.['pullRequestId']).toBe(stored?.id);
+      });
+    });
+  }
+
   it('ignores a repository that is not linked', async () => {
     await withRollback(async (tx) => {
       const result = await applyGithubEvent(tx, {

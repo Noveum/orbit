@@ -47,6 +47,15 @@ conversation. Later events are compact replies in that thread, with broadcast
 disabled. Personal DMs and admin-managed channel mappings are separate routes.
 A PR connected to several issues does not multiply messages to the same channel.
 
+Each Slack update includes an Orbit link and, when available, a separate GitHub
+or source link. Long comments use a bounded excerpt. Untrusted comment text does
+not automatically trigger Slack channel or user mentions.
+
+![A local preview of the Slack root, reply and document message](../assets/screenshots/notification-slack-formatter-preview.png)
+
+This preview renders the actual formatter's blocks with sample data. It is not
+a message sent to Slack; the Slack client's final layout can differ.
+
 Notification email uses Resend and a verified address. Neither Slack nor email
 is recorded as delivered until the provider confirms a message identity.
 
@@ -87,6 +96,9 @@ Before enabling grouped reads or new provider claims:
    deliberately refuses these rows instead of inventing ownership or success.
 2. Apply the complete committed migration chain with `bun run db:release` using
    the target's direct database connection. Verify schema and ledger equivalence.
+   `db:release` prefers `DIRECT_URL`, while backfill and verification use
+   `DATABASE_URL`. Confirm both identify the same target database before running
+   any release or migration command.
 3. Deploy compatibility writes with grouped reads disabled and providers paused.
 4. Run the bounded historical backfill and then the verifier against that target:
 
