@@ -1,5 +1,6 @@
 export * from './activity/activity-service.ts';
 export * from './analytics/index.ts';
+export * from './auth/mcp-idempotency.ts';
 export * from './auth/mcp-token.ts';
 export * from './auth/rate-limit-storage.ts';
 export * from './content/attachment-service.ts';

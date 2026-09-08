@@ -1,6 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { publishDeltas } from '@orbit/core';
+import {
+  getIdempotentResponse,
+  hashParams,
+  publishDeltas,
+  recordIdempotentResponse,
+} from '@orbit/core';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -54,6 +59,7 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
 export interface ToolAccess {
   readonly reads: boolean;
   readonly writes: boolean;
+  readonly grantId?: string | undefined;
 }
 
 const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
@@ -69,18 +75,31 @@ function mayRegister(server: McpServer, readOnly: boolean): boolean {
   return readOnly ? access.reads : access.writes;
 }
 
+const idempotencyKeySchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .optional()
+  .describe('Optional idempotency key to prevent duplicate execution on retries.');
+
 export function defineTool<Shape extends z.ZodRawShape>(
   server: McpServer,
   config: ToolConfig<Shape>,
   run: (args: z.infer<z.ZodObject<Shape>>) => Promise<ToolPayload>,
 ): void {
   if (!mayRegister(server, config.readOnly)) return;
-  const inputSchema = z.strictObject(config.inputSchema) as unknown as z.ZodObject<Shape>;
+  const rawSchema = config.readOnly
+    ? config.inputSchema
+    : { ...config.inputSchema, idempotencyKey: idempotencyKeySchema };
+  const inputSchema = z.strictObject(rawSchema) as unknown as z.ZodObject<Shape>;
+  const description = config.readOnly
+    ? config.description
+    : `${config.description} Accepts an optional idempotencyKey to prevent duplicate execution on retries.`;
   server.registerTool<z.ZodRawShape, z.ZodObject<Shape>>(
     config.name,
     {
       title: config.title,
-      description: config.description,
+      description,
       inputSchema,
       annotations: {
         title: config.title,
@@ -92,6 +111,34 @@ export function defineTool<Shape extends z.ZodRawShape>(
     },
     async (args) => {
       try {
+        const access = GRANTED.get(server);
+        const grantId = access?.grantId;
+        const rawArgs = args as Record<string, unknown>;
+        const idempotencyKey =
+          typeof rawArgs['idempotencyKey'] === 'string' ? rawArgs['idempotencyKey'] : undefined;
+
+        if (
+          !config.readOnly &&
+          idempotencyKey !== undefined &&
+          idempotencyKey.length > 0 &&
+          grantId !== undefined
+        ) {
+          const { idempotencyKey: _, ...restArgs } = rawArgs;
+          const paramsHash = hashParams(restArgs);
+          const cached = await getIdempotentResponse(
+            grantId,
+            idempotencyKey,
+            config.name,
+            paramsHash,
+          );
+          if (cached !== null) {
+            return ok(cached);
+          }
+          const result = await run(args as z.infer<z.ZodObject<Shape>>);
+          await recordIdempotentResponse(grantId, idempotencyKey, config.name, paramsHash, result);
+          return ok(result);
+        }
+
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {
         return failed(config.name, error);

@@ -87,3 +87,24 @@ export const mcpGrant = pgTable(
     index('mcp_grant_user_idx').on(table.userId),
   ],
 );
+
+export const mcpIdempotencyKey = pgTable(
+  'mcp_idempotency_key',
+  {
+    id: text('id').primaryKey(),
+    grantId: text('grant_id')
+      .notNull()
+      .references(() => mcpGrant.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    tool: text('tool').notNull(),
+    paramsHash: text('params_hash').notNull(),
+    response: text('response').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('mcp_idempotency_key_grant_key_unique').on(table.grantId, table.key),
+    index('mcp_idempotency_key_grant_idx').on(table.grantId),
+    index('mcp_idempotency_key_expires_idx').on(table.expiresAt),
+  ],
+);
