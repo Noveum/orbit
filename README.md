@@ -13,6 +13,7 @@ at the end of the month.
 **No pricing. No billing. No paid tiers. Not now, not later.**
 
 [![CI](https://github.com/Noveum/orbit/actions/workflows/ci.yml/badge.svg)](https://github.com/Noveum/orbit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Noveum/orbit?label=source%20release&color=5a63c8)](https://github.com/Noveum/orbit/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Noveum/orbit?style=flat&color=5a63c8)](https://github.com/Noveum/orbit/stargazers)
 [![Commits](https://img.shields.io/github/commit-activity/t/Noveum/orbit?color=5a63c8)](https://github.com/Noveum/orbit/commits/main)
@@ -23,7 +24,7 @@ at the end of the month.
 [![Bun](https://img.shields.io/badge/built%20with-Bun-000000?logo=bun)](https://bun.sh)
 [![Sponsored by Noveum AI](https://img.shields.io/badge/sponsored%20by-Noveum%20AI-5a63c8)](https://noveum.ai)
 
-[**Live demo**](https://orbit.noveum.ai) · [**Documentation**](https://noveum.github.io/orbit/) · [**Quick start**](#quick-start) · [**Self-host**](docs/self-hosting.md) · [**Contribute**](CONTRIBUTING.md) · [**Roadmap**](docs/roadmap.md)
+[**Live demo**](https://orbit.noveum.ai) · [**Documentation**](https://noveum.github.io/orbit/) · [**Quick start**](#quick-start) · [**Releases**](https://github.com/Noveum/orbit/releases) · [**Changelog**](CHANGELOG.md) · [**Self-host**](docs/self-hosting.md) · [**Contribute**](CONTRIBUTING.md)
 
 </div>
 
@@ -36,6 +37,16 @@ at the end of the month.
 </div>
 
 ---
+
+## Latest source release
+
+**2026.09.08** adds similar-issue suggestions during creation, a workspace
+project updates feed, and comment moderation for members and admins. It also
+updates dependencies, preview deployment controls, documentation, and screenshots.
+
+Read the [full changelog](CHANGELOG.md) and
+[upgrade guide](docs/releases.md) before updating an existing installation.
+Releases use dated source tags; self-hosting remains Preview.
 
 ## Why Orbit exists
 
@@ -74,6 +85,10 @@ yourself and never depend on us at all.
 <td width="50%"><img src="docs/assets/screenshots/standup-dark.png" alt="Standup" /><br /><sub><b>Standup</b>: the whole workspace as a Kanban, filtered to one person with a click.</sub></td>
 <td width="50%"><img src="docs/assets/screenshots/analytics-light.png" alt="Analytics" /><br /><sub><b>Analytics</b>: scope, throughput, churn and distributions.</sub></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/project-updates-dark.png" alt="Workspace project updates with health reports, dark theme" /><br /><sub><b>Project updates</b>: health reports from across the workspace in one feed.</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/duplicate-suggestions-light.png" alt="Similar existing issues suggested while drafting a new issue, light theme" /><br /><sub><b>Similar issues</b>: review an existing task before creating another.</sub></td>
+</tr>
 </table>
 
 <sub>More in [`docs/assets/screenshots`](docs/assets/screenshots), every screen in both themes.</sub>
@@ -82,9 +97,9 @@ yourself and never depend on us at all.
 
 | | |
 | --- | --- |
-| **Issues** | Priorities, labels, states, estimates, assignees, multiple reviewers and relations. Fast list or drag-and-drop board |
+| **Issues** | Priorities, labels, states, estimates, assignees, multiple reviewers and relations. Similar-issue suggestions during creation. Fast list or keyboard-accessible drag-and-drop board |
 | **Sprints and cycles** | Timeboxed planning with scope, points, burndown and carryover |
-| **Projects and milestones** | Group work that spans teams and sprints |
+| **Projects and milestones** | Group work across teams and sprints, track health, and read workspace project updates |
 | **Docs** | Rich editor, collections, comments, public share links, self-contained HTML pages |
 | **Standup** | The whole workspace as a Kanban, filtered to work a person owns or reviews by clicking their tile |
 | **Analytics** | Scope, throughput, churn, and distribution by assignee, project, label and estimate |
@@ -93,6 +108,7 @@ yourself and never depend on us at all.
 | **Keyboard first** | Cmd K for everything, `g` to navigate, single keys to act. Press `?` |
 | **MCP server** | AI agents read the board and file work, with your permissions, over OAuth |
 | **Notifications** | In-app inbox, with per-event preferences and quiet hours |
+| **Slack (gated)** | Personal notification DMs, mapped-channel issue unfurls, and member sync after an operator completes the [Slack rollout](docs/integrations.md#launch-order) |
 | **GitHub** | Pull requests linked to the issues they close |
 | **Auth** | Passkeys, Google, GitHub, email OTP. Password optional and off by default |
 | **Roles** | Admin, member, contributor and guest, enforced on the server |
@@ -203,7 +219,9 @@ today:
 | [Configuration](docs/configuration.md) | Every environment variable |
 | [Keyboard shortcuts](docs/keyboard-shortcuts.md) | All of them |
 | [MCP server](docs/mcp.md) | Connect an AI assistant |
-| [Integrations](docs/integrations.md) | GitHub |
+| [Integrations](docs/integrations.md) | GitHub and gated Slack setup |
+| [Changelog](CHANGELOG.md) | Features, fixes and upgrade notes for every source release |
+| [Releases and upgrades](docs/releases.md) | Versioning, publishing, deployment checks and rollback |
 | [Architecture](docs/architecture.md) | How a change reaches every screen |
 | [Testing](docs/testing.md) | Running and writing tests |
 | [Troubleshooting](docs/troubleshooting.md) | The failures we actually hit |
