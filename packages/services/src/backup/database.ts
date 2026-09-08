@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import postgres from 'postgres';
 import type { DatabaseDumpResult } from './types.ts';
@@ -35,7 +33,12 @@ export async function queryDatabaseCounts(url: string): Promise<{
   readonly attachments: number;
   readonly issues: number;
 }> {
-  const sql = postgres(url, { max: 1, idle_timeout: 10, prepare: false });
+  const sql = postgres(url, {
+    max: 1,
+    connect_timeout: 5,
+    idle_timeout: 10,
+    prepare: false,
+  });
   try {
     const [orgRow] = await sql<{ count: number }[]>`
       select count(*)::int as count from organization
@@ -67,84 +70,75 @@ export interface DumpDatabaseOptions {
   readonly databaseVersion: string;
   readonly ledger: readonly { readonly hash: string; readonly createdAt: string }[];
   readonly pgDumpPath?: string | undefined;
+  readonly snapshotId?: string | undefined;
+  readonly counts?:
+    | {
+        readonly workspaces: number;
+        readonly users: number;
+        readonly attachments: number;
+        readonly issues: number;
+      }
+    | undefined;
 }
 
 export async function dumpDatabase(options: DumpDatabaseOptions): Promise<DatabaseDumpResult> {
-  const { databaseUrl, outputFile, databaseVersion, ledger, pgDumpPath } = options;
-  const connection = parseDatabaseConnection(databaseUrl);
-  const counts = await queryDatabaseCounts(databaseUrl);
+  const { databaseUrl, outputFile, databaseVersion, ledger, pgDumpPath, snapshotId } = options;
+  const counts = options.counts ?? (await queryDatabaseCounts(databaseUrl));
 
-  await mkdir(dirname(outputFile), { recursive: true });
+  await mkdir(dirname(outputFile), { recursive: true, mode: 0o700 });
+
+  const parsed = new URL(databaseUrl);
+  const password = parsed.password.length > 0 ? decodeURIComponent(parsed.password) : undefined;
+  parsed.password = '';
+  const sanitizedUrl = parsed.toString();
 
   const binary = pgDumpPath ?? process.env['PG_DUMP_PATH'] ?? 'pg_dump';
-  const args = [
-    '-Fc',
-    '--no-owner',
-    '--no-acl',
-    '-h',
-    connection.host,
-    '-p',
-    connection.port,
-    '-U',
-    connection.user,
-    '-d',
-    connection.database,
-  ];
+  const args = ['-Fc', '--no-owner', '--no-acl', '-d', sanitizedUrl];
+
+  if (snapshotId !== undefined && snapshotId.length > 0) {
+    args.push(`--snapshot=${snapshotId}`);
+  }
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    ...(connection.password === undefined ? {} : { PGPASSWORD: connection.password }),
+    ...(password === undefined ? {} : { PGPASSWORD: password }),
   };
+
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn([binary, ...args], {
+      env,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  } catch (error) {
+    throw new Error(`Failed to spawn "${binary}": ${String(error)}`);
+  }
 
   const hash = createHash('sha256');
   let byteCount = 0;
 
-  await new Promise<void>((resolve, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      reject(new Error(`Failed to spawn "${binary}": ${String(error)}`));
-      return;
+  const fileHandle = await open(outputFile, 'w', 0o600);
+  try {
+    const reader = proc.stdout.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteCount += value.byteLength;
+      hash.update(value);
+      await fileHandle.write(value);
     }
+  } finally {
+    await fileHandle.close();
+  }
 
-    const fileStream = createWriteStream(outputFile);
-    let stderrOutput = '';
+  const stderrText = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
 
-    child.on('error', (error) => {
-      reject(new Error(`pg_dump execution failed (${binary}): ${error.message}`));
-    });
-
-    if (child.stderr !== null) {
-      child.stderr.on('data', (chunk: Buffer | string) => {
-        stderrOutput += chunk.toString();
-      });
-    }
-
-    if (child.stdout !== null) {
-      child.stdout.on('data', (chunk: Buffer) => {
-        byteCount += chunk.length;
-        hash.update(chunk);
-      });
-      child.stdout.pipe(fileStream);
-    }
-
-    fileStream.on('error', (error) => {
-      reject(error);
-    });
-
-    child.on('close', (code) => {
-      fileStream.close(() => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(
-            new Error(`pg_dump exited with nonzero status code ${code}: ${stderrOutput.trim()}`),
-          );
-        }
-      });
-    });
-  });
+  if (exitCode !== 0) {
+    throw new Error(`pg_dump exited with nonzero status code ${exitCode}: ${stderrText.trim()}`);
+  }
 
   return {
     file: 'database.dump',

@@ -40,3 +40,10 @@ export interface StorageCaptureResult {
     readonly contentType: string;
   }[];
 }
+
+export interface AttachmentRecord {
+  readonly id: string;
+  readonly storage_key: string;
+  readonly size: number;
+  readonly content_type: string;
+}

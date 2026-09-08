@@ -13,7 +13,12 @@ export async function verifyPreflight(
   url: string,
   customMigrationsFolder?: string,
 ): Promise<PreflightCheckResult> {
-  const sql = postgres(url, { max: 1, idle_timeout: 10, prepare: false });
+  const sql = postgres(url, {
+    max: 1,
+    connect_timeout: 5,
+    idle_timeout: 10,
+    prepare: false,
+  });
   try {
     const [versionRow] = await sql<{ version: string }[]>`select version() as version`;
     if (versionRow === undefined) {

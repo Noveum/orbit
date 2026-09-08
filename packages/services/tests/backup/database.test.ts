@@ -31,4 +31,21 @@ describe('parseDatabaseConnection', () => {
   it('throws on invalid connection url', () => {
     expect(() => parseDatabaseConnection('postgres:///empty_host')).toThrow();
   });
+
+  it('preserves TLS and libpq parameters when URL is sanitized', () => {
+    const rawUrl =
+      'postgres://orbit_user:secret_pass@db.example.com:5433/orbit_db?sslmode=verify-full&sslrootcert=%2Fpath%2Froot.crt';
+    const parsed = new URL(rawUrl);
+    const password = parsed.password.length > 0 ? decodeURIComponent(parsed.password) : undefined;
+    parsed.password = '';
+    const sanitizedUrl = parsed.toString();
+
+    expect(password).toBe('secret_pass');
+    expect(sanitizedUrl).toBe(
+      'postgres://orbit_user@db.example.com:5433/orbit_db?sslmode=verify-full&sslrootcert=%2Fpath%2Froot.crt',
+    );
+    expect(sanitizedUrl).toContain('sslmode=verify-full');
+    expect(sanitizedUrl).toContain('sslrootcert=');
+    expect(sanitizedUrl).not.toContain('secret_pass');
+  });
 });

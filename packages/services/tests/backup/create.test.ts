@@ -2,7 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { releaseDatabase } from '@orbit/db/migration-release';
 import { createBackup } from '../../src/backup/create.ts';
+
+const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
 
 describe('createBackup', () => {
   it('throws when destination directory is empty', async () => {
@@ -26,6 +30,8 @@ describe('createBackup', () => {
   it('marks incomplete backup atomically when pg_dump fails or is missing', async () => {
     const databaseUrl = process.env['DATABASE_URL'];
     if (databaseUrl === undefined) return;
+
+    await releaseDatabase(databaseUrl, MIGRATIONS);
 
     const tempDir = await mkdtemp(join(tmpdir(), 'orbit-create-test-'));
     try {

@@ -11,6 +11,7 @@ import {
 import { createStorageDriver, storageDriver } from '../storage/index.ts';
 import { dumpDatabase } from './database.ts';
 import { verifyPreflight } from './preflight.ts';
+import { openCoordinatedSnapshot } from './snapshot.ts';
 import { captureStorageObjects } from './storage.ts';
 import type { BackupCreateOptions, BackupCreateResult } from './types.ts';
 
@@ -33,25 +34,33 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
   const workingDir = join(destinationDir, `${backupId}.tmp`);
   const incompleteDir = join(destinationDir, `${backupId}.incomplete`);
 
-  await mkdir(workingDir, { recursive: true });
+  await mkdir(workingDir, { recursive: true, mode: 0o700 });
 
   try {
     const preflight = await verifyPreflight(databaseUrl, options.migrationsFolder);
 
-    const dumpResult = await dumpDatabase({
-      databaseUrl,
-      outputFile: join(workingDir, 'database.dump'),
-      databaseVersion: preflight.databaseVersion,
-      ledger: preflight.ledger,
-      pgDumpPath: options.pgDumpPath,
-    });
+    const snapshot = await openCoordinatedSnapshot(databaseUrl);
+    let dumpResult: Awaited<ReturnType<typeof dumpDatabase>>;
+    try {
+      dumpResult = await dumpDatabase({
+        databaseUrl,
+        outputFile: join(workingDir, 'database.dump'),
+        databaseVersion: preflight.databaseVersion,
+        ledger: preflight.ledger,
+        pgDumpPath: options.pgDumpPath,
+        snapshotId: snapshot.snapshotId,
+        counts: snapshot.counts,
+      });
+    } finally {
+      await snapshot.release();
+    }
 
     const driver =
       options.env === undefined
         ? storageDriver()
         : createStorageDriver(options.env as NodeJS.ProcessEnv);
     const storageResult = await captureStorageObjects({
-      databaseUrl,
+      records: snapshot.records,
       outputObjectsDir: join(workingDir, 'objects'),
       driver,
     });
@@ -87,13 +96,16 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
       },
       metadata: {
         generator: 'orbit-backup-create',
-        boundedConsistencyModel: 'postgres-preflight-then-object-capture',
+        boundedConsistencyModel: 'postgres-snapshot-coordinated-object-capture',
         ...(options.customMetadata ?? {}),
       },
     };
 
     const manifest = backupManifestSchema.parse(rawManifest);
-    await writeFile(join(workingDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+    await writeFile(join(workingDir, 'manifest.json'), JSON.stringify(manifest, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
 
     await rename(workingDir, targetDir);
 
