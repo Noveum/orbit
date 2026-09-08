@@ -120,14 +120,22 @@ interface RawCompletionPayload {
   readonly usage?: AiTokenUsage | undefined;
 }
 
+function trimTrailingSlashes(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '/') {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
 function resolveOpenAiUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, '');
+  const trimmed = trimTrailingSlashes(baseUrl.trim());
   if (trimmed.endsWith('/chat/completions')) return trimmed;
   return `${trimmed}/chat/completions`;
 }
 
 function resolveAnthropicUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, '');
+  const trimmed = trimTrailingSlashes(baseUrl.trim());
   if (trimmed.endsWith('/messages')) return trimmed;
   if (trimmed.endsWith('/v1')) return `${trimmed}/messages`;
   return `${trimmed}/v1/messages`;
@@ -288,7 +296,8 @@ async function recordUsageIfApplicable(
       completionTokens: usage?.completionTokens ?? null,
       totalTokens: usage?.totalTokens ?? null,
     });
-  } catch {
+  } catch (error) {
+    console.error('Failed to log AI token usage telemetry:', error);
     return;
   }
 }
