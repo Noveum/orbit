@@ -1,6 +1,7 @@
 export * from './analytics.ts';
 export * from './auth.ts';
 export * from './avatar.ts';
+export * from './backup.ts';
 export * from './bootstrap.ts';
 export * from './comment.ts';
 export * from './common.ts';
