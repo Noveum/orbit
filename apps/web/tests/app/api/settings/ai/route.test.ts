@@ -147,7 +147,7 @@ describe('AI provider settings API', () => {
       }),
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(422);
   });
 
   it('disconnects and removes provider configuration', async () => {
