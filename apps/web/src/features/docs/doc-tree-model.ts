@@ -107,8 +107,8 @@ export function groupDocs(
 
   groups.push({
     id: PRIVATE_GROUP_ID,
-    name: 'Private',
-    icon: 'lock',
+    name: 'Unfiled',
+    icon: 'folder',
     collectionId: null,
     droppable: true,
     docs: docs.filter((doc) => doc.collectionId === null && doc.projectId === null),

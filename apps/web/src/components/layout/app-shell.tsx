@@ -6,6 +6,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
 import { overlayClassName } from '@/components/ui/dialog.tsx';
+import { ResizableRail } from '@/features/docs/resizable-rail.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import {
@@ -100,15 +101,26 @@ export function AppShell({
         '3xl:[--sidebar-width:17rem] 4xl:[--sidebar-width:19rem]',
       )}
     >
-      <aside
-        className={
-          collapsed
-            ? 'hidden w-[var(--sidebar-width-collapsed)] shrink-0 lg:block'
-            : 'hidden w-[var(--sidebar-width)] shrink-0 lg:block'
-        }
-      >
-        {sidebar(false, null)}
-      </aside>
+      {pathname.startsWith('/docs') && !collapsed ? (
+        <ResizableRail
+          storageKey="orbit:docs:navigation-width"
+          label="Resize workspace navigation"
+          initialWidth={240}
+          className="hidden lg:block"
+        >
+          <aside className="h-full">{sidebar(false, null)}</aside>
+        </ResizableRail>
+      ) : (
+        <aside
+          className={
+            collapsed
+              ? 'hidden w-[var(--sidebar-width-collapsed)] shrink-0 lg:block'
+              : 'hidden w-[var(--sidebar-width)] shrink-0 lg:block'
+          }
+        >
+          {sidebar(false, null)}
+        </aside>
+      )}
 
       <DialogPrimitive.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
         <DialogPrimitive.Portal>

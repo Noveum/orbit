@@ -93,13 +93,13 @@ describe('the share dialog', () => {
   it('says on the trigger what the doc is right now', () => {
     render(menu(doc('public', 'token_1')));
 
-    expect(screen.getByTestId('doc-share')).toHaveTextContent('Public');
+    expect(screen.getByTestId('doc-share')).toHaveTextContent('Share');
   });
 
   it('offers every visibility in one place, with no second menu', async () => {
     await openShare(doc('public', 'token_1'));
 
-    for (const visibility of DOC_VISIBILITIES) {
+    for (const visibility of DOC_VISIBILITIES.filter((value) => value !== 'team')) {
       expect(choiceFor(visibility)).toBeInTheDocument();
     }
   });
@@ -144,11 +144,7 @@ describe('the share dialog', () => {
     expect(screen.queryByTestId('doc-visibility-link')).toBeNull();
     expect(screen.queryByTestId('doc-visibility-public')).toBeNull();
     expect(choiceFor('private')).toBeInTheDocument();
-    expect(visibleChoices(false).map((choice) => choice.value)).toEqual([
-      'private',
-      'team',
-      'workspace',
-    ]);
+    expect(visibleChoices(false).map((choice) => choice.value)).toEqual(['private', 'workspace']);
   });
 });
 
@@ -215,5 +211,20 @@ describe('shareTrigger', () => {
     expect(shareTrigger('members')).toBe('Members');
     expect(shareTrigger('link')).toBe('Unlisted');
     expect(shareTrigger('public')).toBe('Public');
+  });
+});
+
+describe('sharing authority in the interface', () => {
+  it('lets readers copy links but disables access changes and rotation', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    render(
+      <TooltipProvider>
+        <DocShareMenu doc={doc('public', 'token')} canPublish canManageAccess={false} />
+      </TooltipProvider>,
+    );
+    await user.click(screen.getByTestId('doc-share'));
+    expect(screen.getByTestId('doc-visibility-private')).toBeDisabled();
+    expect(screen.getByTestId('doc-rotate-link')).toBeDisabled();
+    expect(screen.getByTestId('doc-copy-link')).toBeEnabled();
   });
 });

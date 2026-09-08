@@ -1,7 +1,7 @@
 'use client';
 
 import type { DocVisibility } from '@orbit/shared/constants';
-import { isPublished, isRestricted } from '@orbit/shared/constants';
+import { isPublished } from '@orbit/shared/constants';
 import {
   Building2,
   Check,
@@ -35,47 +35,43 @@ export interface VisibilityChoice {
 export const VISIBILITY_CHOICES: readonly VisibilityChoice[] = [
   {
     value: 'private',
-    label: 'Only people you invite',
-    description: 'Nobody can open it unless you share it with them by name.',
-    icon: Lock,
-  },
-  {
-    value: 'team',
-    label: 'People you invite, and their team',
-    description: 'Shared with the people and teams you name below, and nobody else.',
+    label: 'Private: invited people and teams',
+    description: 'Only you and the people or teams you add below can open this page.',
     icon: Lock,
   },
   {
     value: 'workspace',
     label: 'Everyone in this workspace',
-    description: 'Anyone signed in to this workspace can read it. Nobody outside can.',
+    description: 'Workspace members can edit. Guests and contributors can view.',
     icon: Building2,
   },
   {
     value: 'members',
     label: 'Anyone in this workspace with the link',
     description:
-      'A published URL. Signed-in workspace members can open it. Nobody outside can, and it stays out of search.',
+      'A read-only page for signed-in workspace members. Also visible in workspace docs.',
     icon: Users,
   },
   {
     value: 'link',
     label: 'Anyone with the link',
-    description: 'Unlisted: no search engines, no sitemap, and you can reset the link.',
+    description:
+      'Anyone with this URL can view. Also visible in workspace docs. Search engines are blocked.',
     icon: Link2,
   },
   {
     value: 'public',
     label: 'Public on the web',
-    description: 'Indexed by search engines, listed in the sitemap, with a link preview card.',
+    description: 'Anyone can view. Search engines may index this page.',
     icon: Globe,
   },
 ];
 
 export function visibilityChoice(visibility: string): VisibilityChoice {
   return (
-    VISIBILITY_CHOICES.find((choice) => choice.value === visibility) ??
-    (VISIBILITY_CHOICES[0] as VisibilityChoice)
+    VISIBILITY_CHOICES.find(
+      (choice) => choice.value === (visibility === 'team' ? 'private' : visibility),
+    ) ?? (VISIBILITY_CHOICES[0] as VisibilityChoice)
   );
 }
 
@@ -170,33 +166,33 @@ export function DocShareMenu({
       <DialogTrigger asChild>
         <Button variant="secondary" size="sm" data-testid="doc-share">
           <current.icon className="size-3.5" aria-hidden="true" />
-          {shareTrigger(doc.visibility)}
+          Share
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="max-w-md">
-        <DialogTitle>Share this doc</DialogTitle>
+      <DialogContent className="max-w-lg">
+        <DialogTitle>Share “{doc.title}”</DialogTitle>
 
         <div className="flex flex-col gap-4">
           <fieldset
             aria-label="Who can see this doc"
             data-testid="doc-visibility-control"
-            className="flex flex-col gap-0.5"
+            className="flex flex-col gap-1 rounded-lg border border-border p-2"
           >
-            {visibleChoices(canPublish).map((choice) => {
-              const active = doc.visibility === choice.value;
+            {visibleChoices(canPublish || isPublished(doc.visibility)).map((choice) => {
+              const active = current.value === choice.value;
               return (
                 <button
                   key={choice.value}
                   type="button"
                   aria-pressed={active}
-                  disabled={share.isPending}
+                  disabled={!canManageAccess || share.isPending}
                   data-testid={`doc-visibility-${choice.value}`}
                   onClick={() => share.mutate({ visibility: choice.value })}
                   className={cn(
                     'flex items-start gap-2 rounded-md px-2 py-1.5 text-left',
                     'transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
+                    'disabled:cursor-default',
                     active ? 'bg-accent-soft' : 'hover:bg-surface-2',
                   )}
                 >
@@ -221,6 +217,12 @@ export function DocShareMenu({
             })}
           </fieldset>
 
+          <p className="text-2xs text-muted">
+            {canManageAccess
+              ? 'Choose who can open this page. Folder location never changes access.'
+              : 'Only the author can change sharing. Copying a link does not grant access.'}
+          </p>
+
           <CopyRow label="Workspace link" url={workspaceUrl} testId="doc-copy-link" />
 
           {publishedUrl === null ? null : (
@@ -234,6 +236,7 @@ export function DocShareMenu({
                 variant="ghost"
                 size="sm"
                 data-testid="doc-rotate-link"
+                disabled={!canManageAccess || share.isPending}
                 className="self-start"
                 onClick={() => share.mutate({ visibility: doc.visibility, rotateToken: true })}
               >
@@ -243,12 +246,12 @@ export function DocShareMenu({
             </div>
           )}
 
-          {isRestricted(doc.visibility) ? (
+          {
             <div className="flex flex-col gap-3 border-border border-t pt-3">
               <DocPeopleAccess docId={doc.id} canManage={canManageAccess} />
               {canManageAccess ? <DocAccessRequests docId={doc.id} /> : null}
             </div>
-          ) : null}
+          }
         </div>
       </DialogContent>
     </Dialog>

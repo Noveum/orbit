@@ -97,7 +97,7 @@ function MoveSubmenu({
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         <DropdownMenuItem data-testid="move-to-private" onSelect={() => onMoveToCollection(null)}>
-          <span className="flex-1">Private</span>
+          <span className="flex-1">Unfiled</span>
           {doc.collectionId === null ? (
             <Check className="size-3.5 text-accent" aria-hidden="true" />
           ) : null}
@@ -126,8 +126,9 @@ const READING_WIDTHS: readonly { value: ReadingWidth; label: string }[] = [
 ];
 
 const EDITOR_MODES: readonly { value: EditorMode; label: string }[] = [
-  { value: 'rich', label: 'Rendered' },
+  { value: 'rich', label: 'Write' },
   { value: 'markdown', label: 'Markdown source' },
+  { value: 'preview', label: 'Reading preview' },
 ];
 
 function EditorViewItems() {

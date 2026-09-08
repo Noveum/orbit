@@ -146,228 +146,58 @@ describe('a folder that can be closed', () => {
   });
 });
 
-describe('folding a folder in the rendered tree', () => {
-  const nested: DocSummary[] = [
+describe('persisted document navigation', () => {
+  const nested = [
     summary('root', 'Handbook'),
     { ...summary('child', 'Onboarding'), parentId: 'root' },
-    { ...summary('grandchild', 'Day one'), parentId: 'child' },
-    summary('other', 'Runbook'),
   ];
-
   afterEach(cleanup);
 
-  it('hides the descendants when the control is pressed, and says so', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(tree(nested, [], 'other'));
-
-    const toggle = screen.getByTestId('doc-toggle-root');
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Day one')).toBeTruthy();
-
-    await user.click(toggle);
-
-    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('Onboarding')).toBeNull();
-    expect(screen.queryByText('Day one')).toBeNull();
-    expect(screen.getByText('Runbook')).toBeTruthy();
-  });
-
-  it('reopens the chain when the doc inside it becomes the active one', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const view = render(tree(nested, [], 'other'));
-
-    await user.click(screen.getByTestId('doc-toggle-root'));
-    expect(screen.queryByText('Day one')).toBeNull();
-
-    view.rerender(tree(nested, [], 'grandchild'));
-
-    expect(screen.getByText('Day one')).toBeTruthy();
-    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'true');
-  });
-});
-
-describe('collapsing the folder the open doc lives in', () => {
-  const nested: DocSummary[] = [
-    summary('root', 'Handbook'),
-    { ...summary('child', 'Onboarding'), parentId: 'root' },
-    { ...summary('grandchild', 'Day one'), parentId: 'child' },
-    summary('other', 'Runbook'),
-  ];
-
-  afterEach(cleanup);
-
-  it('stays collapsed when the docs list refreshes underneath it', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const view = render(tree(nested, [], 'grandchild'));
-
-    await user.click(screen.getByTestId('doc-toggle-root'));
-    expect(screen.queryByText('Day one')).toBeNull();
-
-    view.rerender(tree([...nested], [], 'grandchild'));
-
-    expect(screen.queryByText('Day one')).toBeNull();
-    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
-  });
-});
-
-describe('coming back to a doc after leaving the docs section', () => {
-  const nested: DocSummary[] = [
-    summary('root', 'Handbook'),
-    { ...summary('child', 'Onboarding'), parentId: 'root' },
-    { ...summary('grandchild', 'Day one'), parentId: 'child' },
-    summary('other', 'Runbook'),
-  ];
-
-  afterEach(cleanup);
-
-  it('reveals it again, even though it was the last doc open before leaving', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const view = render(tree(nested, [], 'grandchild'));
-
-    view.rerender(tree(nested, [], null));
-    await user.click(screen.getByTestId('doc-toggle-root'));
-    expect(screen.queryByText('Day one')).toBeNull();
-
-    view.rerender(tree(nested, [], 'grandchild'));
-
-    expect(screen.getByText('Day one')).toBeTruthy();
-  });
-});
-
-function groupRegion(groupId: string): HTMLElement {
-  const toggle = screen.getByTestId(`doc-group-toggle-${groupId}`);
-  const section = toggle.closest('section');
-  const region = section?.querySelector<HTMLElement>('[data-state]') ?? null;
-  if (region === null) throw new Error(`no region for ${groupId}`);
-  return region;
-}
-
-function groupContent(groupId: string): HTMLElement | null {
-  const toggle = screen.getByTestId(`doc-group-toggle-${groupId}`);
-  const section = toggle.closest('section');
-  return section?.querySelector<HTMLElement>('[data-state="open"]') ?? null;
-}
-
-function storedDisclosure(): Record<string, unknown> {
-  const raw = window.localStorage.getItem('orbit:sidebar:disclosure');
-  if (raw === null) return {};
-  const parsed: unknown = JSON.parse(raw);
-  return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : {};
-}
-
-describe('a folder in the docs sidebar', () => {
-  const nested: DocSummary[] = [
-    summary('root', 'Handbook'),
-    { ...summary('child', 'Onboarding'), parentId: 'root' },
-    summary('other', 'Runbook'),
-  ];
-
-  afterEach(cleanup);
-
-  it('names the folder a doc belongs to, so the folder can be reopened for it', () => {
-    expect(groupIdOf(summary('a', 'A'))).toBe('private');
-    expect(groupIdOf({ ...summary('b', 'B'), projectId: 'project_1' })).toBe('project');
-    expect(groupIdOf({ ...summary('c', 'C'), collectionId: 'collection_1' })).toBe('collection_1');
-    expect(docDisclosureKey('same')).not.toBe(groupDisclosureKey('same'));
-  });
-
-  it('closes from its own header, hiding everything filed under it', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(tree(nested, [], null));
-
-    const toggle = screen.getByTestId('doc-group-toggle-private');
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(groupRegion('private')).toHaveAttribute('data-state', 'open');
-
-    await user.click(toggle);
-
+  it('starts every folder and nested page collapsed, even for the active page', () => {
+    render(tree(nested, [], 'child'));
     expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
       'aria-expanded',
       'false',
     );
-    expect(groupRegion('private')).toHaveAttribute('data-state', 'closed');
+    expect(screen.queryByText('Handbook')).toBeNull();
   });
 
-  it('is still closed the next time the person loads the app', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
+  it('persists expanded folders and pages across reloads', async () => {
+    const user = userEvent.setup();
     render(tree(nested, [], null));
-
     await user.click(screen.getByTestId('doc-group-toggle-private'));
-    expect(storedDisclosure()[groupDisclosureKey('private')]).toBe(false);
-
-    reloadPage();
-    render(tree(nested, [], null));
-
-    expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-    expect(groupContent('private')).toBeNull();
-  });
-
-  it('opens again when a doc filed under it becomes the active one', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const view = render(tree(nested, [], null));
-
-    await user.click(screen.getByTestId('doc-group-toggle-private'));
-    expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-
-    view.rerender(tree(nested, [], 'child'));
-
-    expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute('aria-expanded', 'true');
-  });
-
-  it('stays open when it was never closed', () => {
-    render(tree(nested, [], null));
-
-    expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Handbook')).toBeTruthy();
-  });
-});
-
-describe('a nested page that was folded away', () => {
-  const nested: DocSummary[] = [
-    summary('root', 'Handbook'),
-    { ...summary('child', 'Onboarding'), parentId: 'root' },
-    { ...summary('grandchild', 'Day one'), parentId: 'child' },
-    summary('other', 'Runbook'),
-  ];
-
-  afterEach(cleanup);
-
-  it('is still folded the next time the person loads the app', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(tree(nested, [], 'other'));
-
-    await user.click(screen.getByTestId('doc-toggle-root'));
-    expect(screen.queryByText('Onboarding')).toBeNull();
-    expect(storedDisclosure()[docDisclosureKey('root')]).toBe(false);
-
-    reloadPage();
-    render(tree(nested, [], 'other'));
-
     expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('Onboarding')).toBeNull();
-    expect(screen.queryByText('Day one')).toBeNull();
-    expect(screen.getByText('Runbook')).toBeTruthy();
-  });
-
-  it('is unfolded again on the next load once the person reopens it', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    render(tree(nested, [], 'other'));
-
     await user.click(screen.getByTestId('doc-toggle-root'));
-    await user.click(screen.getByTestId('doc-toggle-root'));
-
-    reloadPage();
-    render(tree(nested, [], 'other'));
-
-    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Onboarding')).toBeTruthy();
+    reloadPage();
+    render(tree(nested, [], 'child'));
+    expect(screen.getByText('Onboarding')).toBeTruthy();
+    expect(screen.getByTestId('doc-toggle-root')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('preserves an explicit collapse across navigation, refresh, and reload', async () => {
+    const user = userEvent.setup();
+    const view = render(tree(nested, [], null));
+    await user.click(screen.getByTestId('toggle-all-folders'));
+    expect(screen.getByText('Onboarding')).toBeTruthy();
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
+    view.rerender(tree([...nested], [], 'child'));
+    expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    reloadPage();
+    render(tree(nested, [], 'child'));
+    expect(screen.getByTestId('doc-group-toggle-private')).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('does not label unfiled workspace documents as private', () => {
+    render(tree(nested, [], null));
+    expect(screen.getByTestId('doc-group-toggle-private')).toHaveTextContent('Unfiled');
+    expect(groupIdOf(summary('a', 'A'))).toBe('private');
+    expect(docDisclosureKey('same')).not.toBe(groupDisclosureKey('same'));
   });
 });

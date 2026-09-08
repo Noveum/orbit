@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { createDoc } from './api.ts';
 import { BASE } from './base-url.ts';
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -57,6 +58,7 @@ test('a doc dragged onto a folder is filed there and stays after a reload', asyn
   if (folderTestId === null) throw new Error('the new folder has no test id');
   const folderId = folderTestId.replace('doc-folder-', '');
 
+  await page.getByTestId('toggle-all-folders').click();
   const loose = page.locator(`[data-testid^="doc-row-wrap-"]`);
   await expect(loose.first()).toBeVisible({ timeout: 15_000 });
   const wrapTestId = await loose.first().getAttribute('data-testid');
@@ -90,13 +92,9 @@ test('a private doc offers a link that can be copied and handed to a colleague',
   });
   const page = await signIn(context, 'alex@orbit.example');
 
-  await page.goto(`${BASE}/docs`);
-  const firstDoc = page.locator('[data-testid^="doc-row-"]:not([data-testid$="-menu"])').first();
-  await expect(firstDoc).toBeVisible({ timeout: 15_000 });
-  await firstDoc.click();
-
+  const doc = await createDoc(page, 'Private launch notes', 'private');
+  await page.goto(`${BASE}/docs/${doc.id}`);
   await page.getByTestId('doc-share').click();
-  await page.getByTestId('doc-visibility-private').click();
 
   const copy = page.getByTestId('doc-copy-link');
   await expect(copy).toBeVisible();

@@ -3,6 +3,7 @@
 import { useScopeSubscription } from '@orbit/realtime-client/react';
 import { isHtmlDoc } from '@orbit/shared/constants';
 import { scopes } from '@orbit/shared/events';
+import { canManageDocAccess } from '@orbit/shared/policy';
 import type { DocCommentAnchor } from '@orbit/shared/validators';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { Check, Search } from 'lucide-react';
@@ -46,6 +47,7 @@ import { HtmlDocReader } from './html-doc-reader.tsx';
 import type { SaveStatus } from './use-autosave.ts';
 import { useAutosave } from './use-autosave.ts';
 import type { DocAnchorTarget, DocCommenting } from './use-doc-anchors.ts';
+import { READING_WIDTH_CLASS, useDocPreferences } from './use-doc-preferences.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 import { useEditorOutline } from './use-editor-outline.ts';
 
@@ -247,11 +249,18 @@ function LoadedDoc({
           )
         }
         share={
-          canWrite ? (
+          detail.doc.archivedAt === null ? (
             <DocShareMenu
               doc={detail.doc}
               canPublish={canPublish}
-              canManageAccess={canPublish || detail.doc.authorId === workspace.userId}
+              canManageAccess={canManageDocAccess(
+                {
+                  userId: workspace.userId ?? '',
+                  role: workspace.role,
+                  organizationId: detail.doc.organizationId,
+                },
+                detail.doc,
+              )}
             />
           ) : null
         }
@@ -475,6 +484,7 @@ function EditSession({
   readonly commenting: DocCommenting;
   readonly footer?: React.ReactNode;
 }) {
+  const { width, mode } = useDocPreferences();
   const [title, setTitle] = useState(doc.title);
   const [content, setContent] = useState(doc.content);
   const draft = useMemo(() => ({ title, content }), [title, content]);
@@ -504,13 +514,19 @@ function EditSession({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-col px-6 pt-2 pb-0">
+      <div
+        className={cn(
+          'mx-auto flex w-full shrink-0 flex-col px-8 pt-8 pb-6',
+          READING_WIDTH_CLASS[width],
+        )}
+      >
         <Input
           value={title}
+          readOnly={mode === 'preview'}
           aria-label="Doc title"
           data-testid="doc-title-input"
           onChange={(event) => setTitle(event.target.value)}
-          className="h-auto rounded-sm border-0 bg-transparent px-0 py-0 font-semibold text-text text-2xl outline-none focus-visible:border-0 focus-visible:bg-surface-2/60"
+          className="h-auto rounded-sm border-0 bg-transparent px-0 py-0 font-semibold text-text text-3xl tracking-tight outline-none focus-visible:border-0 focus-visible:bg-surface-2/60"
         />
       </div>
       {isHtmlDoc(doc.kind) ? (

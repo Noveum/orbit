@@ -90,6 +90,7 @@ export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEdito
         })}
       </div>
       <SplitPane
+        stackOnSmall
         storageKey={SPLIT_STORAGE_KEY}
         label="Resize source and preview"
         secondClassName="bg-white"

@@ -39,6 +39,7 @@ import {
   wrapSelection,
 } from './markdown-input.ts';
 import type { DocHeading } from './outline.ts';
+import { SplitPane } from './split-pane.tsx';
 import { type DocCommenting, useDocAnchors } from './use-doc-anchors.ts';
 import { type EditorMode, useDocPreferences } from './use-doc-preferences.ts';
 import { useDocUploads } from './use-doc-uploads.ts';
@@ -130,7 +131,7 @@ function EditorModeSwitch({
   return (
     <div className="flex items-center gap-1">
       <div className="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
-        {(['markdown', 'rich'] as const).map((option) => (
+        {(['rich', 'markdown', 'preview'] as const).map((option) => (
           <button
             key={option}
             type="button"
@@ -143,7 +144,7 @@ function EditorModeSwitch({
               mode === option ? 'bg-surface text-text shadow-sm' : 'text-faint',
             )}
           >
-            {option === 'rich' ? 'Rich text' : 'Markdown'}
+            {{ rich: 'Write', markdown: 'Source', preview: 'Preview' }[option]}
           </button>
         ))}
       </div>
@@ -199,7 +200,7 @@ function MarkdownToolbarRow({
           aria-pressed={preview}
           onClick={onTogglePreview}
         >
-          {preview ? 'Editing preview' : 'Preview'}
+          {preview ? 'Hide split preview' : 'Split preview'}
         </Button>
       </span>
     </div>
@@ -222,13 +223,11 @@ function MarkdownPane({
   readonly previewHtml: string | null;
 }) {
   return (
-    <div
-      className={cn(
-        'relative grid min-h-0 min-w-0 flex-1',
-        previewHtml === null ? 'grid-cols-1' : 'grid-rows-2 lg:grid-cols-2 lg:grid-rows-1',
-      )}
-    >
-      <div className="relative min-h-0">
+    <SplitPane
+      stackOnSmall
+      storageKey="orbit:docs:markdown-split"
+      label="Resize markdown and preview"
+      first={
         <MarkdownCodeEditor
           handleRef={handleRef}
           value={content}
@@ -238,14 +237,15 @@ function MarkdownPane({
           ariaLabel="Doc markdown"
           testId="doc-editor-input"
         />
-      </div>
-
-      {previewHtml === null ? null : (
-        <div className="min-h-0 overflow-y-auto border-border border-t px-6 py-6 lg:border-t-0 lg:border-l">
-          <DocBody html={previewHtml} />
-        </div>
-      )}
-    </div>
+      }
+      second={
+        previewHtml === null ? null : (
+          <div className="h-full overflow-y-auto px-8 py-8">
+            <DocBody html={previewHtml} />
+          </div>
+        )
+      }
+    />
   );
 }
 
@@ -266,6 +266,18 @@ export interface DocEditorProps {
   readonly commenting?: DocCommenting;
 }
 
+function DocSupplement({ footer }: { readonly footer: React.ReactNode }) {
+  if (footer === undefined) return null;
+  return (
+    <details className="shrink-0 border-border border-t" data-testid="doc-discussion">
+      <summary className="cursor-pointer px-6 py-2 text-dense text-muted">
+        Comments and attachments
+      </summary>
+      <div className="max-h-64 overflow-y-auto px-8 pb-4">{footer}</div>
+    </details>
+  );
+}
+
 export function DocEditor({
   docId,
   content,
@@ -284,7 +296,7 @@ export function DocEditor({
   const { uploading, percent, upload, uploadEach } = useDocUploads(docId);
 
   const html = useMemo(
-    () => (mode === 'markdown' && preview ? renderMarkdown(content) : ''),
+    () => (mode === 'preview' || (mode === 'markdown' && preview) ? renderMarkdown(content) : ''),
     [mode, preview, content],
   );
 
@@ -367,9 +379,21 @@ export function DocEditor({
     </span>
   ) : undefined;
 
+  if (mode === 'preview')
+    return (
+      <div className="flex min-h-0 flex-1 flex-col" data-testid="doc-editor">
+        <div className="flex h-11 shrink-0 items-center border-border border-b px-6">
+          {modeSwitch}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-8 py-8" data-testid="doc-reading-preview">
+          <DocBody html={html} className="mx-auto max-w-[45rem]" />
+        </div>
+      </div>
+    );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="doc-editor">
-      {mode === 'markdown' && toolbar ? (
+      {mode === 'markdown' ? (
         <MarkdownToolbarRow
           modeSwitch={modeSwitch}
           toolbar={toolbar}
@@ -382,6 +406,12 @@ export function DocEditor({
         />
       ) : null}
 
+      {mode === 'rich' && !toolbar ? (
+        <div className="flex h-11 shrink-0 items-center justify-between border-border border-b px-6">
+          {modeSwitch}
+          {uploadStatus}
+        </div>
+      ) : null}
       {mode === 'rich' ? (
         <div className="flex min-h-0 flex-1">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -418,6 +448,7 @@ export function DocEditor({
           {outlinePane}
         </div>
       )}
+      {mode === 'markdown' ? <DocSupplement footer={footer} /> : null}
     </div>
   );
 }

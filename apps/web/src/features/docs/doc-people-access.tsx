@@ -85,9 +85,7 @@ export function DocPeopleAccess({ docId, canManage }: { docId: string; canManage
 
   if (!canManage) {
     return (
-      <p className="text-2xs text-faint">
-        Only the author or a workspace admin can change who this doc is shared with.
-      </p>
+      <p className="text-2xs text-faint">Only the author can change who this doc is shared with.</p>
     );
   }
 

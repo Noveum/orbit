@@ -51,9 +51,7 @@ async function openNewDoc(page: Page, click: () => Promise<void>): Promise<void>
   await click();
   await page.waitForURL(
     (url) =>
-      url.pathname.startsWith('/docs/') &&
-      url.pathname !== from &&
-      url.searchParams.get('edit') === '1',
+      url.pathname.startsWith('/docs/') && url.pathname !== from && url.pathname !== '/docs/new',
   );
   await expect(page.getByTestId('doc-editor')).toBeVisible();
 }
@@ -94,15 +92,16 @@ test.fixme('a doc is written, attached to, published, and read without a session
 
   await author.goto(`${BASE}/docs`);
   await expect(author.getByTestId('docs-workspace')).toBeVisible();
+  await expect(author.getByTestId('doc-tree').getByText('Realtime delta protocol')).toHaveCount(0);
+  await author.getByTestId('toggle-all-folders').click();
   await expect(author.getByTestId('doc-tree').getByText('Realtime delta protocol')).toBeVisible();
   await expect(author.getByTestId('docs-workspace').getByText('Engineering')).toBeVisible();
   await expect(author.getByTestId('docs-workspace').getByText('Project docs')).toBeVisible();
-  await expect(author.getByTestId('docs-workspace').getByText('Private')).toBeVisible();
+  await expect(author.getByTestId('docs-workspace').getByText('Unfiled')).toBeVisible();
 
   await author.getByTestId('doc-tree').getByText('Realtime delta protocol').click();
   await expect(author.getByTestId('doc-rich-editor')).toBeVisible();
   await expect(author.getByTestId('doc-edit-toggle')).toHaveCount(0);
-  await expect(author.getByTestId('doc-repo-pill')).toContainText('docs/realtime.md');
   await expect(
     author.getByTestId('doc-rich-editor').locator('th', { hasText: 'Rule' }),
   ).toBeVisible({ timeout: 30_000 });
@@ -170,6 +169,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
   });
   await expect(author.getByTestId('doc-save-status')).toHaveText('Saved', { timeout: 30_000 });
 
+  await author.getByTestId('doc-discussion').locator('summary').click();
   await expect(author.getByTestId('doc-attachments')).toBeVisible({ timeout: 30_000 });
   await shoot(author, 'docs-reader');
 
@@ -183,6 +183,13 @@ test.fixme('a doc is written, attached to, published, and read without a session
   await expect(author.getByTestId('doc-attachments').locator('video')).toHaveCount(1);
   await shoot(author, 'docs-attachment');
 
+  await author.getByTestId('doc-share').click();
+  await author.getByTestId('doc-visibility-workspace').click();
+  await expect(author.getByTestId('doc-visibility-workspace')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await author.keyboard.press('Escape');
   const watching = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const watcher = await signIn(watching, 'sam@orbit.example');
   await watcher.goto(`${BASE}${new URL(author.url()).pathname}`);
@@ -196,7 +203,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
 
   await author.getByTestId('doc-share').click();
   await author.getByTestId('doc-visibility-public').click();
-  await expect(author.getByTestId('doc-share')).toHaveText('Public', { timeout: 30_000 });
+  await expect(author.getByTestId('doc-visibility-public')).toHaveAttribute('aria-pressed', 'true');
 
   const link = author.getByTestId('doc-copy-public-link-url');
   await expect(link).toBeVisible({ timeout: 30_000 });
@@ -214,7 +221,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
     const visitor = await anonymous.newPage();
     await visitor.goto(publishedUrl);
     await expect(visitor.getByTestId('published-doc')).toBeVisible();
-    await expect(visitor.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    await expect(visitor.getByRole('heading', { level: 1, name: renamed })).toBeVisible();
     await expect(visitor.locator('th', { hasText: 'Rule' })).toBeVisible();
     await expect(visitor.locator('input[type=checkbox]')).toHaveCount(2);
     await expect(visitor.getByTestId('doc-attachments')).toBeVisible();

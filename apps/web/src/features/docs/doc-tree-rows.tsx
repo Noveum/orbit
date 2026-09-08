@@ -2,7 +2,7 @@
 
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { isHtmlDoc } from '@orbit/shared/constants';
-import { ChevronRight, FileCode, FileText, Folder, FolderOpen, Lock, Plus } from 'lucide-react';
+import { ChevronRight, FileCode, FileText, Folder, FolderOpen, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { Collapsible } from '@/components/ui/collapsible.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -12,7 +12,7 @@ import type { DocSummary } from '@/lib/query/schemas.ts';
 import type { DropEdge } from './doc-drop.ts';
 import type { DocRowMenuProps } from './doc-row-menu.tsx';
 import { DocRowMenu } from './doc-row-menu.tsx';
-import { type DocGroup, PRIVATE_GROUP_ID } from './doc-tree-model.ts';
+import type { DocGroup } from './doc-tree-model.ts';
 
 export const DOC_DRAG_PREFIX = 'doc:';
 export const GROUP_DRAG_PREFIX = 'group:';
@@ -24,8 +24,7 @@ export interface DropHint {
   readonly edge: DropEdge;
 }
 
-function glyphFor(groupId: string, open: boolean) {
-  if (groupId === PRIVATE_GROUP_ID) return Lock;
+function glyphFor(open: boolean) {
   return open ? FolderOpen : Folder;
 }
 
@@ -74,7 +73,7 @@ export function FolderRow({
     disabled: !group.droppable,
   });
   const nesting = isOver && hint?.targetId === group.id;
-  const Glyph = glyphFor(group.id, open);
+  const Glyph = glyphFor(open);
 
   return (
     <section className="flex flex-col gap-0.5" data-testid={`doc-folder-${group.id}`}>

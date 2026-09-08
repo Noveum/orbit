@@ -15,11 +15,11 @@ describe('the html page editor', () => {
     expect(screen.getByTestId('html-view-split').getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('puts a drag handle between source and preview', () => {
+  it('stacks source and preview with a horizontal handle on a narrow screen', () => {
     render(<HtmlDocEditor title="Board" content="<p>ok</p>" onChange={() => undefined} />);
     const handle = screen.getByTestId('split-pane-handle');
     expect(handle.getAttribute('aria-label')).toBe('Resize source and preview');
-    expect(handle.getAttribute('aria-orientation')).toBe('vertical');
+    expect(handle.getAttribute('aria-orientation')).toBe('horizontal');
   });
 
   it('hides the source when preview is selected', async () => {

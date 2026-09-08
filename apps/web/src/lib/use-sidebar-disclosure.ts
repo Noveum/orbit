@@ -90,7 +90,7 @@ export function useSidebarDisclosure(): SidebarDisclosure {
 
   const setAll = useCallback((ids: readonly string[], open: boolean) => {
     const now = current();
-    if (ids.every((id) => (now[id] ?? true) === open)) return;
+    if (ids.every((id) => now[id] === open)) return;
     const next: OpenMap = { ...now };
     for (const id of ids) next[id] = open;
     publish(next);
