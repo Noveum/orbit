@@ -170,10 +170,8 @@ function AiProviderInputs(props: AiProviderInputsProps) {
           onChange={(e) => props.onKindChange(e.target.value as AiProviderKind)}
           className="mt-1 block w-full rounded-md border border-border bg-surface-2 px-3 py-1.5 text-dense text-text"
         >
-          <option value="openai-compatible">
-            OpenAI-compatible (OpenAI, Ollama, vLLM, LM Studio)
-          </option>
-          <option value="anthropic">Anthropic native</option>
+          <option value="openai-compatible">OpenAI-compatible</option>
+          <option value="anthropic">Anthropic-compatible</option>
         </select>
       </div>
 

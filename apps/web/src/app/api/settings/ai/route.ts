@@ -68,8 +68,9 @@ export async function POST(request: Request): Promise<Response> {
         apiKey: body.apiKey,
       });
 
-      if (existing === undefined) {
-        await db.insert(schema.integration).values({
+      await db
+        .insert(schema.integration)
+        .values({
           id: randomUUIDv7(),
           organizationId: principal.organizationId,
           provider: 'ai',
@@ -77,17 +78,19 @@ export async function POST(request: Request): Promise<Response> {
           config,
           credentials: { apiKey: envelope },
           connectedById: principal.userId,
-        });
-      } else {
-        await db
-          .update(schema.integration)
-          .set({
+        })
+        .onConflictDoUpdate({
+          target: [
+            schema.integration.organizationId,
+            schema.integration.provider,
+            schema.integration.externalId,
+          ],
+          set: {
             config,
             credentials: { apiKey: envelope },
             updatedAt: new Date(),
-          })
-          .where(eq(schema.integration.id, existing.id));
-      }
+          },
+        });
     } else {
       if (existing === undefined || !hasAiApiKey(existing.credentials)) {
         throw validationFailed('An API key is required when setting up an AI provider.');
