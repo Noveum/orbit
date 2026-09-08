@@ -12,6 +12,17 @@ const publishDeltas = mock((actions: SyncAction[]) => {
   return Promise.resolve();
 });
 const deliverPendingSlackDms = mock(() => Promise.resolve(3));
+const deliverPendingSlackChannels = mock(() => Promise.resolve(2));
+const deliverPendingNotificationEmails = mock(() => Promise.resolve(5));
+const wakeDueNotificationConversations = mock(() =>
+  Promise.resolve({ woken: 0, stale: 0, changes: [] }),
+);
+const notificationConversationActions = mock(() => Promise.resolve([]));
+const previousProviderEnv = {
+  RESEND_API_KEY: process.env['RESEND_API_KEY'],
+  EMAIL_FROM: process.env['EMAIL_FROM'],
+  NOTIFICATION_PROVIDERS_PAUSED: process.env['NOTIFICATION_PROVIDERS_PAUSED'],
+};
 const reconcilePendingGithubWork = mock(() =>
   Promise.resolve({
     processed: 4,
@@ -27,13 +38,28 @@ const previousSlackEnabled = process.env['SLACK_ENABLED'];
 const previousGithubAppId = process.env['GITHUB_APP_ID'];
 const previousGithubPrivateKey = process.env['GITHUB_APP_PRIVATE_KEY'];
 
-mock.module('@orbit/core', () => ({ ...core, deliverPendingSlackDms, publishDeltas }));
-mock.module('@orbit/services', () => ({ ...services, reconcilePendingGithubWork }));
+mock.module('@orbit/core', () => ({
+  ...core,
+  deliverPendingSlackDms,
+  deliverPendingSlackChannels,
+  deliverPendingNotificationEmails,
+  publishDeltas,
+}));
+mock.module('@orbit/services', () => ({
+  ...services,
+  reconcilePendingGithubWork,
+  wakeDueNotificationConversations,
+  notificationConversationActions,
+}));
 mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
 const { GET, maxDuration } = await import('../../../../../src/app/api/cron/notifications/route.ts');
 
 afterAll(() => {
+  for (const [key, value] of Object.entries(previousProviderEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   if (previousSecret === undefined) delete process.env['CRON_SECRET'];
   else process.env['CRON_SECRET'] = previousSecret;
   if (previousSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
@@ -53,6 +79,12 @@ function request(authorization?: string): Request {
 }
 
 beforeEach(() => {
+  process.env['RESEND_API_KEY'] = 'test-resend';
+  process.env['EMAIL_FROM'] = 'Orbit <notifications@example.com>';
+  process.env['NOTIFICATION_PROVIDERS_PAUSED'] = 'false';
+  deliverPendingSlackChannels.mockClear();
+  deliverPendingNotificationEmails.mockClear();
+  wakeDueNotificationConversations.mockClear();
   process.env['CRON_SECRET'] = SECRET;
   process.env['SLACK_ENABLED'] = 'true';
   process.env['GITHUB_APP_ID'] = '4514311';
@@ -81,7 +113,9 @@ describe('GET /api/cron/notifications', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      delivered: 3,
+      delivered: 10,
+      providers: { slackDms: 3, slackChannels: 2, emails: 5 },
+      snoozes: { woken: 0, stale: 0 },
       github: {
         configured: true,
         processed: 4,
@@ -93,6 +127,8 @@ describe('GET /api/cron/notifications', () => {
       },
     });
     expect(deliverPendingSlackDms).toHaveBeenCalledTimes(1);
+    expect(deliverPendingSlackChannels).toHaveBeenCalledTimes(1);
+    expect(deliverPendingNotificationEmails).toHaveBeenCalledTimes(1);
     expect(reconcilePendingGithubWork).toHaveBeenCalledTimes(1);
   });
 
@@ -103,7 +139,9 @@ describe('GET /api/cron/notifications', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      delivered: 0,
+      delivered: 5,
+      providers: { slackDms: 0, slackChannels: 0, emails: 5 },
+      snoozes: { woken: 0, stale: 0 },
       github: {
         configured: true,
         processed: 4,
@@ -147,7 +185,9 @@ describe('GET /api/cron/notifications', () => {
     expect(response.status).toBe(200);
     expect(published).toEqual([[action]]);
     expect(await response.json()).toEqual({
-      delivered: 3,
+      delivered: 10,
+      providers: { slackDms: 3, slackChannels: 2, emails: 5 },
+      snoozes: { woken: 0, stale: 0 },
       github: {
         configured: true,
         processed: 1,
@@ -167,7 +207,9 @@ describe('GET /api/cron/notifications', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      delivered: 3,
+      delivered: 10,
+      providers: { slackDms: 3, slackChannels: 2, emails: 5 },
+      snoozes: { woken: 0, stale: 0 },
       github: {
         configured: false,
         processed: 0,
@@ -187,6 +229,17 @@ describe('GET /api/cron/notifications', () => {
     expect(response.status).toBe(401);
     expect(deliverPendingSlackDms).not.toHaveBeenCalled();
     expect(reconcilePendingGithubWork).not.toHaveBeenCalled();
+  });
+
+  it('pauses provider contact without disabling GitHub reconciliation or snooze wakes', async () => {
+    process.env['NOTIFICATION_PROVIDERS_PAUSED'] = 'true';
+    const response = await GET(request(`Bearer ${SECRET}`));
+    expect(response.status).toBe(200);
+    expect(deliverPendingSlackDms).not.toHaveBeenCalled();
+    expect(deliverPendingSlackChannels).not.toHaveBeenCalled();
+    expect(deliverPendingNotificationEmails).not.toHaveBeenCalled();
+    expect(reconcilePendingGithubWork).toHaveBeenCalledTimes(1);
+    expect(wakeDueNotificationConversations).toHaveBeenCalledTimes(1);
   });
 
   it('refuses the wrong secret', async () => {

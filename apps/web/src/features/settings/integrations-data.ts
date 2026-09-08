@@ -1,4 +1,5 @@
 import { and, count, db, desc, eq, schema } from '@orbit/db';
+import { notificationProviderHealth } from '@orbit/services/notifications';
 import { hasSlackBotToken } from '@orbit/services/slack/credentials';
 import { resolveSlackContext, slackUserMappingSyncReady } from '@orbit/services/slack/dispatch';
 import { can, type Principal } from '@orbit/shared/policy';
@@ -25,6 +26,13 @@ export interface SlackIntegrationSettings {
   readonly slackConnected: boolean;
   readonly slackHasToken: boolean;
   readonly slackConnectEnabled: boolean;
+  readonly deliveryHealth?: readonly {
+    readonly channel: string;
+    readonly status: string;
+    readonly count: number;
+    readonly oldestAt: string | null;
+  }[];
+  readonly deliveryDraining?: boolean;
   readonly channels: ConnectedChannel[];
   readonly teams: IntegrationTeam[];
   readonly memberSync: {
@@ -77,7 +85,7 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
   ]);
 
   const slackRow = slackRows[0];
-  const [channels, memberSync] = await Promise.all([
+  const [channels, memberSync, deliveryHealth] = await Promise.all([
     slackRow === undefined
       ? Promise.resolve([])
       : db
@@ -95,6 +103,7 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
             ),
           ),
     loadSlackMemberSync(principal.organizationId, slackRow?.id),
+    notificationProviderHealth(db, principal.organizationId),
   ]);
   return {
     github,
@@ -102,6 +111,11 @@ export async function loadIntegrationSettings(principal: Principal): Promise<Int
       slackConnected: slackRow !== undefined,
       slackHasToken: slackRow !== undefined && hasSlackBotToken(slackRow.credentials),
       slackConnectEnabled: slackConnectReady(),
+      deliveryHealth: deliveryHealth.map((row) => ({
+        ...row,
+        oldestAt: row.oldestAt?.toISOString() ?? null,
+      })),
+      deliveryDraining: slackRow?.config['notificationDeliveryState'] === 'draining',
       channels,
       teams,
       memberSync: {

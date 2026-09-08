@@ -1,5 +1,10 @@
 import { db } from '@orbit/db';
-import { dismissNotification, snooze, unreadCount } from '@orbit/services/notifications';
+import {
+  dismissNotification,
+  notificationConversationActions,
+  snooze,
+  unreadCount,
+} from '@orbit/services/notifications';
 import { z } from 'zod';
 import { apiContext, handleRoute, publish, readJson } from '@/lib/api/handler.ts';
 import { notificationActions } from '../deltas.ts';
@@ -23,7 +28,14 @@ export async function PATCH(request: Request, { params }: RouteParams): Promise<
       notificationId: id,
       until: new Date(Date.now() + parsed.snoozeHours * 3_600_000),
     });
-    await publish(notificationActions(principal, userName, 'update', [record]));
+    await publish([
+      ...notificationActions(principal, userName, 'update', [record]),
+      ...(await notificationConversationActions(db, [record], {
+        type: 'user',
+        id: principal.userId,
+        name: userName,
+      })),
+    ]);
     return {
       notification: record,
       unreadCount: await unreadCount(db, principal.userId, principal.organizationId),
@@ -40,7 +52,14 @@ export async function DELETE(_request: Request, { params }: RouteParams): Promis
       organizationId: principal.organizationId,
       notificationId: id,
     });
-    await publish(notificationActions(principal, userName, 'delete', [removed]));
+    await publish([
+      ...notificationActions(principal, userName, 'delete', [removed]),
+      ...(await notificationConversationActions(db, [removed], {
+        type: 'user',
+        id: principal.userId,
+        name: userName,
+      })),
+    ]);
     return {
       deletedId: id,
       unreadCount: await unreadCount(db, principal.userId, principal.organizationId),

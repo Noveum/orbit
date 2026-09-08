@@ -1,6 +1,8 @@
 import type { Database, Transaction } from '@orbit/db';
+import { PULL_REQUEST_NOTIFICATION_TYPES } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { sql } from 'drizzle-orm';
+import { lockNotificationSubjectAccess } from './conversation-access.ts';
 import {
   type NotificationConversationIdentity,
   resolveNotificationConversation,
@@ -493,7 +495,7 @@ async function runBackfillPhase(
   phase: ConversationBackfillPhase,
 ): Promise<{ readonly progress: ConversationBackfillProgress; readonly batchCount: number }> {
   const previous = await store.readProgress(context.organizationId, phase);
-  if (previous?.status === 'completed') {
+  if (previous?.status === 'completed' && (phase !== 'tail' || previous.highWaterMark !== null)) {
     return { progress: previous, batchCount: context.batchCount };
   }
   let current = runningProgress(context.organizationId, phase, previous, context.now);
@@ -669,16 +671,38 @@ function validateSourceResolution(
   return { ...resolution, equivalentNotificationIds: memberIds };
 }
 
-function defaultLegacySourceResolution(
-  _database: NotificationConversationBackfillDatabase,
+export async function defaultLegacySourceResolution(
+  database: NotificationConversationBackfillDatabase,
   input: LegacyNotificationSourceInput,
 ): Promise<LegacyNotificationSourceResolution> {
+  const isPullRequest = new Set<string>(PULL_REQUEST_NOTIFICATION_TYPES).has(input.type);
+  const candidates = isPullRequest
+    ? await database.execute<{ id: string; repositoryId: string; number: number }>(sql`
+    select distinct pr.id, pr.repository_id as "repositoryId", pr.number::float8 as number
+    from github_pull_request pr
+    join github_repository_sync repository on repository.id = pr.repository_sync_id
+      and repository.organization_id = pr.organization_id
+      and repository.repository_id = pr.repository_id
+    where pr.organization_id = ${input.organizationId}
+      and (
+        (${input.entityType} = 'github_pull_request' and pr.id = ${input.entityId})
+        or (${input.entityType} in ('issue', 'task') and exists (
+          select 1 from git_link link
+          where link.organization_id = ${input.organizationId}
+            and link.issue_id = ${input.entityId} and link.pull_request_id = pr.id
+        ))
+      )
+    limit 2
+  `)
+    : [];
+  const pullRequest = candidates.length === 1 ? candidates[0] : undefined;
   const identity = resolveNotificationConversation({
     notificationId: input.id,
     type: input.type,
     entityType: input.entityType,
     entityId: input.entityId,
     url: input.url,
+    ...(pullRequest === undefined ? {} : { githubPullRequest: pullRequest }),
   });
   return Promise.resolve({
     sourceEventKey: `legacy-notification:${input.id}`,
@@ -686,6 +710,7 @@ function defaultLegacySourceResolution(
     subjectType: identity.subjectType,
     subjectKey: identity.conversationKey,
     occurredAt: input.createdAt,
+    ...(pullRequest === undefined ? {} : { payload: { pullRequestId: pullRequest.id } }),
   });
 }
 
@@ -738,14 +763,14 @@ function deliveryDestination(row: LegacyDeliveryRow): {
     return { destinationKind: row.destinationKind, destinationId: row.destinationId };
   }
   if (row.channel === 'slack_dm' && row.userId !== null) {
-    return { destinationKind: 'user', destinationId: row.userId };
+    return null;
   }
   return null;
 }
 
 function deliveryEquivalenceKey(row: LegacyDeliveryRow): string | null {
   const destination = deliveryDestination(row);
-  if (destination === null || row.integrationId === null) return null;
+  if (destination === null) return null;
   return JSON.stringify([
     row.channel,
     row.integrationId,
@@ -988,8 +1013,9 @@ async function classifyDeliveryRows(
   now: Date,
 ): Promise<void> {
   const grouped = new Map<string, LegacyDeliveryRow[]>();
-  for (const row of rows) {
-    if (row.deduplicatedIntoDeliveryId !== null) continue;
+  for (const original of rows) {
+    if (original.deduplicatedIntoDeliveryId !== null) continue;
+    const row = await resolveLegacyDeliveryDestination(tx, organizationId, original);
     const key = deliveryEquivalenceKey(row);
     if (key === null) throw new Error(`Delivery ${row.id} has no provable provider destination.`);
     const members = grouped.get(key) ?? [];
@@ -1011,6 +1037,61 @@ async function classifyDeliveryRows(
       now,
     });
   }
+}
+
+async function resolveLegacyDeliveryDestination(
+  tx: Transaction,
+  organizationId: string,
+  row: LegacyDeliveryRow,
+): Promise<LegacyDeliveryRow> {
+  if (row.channel === 'email') {
+    return { ...row, destinationKind: 'user', destinationId: row.userId };
+  }
+  if (row.channel !== 'slack_dm') return row;
+  if (isDeliveryUncertain(deliveryCandidate(row)))
+    throw new Error(`Delivery uncertainty blocks ${row.id}.`);
+  if (
+    row.destinationId !== null &&
+    row.destinationId !== row.userId &&
+    row.slackTeamId !== null &&
+    row.slackAppId !== null
+  )
+    return row;
+  const candidates = await tx.execute<{
+    integrationId: string;
+    slackUserId: string;
+    slackTeamId: string;
+    slackAppId: string;
+  }>(sql`
+    select mapping.integration_id as "integrationId", mapping.slack_user_id as "slackUserId",
+      coalesce(connection.config->>'slackTeamId', nullif(connection.external_id, 'default')) as "slackTeamId",
+      connection.config->>'slackAppId' as "slackAppId"
+    from slack_user_mapping mapping join integration connection on connection.id = mapping.integration_id
+      and connection.organization_id = mapping.organization_id and connection.provider = 'slack'
+    where mapping.organization_id = ${organizationId} and mapping.user_id = ${row.userId}
+      and (${row.integrationId}::text is null or mapping.integration_id = ${row.integrationId})
+      and nullif(connection.config->>'slackAppId', '') is not null
+      and coalesce(connection.config->>'slackTeamId', nullif(connection.external_id, 'default')) is not null
+    order by mapping.integration_id limit 2
+  `);
+  const mapping = candidates.length === 1 ? candidates[0] : undefined;
+  const resolved = {
+    ...row,
+    destinationKind: 'user',
+    destinationId: mapping?.slackUserId ?? `legacy-unresolved:${row.id}`,
+    integrationId: mapping?.integrationId ?? row.integrationId,
+    slackTeamId: mapping?.slackTeamId ?? row.slackTeamId,
+    slackAppId: mapping?.slackAppId ?? row.slackAppId,
+    status: mapping === undefined ? 'unavailable' : row.status,
+  };
+  await tx.execute(sql`
+    update notification_delivery set destination_kind = ${resolved.destinationKind}, destination_id = ${resolved.destinationId},
+      integration_id = ${resolved.integrationId}, slack_team_id = ${resolved.slackTeamId}, slack_app_id = ${resolved.slackAppId},
+      status = ${resolved.status}, last_error = ${mapping === undefined ? 'legacy Slack destination cannot be resolved' : null},
+      claim_token = null, claimed_at = null, lease_expires_at = null
+    where id = ${row.id}
+  `);
+  return resolved;
 }
 
 interface DeliveryClassificationContext {
@@ -1068,7 +1149,7 @@ async function classifyDeliveryEquivalenceGroup(
   const canonical = context.members.find((row) => row.id === classification.survivorId);
   if (canonical === undefined) throw new Error(`Delivery ${classification.survivorId} is missing.`);
   const destination = deliveryDestination(canonical);
-  if (destination === null || canonical.integrationId === null) {
+  if (destination === null) {
     throw new Error(`Delivery ${canonical.id} has no canonical provider destination.`);
   }
   const canonicalNotificationId = canonicalNotificationForDelivery(
@@ -1139,7 +1220,10 @@ async function closeHistoricalSource(
       and not (
         (source_event_id = ${sourceId} and deduplicated_into_notification_id is null)
         or
-        (source_event_id is null and deduplicated_into_notification_id is not null and surface_in_inbox is false)
+        (source_event_id is null and deduplicated_into_notification_id is not null and surface_in_inbox is false
+          and exists (select 1 from notification survivor where survivor.id = notification.deduplicated_into_notification_id
+            and survivor.organization_id = notification.organization_id and survivor.user_id = notification.user_id
+            and survivor.source_event_id = ${sourceId} and survivor.deduplicated_into_notification_id is null))
       )
   `);
   const deliveryRows = await tx.execute<{ incomplete: number }>(sql`
@@ -1159,6 +1243,16 @@ async function closeHistoricalSource(
           source_event_id is null
           and deduplicated_into_delivery_id is not null
           and status in ('delivered', 'succeeded', 'unavailable', 'skipped')
+          and exists (select 1 from notification_delivery survivor
+            where survivor.id = notification_delivery.deduplicated_into_delivery_id
+              and survivor.organization_id = notification_delivery.organization_id
+              and survivor.source_event_id = ${sourceId} and survivor.deduplicated_into_delivery_id is null
+              and survivor.channel = notification_delivery.channel
+              and survivor.integration_id is not distinct from notification_delivery.integration_id
+              and survivor.slack_team_id is not distinct from notification_delivery.slack_team_id
+              and survivor.slack_app_id is not distinct from notification_delivery.slack_app_id
+              and survivor.destination_kind is not distinct from notification_delivery.destination_kind
+              and survivor.destination_id is not distinct from notification_delivery.destination_id)
         )
       )
   `);
@@ -1841,6 +1935,12 @@ async function applyConversationGroup(
   now: Date,
 ): Promise<number> {
   return await database.transaction(async (tx) => {
+    const accessible = await lockNotificationSubjectAccess(tx, {
+      organizationId,
+      userId: seed.userId,
+      subjectType: identity.subjectType,
+      subjectId: identity.subjectId,
+    });
     await tx.execute(sql`
       insert into notification_inbox_state (organization_id, user_id, created_at, updated_at)
       values (
@@ -1951,6 +2051,8 @@ async function applyConversationGroup(
         read_at = ${postgresTimestamp(folded.readAt)},
         snoozed_until = ${postgresTimestamp(folded.snoozedUntil)},
         dismissed_at = ${postgresTimestamp(folded.dismissedAt)},
+        access_hidden_at = ${backfilledAccessTimestamp(accessible, conversation.accessHiddenAt, now)},
+        access_generation = access_generation + ${accessible === (conversation.accessHiddenAt === null) ? 0 : 1},
         snooze_generation = ${snoozeGeneration},
         last_activity_seq = ${folded.lastActivitySeq},
         last_activity_at = ${postgresTimestamp(folded.lastActivityAt)},
@@ -1987,6 +2089,14 @@ async function applyConversationGroup(
     await updateInboxStateCounters(tx, organizationId, seed.userId, now);
     return events.length;
   });
+}
+
+function backfilledAccessTimestamp(
+  accessible: boolean,
+  hiddenAt: Date | null,
+  now: Date,
+): string | null {
+  return accessible ? null : postgresTimestamp(hiddenAt ?? now);
 }
 
 async function processConversationBatch(
@@ -2044,7 +2154,12 @@ async function processTailBatch(
   resolver: ResolveLegacyNotificationSource,
   maxEquivalenceGroupRows: number,
   passNumber: number,
+  previousWatermark: string | null,
 ): Promise<ConversationBackfillBatchResult> {
+  const before = JSON.stringify([
+    await notificationHighWaterMark(database, input.organizationId),
+    await deliveryHighWaterMark(database, input.organizationId),
+  ]);
   const tailInput = { ...input, cursor: null };
   const sources = await processSourceBatch(
     database,
@@ -2088,11 +2203,22 @@ async function processTailBatch(
       done: false,
     };
   }
+  const after = JSON.stringify([
+    await notificationHighWaterMark(database, input.organizationId),
+    await deliveryHighWaterMark(database, input.organizationId),
+  ]);
+  const empty =
+    sources.processedRows +
+      recipients.processedRows +
+      deliveries.processedRows +
+      conversations.processedRows ===
+    0;
   return {
     processedRows: 0,
     cursor: null,
     passNumber: passNumber + 1,
-    done: true,
+    highWaterMark: empty && before === after ? after : null,
+    done: empty && before === after && previousWatermark === after,
   };
 }
 
@@ -2205,6 +2331,7 @@ class DatabaseConversationBackfillStore implements ConversationBackfillStore {
       this.resolver,
       this.maxEquivalenceGroupRows,
       progress?.passNumber ?? 1,
+      progress?.highWaterMark ?? null,
     );
   }
 }
@@ -2237,6 +2364,10 @@ export interface NotificationConversationBackfillDrift {
   readonly deliveryAuditDrift: number;
   readonly conversationStateDrift: number;
   readonly inboxStateDrift: number;
+  readonly incompleteProgressPhases: number;
+  readonly identityDrift: number;
+  readonly accessStateDrift: number;
+  readonly snoozeWakeDrift: number;
 }
 
 export interface NotificationConversationBackfillVerification {
@@ -2265,6 +2396,10 @@ const emptyBackfillDrift = (): NotificationConversationBackfillDrift => ({
   deliveryAuditDrift: 0,
   conversationStateDrift: 0,
   inboxStateDrift: 0,
+  incompleteProgressPhases: 0,
+  identityDrift: 0,
+  accessStateDrift: 0,
+  snoozeWakeDrift: 0,
 });
 
 function addBackfillDrift(
@@ -2286,6 +2421,10 @@ function addBackfillDrift(
     deliveryAuditDrift: left.deliveryAuditDrift + right.deliveryAuditDrift,
     conversationStateDrift: left.conversationStateDrift + right.conversationStateDrift,
     inboxStateDrift: left.inboxStateDrift + right.inboxStateDrift,
+    incompleteProgressPhases: left.incompleteProgressPhases + right.incompleteProgressPhases,
+    identityDrift: left.identityDrift + right.identityDrift,
+    accessStateDrift: left.accessStateDrift + right.accessStateDrift,
+    snoozeWakeDrift: left.snoozeWakeDrift + right.snoozeWakeDrift,
   };
 }
 
@@ -2417,6 +2556,8 @@ async function verifyOrganizationBackfill(
             source_event_id,
             channel,
             integration_id,
+            slack_team_id,
+            slack_app_id,
             destination_kind,
             destination_id
           having count(*) > 1
@@ -2459,6 +2600,12 @@ async function verifyOrganizationBackfill(
             or survivor.id is null
             or survivor.source_event_id is null
             or survivor.deduplicated_into_delivery_id is not null
+            or survivor.channel is distinct from duplicate.channel
+            or survivor.integration_id is distinct from duplicate.integration_id
+            or survivor.slack_team_id is distinct from duplicate.slack_team_id
+            or survivor.slack_app_id is distinct from duplicate.slack_app_id
+            or survivor.destination_kind is distinct from duplicate.destination_kind
+            or survivor.destination_id is distinct from duplicate.destination_id
           )
       `,
     ),
@@ -2502,7 +2649,7 @@ async function verifyOrganizationBackfill(
             and n.deduplicated_into_notification_id is null
         ) folded on true
         left join lateral (
-          select n.id
+          select n.*
           from notification n
           where n.organization_id = c.organization_id
             and n.user_id = c.user_id
@@ -2547,6 +2694,13 @@ async function verifyOrganizationBackfill(
               end
             )
             or c.latest_event_id is distinct from latest.id
+            or c.latest_type is distinct from latest.type
+            or c.latest_actor_name is distinct from latest.actor_name
+            or c.latest_title is distinct from latest.title
+            or c.latest_body is distinct from latest.body
+            or c.latest_url is distinct from latest.url
+            or c.latest_external_url is distinct from latest.external_url
+            or c.latest_occurred_at is distinct from latest.occurred_at
           )
       `,
     ),
@@ -2597,10 +2751,9 @@ async function verifyOrganizationBackfill(
         where coalesce(expected.organization_id, state.organization_id) = ${organizationId}
           and (
             state.organization_id is null
-            or expected.organization_id is null
-            or state.unread_count is distinct from expected.unread_count
-            or state.unread_activity_count is distinct from expected.unread_activity_count
-            or state.unread_mention_count is distinct from expected.unread_mention_count
+            or state.unread_count is distinct from coalesce(expected.unread_count, 0)
+            or state.unread_activity_count is distinct from coalesce(expected.unread_activity_count, 0)
+            or state.unread_mention_count is distinct from coalesce(expected.unread_mention_count, 0)
           )
       `,
     ),
@@ -2617,6 +2770,42 @@ async function verifyOrganizationBackfill(
     deliveryAuditDrift,
     conversationStateDrift,
     inboxStateDrift,
+    identityDrift: await countDrift(
+      database,
+      sql`
+      select count(*)::int as count from notification_conversation conversation
+      where conversation.organization_id = ${organizationId} and (
+        (conversation.subject_type = 'github_pull_request' and conversation.category <> 'activity')
+        or (conversation.subject_type = 'issue' and conversation.conversation_key <> 'orbit-issue:' || conversation.subject_id || ':' || conversation.category)
+        or (conversation.subject_type = 'doc' and conversation.conversation_key <> 'orbit-doc:' || conversation.subject_id || ':activity')
+        or (conversation.subject_type = 'project' and conversation.conversation_key <> 'orbit-project:' || conversation.subject_id || ':activity')
+      )
+    `,
+    ),
+    accessStateDrift: 0,
+    snoozeWakeDrift: await countDrift(
+      database,
+      sql`
+      select count(*)::int as count from notification_conversation conversation
+      where conversation.organization_id = ${organizationId} and conversation.snoozed_until > ${postgresTimestamp(now)}
+        and conversation.dismissed_at is null and not exists (
+          select 1 from notification_snooze_wake wake where wake.conversation_id = conversation.id
+            and wake.organization_id = conversation.organization_id and wake.user_id = conversation.user_id
+            and wake.snooze_generation = conversation.snooze_generation and wake.wake_at = conversation.snoozed_until
+            and wake.status in ('pending','processing','failed')
+        )
+    `,
+    ),
+    incompleteProgressPhases: await countDrift(
+      database,
+      sql`
+      select count(*)::int as count from unnest(array['sources','recipients','deliveries','conversations','tail']) as phases(phase)
+      left join notification_conversation_backfill_progress progress
+        on progress.organization_id = ${organizationId} and progress.phase = phases.phase
+      where progress.id is null or progress.status <> 'completed'
+        or (phases.phase = 'tail' and (progress.high_water_mark is null or progress.pass_number < 2))
+    `,
+    ),
   };
 }
 
@@ -2637,7 +2826,33 @@ export async function verifyNotificationConversationBackfill(
   }[];
   let totals = emptyBackfillDrift();
   for (const organizationId of organizationIds) {
-    const drift = await verifyOrganizationBackfill(database, organizationId, now);
+    const existing = await database.execute<{ id: string }>(
+      sql`select id from organization where id = ${organizationId}`,
+    );
+    if (existing.length === 0) throw new Error(`Organization ${organizationId} does not exist.`);
+    const drift = await database.transaction(async (tx) => {
+      const drift = await verifyOrganizationBackfill(tx, organizationId, now);
+      const conversations = await tx.execute<{
+        subjectType: string;
+        subjectId: string;
+        userId: string;
+        hidden: boolean;
+      }>(sql`
+        select subject_type as "subjectType", subject_id as "subjectId", user_id as "userId", access_hidden_at is not null as hidden
+        from notification_conversation where organization_id = ${organizationId} order by subject_type, subject_id, user_id
+      `);
+      let accessStateDrift = 0;
+      for (const row of conversations) {
+        const allowed = await lockNotificationSubjectAccess(tx, {
+          organizationId,
+          userId: row.userId,
+          subjectType: row.subjectType,
+          subjectId: row.subjectId,
+        });
+        if (allowed === row.hidden) accessStateDrift += 1;
+      }
+      return { ...drift, accessStateDrift };
+    });
     organizations.push({ organizationId, drift });
     totals = addBackfillDrift(totals, drift);
   }

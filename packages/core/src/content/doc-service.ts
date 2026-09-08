@@ -51,9 +51,17 @@ import {
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, newToken, requireRow } from '../internal.ts';
+import {
+  lockNotificationPolicyMutation,
+  synchronizeDocumentNotificationAccess,
+} from '../notifications/access-sync.ts';
 import { docReaderIds } from '../notifications/audience.ts';
 import { newMentions, resolveHandles } from '../notifications/mentions.ts';
-import { NOTIFICATION_BODY_LIMIT, notifyRecipients } from '../notifications/notify.ts';
+import {
+  docSubscriberIds,
+  NOTIFICATION_BODY_LIMIT,
+  notifyRecipients,
+} from '../notifications/notify.ts';
 import { findPrincipal } from '../org/member-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
@@ -1090,9 +1098,62 @@ async function docMentionNotifications(
       title: `Mentioned you in ${doc.title}`,
       body: truncate(doc.content, NOTIFICATION_BODY_LIMIT),
       url: docUrl(doc.id),
+      source: {
+        sourceEventKey: `orbit-doc:${doc.id}:mentions:${doc.syncId}`,
+        subjectType: 'doc',
+        subjectKey: `orbit-doc:${doc.id}:activity`,
+        occurredAt: doc.updatedAt,
+        payload: { documentId: doc.id },
+      },
     },
   ];
   return await notifyRecipients(tx, events);
+}
+
+async function docChangeNotifications(
+  tx: Executor,
+  principal: Principal,
+  doc: DocRow,
+  actor: Actor,
+  mentionedHandles: readonly string[],
+  previous: DocRow,
+): Promise<SyncAction[]> {
+  if (doc.title === previous.title && doc.content === previous.content) return [];
+  const [subscribers, mentioned, versions] = await Promise.all([
+    docSubscriberIds(tx, doc.id),
+    resolveHandles(tx, principal.organizationId, mentionedHandles, null),
+    tx
+      .select({ id: schema.docVersion.id })
+      .from(schema.docVersion)
+      .where(eq(schema.docVersion.docId, doc.id))
+      .orderBy(desc(schema.docVersion.lastSavedAt))
+      .limit(1),
+  ]);
+  const version = versions[0];
+  if (version === undefined) return [];
+  const readers = await docReaderIds(tx, doc, subscribers);
+  const excluded = new Set([principal.userId, ...mentioned]);
+  return await notifyRecipients(tx, [
+    {
+      organizationId: doc.organizationId,
+      type: 'document_changed',
+      reason: 'subscribed',
+      actor,
+      entityType: 'doc',
+      entityId: doc.id,
+      userIds: subscribers.filter((id) => readers.has(id) && !excluded.has(id)),
+      title: `Updated ${doc.title}`,
+      body: 'A document you follow has changed.',
+      url: docUrl(doc.id),
+      source: {
+        sourceEventKey: `orbit-doc-version:${version.id}:changed`,
+        subjectType: 'doc',
+        subjectKey: `orbit-doc:${doc.id}:activity`,
+        occurredAt: doc.updatedAt,
+        payload: { documentId: doc.id, versionId: version.id },
+      },
+    },
+  ]);
 }
 
 export async function createDoc(principal: Principal, input: unknown): Promise<SavedDoc> {
@@ -1249,6 +1310,16 @@ async function snapshotVersion(
   });
 }
 
+async function snapshotChangedDocVersion(
+  tx: Executor,
+  principal: Principal,
+  current: DocRow,
+  doc: DocRow,
+): Promise<void> {
+  if (doc.title !== current.title || doc.content !== current.content)
+    await snapshotVersion(tx, principal, doc, null);
+}
+
 export async function updateDoc(
   principal: Principal,
   docId: string,
@@ -1261,6 +1332,8 @@ export async function updateDoc(
   }
 
   return await db.transaction(async (tx) => {
+    if (parsed.visibility !== undefined)
+      await lockNotificationPolicyMutation(tx, principal.organizationId);
     const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
@@ -1290,9 +1363,7 @@ export async function updateDoc(
       .where(eq(schema.doc.id, docId))
       .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
-    if (doc.title !== current.title || doc.content !== current.content) {
-      await snapshotVersion(tx, principal, doc, null);
-    }
+    await snapshotChangedDocVersion(tx, principal, current, doc);
 
     const descendants = samePlacement(placement, placementOf(current))
       ? []
@@ -1305,6 +1376,26 @@ export async function updateDoc(
       newMentions(current.content, doc.content),
       actor,
     );
+
+    notifications.push(
+      ...(await docChangeNotifications(
+        tx,
+        principal,
+        doc,
+        actor,
+        newMentions(current.content, doc.content),
+        current,
+      )),
+    );
+    if (parsed.visibility !== undefined)
+      notifications.push(
+        ...(await synchronizeDocumentNotificationAccess(
+          tx,
+          principal.organizationId,
+          docId,
+          actor,
+        )),
+      );
 
     return {
       doc,
@@ -1430,6 +1521,7 @@ export async function deleteDoc(principal: Principal, docId: string): Promise<De
   assertCan(principal, 'doc:write');
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const [locked] = await tx
       .select({ id: schema.doc.id })
       .from(schema.doc)
@@ -1460,6 +1552,12 @@ export async function deleteDoc(principal: Principal, docId: string): Promise<De
     return {
       promoted,
       actions: [
+        ...(await synchronizeDocumentNotificationAccess(
+          tx,
+          principal.organizationId,
+          docId,
+          actor,
+        )),
         buildSyncAction({
           syncId,
           organizationId: current.organizationId,
@@ -1490,6 +1588,7 @@ export async function shareDoc(
   if (isPublished(visibility)) assertCan(principal, 'doc:publish');
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const current = await loadReadableDoc(tx, principal, docId);
     await assertDocWritable(tx, principal, current);
     if (current.archivedAt !== null) throw conflict('That doc is archived.');
@@ -1511,7 +1610,19 @@ export async function shareDoc(
       .returning(DOC_COLUMNS);
     const doc = requireRow(saved, 'That doc does not exist.');
 
-    return { doc, publishToken, actions: [docAction(doc, syncId, actor, 'update')] };
+    return {
+      doc,
+      publishToken,
+      actions: [
+        docAction(doc, syncId, actor, 'update'),
+        ...(await synchronizeDocumentNotificationAccess(
+          tx,
+          principal.organizationId,
+          docId,
+          actor,
+        )),
+      ],
+    };
   });
 }
 
@@ -1775,6 +1886,7 @@ export async function setDocAccess(
   const grants = [...unique.values()];
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     await assertSubjectsInWorkspace(tx, principal.organizationId, grants);
     await tx.delete(schema.docAccess).where(eq(schema.docAccess.docId, docId));
     const syncId = await nextSyncId(tx);
@@ -1814,6 +1926,12 @@ export async function setDocAccess(
     return {
       grants: saved,
       actions: [
+        ...(await synchronizeDocumentNotificationAccess(
+          tx,
+          principal.organizationId,
+          docId,
+          actor,
+        )),
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,

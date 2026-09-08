@@ -482,6 +482,7 @@ describe('POST /api/webhooks/github', () => {
       deliveryId: 'delivery-abandoned',
       event: 'pull_request',
       status: 'processing',
+      claimToken: randomUUIDv7(),
       claimedAt: new Date(Date.now() - 2 * 60 * 1000),
       createdAt: receivedAt,
     });
@@ -503,6 +504,7 @@ describe('POST /api/webhooks/github', () => {
       deliveryId: 'delivery-active',
       event: 'pull_request',
       status: 'processing',
+      claimToken: randomUUIDv7(),
       claimedAt: new Date(),
     });
 

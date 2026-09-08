@@ -15,6 +15,7 @@ const argumentNames = [
 ] as const;
 
 for (const value of args) {
+  if (value === '--all') continue;
   if (!argumentNames.some((name) => value.startsWith(`--${name}=`))) {
     throw new Error(`Unknown notification conversation backfill argument "${value}".`);
   }
@@ -57,6 +58,9 @@ function phases(): ConversationBackfillPhase[] | undefined {
 
 async function main(): Promise<void> {
   const organizationIds = valuesFor('organization');
+  if (args.includes('--all') === organizationIds.length > 0) {
+    throw new Error('Choose --all or at least one --organization, never both.');
+  }
   const requestedPhases = phases();
   const batchSize = positiveInteger('batch-size');
   const maxBatches = positiveInteger('max-batches');

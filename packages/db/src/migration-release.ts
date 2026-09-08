@@ -177,6 +177,28 @@ async function reconcileNotificationAuditReplacements(
   }
 }
 
+async function reconcileNotificationChecks(
+  tx: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  const checks = new Map<string, { table: string; name: string; statement: string }>();
+  for (const migration of migrations) {
+    for (const statement of migration.sql) {
+      const match =
+        /^\s*ALTER TABLE "(notification_delivery|webhook_delivery)" ADD CONSTRAINT "(notification_delivery_owner_shape_check|webhook_delivery_processing_claim_check)" CHECK\b/u.exec(
+          statement,
+        );
+      if (match?.[1] !== undefined && match[2] !== undefined) {
+        checks.set(match[2], { table: match[1], name: match[2], statement });
+      }
+    }
+  }
+  for (const check of checks.values()) {
+    await tx.unsafe(`alter table "${check.table}" drop constraint if exists "${check.name}"`);
+    await tx.unsafe(check.statement);
+  }
+}
+
 async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
@@ -192,6 +214,7 @@ async function baselineLedger(
       await reconcileNotificationAuditArtifacts(tx, notificationAuditMigration);
     }
     await reconcileNotificationAuditReplacements(tx, pendingMigrations);
+    await reconcileNotificationChecks(tx, pendingMigrations);
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
       await tx`
         update attachment

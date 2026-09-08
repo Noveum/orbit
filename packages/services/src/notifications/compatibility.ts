@@ -90,7 +90,7 @@ function conversationRecipientPredicate(
   );
 }
 
-async function ensureAndLockInboxStates(
+export async function ensureAndLockInboxStates(
   database: CompatibilityDatabase,
   recipients: readonly { organizationId: string; userId: string }[],
   now: Date,
@@ -371,7 +371,7 @@ function foldConversationRows(
   };
 }
 
-async function refreshInboxStates(
+export async function refreshInboxStates(
   database: CompatibilityDatabase,
   recipients: readonly { organizationId: string; userId: string }[],
   now: Date,
@@ -673,4 +673,123 @@ export function compatibleInboxSurface() {
       sql`${notification.deliveredChannels} @> '["inbox"]'::jsonb`,
     ),
   );
+}
+
+export interface ConversationMutationInput {
+  readonly organizationId: string;
+  readonly userId: string;
+  readonly conversationIds: readonly string[];
+  readonly kind: 'read' | 'snooze' | 'dismiss';
+  readonly read?: boolean;
+  readonly until?: Date | null;
+  readonly now: Date;
+}
+
+export async function mutateNotificationConversations(
+  database: CompatibilityDatabase,
+  input: ConversationMutationInput,
+): Promise<ConversationRow[]> {
+  if ('$client' in database)
+    return await database.transaction((tx) => mutateNotificationConversations(tx, input));
+  if (input.conversationIds.length === 0) return [];
+  const recipients = [{ organizationId: input.organizationId, userId: input.userId }];
+  await ensureAndLockInboxStates(database, recipients, input.now);
+  const conversations = await database
+    .select()
+    .from(notificationConversation)
+    .where(
+      and(
+        eq(notificationConversation.organizationId, input.organizationId),
+        eq(notificationConversation.userId, input.userId),
+        inArray(notificationConversation.id, [...input.conversationIds]),
+      ),
+    )
+    .orderBy(notificationConversation.conversationKey)
+    .for('update');
+  const ids = conversations.map((row) => row.id);
+  if (ids.length === 0) return [];
+  await database
+    .select({ id: notification.id })
+    .from(notification)
+    .where(
+      and(
+        inArray(notification.conversationId, ids),
+        isNull(notification.deduplicatedIntoNotificationId),
+      ),
+    )
+    .orderBy(notification.conversationId, notification.id)
+    .for('update');
+  const updated: ConversationRow[] = [];
+  for (const conversation of conversations) {
+    await mutateConversationSiblings(database, conversation, input);
+    const siblings = await database
+      .select()
+      .from(notification)
+      .where(
+        and(
+          eq(notification.conversationId, conversation.id),
+          isNull(notification.deduplicatedIntoNotificationId),
+        ),
+      );
+    const folded = foldConversationRows(conversation, siblings, input.now);
+    const aggregate = {
+      ...folded,
+      snoozeGeneration:
+        input.kind === 'read' ? folded.snoozeGeneration : conversation.snoozeGeneration + 1,
+      readAt: input.kind === 'read' && input.read !== false ? input.now : folded.readAt,
+    };
+    const [saved] = await database
+      .update(notificationConversation)
+      .set(aggregateUpdate(aggregate, input.now))
+      .where(eq(notificationConversation.id, conversation.id))
+      .returning();
+    if (saved !== undefined) updated.push(saved);
+    await enqueueSnoozeWake(database, conversation, aggregate, input.now);
+  }
+  await refreshInboxStates(database, recipients, input.now);
+  return updated;
+}
+
+async function mutateConversationSiblings(
+  database: CompatibilityDatabase,
+  conversation: ConversationRow,
+  input: ConversationMutationInput,
+): Promise<void> {
+  const active = and(
+    eq(notification.conversationId, conversation.id),
+    eq(notification.organizationId, input.organizationId),
+    eq(notification.userId, input.userId),
+    compatibleInboxSurface(),
+    isNull(notification.deduplicatedIntoNotificationId),
+    isNull(notification.dismissedAt),
+  );
+  if (input.kind === 'read') {
+    await database
+      .update(notification)
+      .set({ readAt: input.now, manualUnreadAnchor: false, syncId: nextSyncId })
+      .where(active);
+    if (input.read === false) {
+      const [latest] = await database
+        .select({ id: notification.id })
+        .from(notification)
+        .where(active)
+        .orderBy(sql`${notification.ingestionSeq} desc`, sql`${notification.id} desc`)
+        .limit(1);
+      if (latest !== undefined)
+        await database
+          .update(notification)
+          .set({ readAt: null, manualUnreadAnchor: true, syncId: nextSyncId })
+          .where(eq(notification.id, latest.id));
+    }
+  } else if (input.kind === 'snooze') {
+    await database
+      .update(notification)
+      .set({ snoozedUntil: input.until ?? null, syncId: nextSyncId })
+      .where(active);
+  } else {
+    await database
+      .update(notification)
+      .set({ dismissedAt: input.now, snoozedUntil: null, syncId: nextSyncId })
+      .where(active);
+  }
 }

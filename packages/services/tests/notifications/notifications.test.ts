@@ -15,7 +15,7 @@ import {
 } from '@orbit/db/schema';
 import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   claimSlackDmDeliveries,
   defaultPreferences,
@@ -132,7 +132,12 @@ async function seedSlackDmConnection(
         tag: 'AAAAAAAAAAAAAAAAAAAAAA',
       },
     },
-    config: options.config ?? { scopes: ['chat:write', 'im:write'] },
+    config: {
+      slackTeamId: `T-${fixture.organizationId}`,
+      slackAppId: 'A-test',
+      credentialGeneration: 0,
+      ...(options.config ?? { scopes: ['chat:write', 'im:write'] }),
+    },
   });
   if (options.mapped === false) return;
   const mappedUserIds = options.mappedUserIds ?? [fixture.adaId];
@@ -195,7 +200,12 @@ describe('notifyMany', () => {
         );
 
         expect(outcome.slackDm).toEqual([]);
-        expect(await tx.select().from(notificationDelivery)).toEqual([]);
+        expect(
+          await tx
+            .select()
+            .from(notificationDelivery)
+            .where(eq(notificationDelivery.channel, 'slack_dm')),
+        ).toEqual([]);
       });
     });
   }
@@ -212,7 +222,12 @@ describe('notifyMany', () => {
       );
 
       expect(outcome.slackDm).toHaveLength(1);
-      expect(await tx.select().from(notificationDelivery)).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(notificationDelivery)
+          .where(eq(notificationDelivery.channel, 'slack_dm')),
+      ).toHaveLength(1);
     });
   });
 
@@ -600,7 +615,12 @@ describe('notifyMany', () => {
       const deliveries = await tx
         .select({ channel: notificationDelivery.channel, status: notificationDelivery.status })
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.adaId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.adaId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       expect(deliveries).toEqual([{ channel: 'slack_dm', status: 'pending' }]);
       const deferredAt = outcome.slackDm[0]?.sendAt;
       if (deferredAt === undefined) throw new Error('Expected a deferred Slack DM.');
@@ -637,7 +657,10 @@ describe('notifyMany', () => {
       );
       const afterSuccess = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 60_000));
       expect(afterSuccess).toHaveLength(0);
-      const rows = await tx.select().from(notificationDelivery);
+      const rows = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack_dm'));
       expect(rows[0]?.status).toBe('succeeded');
     });
   });
@@ -655,7 +678,12 @@ describe('notifyMany', () => {
       const [delivery] = await tx
         .select()
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.adaId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.adaId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       if (delivery === undefined) throw new Error('Expected a Slack DM delivery.');
       await tx
         .update(notificationDelivery)
@@ -711,7 +739,12 @@ describe('notifyMany', () => {
       const [delivery] = await tx
         .select({ notificationId: notificationDelivery.notificationId })
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.adaId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.adaId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       if (delivery === undefined) throw new Error('Expected a Slack DM delivery.');
       if (delivery.notificationId === null) throw new Error('Expected a direct delivery owner.');
       return { fixture, notificationId: delivery.notificationId };
@@ -786,7 +819,12 @@ describe('notifyMany', () => {
       const fresh = await tx
         .select()
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.graceId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.graceId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       expect(fresh).toHaveLength(1);
 
       const claimed = await claimSlackDmDeliveries(
@@ -858,7 +896,10 @@ describe('notifyMany', () => {
         slackEnabled: true,
       });
       const claimAt = new Date(Date.now() + 86_400_000);
-      const pendingRows = await tx.select().from(notificationDelivery);
+      const pendingRows = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack_dm'));
       expect(pendingRows).toHaveLength(1);
       const claimed = await claimSlackDmDeliveries(tx, 10, claimAt);
       expect(claimed).toHaveLength(1);
@@ -932,8 +973,12 @@ describe('notifyMany', () => {
       const outcome = await notifyMany(tx, [eventFor(fixture)]);
 
       expect(outcome.notifications).toHaveLength(2);
-      expect(outcome.actions).toHaveLength(2);
-      for (const action of outcome.actions) {
+      const eventActions = outcome.actions.filter((action) => action.model === 'notification');
+      expect(eventActions).toHaveLength(2);
+      expect(
+        outcome.actions.filter((action) => action.model === 'notification_conversation'),
+      ).toHaveLength(2);
+      for (const action of eventActions) {
         expect(() => syncActionSchema.parse(action)).not.toThrow();
         expect(action.model).toBe('notification');
         expect(action.action).toBe('insert');
@@ -945,7 +990,7 @@ describe('notifyMany', () => {
         .from(notification)
         .where(eq(notification.organizationId, fixture.organizationId));
       expect(rows).toHaveLength(2);
-      expect(rows[0]?.deliveredChannels).toEqual(['inbox', 'email']);
+      expect(rows[0]?.deliveredChannels).toEqual(['inbox']);
       expect(outcome.slack).toEqual([]);
     });
   });
@@ -955,11 +1000,12 @@ describe('notifyMany', () => {
       const fixture = await seed(tx);
       const outcome = await notifyMany(tx, [eventFor(fixture, { type: 'mention' })]);
 
-      expect(outcome.actions).toHaveLength(2);
-      for (const action of outcome.actions) {
+      const eventActions = outcome.actions.filter((action) => action.model === 'notification');
+      expect(eventActions).toHaveLength(2);
+      for (const action of eventActions) {
         expect(action.scopes).toEqual([`user:${action.data['userId'] as string}`]);
       }
-      const recipients = outcome.actions.map((action) => action.data['userId']);
+      const recipients = eventActions.map((action) => action.data['userId']);
       expect(new Set(recipients)).toEqual(new Set([fixture.adaId, fixture.graceId]));
     });
   });
@@ -1004,8 +1050,8 @@ describe('notifyMany', () => {
       });
       const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
 
-      expect(outcome.notifications[0]?.deliveredChannels).toEqual(['email']);
-      expect(outcome.actions).toHaveLength(0);
+      expect(outcome.notifications[0]?.deliveredChannels).toEqual([]);
+      expect(outcome.actions.filter((action) => action.model === 'notification')).toHaveLength(0);
       const page = await listInbox(tx, {
         userId: fixture.adaId,
         organizationId: fixture.organizationId,
@@ -1089,10 +1135,10 @@ describe('notifyMany', () => {
         fixture.graceId,
       ]);
       const ada = outcome.notifications.find((row) => row.userId === fixture.adaId);
-      expect(ada?.deliveredChannels).toEqual(['inbox', 'slack']);
+      expect(ada?.deliveredChannels).toEqual(['inbox']);
       expect(
         outcome.actions.find((action) => action.modelId === ada?.id)?.data['deliveredChannels'],
-      ).toEqual(['inbox', 'slack']);
+      ).toEqual(['inbox']);
     });
   });
 

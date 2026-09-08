@@ -1,10 +1,25 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  listInboxConversationEvents,
+  listInboxConversations,
+  markInboxConversationsRead,
+} from '@orbit/core';
 import { and, db, eq, inArray, schema } from '@orbit/db';
-import { listInbox, markRead } from '@orbit/services/notifications';
+import {
+  listInbox,
+  markRead,
+  notificationConversationActions,
+} from '@orbit/services/notifications';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
+import {
+  idSchema,
+  inboxConversationQuerySchema,
+  inboxConversationReadSchema,
+  inboxHistoryQuerySchema,
+} from '@orbit/shared/validators';
 import { z } from 'zod';
-import { defineTool } from './support.ts';
+import { defineTool, publish } from './support.ts';
 
 interface IssueSummary {
   readonly identifier: string;
@@ -81,6 +96,48 @@ async function issueSummaries(
 }
 
 export function registerInboxTools(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'list_inbox_conversations',
+      title: 'List inbox conversations',
+      readOnly: true,
+      description:
+        'Your inbox grouped into one conversation per pull request, document, or issue activity family. Filters run before pagination. Cursors describe a live feed: fetch a fresh first page to reconcile conversations moved by new activity. Counts are unread conversations, not events.',
+      inputSchema: inboxConversationQuerySchema.shape,
+    },
+    async (input) => ({ ...(await listInboxConversations(principal, input)) }),
+  );
+  defineTool(
+    server,
+    {
+      name: 'list_inbox_conversation_events',
+      title: 'Read conversation history',
+      readOnly: true,
+      description:
+        'Read immutable notification events newest first for one of your currently accessible conversations. Use the returned cursor for older updates.',
+      inputSchema: { conversationId: idSchema, ...inboxHistoryQuerySchema.shape },
+    },
+    async ({ conversationId, ...input }) => ({
+      ...(await listInboxConversationEvents(principal, conversationId, input)),
+    }),
+  );
+  defineTool(
+    server,
+    {
+      name: 'mark_inbox_conversations_read',
+      title: 'Mark conversations read or unread',
+      readOnly: false,
+      description:
+        'Mark your own conversations read or manually unread. This updates every active event compatibly and returns authoritative conversation counters. Do not mark work read until acted on or handed on.',
+      inputSchema: inboxConversationReadSchema.shape,
+    },
+    async (input) => {
+      const { actions, ...result } = await markInboxConversationsRead(principal, input);
+      await publish(actions);
+      return result;
+    },
+  );
   defineTool(
     server,
     {
@@ -181,6 +238,9 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         notificationIds: args.ids,
         read: true,
       });
+      await publish(
+        await notificationConversationActions(db, updated, { type: 'user', id: principal.userId }),
+      );
       return { markedIds: updated.map((row) => row.id) };
     },
   );

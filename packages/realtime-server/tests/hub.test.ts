@@ -487,7 +487,15 @@ describe('delta fan out', () => {
           syncId: 201,
         }),
       );
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await waitFor(
+        () =>
+          wired.socket
+            .frames('delta')
+            .some((frame) =>
+              frame.actions.some((entry) => entry.modelId === 'comment_after_forged_delete'),
+            ),
+        'the authorized comment after a forged delete',
+      );
 
       const delivered = JSON.stringify(wired.socket.frames('delta'));
       expect(delivered).not.toContain('CORE-LIVE');
@@ -1227,7 +1235,15 @@ describe('delta fan out', () => {
           syncId: 131,
         }),
       );
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await waitFor(
+        () =>
+          destination.socket
+            .frames('delta')
+            .some((frame) =>
+              frame.actions.some((entry) => entry.modelId === 'comment_after_future_replay'),
+            ),
+        'the authoritative comment after a forged future move',
+      );
 
       const delivered = JSON.stringify(destination.socket.frames('delta'));
       expect(delivered).not.toContain('Forged future arrival');

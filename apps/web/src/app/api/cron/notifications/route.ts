@@ -1,7 +1,15 @@
 import { timingSafeEqual } from 'node:crypto';
-import { deliverPendingSlackDms } from '@orbit/core';
+import {
+  deliverPendingNotificationEmails,
+  deliverPendingSlackChannels,
+  deliverPendingSlackDms,
+} from '@orbit/core';
 import { db } from '@orbit/db';
-import { reconcilePendingGithubWork } from '@orbit/services';
+import {
+  notificationConversationActions,
+  reconcilePendingGithubWork,
+  wakeDueNotificationConversations,
+} from '@orbit/services';
 import { publish } from '@/lib/api/handler.ts';
 import { githubAppConfig } from '@/lib/env.ts';
 import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
@@ -41,7 +49,8 @@ export async function GET(request: Request): Promise<Response> {
 
   const github = githubAppConfig();
   const githubConfigured = github.appId.length > 0 && github.privateKey.length > 0;
-  const [githubResult, delivered] = await Promise.all([
+  const providersEnabled = process.env['NOTIFICATION_PROVIDERS_PAUSED'] !== 'true';
+  const [githubResult, slackDms, slackChannels, emails, snoozes] = await Promise.all([
     githubConfigured
       ? reconcilePendingGithubWork(db, {
           appId: github.appId,
@@ -49,12 +58,28 @@ export async function GET(request: Request): Promise<Response> {
           limit: 20,
         })
       : Promise.resolve(EMPTY_GITHUB_RESULT),
-    slackIntegrationEnabled() ? deliverPendingSlackDms(db, 100) : Promise.resolve(0),
+    providersEnabled && slackIntegrationEnabled()
+      ? deliverPendingSlackDms(db, 100)
+      : Promise.resolve(0),
+    providersEnabled && slackIntegrationEnabled()
+      ? deliverPendingSlackChannels(db, 100)
+      : Promise.resolve(0),
+    providersEnabled && process.env['RESEND_API_KEY'] && process.env['EMAIL_FROM']
+      ? deliverPendingNotificationEmails(db, 100)
+      : Promise.resolve(0),
+    wakeDueNotificationConversations(db, { limit: 100 }),
   ]);
   const { actions: githubActions, ...githubCounts } = githubResult;
-  await publish(githubActions);
+  const wakeActions = await notificationConversationActions(db, snoozes.changes, {
+    type: 'system',
+    id: 'orbit',
+    name: 'Orbit',
+  });
+  await publish([...githubActions, ...wakeActions]);
   return Response.json({
-    delivered,
+    delivered: slackDms + slackChannels + emails,
+    providers: { slackDms, slackChannels, emails },
+    snoozes: { woken: snoozes.woken, stale: snoozes.stale },
     github: { configured: githubConfigured, ...githubCounts },
   });
 }

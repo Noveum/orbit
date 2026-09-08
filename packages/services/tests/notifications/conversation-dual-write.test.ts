@@ -218,7 +218,7 @@ describe('notification conversation compatibility writes', () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);
       const now = new Date('2026-09-01T01:00:00.000Z');
-      const until = new Date('2026-09-02T01:00:00.000Z');
+      const until = new Date(Date.now() + 86_400_000);
       const outcome = await notifyMany(
         tx,
         [

@@ -78,6 +78,20 @@ async function seedCanonicalRows(sql: postgres.Sql): Promise<void> {
 }
 
 describe('notification conversation expansion migration', () => {
+  it('rejects processing webhook claims without an ownership token', async () => {
+    await resetScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      let rejected = false;
+      try {
+        await sql`insert into webhook_delivery (id, provider, delivery_id, event, status) values ('tokenless', 'github', 'tokenless', 'pull_request', 'processing')`;
+      } catch {
+        rejected = true;
+      }
+      expect(rejected).toBe(true);
+      await sql`insert into webhook_delivery (id, provider, delivery_id, event, status, claim_token) values ('claimed', 'github', 'claimed', 'pull_request', 'processing', 'token')`;
+    });
+  }, 60_000);
+
   it('validates the final survivor state after linking legacy rows in one transaction', async () => {
     await resetScratch();
     await run(urlFor(SCRATCH), async (sql) => {

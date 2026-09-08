@@ -77,6 +77,22 @@ describe('database release', () => {
     expect([...preserved]).toEqual([{ payload: 'preserve me' }]);
   }, 60_000);
 
+  it('does not silently baseline a missing webhook ownership constraint', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table webhook_delivery drop constraint webhook_delivery_processing_claim_check`;
+      await sql`delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`;
+    });
+    await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const rows = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql`select convalidated from pg_constraint where conname = 'webhook_delivery_processing_claim_check'`,
+    );
+    expect([...rows]).toEqual([{ convalidated: true }]);
+  }, 60_000);
+
   it('restores deferred audit triggers while baselining a schema-pushed catalog', async () => {
     await resetScratch();
     await migrateScratch();

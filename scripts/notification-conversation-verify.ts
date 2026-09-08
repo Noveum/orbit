@@ -4,6 +4,7 @@ import { verifyNotificationConversationBackfill } from '../packages/services/src
 const args = process.argv.slice(2);
 
 for (const value of args) {
+  if (value === '--all') continue;
   if (!value.startsWith('--organization=')) {
     throw new Error(`Unknown notification conversation verifier argument "${value}".`);
   }
@@ -22,6 +23,9 @@ function organizationIds(): string[] {
 
 async function main(): Promise<void> {
   const organizations = organizationIds();
+  if (args.includes('--all') === organizations.length > 0) {
+    throw new Error('Choose --all or at least one --organization, never both.');
+  }
   const result = await verifyNotificationConversationBackfill(db, {
     ...(organizations.length === 0 ? {} : { organizationIds: organizations }),
   });

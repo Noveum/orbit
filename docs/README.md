@@ -17,6 +17,7 @@ gated behind a plan.
 | Stop reaching for the mouse | [Keyboard shortcuts](keyboard-shortcuts.md) |
 | Let an AI agent read and update your board | [MCP server](mcp.md) |
 | Connect GitHub | [Integrations](integrations.md) |
+| Understand grouped notifications and Slack delivery | [Inbox conversations](features/inbox.md) |
 | Know how the realtime sync actually works | [Architecture](architecture.md) |
 | Write or run the tests | [Testing](testing.md) |
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |

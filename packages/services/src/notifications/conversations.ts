@@ -388,7 +388,22 @@ export function applyLiveConversationEvent(
 ): NotificationConversationAggregate {
   if (!event.surfaceInInbox) return aggregate;
   if (event.ingestionSeq <= aggregate.lastActivitySeq) {
-    return { ...aggregate, eventCount: aggregate.eventCount + 1 };
+    const mention = eventIsMention(event);
+    let lastMentionAt = aggregate.lastMentionAt;
+    if (mention && (lastMentionAt === null || event.ingestedAt > lastMentionAt)) {
+      lastMentionAt = event.ingestedAt;
+    }
+    return {
+      ...aggregate,
+      eventCount: aggregate.eventCount + 1,
+      unreadEventCount: aggregate.unreadEventCount + 1,
+      unreadMentionCount: aggregate.unreadMentionCount + (mention ? 1 : 0),
+      manualUnread: false,
+      lastMentionAt,
+      snoozedUntil: null,
+      dismissedAt: null,
+      snoozeGeneration: aggregate.snoozeGeneration + 1,
+    };
   }
   const mention = eventIsMention(event);
   return {

@@ -38,6 +38,29 @@ beforeAll(async () => {
 });
 
 describe('list_notifications', () => {
+  it('exposes additive conversation tools without changing event ids', async () => {
+    const grouped = await agent.result('list_inbox_conversations', { tab: 'mentions' });
+    const conversations = grouped['conversations'] as {
+      id: string;
+      eventCount: number;
+      hasMention: boolean;
+    }[];
+    const conversation = conversations.find((row) => row.hasMention);
+    expect(conversation).toBeDefined();
+    const id = conversation?.id ?? '';
+    const history = await agent.result('list_inbox_conversation_events', { conversationId: id });
+    const events = history['events'] as { id: string }[];
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0]?.id).not.toBe(id);
+    const unread = await agent.result('mark_inbox_conversations_read', {
+      conversationIds: [id],
+      read: false,
+    });
+    expect(unread['counterVersion']).toBeNumber();
+    expect(
+      (unread['conversations'] as { unreadMentionCount: number }[])[0]?.unreadMentionCount,
+    ).toBe(0);
+  });
   it('returns the mention with the issue resolved from the comment', async () => {
     const result = await agent.result('list_notifications', { unreadOnly: true });
     const rows = result['notifications'] as {

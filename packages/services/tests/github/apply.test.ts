@@ -267,6 +267,7 @@ async function applyCheckEvent(
     event: event.eventName,
     organizationId,
     status: 'processing',
+    claimToken: randomUUIDv7(),
   });
   return await applyGithubEvent(tx, {
     ...event,
@@ -1698,6 +1699,7 @@ describe('applyGithubEvent', () => {
       event: 'check_run',
       organizationId: fixture.organizationId,
       status: 'processing',
+      claimToken: randomUUIDv7(),
     });
     let announceRemoval = (): void => undefined;
     const removalReady = new Promise<void>((resolve) => {

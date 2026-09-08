@@ -118,11 +118,11 @@
 - Produces: resumable backfill and zero-drift verifier commands
 - Preserves: bidirectional legacy read, unread, snooze, dismiss, and delivery-channel state
 
-- [ ] Write tests for grouping, counters, read state, dismissal, snooze, policy hiding, duplicate survivor rules, and resumable backfill.
-- [ ] Add conversation, inbox-state, snooze-wake, audit-link, sequence, and compatibility columns and constraints.
-- [ ] Dual-write live events and every legacy mutation before backfill begins.
-- [ ] Implement deterministic historical recipient and delivery survivor selection.
-- [ ] Add resumable backfill and verification commands with bounded batches and persisted progress.
+- [x] Write tests for grouping, counters, read state, dismissal, snooze, policy hiding, duplicate survivor rules, and resumable backfill.
+- [x] Add conversation, inbox-state, snooze-wake, audit-link, sequence, and compatibility columns and constraints.
+- [x] Dual-write live events and every legacy mutation before backfill begins.
+- [x] Implement deterministic historical recipient and delivery survivor selection.
+- [x] Add resumable backfill and verification commands with bounded batches and persisted progress.
 - [ ] Run focused service, database, and compatibility tests.
 - [ ] Commit as `feat(inbox): add durable conversations`.
 
@@ -148,12 +148,12 @@
 - Produces: additive MCP conversation tools while retaining event tools
 - Preserves: keyboard navigation, deep links, issue and document context, light and dark themes
 
-- [ ] Write API, realtime, MCP, grouping, pagination, history, keyboard, and counter tests.
-- [ ] Add shared response validators and authorized conversation queries.
-- [ ] Add current-policy event-history reads and conversation mutations.
-- [ ] Publish conversation upserts and replace client-side badge arithmetic with server counters.
-- [ ] Render one list row per conversation and event history in the detail pane.
-- [ ] Group document comments, replies, mentions, and document changes under `orbit-doc:<id>:activity`.
+- [x] Write API, realtime, MCP, grouping, pagination, history, keyboard, and counter tests.
+- [x] Add shared response validators and authorized conversation queries.
+- [x] Add current-policy event-history reads and conversation mutations.
+- [x] Publish conversation upserts and replace client-side badge arithmetic with server counters.
+- [x] Render one list row per conversation and event history in the detail pane.
+- [x] Group document comments, replies, mentions, and document changes under `orbit-doc:<id>:activity`.
 - [ ] Run focused unit tests and Playwright.
 - [ ] Commit as `feat(inbox): switch to conversation threads`.
 
@@ -176,12 +176,12 @@
 - Produces: current-policy preflight for DMs, shared channels, and email
 - Produces: visible pending, retrying, unavailable, ambiguous, and dead-letter diagnostics
 
-- [ ] Write concurrent root, ordered reply, ambiguity, rate-limit, reconnect, preference, mapping, and email idempotency tests.
-- [ ] Add provider identity, destination, claim, lease, payload, ambiguity, and Slack thread fields and constraints.
-- [ ] Convert shared channel and direct-message delivery to one durable worker contract.
-- [ ] Render a useful root summary and compact event replies with `reply_broadcast: false`.
-- [ ] Add the notification-email Resend worker without changing transactional email.
-- [ ] Add actionable integration diagnostics and admin versus personal preference copy.
+- [x] Write concurrent root, ordered reply, ambiguity, rate-limit, reconnect, preference, mapping, and email idempotency tests.
+- [x] Add provider identity, destination, claim, lease, payload, ambiguity, and Slack thread fields and constraints.
+- [x] Convert shared channel and direct-message delivery to one durable worker contract.
+- [x] Render a useful root summary and compact event replies with `reply_broadcast: false`.
+- [x] Add the notification-email Resend worker without changing transactional email.
+- [x] Add actionable integration diagnostics and admin versus personal preference copy.
 - [ ] Run focused provider and cron tests.
 - [ ] Commit as `feat(slack): thread notification conversations`.
 
@@ -197,7 +197,7 @@
 - Produces: user-facing Slack and inbox documentation
 - Produces: reproducible light and dark screenshots of grouped inbox and Slack message fixtures
 
-- [ ] Document current notification types, audience rules, Slack channel versus direct-message behavior, and exact-email member matching.
+- [x] Document current notification types, audience rules, Slack channel versus direct-message behavior, and exact-email member matching.
 - [ ] Capture grouped PR, document-comment, and Slack-thread fixtures in light and dark themes.
 - [ ] Run focused tests, `bun run verify`, `bun run docs:build`, and `git diff --check`.
 - [ ] Merge current `main`, rerun every check, resolve Greptile and CodeRabbit threads, and keep the PR draft until review is complete.

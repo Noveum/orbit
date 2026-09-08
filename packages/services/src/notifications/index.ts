@@ -18,6 +18,7 @@ import {
   NOTIFICATION_AUDIENCE_BY_REASON,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
+  notificationSlackNamespaceSchema,
   notificationSourceInputSchema,
   type SyncAction,
   scopes,
@@ -41,6 +42,7 @@ import {
   notificationConversationLookupKey,
   prepareNotificationConversations,
 } from './compatibility.ts';
+import { notificationConversationActions } from './conversation-deltas.ts';
 import { type ConversationIdentity, resolveNotificationConversation } from './conversations.ts';
 import {
   DEFAULT_SETTINGS,
@@ -50,9 +52,14 @@ import {
 } from './preferences.ts';
 import { isWithinQuietHours, nextQuietHoursEnd, type QuietHours } from './quiet-hours.ts';
 
+export { mutateNotificationConversations } from './compatibility.ts';
+export * from './conversation-access.ts';
 export * from './conversation-backfill.ts';
+export * from './conversation-deltas.ts';
+export * from './conversation-snooze.ts';
 export * from './conversations.ts';
 export * from './preferences.ts';
+export * from './provider-outbox.ts';
 export * from './quiet-hours.ts';
 
 export type NotificationDatabase = Database | Transaction;
@@ -315,6 +322,9 @@ interface Recipient {
 interface SlackDmDestination {
   readonly integrationId: string;
   readonly destinationId: string;
+  readonly slackTeamId: string;
+  readonly slackAppId: string;
+  readonly credentialGeneration: number;
 }
 
 interface Plan {
@@ -350,8 +360,34 @@ export async function notifyMany(
   if ('$client' in database) {
     return await database.transaction((tx) => notifyMany(tx, events, options));
   }
-  const parsed = events.map((event) => notificationEventSchema.parse(event));
   const now = options.now ?? new Date();
+  const generatedSourceKeys = new Set<string>();
+  const parsed = events.map((event) => {
+    const validated = notificationEventSchema.parse(event);
+    if (validated.source !== undefined) return validated;
+    const eventId = randomUUIDv7(now);
+    generatedSourceKeys.add(`orbit-notification:${eventId}`);
+    const identity = resolveNotificationConversation({
+      notificationId: eventId,
+      type: validated.type,
+      entityType: validated.entityType,
+      entityId: validated.entityId,
+    });
+    return notificationEventSchema.parse({
+      ...validated,
+      source: {
+        sourceEventKey: `orbit-notification:${eventId}`,
+        subjectType: identity.subjectType,
+        subjectKey: identity.conversationKey,
+        occurredAt: now,
+        payload: {
+          entityType: validated.entityType,
+          entityId: validated.entityId,
+          subjectId: identity.subjectId,
+        },
+      },
+    });
+  });
   const claimedSources = await claimNotificationSources(
     database,
     parsed,
@@ -441,7 +477,10 @@ export async function notifyMany(
         continue;
       }
       const key = dedupeKey(userId, event.type, event.entityId, event.externalUrl ?? null);
-      if (event.source === undefined && seen.has(key)) {
+      if (
+        (event.source === undefined || generatedSourceKeys.has(event.source.sourceEventKey)) &&
+        seen.has(key)
+      ) {
         deduped += 1;
         continue;
       }
@@ -456,7 +495,8 @@ export async function notifyMany(
         sourceEventId,
       );
       if (plan !== null) {
-        if (event.source === undefined) seen.add(key);
+        if (event.source === undefined || generatedSourceKeys.has(event.source.sourceEventKey))
+          seen.add(key);
         plans.push(plan);
       }
     }
@@ -501,7 +541,14 @@ export async function notifyMany(
   await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
   await completeNotificationSources(database, claimedSources, now);
 
-  return buildOutcome(plans, rows, deduped);
+  const outcome = buildOutcome(plans, rows, deduped);
+  const conversationActions = await notificationConversationActions(
+    database,
+    rows,
+    { type: 'system', id: 'orbit', name: 'Orbit' },
+    now,
+  );
+  return { ...outcome, actions: [...outcome.actions, ...conversationActions] };
 }
 
 function sourceIdentity(organizationId: string, sourceEventKey: string): string {
@@ -607,17 +654,28 @@ function slackDeliveryRows(
   sourceDeliveryId?: string,
 ) {
   const planById = new Map(plans.map((plan) => [plan.id, plan]));
-  return rows.flatMap((row) => {
+  return rows.flatMap((row): (typeof notificationDelivery.$inferInsert)[] => {
     const plan = planById.get(row.id);
-    if (
-      plan === undefined ||
-      !plan.channels.includes('slack_dm') ||
-      plan.slackDmDestination === null
-    ) {
-      return [];
+    if (plan === undefined) return [];
+    const result: (typeof notificationDelivery.$inferInsert)[] = [];
+    if (plan.emailAt !== null) {
+      const id = randomUUIDv7(now);
+      result.push({
+        id,
+        notificationId: row.id,
+        organizationId: row.organizationId,
+        sourceEventId: plan.sourceEventId,
+        userId: row.userId,
+        channel: 'email',
+        conversationKey: plan.conversation.conversationKey,
+        destinationKind: 'user',
+        destinationId: row.userId,
+        providerRequestId: `notification/${id}`,
+        availableAt: plan.emailAt,
+      });
     }
-    return [
-      {
+    if (plan.channels.includes('slack_dm') && plan.slackDmDestination !== null) {
+      result.push({
         id: randomUUIDv7(now),
         notificationId: row.id,
         organizationId: row.organizationId,
@@ -629,9 +687,13 @@ function slackDeliveryRows(
         destinationKind: 'user',
         destinationId: plan.slackDmDestination.destinationId,
         integrationId: plan.slackDmDestination.integrationId,
+        slackTeamId: plan.slackDmDestination.slackTeamId,
+        slackAppId: plan.slackDmDestination.slackAppId,
+        credentialGeneration: plan.slackDmDestination.credentialGeneration,
         availableAt: plan.slackDmAt ?? now,
-      },
-    ];
+      });
+    }
+    return result;
   });
 }
 
@@ -744,6 +806,11 @@ async function loadSlackDmEligibleRecipients(
   for (const row of rows) {
     const parsed = slackDmEligibilitySchema.safeParse(row);
     if (!(parsed.success && hasSlackBotToken(row.credentials))) continue;
+    const namespace = notificationSlackNamespaceSchema.safeParse({
+      ...row.config,
+      slackAppId: row.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+    });
+    if (!namespace.success || namespace.data.notificationDeliveryState !== 'active') continue;
     if (parsed.data.config.slackReauthorize === true) continue;
     const scopes = parsed.data.config.scopes;
     if (!(scopes.includes('chat:write') && scopes.includes('im:write'))) continue;
@@ -751,6 +818,9 @@ async function loadSlackDmEligibleRecipients(
     recipients.set(row.userId, {
       integrationId: row.integrationId,
       destinationId: row.slackUserId,
+      slackTeamId: namespace.data.slackTeamId,
+      slackAppId: namespace.data.slackAppId,
+      credentialGeneration: namespace.data.credentialGeneration,
     });
     eligible.set(row.organizationId, recipients);
   }
@@ -809,7 +879,7 @@ function toInsert(plan: Plan, conversationId: string, now: Date) {
     ingestedAt: now,
     ingestionSeq: nextSyncId,
     surfaceInInbox: plan.channels.includes(INBOX_CHANNEL),
-    deliveredChannels: plan.channels.filter((channel) => channel !== 'slack_dm'),
+    deliveredChannels: plan.channels.filter((channel) => channel === 'inbox'),
     syncId: nextSyncId,
     createdAt: now,
   };
@@ -825,7 +895,8 @@ async function enqueueSharedSlackDeliveries(
   if (!enabled) return;
   const sourceEvents = new Map<string, ParsedEvent>();
   for (const event of events) {
-    if (event.source?.subjectType !== 'github_pull_request') continue;
+    if (event.source === undefined) continue;
+    if (event.reason === 'access_requested' || event.reason === 'access_granted') continue;
     const sourceEventId = claimedSources.get(
       sourceIdentity(event.organizationId, event.source.sourceEventKey),
     );
@@ -840,8 +911,18 @@ async function enqueueSharedSlackDeliveries(
       integrationId: slackChannelSync.integrationId,
       teamId: slackChannelSync.teamId,
       channelId: slackChannelSync.channelId,
+      events: slackChannelSync.events,
+      config: integration.config,
     })
     .from(slackChannelSync)
+    .innerJoin(
+      integration,
+      and(
+        eq(integration.id, slackChannelSync.integrationId),
+        eq(integration.organizationId, slackChannelSync.organizationId),
+        eq(integration.provider, 'slack'),
+      ),
+    )
     .where(
       and(
         inArray(slackChannelSync.organizationId, organizationIds),
@@ -853,6 +934,11 @@ async function enqueueSharedSlackDeliveries(
       .filter(
         (target) =>
           target.organizationId === event.organizationId &&
+          (target.events.length === 0 || target.events.includes(event.type)) &&
+          notificationSlackNamespaceSchema.safeParse({
+            ...target.config,
+            slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+          }).success &&
           (target.teamId === null || event.source?.teamIds.includes(target.teamId) === true),
       )
       .map((target) => ({
@@ -866,7 +952,20 @@ async function enqueueSharedSlackDeliveries(
         destinationKind: 'shared_channel',
         destinationId: `${target.integrationId}:${target.channelId}`,
         integrationId: target.integrationId,
+        slackTeamId: notificationSlackNamespaceSchema.parse({
+          ...target.config,
+          slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+        }).slackTeamId,
+        slackAppId: notificationSlackNamespaceSchema.parse({
+          ...target.config,
+          slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+        }).slackAppId,
+        credentialGeneration: notificationSlackNamespaceSchema.parse({
+          ...target.config,
+          slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+        }).credentialGeneration,
         providerPayload: {
+          notificationType: event.type,
           title: event.title,
           body: event.body,
           url: event.url,

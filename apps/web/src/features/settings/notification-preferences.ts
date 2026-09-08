@@ -112,6 +112,11 @@ export async function saveNotificationPreferences(
   );
 
   await db.transaction(async (tx) => {
+    await tx
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .for('update');
     for (const preference of preferences) {
       await tx
         .insert(schema.notificationPreference)

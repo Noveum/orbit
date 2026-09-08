@@ -1,0 +1,1 @@
+ALTER TABLE "webhook_delivery" ADD CONSTRAINT "webhook_delivery_processing_claim_check" CHECK ("webhook_delivery"."status" <> 'processing' or "webhook_delivery"."claim_token" is not null);

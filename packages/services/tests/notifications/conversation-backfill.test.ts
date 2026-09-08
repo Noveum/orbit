@@ -9,6 +9,7 @@ import {
   notificationInboxState,
   notificationSourceEvent,
   organization,
+  slackUserMapping,
   user,
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
@@ -245,8 +246,11 @@ describe('conversation backfill planning', () => {
       externalId: `T-${suffix}`,
       connectedById: userId,
       credentials: { botToken: 'test' },
-      config: {},
+      config: { slackTeamId: `T-${suffix}`, slackAppId: 'A123' },
     });
+    await db
+      .insert(slackUserMapping)
+      .values({ id: randomUUIDv7(), organizationId, integrationId, userId, slackUserId: 'U123' });
 
     try {
       await db.insert(notification).values([
@@ -363,6 +367,8 @@ describe('conversation backfill planning', () => {
         deduplicatedIntoNotificationId: firstId,
       });
       expect(canonicalDelivery).toMatchObject({
+        destinationId: 'U123',
+        slackAppId: 'A123',
         notificationId: firstId,
         sourceEventId: survivor?.sourceEventId,
         conversationKey: 'orbit-issue:iss_exact:activity',
@@ -579,12 +585,16 @@ describe('resumable conversation backfill', () => {
         manualUnread: false,
       });
       expect(inboxState).toMatchObject({
-        unreadCount: 1,
-        unreadActivityCount: 1,
+        unreadCount: 0,
+        unreadActivityCount: 0,
         unreadMentionCount: 0,
       });
+      expect(conversation?.accessHiddenAt).not.toBeNull();
+      expect(conversation?.accessGeneration).toBe(1);
       expect(progress).toHaveLength(5);
       expect(progress.every((row) => row.status === 'completed')).toBe(true);
+      expect(progress.find((row) => row.phase === 'tail')?.highWaterMark).not.toBeNull();
+      expect(progress.find((row) => row.phase === 'tail')?.passNumber).toBeGreaterThanOrEqual(2);
       expect(verification.ok).toBe(true);
     } finally {
       await db.delete(organization).where(eq(organization.id, organizationId));

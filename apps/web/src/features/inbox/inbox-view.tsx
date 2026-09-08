@@ -351,7 +351,7 @@ function NotificationRow({
   );
 }
 
-function NotificationBody({
+export function NotificationBody({
   item,
   canWriteDocs,
   canPublishDocs,

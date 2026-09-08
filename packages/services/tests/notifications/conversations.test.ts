@@ -333,8 +333,8 @@ describe('conversation aggregate transitions', () => {
 
     expect(older.latestEventId).toBe('ntf_new');
     expect(older.eventCount).toBe(2);
-    expect(older.unreadEventCount).toBe(1);
-    expect(older.unreadMentionCount).toBe(0);
+    expect(older.unreadEventCount).toBe(2);
+    expect(older.unreadMentionCount).toBe(1);
   });
 
   it('models read, manual unread, snooze, dismissal and access hiding', () => {

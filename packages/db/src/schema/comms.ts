@@ -564,7 +564,7 @@ export const notificationDelivery = pgTable(
                   and ${table.channel} = 'slack_dm'
                   and ${table.notificationId} is not null
                   and ${table.userId} is not null
-                  and ${table.integrationId} is not null
+                  and (${table.integrationId} is not null or ${table.status} = 'unavailable')
                 )
                 or
                 (
@@ -1827,6 +1827,10 @@ export const webhookDelivery = pgTable(
     unique('webhook_delivery_org_id_unique').on(table.organizationId, table.id),
     uniqueIndex('webhook_delivery_unique').on(table.provider, table.deliveryId),
     index('webhook_delivery_org_idx').on(table.organizationId, table.createdAt),
+    check(
+      'webhook_delivery_processing_claim_check',
+      sql`${table.status} <> 'processing' or ${table.claimToken} is not null`,
+    ),
   ],
 );
 

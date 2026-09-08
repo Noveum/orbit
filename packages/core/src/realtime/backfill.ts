@@ -685,6 +685,56 @@ const LOADERS: Record<SyncModel, Loader> = {
       data: row,
     })),
 
+  notification_conversation: async (executor, principal, since, limit) => {
+    const rows = await executor
+      .select({
+        conversation: schema.notificationConversation,
+        state: schema.notificationInboxState,
+      })
+      .from(schema.notificationConversation)
+      .innerJoin(
+        schema.notificationInboxState,
+        and(
+          eq(
+            schema.notificationInboxState.organizationId,
+            schema.notificationConversation.organizationId,
+          ),
+          eq(schema.notificationInboxState.userId, schema.notificationConversation.userId),
+        ),
+      )
+      .where(
+        and(
+          eq(schema.notificationConversation.organizationId, principal.organizationId),
+          eq(schema.notificationConversation.userId, principal.userId),
+          gt(schema.notificationConversation.syncId, since),
+        ),
+      )
+      .orderBy(asc(schema.notificationConversation.syncId))
+      .limit(limit);
+    const now = new Date();
+    return rows.map(({ conversation: row, state }) => ({
+      modelId: row.id,
+      syncId: row.syncId,
+      scopes: [scopes.user(row.userId)],
+      data: {
+        id: row.id,
+        syncId: row.syncId,
+        lastActivitySeq: row.lastActivitySeq,
+        visible:
+          row.eventCount > 0 &&
+          row.dismissedAt === null &&
+          row.accessHiddenAt === null &&
+          (row.snoozedUntil === null || row.snoozedUntil <= now),
+        counterVersion: state.syncId,
+        counters: {
+          unreadCount: state.unreadCount,
+          unreadActivityCount: state.unreadActivityCount,
+          unreadMentionCount: state.unreadMentionCount,
+        },
+      },
+    }));
+  },
+
   view: async (executor, principal, since, limit) =>
     (
       await executor

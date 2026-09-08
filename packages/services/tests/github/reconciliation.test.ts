@@ -162,6 +162,7 @@ async function applyDirectCheck(
     event: 'check_run',
     organizationId,
     status: 'processing',
+    claimToken: randomUUIDv7(),
   });
   return await applyGithubEvent(tx, {
     eventName: 'check_run',
