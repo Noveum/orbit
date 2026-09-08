@@ -13,6 +13,7 @@ import { unique } from '@orbit/shared';
 import { isInOrganization, isInTeam, type Principal, policyRole } from '@orbit/shared/policy';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { type NotificationEvent, notifyMany } from '../notifications/index.ts';
+import { githubFailureDetails } from './failure-details.ts';
 import type { GithubCheckFailureTransition } from './reconciliation.ts';
 
 type GithubNotificationDatabase = Database | Transaction;
@@ -257,6 +258,7 @@ export async function githubCheckFailureTransitionEvents(
     );
     let teamIds = linked.map((entry) => entry.teamId);
     if (linked.length === 0 && repository.teamId !== null) teamIds = [repository.teamId];
+    const details = await githubFailureDetails(database, pull);
     events.push({
       organizationId: transition.organizationId,
       type: 'pr_checks_failed' as const,
@@ -266,9 +268,9 @@ export async function githubCheckFailureTransitionEvents(
       entityId: pull.id,
       userIds,
       title: `Checks failed on ${pull.title}`,
-      body: `${repository.repositoryName}#${pull.number}\nCommit ${pull.headSha.slice(0, 7)}`,
+      body: details.body,
       url: `/pulls/${pull.id}`,
-      externalUrl: pull.url,
+      externalUrl: details.externalUrl,
       source: {
         sourceEventKey: `github-pr:${repository.repositoryId}:${pull.number}:${pull.headSha}:checks-failed`,
         subjectType: 'github_pull_request',

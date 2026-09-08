@@ -398,6 +398,7 @@ describe('reconcileNextGithubCheckHead', () => {
       expect(recipients).toHaveLength(1);
       expect(recipients[0]?.userId).toBe(fixture.userId);
       expect(recipients[0]?.body).toContain(`Commit ${HEAD_SHA.slice(0, 7)}`);
+      expect(recipients[0]?.body).toContain('Failed: verify');
     });
   });
 

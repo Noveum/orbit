@@ -21,6 +21,25 @@ afterAll(() => {
 });
 
 describe('notification Slack messages', () => {
+  it('keeps comment previews short and readable without raw Markdown or HTML', () => {
+    const message = notificationSlackMessage({
+      channel: 'C-test',
+      rootTs: '1.000',
+      payload: {
+        title: 'New comment from Sam',
+        body: `**Type check** failed.\n\n<details><summary>Details</summary>Missing an export.</details>\n\n${'More context '.repeat(100)}`,
+        url: '/inbox',
+      },
+    });
+    const section = z.object({ text: z.object({ text: z.string() }) }).parse(message.blocks?.[0]);
+    expect(section.text.text).toContain('Type check failed.');
+    expect(section.text.text).not.toContain('<details>');
+    expect(section.text.text).not.toContain('&lt;details&gt;');
+    expect(section.text.text).not.toContain('**Type check**');
+    expect(section.text.text.length).toBeLessThanOrEqual(450);
+    expect(section.text.text).toEndWith('…');
+  });
+
   it('disables automatic mention parsing for ordinary workspace mention text', () => {
     const message = notificationSlackMessage({
       channel: 'C-test',
@@ -80,13 +99,13 @@ describe('notification Slack messages', () => {
     }
   });
 
-  it('bounds sections and provides root-only thread guidance without broadcasting replies', () => {
+  it('bounds sections without repetitive footers or broadcasting replies', () => {
     const payload = { title: '&'.repeat(255), body: '<'.repeat(100_000), url: '/inbox' };
     const root = notificationSlackMessage({ channel: 'C-test', rootTs: null, payload });
     const reply = notificationSlackMessage({ channel: 'C-test', rootTs: '1.000', payload });
     const section = z.object({ text: z.object({ text: z.string() }) }).parse(root.blocks?.[0]);
     expect(section.text.text.length).toBeLessThanOrEqual(3000);
-    expect(root.blocks).toHaveLength(3);
+    expect(root.blocks).toHaveLength(2);
     expect(root.threadTs).toBeUndefined();
     expect(reply.blocks).toHaveLength(2);
     expect(reply.threadTs).toBe('1.000');

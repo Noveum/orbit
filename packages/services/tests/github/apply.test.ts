@@ -316,6 +316,7 @@ describe('applyGithubEvent', () => {
           expect(event.title.length).toBeLessThanOrEqual(255);
           expect(event.title).toStartWith('Checks failed on ');
           expect(event.body).toContain(`Commit ${HEAD_SHA.slice(0, 7)}`);
+          expect(event.body).toContain('Failed: verify');
           expect(event.title).not.toMatch(/[\uD800-\uDBFF]…$/u);
           expect(event.externalUrl).toBe('https://github.com/acme/web/actions/runs/1');
           expect(event.url).toBe(result.notificationEvents[0]?.url ?? '');
