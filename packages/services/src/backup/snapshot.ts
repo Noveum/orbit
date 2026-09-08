@@ -1,8 +1,9 @@
+import { internal } from '@orbit/shared';
 import postgres from 'postgres';
 import type { AttachmentRecord } from './types.ts';
 
 export interface DatabaseSnapshotSession {
-  readonly snapshotId?: string | undefined;
+  readonly snapshotId: string;
   readonly records: readonly AttachmentRecord[];
   readonly counts: {
     readonly workspaces: number;
@@ -35,14 +36,13 @@ export async function openCoordinatedSnapshot(url: string): Promise<DatabaseSnap
       .begin(async (tx) => {
         try {
           await tx.unsafe('set transaction isolation level repeatable read read only');
-          try {
-            const [snapRow] = await tx<{ snapshot: string }[]>`
-              select pg_export_snapshot() as snapshot
-            `;
-            snapshotId = snapRow?.snapshot;
-          } catch {
-            snapshotId = undefined;
+          const [snapRow] = await tx<{ snapshot: string }[]>`
+            select pg_export_snapshot() as snapshot
+          `;
+          if (snapRow?.snapshot === undefined || snapRow.snapshot.length === 0) {
+            throw internal('Failed to export PostgreSQL snapshot for backup coordination.');
           }
+          snapshotId = snapRow.snapshot;
 
           records = await tx<AttachmentRecord[]>`
             select id, storage_key, size, content_type
@@ -84,7 +84,23 @@ export async function openCoordinatedSnapshot(url: string): Promise<DatabaseSnap
       });
   });
 
-  await sessionReady;
+  try {
+    await sessionReady;
+  } catch (error) {
+    if (closeTransaction !== undefined) {
+      closeTransaction();
+    }
+    await sql.end({ timeout: 5 }).catch(() => undefined);
+    throw error;
+  }
+
+  if (snapshotId === undefined) {
+    if (closeTransaction !== undefined) {
+      closeTransaction();
+    }
+    await sql.end({ timeout: 5 }).catch(() => undefined);
+    throw internal('Failed to export PostgreSQL snapshot for backup coordination.');
+  }
 
   return {
     snapshotId,
