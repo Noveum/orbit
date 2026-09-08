@@ -22,6 +22,19 @@ afterEach(() => {
 });
 
 describe('the html page editor', () => {
+  it('places the editable title and view controls in the same toolbar', () => {
+    render(
+      <HtmlDocEditor
+        title="Board"
+        titleControl={<input aria-label="Doc title" defaultValue="Board" />}
+        content="<p>ok</p>"
+        onChange={() => undefined}
+      />,
+    );
+    const toolbar = screen.getByTestId('html-view-preview').parentElement;
+    expect(toolbar?.contains(screen.getByRole('textbox', { name: 'Doc title' }))).toBe(true);
+  });
+
   it('starts in split view so source and the live page are both visible', () => {
     render(<HtmlDocEditor title="Board" content="<p>ok</p>" onChange={() => undefined} />);
     expect(screen.getByTestId('html-code-editor-host')).toBeTruthy();

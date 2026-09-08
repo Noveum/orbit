@@ -515,25 +515,35 @@ function EditSession({
     setContent(incoming.content);
   }, [doc.title, doc.content, settled]);
 
+  const titleControl = (
+    <Input
+      value={title}
+      readOnly={mode === 'preview'}
+      aria-label="Doc title"
+      data-testid="doc-title-input"
+      onChange={(event) => setTitle(event.target.value)}
+      className={cn(
+        'h-8 min-w-0 rounded-sm border-0 bg-transparent px-1 py-0 font-semibold text-text tracking-tight outline-none focus-visible:border-0 focus-visible:bg-surface-2/60',
+        isHtmlDoc(doc.kind) ? 'text-dense' : 'text-xl',
+      )}
+    />
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div
-        className={cn(
-          'mx-auto flex w-full shrink-0 flex-col px-8 pt-8 pb-6',
-          READING_WIDTH_CLASS[width],
-        )}
-      >
-        <Input
-          value={title}
-          readOnly={mode === 'preview'}
-          aria-label="Doc title"
-          data-testid="doc-title-input"
-          onChange={(event) => setTitle(event.target.value)}
-          className="h-auto rounded-sm border-0 bg-transparent px-0 py-0 font-semibold text-text text-3xl tracking-tight outline-none focus-visible:border-0 focus-visible:bg-surface-2/60"
-        />
-      </div>
+      {isHtmlDoc(doc.kind) ? null : (
+        <div className={cn('mx-auto w-full shrink-0 px-6 py-3', READING_WIDTH_CLASS[width])}>
+          {titleControl}
+        </div>
+      )}
       {isHtmlDoc(doc.kind) ? (
-        <HtmlDocEditor title={title} content={content} onChange={setContent} footer={footer} />
+        <HtmlDocEditor
+          title={title}
+          titleControl={titleControl}
+          content={content}
+          onChange={setContent}
+          footer={footer}
+        />
       ) : (
         <DocEditor
           docId={doc.id}
