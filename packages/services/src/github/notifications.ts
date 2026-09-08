@@ -266,7 +266,7 @@ export async function githubCheckFailureTransitionEvents(
       entityId: pull.id,
       userIds,
       title: `Checks failed on ${pull.title}`,
-      body: `${repository.repositoryName}#${pull.number}`,
+      body: `${repository.repositoryName}#${pull.number}\nCommit ${pull.headSha.slice(0, 7)}`,
       url: `/pulls/${pull.id}`,
       externalUrl: pull.url,
       source: {

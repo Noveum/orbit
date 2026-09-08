@@ -416,6 +416,30 @@ async function subjectAllowed(tx: Transaction, delivery: Delivery, subject: Prov
   });
 }
 
+async function subjectStillRelevant(tx: Transaction, delivery: Delivery, subject: ProviderSubject) {
+  const type = subject.recipientEvent?.type ?? delivery.providerPayload?.['notificationType'];
+  if (type !== 'pr_checks_failed') return true;
+  const pullRequestId = subject.source?.payload?.['pullRequestId'];
+  const headSha = subject.source?.payload?.['headSha'];
+  if (typeof pullRequestId !== 'string' || typeof headSha !== 'string' || headSha.length === 0)
+    return false;
+  const [pull] = await tx
+    .select({ id: schema.githubPullRequest.id })
+    .from(schema.githubPullRequest)
+    .where(
+      and(
+        eq(schema.githubPullRequest.organizationId, delivery.organizationId ?? ''),
+        eq(schema.githubPullRequest.id, pullRequestId),
+        eq(schema.githubPullRequest.headSha, headSha),
+        eq(schema.githubPullRequest.checkStatus, 'failure'),
+        eq(schema.githubPullRequest.state, 'open'),
+        eq(schema.githubPullRequest.merged, false),
+      ),
+    )
+    .for('share');
+  return pull !== undefined;
+}
+
 async function slackConnection(
   tx: Transaction,
   delivery: Delivery,
@@ -642,6 +666,17 @@ async function recordProviderStart(
   return started;
 }
 
+function providerPreflightError(
+  allowed: boolean,
+  relevant: boolean,
+  destinationError: string | null,
+  recipientError: string | null,
+) {
+  if (!allowed) return 'subject_access_lost';
+  if (!relevant) return 'github_check_failure_superseded';
+  return destinationError ?? recipientError;
+}
+
 async function preflight(
   database: ProviderDatabase,
   claim: Claim,
@@ -651,6 +686,7 @@ async function preflight(
     const delivery = claim.delivery;
     const subject = await loadProviderSubject(tx, delivery);
     const allowed = await subjectAllowed(tx, delivery, subject);
+    const relevant = await subjectStillRelevant(tx, delivery, subject);
     const destination =
       delivery.channel === 'email'
         ? { token: null, channelId: null, error: null, draining: false }
@@ -670,7 +706,7 @@ async function preflight(
       !threadClaimIsCurrent(thread, delivery)
     )
       return null;
-    const error = allowed ? (destination.error ?? recipient.error) : 'subject_access_lost';
+    const error = providerPreflightError(allowed, relevant, destination.error, recipient.error);
     if (error !== null) {
       await markPreflightUnavailable(tx, current, error, destination.draining, now);
       return null;

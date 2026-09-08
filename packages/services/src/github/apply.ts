@@ -483,7 +483,7 @@ async function githubCheckFailureNotifications(
       entityId: pull.id,
       userIds,
       title: `Checks failed on ${pull.title}`,
-      body: `${context.repo.repositoryName}#${pull.number}`,
+      body: `${context.repo.repositoryName}#${pull.number}\nCommit ${pull.headSha.slice(0, 7)}`,
       url: `/pulls/${pull.id}`,
       externalUrl: externalUrl.length > 0 ? externalUrl : pull.url,
       source: {
