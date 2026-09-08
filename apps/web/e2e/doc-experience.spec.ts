@@ -82,7 +82,7 @@ test('folders, resized panes, writing, preview and published links work together
   await expect(page.getByTestId('doc-visibility-private')).toHaveAttribute('aria-pressed', 'true');
   await page.getByTestId('doc-visibility-link').click();
   const published = page.getByTestId('doc-copy-link-url');
-  await expect(published).toBeVisible();
+  await expect(published).toContainText('/d/');
   const url = (await published.innerText()).trim();
   const anonymousContext = await browser.newContext();
   const anonymous = await anonymousContext.newPage();

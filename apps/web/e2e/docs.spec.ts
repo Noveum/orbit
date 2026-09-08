@@ -206,7 +206,7 @@ test.fixme('a doc is written, attached to, published, and read without a session
   await expect(author.getByTestId('doc-visibility-link')).toHaveAttribute('aria-pressed', 'true');
 
   const link = author.getByTestId('doc-copy-link-url');
-  await expect(link).toBeVisible({ timeout: 30_000 });
+  await expect(link).toContainText('/d/', { timeout: 30_000 });
   const publishedUrl = ((await link.textContent()) ?? '').trim();
   expect(publishedUrl).toContain('/d/');
   expect(new URL(publishedUrl).pathname).toMatch(/^\/d\/e2e-doc-\d+-[0-9a-f]{32,}$/);
