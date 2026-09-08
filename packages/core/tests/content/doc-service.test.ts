@@ -434,7 +434,7 @@ describe('visibility modes', () => {
     expect(await getPublishedDoc(first)).toBeNull();
     expect(await getPublishedDoc(second)).not.toBeNull();
     expect(rotated.actions[0]?.action).toBe('update');
-    expect(rotated.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true });
+    expect(rotated.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true, revoked: false });
   });
 
   it('mints a members link that only a signed-in workspace member can open', async () => {
@@ -923,7 +923,7 @@ describe('a restricted doc reaches the people it is shared with', () => {
     expect(reach).not.toContain(scopes.organization(workspace.organizationId));
   });
 
-  it('addresses a team grant at the team', async () => {
+  it('addresses a team grant at its actual readers', async () => {
     const { doc } = await createDoc(workspace.admin, {
       title: 'Board deck',
       content: 'Numbers.',
@@ -933,7 +933,7 @@ describe('a restricted doc reaches the people it is shared with', () => {
       grants: [{ subjectType: 'team', subjectId: workspace.teamId, level: 'read' }],
     });
     expect(saved.actions[0]?.scopes).toContain(scopes.user(workspace.admin.userId));
-    expect(saved.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true });
+    expect(saved.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true, revoked: false });
   });
 });
 
