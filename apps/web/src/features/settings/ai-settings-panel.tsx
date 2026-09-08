@@ -106,7 +106,11 @@ function AiFeedbackBanner({
 }) {
   if (statusMessage !== null) {
     return (
-      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-400 text-xs">
+      <div
+        role="status"
+        aria-live="polite"
+        className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-400 text-xs"
+      >
         {statusMessage}
       </div>
     );
@@ -114,7 +118,10 @@ function AiFeedbackBanner({
 
   if (errorMessage !== null) {
     return (
-      <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-rose-400 text-xs">
+      <div
+        role="alert"
+        className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-rose-400 text-xs"
+      >
         {errorMessage}
       </div>
     );
@@ -126,7 +133,11 @@ function AiFeedbackBanner({
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
       : 'border-rose-500/30 bg-rose-500/10 text-rose-400';
     return (
-      <div className={`rounded-md border px-3 py-2 text-xs ${borderClass}`}>
+      <div
+        role={isOk ? 'status' : 'alert'}
+        aria-live={isOk ? 'polite' : undefined}
+        className={`rounded-md border px-3 py-2 text-xs ${borderClass}`}
+      >
         {isOk ? (
           <span>
             Connection successful ({testResult.latencyMs}ms): &quot;{testResult.message}&quot;

@@ -1,26 +1,12 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 import { DomainError, isDomainError } from '@orbit/shared/errors';
-import { z } from 'zod';
+import { type AiCredentialEnvelope, aiCredentialEnvelopeSchema } from '@orbit/shared/validators';
 
 const ALGORITHM = 'aes-256-gcm';
 const INFO = 'orbit/ai/api-key/v1';
 const EMPTY_SALT = '';
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
-
-const base64UrlSchema = z
-  .string()
-  .min(1)
-  .regex(/^[A-Za-z0-9_-]+$/);
-
-const aiCredentialEnvelopeSchema = z.object({
-  version: z.literal(1),
-  iv: base64UrlSchema.length(16),
-  ciphertext: base64UrlSchema,
-  tag: base64UrlSchema.length(22),
-});
-
-export type AiCredentialEnvelope = z.infer<typeof aiCredentialEnvelopeSchema>;
 
 export interface AiCredentialIdentity {
   readonly organizationId: string;

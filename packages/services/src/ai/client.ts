@@ -1,7 +1,11 @@
 import { and, db, eq, schema } from '@orbit/db';
 import { DomainError } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { aiProviderConfigSchema } from '@orbit/shared/validators';
+import {
+  aiProviderConfigSchema,
+  anthropicMessagesResponseSchema,
+  openAiCompletionResponseSchema,
+} from '@orbit/shared/validators';
 import { decryptAiApiKey } from './credentials.ts';
 import type {
   AiCompletionOptions,
@@ -100,17 +104,17 @@ async function resolveTarget(options: AiCompletionOptions): Promise<ResolvedClie
     throw new AiDisabledError();
   }
 
-  const decryptedKey = decryptAiApiKey(row.credentials, {
+  const apiKey = decryptAiApiKey(row.credentials, {
     organizationId: options.organizationId,
   });
 
-  if (decryptedKey === null || decryptedKey.length === 0) {
-    throw new AiDisabledError('AI API key is missing or invalid.');
+  if (apiKey === null || apiKey.length === 0) {
+    throw new AiDisabledError();
   }
 
   return {
     config: parsedConfig.data,
-    apiKey: decryptedKey,
+    apiKey,
     organizationId: options.organizationId,
   };
 }
@@ -166,6 +170,7 @@ async function callOpenAiCompatible(
       },
       body: JSON.stringify(body),
       signal,
+      redirect: 'manual',
     });
   } catch (error) {
     throw new AiClientError(
@@ -184,24 +189,18 @@ async function callOpenAiCompatible(
     );
   }
 
-  const json = (await response.json()) as {
-    choices?: readonly { message?: { content?: string } }[];
-    usage?: {
-      prompt_tokens?: number;
-      completion_tokens?: number;
-      total_tokens?: number;
-    };
-  };
+  const rawJson: unknown = await response.json().catch(() => ({}));
+  const parsed = openAiCompletionResponseSchema.safeParse(rawJson);
 
-  const text = json.choices?.[0]?.message?.content ?? '';
+  const text = parsed.success ? (parsed.data.choices?.[0]?.message?.content ?? '') : '';
   const usage: AiTokenUsage | undefined =
-    json.usage === undefined
-      ? undefined
-      : {
-          promptTokens: json.usage.prompt_tokens,
-          completionTokens: json.usage.completion_tokens,
-          totalTokens: json.usage.total_tokens,
-        };
+    parsed.success && parsed.data.usage !== undefined
+      ? {
+          promptTokens: parsed.data.usage.prompt_tokens,
+          completionTokens: parsed.data.usage.completion_tokens,
+          totalTokens: parsed.data.usage.total_tokens,
+        }
+      : undefined;
 
   return { text, usage };
 }
@@ -232,6 +231,7 @@ async function callAnthropic(
       },
       body: JSON.stringify(body),
       signal,
+      redirect: 'manual',
     });
   } catch (error) {
     throw new AiClientError('Failed to connect to Anthropic endpoint.', error, target.apiKey);
@@ -246,21 +246,18 @@ async function callAnthropic(
     );
   }
 
-  const json = (await response.json()) as {
-    content?: readonly { type?: string; text?: string }[];
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-    };
-  };
+  const rawJson: unknown = await response.json().catch(() => ({}));
+  const parsed = anthropicMessagesResponseSchema.safeParse(rawJson);
 
-  const textBlocks = (json.content ?? [])
-    .filter((block) => block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text as string);
+  const textBlocks = parsed.success
+    ? (parsed.data.content ?? [])
+        .filter((block) => block.type === 'text' && typeof block.text === 'string')
+        .map((block) => block.text as string)
+    : [];
   const text = textBlocks.join('');
 
-  const inputTokens = json.usage?.input_tokens;
-  const outputTokens = json.usage?.output_tokens;
+  const inputTokens = parsed.success ? parsed.data.usage?.input_tokens : undefined;
+  const outputTokens = parsed.success ? parsed.data.usage?.output_tokens : undefined;
   const totalTokens =
     inputTokens === undefined && outputTokens === undefined
       ? undefined

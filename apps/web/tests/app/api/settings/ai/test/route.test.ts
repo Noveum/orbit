@@ -18,6 +18,7 @@ let memberUser: Workspace['adminUser'];
 mockSession(() => session);
 
 const { POST } = await import('../../../../../../src/app/api/settings/ai/test/route.ts');
+const { POST: SAVE_POST } = await import('../../../../../../src/app/api/settings/ai/route.ts');
 
 function signIn(user: Workspace['adminUser']): void {
   session = { user, session: { activeOrganizationId: workspace.organizationId } };
@@ -59,8 +60,11 @@ describe('AI test connection API', () => {
     expect(response.status).toBe(403);
   });
 
-  it('tests connection successfully and returns model ping response', async () => {
-    globalThis.fetch = (() => {
+  it('tests connection successfully and returns model ping response with explicit key', async () => {
+    let capturedAuth = '';
+
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedAuth = String((init?.headers as Record<string, string>)?.['authorization']);
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -88,7 +92,55 @@ describe('AI test connection API', () => {
     const body = (await response.json()) as { ok: boolean; message: string; latencyMs: number };
     expect(body.ok).toBe(true);
     expect(body.message).toBe('pong');
-    expect(body.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(capturedAuth).toBe('Bearer sk-test-valid');
+  });
+
+  it('tests connection using stored credentials when no key is supplied', async () => {
+    let capturedAuth = '';
+
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedAuth = String((init?.headers as Record<string, string>)?.['authorization']);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'pong' } }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    }) as unknown as typeof fetch;
+
+    await SAVE_POST(
+      new Request('https://orbit.local/api/settings/ai', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o-mini',
+          apiKey: 'sk-saved-stored-key',
+          enabled: true,
+        }),
+      }),
+    );
+
+    const response = await POST(
+      new Request('https://orbit.local/api/settings/ai/test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o-mini',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; message: string };
+    expect(body.ok).toBe(true);
+    expect(body.message).toBe('pong');
+    expect(capturedAuth).toBe('Bearer sk-saved-stored-key');
   });
 
   it('handles connection failure without leaking the API key', async () => {
