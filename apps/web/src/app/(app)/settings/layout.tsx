@@ -5,7 +5,7 @@ import { apiContext } from '@/lib/api/handler.ts';
 import { passwordAuthEnabled } from '@/lib/auth/server.ts';
 
 export default async function SettingsLayout({ children }: { children: ReactNode }) {
-  let canManageAi = true;
+  let canManageAi: boolean;
   try {
     const { principal } = await apiContext();
     canManageAi = can(principal, 'ai:manage');

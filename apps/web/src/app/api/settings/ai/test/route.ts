@@ -2,13 +2,14 @@ import { and, db, eq, schema } from '@orbit/db';
 import { AiClientError, AiDisabledError, complete, decryptAiApiKey } from '@orbit/services/ai';
 import { validationFailed } from '@orbit/shared/errors';
 import { assertCan } from '@orbit/shared/policy';
-import { aiProviderConfigSchema, testAiConnectionSchema } from '@orbit/shared/validators';
+import {
+  aiProviderConfigSchema,
+  type TestAiConnection,
+  testAiConnectionSchema,
+} from '@orbit/shared/validators';
 import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
 
-async function resolveTestApiKey(
-  organizationId: string,
-  body: { readonly apiKey?: string; readonly baseUrl: string; readonly kind: string },
-): Promise<string> {
+async function resolveTestApiKey(organizationId: string, body: TestAiConnection): Promise<string> {
   if (body.apiKey !== undefined && body.apiKey.length > 0) {
     return body.apiKey;
   }
