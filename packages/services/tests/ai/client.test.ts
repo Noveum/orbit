@@ -115,7 +115,7 @@ describe('AI client complete()', () => {
     expect(json).not.toContain('sk-ant-secret-must-not-leak');
   });
 
-  it('rejects when provider is not configured and no direct config provided', () => {
-    expect(() => complete('Say hello', {})).toThrow(AiDisabledError);
+  it('rejects when provider is not configured and no direct config provided', async () => {
+    await expect(complete('Say hello', {})).rejects.toThrow(AiDisabledError);
   });
 });

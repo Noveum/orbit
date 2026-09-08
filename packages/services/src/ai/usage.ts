@@ -5,9 +5,9 @@ export async function loadAiUsage(organizationId: string): Promise<AiUsageSummar
   const [summary] = await db
     .select({
       totalCalls: count(),
-      promptTokens: sql<number>`coalesce(sum(${schema.aiUsage.promptTokens}), 0)::int`,
-      completionTokens: sql<number>`coalesce(sum(${schema.aiUsage.completionTokens}), 0)::int`,
-      totalTokens: sql<number>`coalesce(sum(${schema.aiUsage.totalTokens}), 0)::int`,
+      promptTokens: sql<number>`coalesce(sum(${schema.aiUsage.promptTokens}), 0)::double precision`,
+      completionTokens: sql<number>`coalesce(sum(${schema.aiUsage.completionTokens}), 0)::double precision`,
+      totalTokens: sql<number>`coalesce(sum(${schema.aiUsage.totalTokens}), 0)::double precision`,
     })
     .from(schema.aiUsage)
     .where(eq(schema.aiUsage.organizationId, organizationId));

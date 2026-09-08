@@ -29,6 +29,12 @@ describe('settings sections', () => {
     );
   });
 
+  it('omits AI provider section when canManageAi is false', () => {
+    const workspace = settingsGroupsFor(false, false).find((group) => group.id === 'workspace');
+
+    expect(workspace?.sections.some((section) => section.href === '/settings/ai')).toBe(false);
+  });
+
   it('lists every section in sidebar order for keyboard navigation', () => {
     expect(settingsSectionsFlat(false).map((section) => section.label)).toEqual([
       'Profile',
@@ -42,6 +48,7 @@ describe('settings sections', () => {
       'Workflow',
       'Notifications',
       'Integrations',
+      'AI provider',
       'MCP server',
     ]);
   });
@@ -52,6 +59,24 @@ describe('settings sections', () => {
       'Connected accounts',
       'Passkeys',
       'Password',
+      'Sessions',
+      'General',
+      'Members',
+      'Teams',
+      'Labels',
+      'Workflow',
+      'Notifications',
+      'Integrations',
+      'AI provider',
+      'MCP server',
+    ]);
+  });
+
+  it('omits AI provider from flat sections when canManageAi is false', () => {
+    expect(settingsSectionsFlat(false, false).map((section) => section.label)).toEqual([
+      'Profile',
+      'Connected accounts',
+      'Passkeys',
       'Sessions',
       'General',
       'Members',

@@ -1,7 +1,7 @@
 import { and, db, eq, schema } from '@orbit/db';
-import type { Principal } from '@orbit/shared/policy';
+import { can, type Principal } from '@orbit/shared/policy';
 import { aiProviderConfigSchema } from '@orbit/shared/validators';
-import { hasAiApiKey } from './credentials.ts';
+import { decryptAiApiKey, hasAiApiKey } from './credentials.ts';
 
 export interface AiStatus {
   readonly configured: boolean;
@@ -54,9 +54,19 @@ export async function loadAiProviderStatus(organizationId: string): Promise<AiSt
 
   const hasKey = hasAiApiKey(row.credentials);
 
+  let keyValid = false;
+  if (hasKey) {
+    try {
+      const key = decryptAiApiKey(row.credentials, { organizationId });
+      keyValid = key !== null && key.length > 0;
+    } catch {
+      keyValid = false;
+    }
+  }
+
   return {
     configured: true,
-    enabled: parsedConfig.data.enabled && hasKey,
+    enabled: parsedConfig.data.enabled && keyValid,
     kind: parsedConfig.data.kind,
     baseUrl: parsedConfig.data.baseUrl,
     model: parsedConfig.data.model,
@@ -73,7 +83,7 @@ export async function aiAdminErrorNotice(
   principal: Principal,
   probeError?: string,
 ): Promise<string | null> {
-  if (principal.role !== 'admin') return null;
+  if (!can(principal, 'ai:manage')) return null;
   if (probeError === undefined || probeError.length === 0) return null;
   const status = await loadAiProviderStatus(principal.organizationId);
   if (!(status.configured && status.enabled)) return null;
