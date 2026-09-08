@@ -2,7 +2,10 @@ import type { Database, Transaction } from '@orbit/db';
 import { PULL_REQUEST_NOTIFICATION_TYPES } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { sql } from 'drizzle-orm';
-import { lockNotificationSubjectAccess } from './conversation-access.ts';
+import {
+  lockNotificationSubjectAccess,
+  notificationSubjectAccessMap,
+} from './conversation-access.ts';
 import {
   type NotificationConversationIdentity,
   resolveNotificationConversation,
@@ -2878,31 +2881,41 @@ export async function verifyNotificationConversationBackfill(
       sql`select id from organization where id = ${organizationId}`,
     );
     if (existing.length === 0) throw new Error(`Organization ${organizationId} does not exist.`);
-    const drift = await database.transaction(async (tx) => {
-      const drift = await verifyOrganizationBackfill(tx, organizationId, now);
-      const conversations = await tx.execute<{
-        subjectType: string;
-        subjectId: string;
-        userId: string;
-        hidden: boolean;
-      }>(sql`
-        select subject_type as "subjectType", subject_id as "subjectId", user_id as "userId", access_hidden_at is not null as hidden
-        from notification_conversation where organization_id = ${organizationId} order by subject_type, subject_id, user_id
+    const drift = await database.transaction(async (tx) =>
+      verifyOrganizationBackfill(tx, organizationId, now),
+    );
+    const conversations = await database.execute<{
+      id: string;
+      subjectType: string;
+      subjectId: string;
+      userId: string;
+      hidden: boolean;
+    }>(sql`
+        select id, subject_type as "subjectType", subject_id as "subjectId", user_id as "userId", access_hidden_at is not null as hidden
+        from notification_conversation where organization_id = ${organizationId} order by user_id, id
       `);
-      let accessStateDrift = 0;
-      for (const row of conversations) {
-        const allowed = await lockNotificationSubjectAccess(tx, {
-          organizationId,
-          userId: row.userId,
-          subjectType: row.subjectType,
-          subjectId: row.subjectId,
-        });
-        if (allowed === row.hidden) accessStateDrift += 1;
-      }
-      return { ...drift, accessStateDrift };
-    });
-    organizations.push({ organizationId, drift });
-    totals = addBackfillDrift(totals, drift);
+    let accessStateDrift = 0;
+    for (let offset = 0; offset < conversations.length; ) {
+      const userId = conversations[offset]?.userId;
+      if (userId === undefined) break;
+      const batch = conversations.slice(offset, offset + 50).filter((row) => row.userId === userId);
+      accessStateDrift += await database.transaction(async (tx) => {
+        await tx.execute(sql`set local lock_timeout = '2s'`);
+        await tx.execute(sql`set local statement_timeout = '10s'`);
+        const access = await notificationSubjectAccessMap(tx, organizationId, userId, batch);
+        const current = await tx.execute<{ id: string; hidden: boolean }>(sql`
+          select id, access_hidden_at is not null as hidden
+          from notification_conversation
+          where organization_id = ${organizationId} and user_id = ${userId}
+            and id in (${sqlList(batch.map((row) => row.id))})
+        `);
+        return current.filter((row) => access.get(row.id) === row.hidden).length;
+      });
+      offset += batch.length;
+    }
+    const verified = { ...drift, accessStateDrift };
+    organizations.push({ organizationId, drift: verified });
+    totals = addBackfillDrift(totals, verified);
   }
   return { ok: driftIsZero(totals), organizations, totals };
 }

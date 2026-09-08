@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { db } from '@orbit/db';
+import { db, pool, schema } from '@orbit/db';
 import {
   integration,
   notification,
@@ -14,6 +14,7 @@ import {
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import {
   type ConversationBackfillBatchResult,
   type ConversationBackfillPhase,
@@ -75,6 +76,69 @@ function delivery(
 }
 
 describe('conversation backfill planning', () => {
+  it('verifies historical access without one query sequence per conversation', async () => {
+    const suffix = randomUUIDv7();
+    const organizationId = `org_verify_${suffix}`;
+    const userId = `usr_verify_${suffix}`;
+    await db.insert(organization).values({ id: organizationId, name: 'Verifier', slug: suffix });
+    await db
+      .insert(user)
+      .values({ id: userId, name: 'Verifier', handle: suffix, email: `${suffix}@orbit.local` });
+    try {
+      await db.insert(notification).values(
+        Array.from({ length: 55 }, (_, index) => ({
+          id: `ntf_verify_${suffix}_${index}`,
+          organizationId,
+          userId,
+          type: 'comment_created',
+          reason: 'commented' as const,
+          actorId: userId,
+          actorName: 'Verifier',
+          entityType: 'issue',
+          entityId: `missing_${index}`,
+          title: 'Historical comment',
+          body: '',
+          url: `/issues/missing_${index}`,
+          deliveredChannels: ['inbox'],
+          createdAt: january,
+        })),
+      );
+      await runNotificationConversationBackfill(db, { organizationIds: [organizationId] });
+      let queries = 0;
+      const observed = drizzle(pool, {
+        schema,
+        logger: {
+          logQuery() {
+            queries += 1;
+          },
+        },
+      });
+      const result = await verifyNotificationConversationBackfill(observed, {
+        organizationIds: [organizationId],
+      });
+      expect(result.ok).toBe(true);
+      expect(queries).toBeLessThan(50);
+      const [conversation] = await db
+        .select({ id: notificationConversation.id })
+        .from(notificationConversation)
+        .where(eq(notificationConversation.organizationId, organizationId))
+        .limit(1);
+      if (conversation === undefined) throw new Error('Missing backfilled conversation');
+      await db
+        .update(notificationConversation)
+        .set({ accessHiddenAt: null })
+        .where(eq(notificationConversation.id, conversation.id));
+      const drift = await verifyNotificationConversationBackfill(observed, {
+        organizationIds: [organizationId],
+      });
+      expect(drift.ok).toBe(false);
+      expect(drift.totals.accessStateDrift).toBe(1);
+    } finally {
+      await db.delete(organization).where(eq(organization.id, organizationId));
+      await db.delete(user).where(eq(user.id, userId));
+    }
+  });
+
   it('bounds concurrent source work and verifies all historical rows after completion', async () => {
     const suffix = randomUUIDv7();
     const organizationId = `org_parallel_${suffix}`;
