@@ -237,6 +237,39 @@ describe('subscribe is the authorization gate', () => {
 });
 
 describe('delta fan out', () => {
+  it('turns cached legacy notification bodies into content-free invalidations', async () => {
+    const hub = await newHub();
+    try {
+      const recipient = await connect(hub, home.readerUserId, home.organizationId);
+      await subscribe(recipient, [`user:${home.readerUserId}`]);
+      await publishDelta(
+        action({
+          model: 'notification',
+          modelId: 'notification_cached_before_revoke',
+          scopes: [`user:${home.readerUserId}`],
+          data: {
+            id: 'notification_cached_before_revoke',
+            title: 'Restricted document title',
+            body: 'Private comment cached before access was revoked',
+            bodyHtml: '<p>Private comment</p>',
+            url: '/docs/restricted',
+            syncId: 10,
+          },
+        }),
+      );
+      await waitFor(
+        () => recipient.socket.frames('delta').length > 0,
+        'a notification invalidation',
+      );
+      expect(recipient.socket.last('delta')?.actions[0]?.data).toEqual({
+        id: 'notification_cached_before_revoke',
+        syncId: 10,
+      });
+    } finally {
+      await hub.close();
+    }
+  });
+
   it('reaches only the connections whose scopes and workspace both match', async () => {
     const hub = await newHub();
     try {

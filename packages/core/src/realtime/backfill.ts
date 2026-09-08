@@ -682,7 +682,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       syncId: row.syncId,
       scopes: [scopes.user(row.userId)],
       action: row.dismissedAt === null ? 'update' : 'delete',
-      data: row,
+      data: { id: row.id, syncId: row.syncId, visible: row.dismissedAt === null },
     })),
 
   notification_conversation: async (executor, principal, since, limit) => {

@@ -18,6 +18,7 @@ import {
   snooze,
 } from '../../src/notifications/index.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+import { seedReadableNotificationIssues } from './policy-fixture.ts';
 
 interface Fixture {
   readonly organizationId: string;
@@ -49,6 +50,13 @@ async function seed(tx: TestTransaction): Promise<Fixture> {
       handle: `recipient-${suffix.toLowerCase()}`,
     },
   ]);
+  await seedReadableNotificationIssues(
+    tx,
+    organizationId,
+    actorId,
+    [actorId, recipientId],
+    ['iss_conversation'],
+  );
   return { organizationId, actorId, recipientId };
 }
 

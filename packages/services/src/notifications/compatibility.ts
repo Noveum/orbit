@@ -547,7 +547,14 @@ function mutationTargetPredicate(input: LegacyNotificationMutationInput) {
     isNull(notification.deduplicatedIntoNotificationId),
   );
   if (input.kind === 'read_all') {
-    return and(base, isNull(notification.readAt), isNull(notification.dismissedAt));
+    return and(
+      base,
+      isNull(notification.readAt),
+      isNull(notification.dismissedAt),
+      input.notificationIds === undefined
+        ? undefined
+        : inArray(notification.id, [...input.notificationIds]),
+    );
   }
   const ids = input.notificationIds ?? [];
   if (ids.length === 0) return and(base, eq(notification.id, ''));

@@ -80,34 +80,30 @@ describe('loadIntegrationSettings', () => {
   it('exposes delivery diagnostics with serialized timestamps only to workspace managers', async () => {
     process.env['SLACK_ENABLED'] = 'true';
     const notificationId = randomUUIDv7();
-    await db
-      .insert(schema.notification)
-      .values({
-        id: notificationId,
-        organizationId: workspace.organizationId,
-        userId: workspace.adminUser.id,
-        type: 'mention',
-        reason: 'mentioned',
-        actorType: 'system',
-        actorId: 'orbit',
-        actorName: 'Orbit',
-        entityType: 'project',
-        entityId: 'project-health',
-        title: 'Review requested',
-        body: 'Please review.',
-        url: '/inbox',
-      });
-    await db
-      .insert(schema.notificationDelivery)
-      .values({
-        id: randomUUIDv7(),
-        notificationId,
-        organizationId: workspace.organizationId,
-        userId: workspace.adminUser.id,
-        channel: 'slack_dm',
-        status: 'ambiguous',
-        createdAt: new Date('2026-09-08T00:00:00.000Z'),
-      });
+    await db.insert(schema.notification).values({
+      id: notificationId,
+      organizationId: workspace.organizationId,
+      userId: workspace.adminUser.id,
+      type: 'mention',
+      reason: 'mentioned',
+      actorType: 'system',
+      actorId: 'orbit',
+      actorName: 'Orbit',
+      entityType: 'project',
+      entityId: 'project-health',
+      title: 'Review requested',
+      body: 'Please review.',
+      url: '/inbox',
+    });
+    await db.insert(schema.notificationDelivery).values({
+      id: randomUUIDv7(),
+      notificationId,
+      organizationId: workspace.organizationId,
+      userId: workspace.adminUser.id,
+      channel: 'slack_dm',
+      status: 'ambiguous',
+      createdAt: new Date('2026-09-08T00:00:00.000Z'),
+    });
     const settings = await loadIntegrationSettings(workspace.admin);
     expect(settings.slack?.deliveryHealth).toEqual([
       { channel: 'slack_dm', status: 'ambiguous', count: 1, oldestAt: '2026-09-08T00:00:00.000Z' },

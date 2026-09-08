@@ -30,7 +30,6 @@ import { notFound } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { renderMarkdown } from '../markdown/index.ts';
 import { hasSlackBotToken } from '../slack/credentials.ts';
 import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
 import { slackFeatureEnabled } from '../slack/feature.ts';
@@ -44,6 +43,10 @@ import {
 } from './compatibility.ts';
 import { notificationConversationActions } from './conversation-deltas.ts';
 import { type ConversationIdentity, resolveNotificationConversation } from './conversations.ts';
+import {
+  readableLegacyNotificationIds,
+  readableLegacyNotificationPredicate,
+} from './legacy-access.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -1022,25 +1025,8 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
     modelId: row.id,
     data: {
       id: row.id,
-      organizationId: row.organizationId,
-      userId: row.userId,
-      type: row.type,
-      reason: row.reason,
-      actorType: row.actorType,
-      actorId: row.actorId,
-      actorName: row.actorName,
-      entityType: row.entityType,
-      entityId: row.entityId,
-      title: row.title,
-      body: row.body,
-      bodyHtml: renderMarkdown(row.body),
-      url: row.url,
-      externalUrl: row.externalUrl,
-      readAt: row.readAt?.toISOString() ?? null,
-      snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
-      deliveredChannels: row.deliveredChannels,
       syncId: row.syncId,
-      createdAt: row.createdAt.toISOString(),
+      visible: row.dismissedAt === null,
     },
     actor: plan.event.actor,
     at: row.createdAt.toISOString(),
@@ -1124,7 +1110,12 @@ export async function markRead(
     kind: 'read',
     userId: params.userId,
     organizationId: params.organizationId,
-    notificationIds: params.notificationIds,
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+      params.notificationIds,
+    ),
     read: params.read,
     now: new Date(),
   });
@@ -1145,6 +1136,11 @@ export async function markAllRead(
   }
   const updated = await mutateLegacyNotifications(database, {
     kind: 'read_all',
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+    ),
     userId: params.userId,
     organizationId: params.organizationId,
     now: new Date(),
@@ -1171,7 +1167,12 @@ export async function snooze(
     kind: 'snooze',
     userId: params.userId,
     organizationId: params.organizationId,
-    notificationIds: [params.notificationId],
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+      [params.notificationId],
+    ),
     until: params.until,
     now: new Date(),
   });
@@ -1198,7 +1199,12 @@ export async function dismissNotification(
     kind: 'dismiss',
     userId: params.userId,
     organizationId: params.organizationId,
-    notificationIds: [params.notificationId],
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+      [params.notificationId],
+    ),
     now: new Date(),
   });
   const row = updated[0];
@@ -1226,7 +1232,12 @@ export async function listInbox(
   input: z.input<typeof listInboxSchema>,
 ): Promise<InboxPage> {
   const params = listInboxSchema.parse(input);
+  if ('$client' in database) return await database.transaction((tx) => listInbox(tx, params));
+  const access = readableLegacyNotificationPredicate(
+    await readableLegacyNotificationIds(database, params.organizationId, params.userId),
+  );
   const filters = [
+    access,
     eq(notification.userId, params.userId),
     eq(notification.organizationId, params.organizationId),
     compatibleInboxSurface(),
@@ -1258,6 +1269,11 @@ export async function unreadCount(
   organizationId: string,
   at: Date = new Date(),
 ): Promise<number> {
+  if ('$client' in database)
+    return await database.transaction((tx) => unreadCount(tx, userId, organizationId, at));
+  const access = readableLegacyNotificationPredicate(
+    await readableLegacyNotificationIds(database, organizationId, userId),
+  );
   const rows = await database
     .select({ value: count() })
     .from(notification)
@@ -1265,6 +1281,7 @@ export async function unreadCount(
       and(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
+        access,
         isNull(notification.readAt),
         compatibleInboxSurface(),
         isNull(notification.deduplicatedIntoNotificationId),
@@ -1287,6 +1304,11 @@ export async function unreadCounters(
   organizationId: string,
   at: Date = new Date(),
 ): Promise<UnreadCounters> {
+  if ('$client' in database)
+    return await database.transaction((tx) => unreadCounters(tx, userId, organizationId, at));
+  const access = readableLegacyNotificationPredicate(
+    await readableLegacyNotificationIds(database, organizationId, userId),
+  );
   const rows = await database
     .select({ type: notification.type, value: count() })
     .from(notification)
@@ -1294,6 +1316,7 @@ export async function unreadCounters(
       and(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
+        access,
         isNull(notification.readAt),
         compatibleInboxSurface(),
         isNull(notification.deduplicatedIntoNotificationId),

@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
+import { updateDoc } from '@orbit/core';
 import {
   addMember,
   connect,
@@ -158,6 +159,24 @@ describe('mark_notification_read', () => {
 });
 
 describe('list_notifications on docs', () => {
+  it('withholds notification text and document context after access is revoked', async () => {
+    const created = await admin.result('create_doc', {
+      title: 'Revocable confidential roadmap',
+      content: 'body',
+    });
+    const docId = (created['doc'] as { id: string }).id;
+    await admin.result('comment_on_doc', {
+      doc: docId,
+      body: `@${agentHandle} confidential roadmap comment`,
+    });
+    const before = await agent.result('list_notifications', {});
+    expect(JSON.stringify(before)).toContain('confidential roadmap comment');
+    await updateDoc(workspace.admin, docId, { visibility: 'private' });
+    const after = await agent.result('list_notifications', {});
+    expect(JSON.stringify(after)).not.toContain('confidential roadmap comment');
+    expect(JSON.stringify(after)).not.toContain('Revocable confidential roadmap');
+  });
+
   it('resolves the doc for a mention in a doc comment', async () => {
     const doc = await admin.result('create_doc', { title: 'RBAC permissions', content: 'body' });
     const docId = (doc['doc'] as { id: string }).id;

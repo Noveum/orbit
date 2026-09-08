@@ -18,6 +18,7 @@ mock.module('@orbit/realtime-client/react', () => ({
   ...realtimeReact,
   useScopeSubscription: () => undefined,
   useDeltaHandler: () => undefined,
+  useResumeHandler: () => undefined,
 }));
 
 const STUBBED = {

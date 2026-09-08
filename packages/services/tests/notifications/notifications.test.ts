@@ -35,6 +35,7 @@ import {
 } from '../../src/notifications/index.ts';
 import { slackFeatureEnabled } from '../../src/slack/feature.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+import { seedReadableNotificationIssues } from './policy-fixture.ts';
 
 const previousSlackEnabled = process.env['SLACK_ENABLED'];
 
@@ -54,7 +55,7 @@ interface Fixture {
   readonly graceId: string;
 }
 
-async function seed(tx: TestTransaction, timezone = 'UTC'): Promise<Fixture> {
+async function seed(tx: TestTransaction, timezone = 'UTC', seedPolicy = true): Promise<Fixture> {
   const suffix = randomUUIDv7();
   const organizationId = `org_${suffix}`;
   await tx.insert(organization).values({
@@ -70,6 +71,26 @@ async function seed(tx: TestTransaction, timezone = 'UTC'): Promise<Fixture> {
     timezone,
   }));
   await tx.insert(user).values(people);
+  if (seedPolicy)
+    await seedReadableNotificationIssues(
+      tx,
+      organizationId,
+      `usr_actor_${suffix}`,
+      people.map((person) => person.id),
+      [
+        'iss_0',
+        'iss_1',
+        'iss_2',
+        'iss_3',
+        'iss_4',
+        'iss_5',
+        'iss_a',
+        'iss_b',
+        'iss_c',
+        'iss_d',
+        'iss_fresh',
+      ],
+    );
   return {
     organizationId,
     actorId: `usr_actor_${suffix}`,
@@ -505,7 +526,7 @@ describe('notifyMany', () => {
   it('rejects a notification source from another organization', async () => {
     await withRollback(async (tx) => {
       const sourceWorkspace = await seed(tx);
-      const recipientWorkspace = await seed(tx);
+      const recipientWorkspace = await seed(tx, 'UTC', false);
       const sourceEventId = `nse_${randomUUIDv7()}`;
       await tx.insert(notificationSourceEvent).values({
         id: sourceEventId,
@@ -541,7 +562,7 @@ describe('notifyMany', () => {
   it('rejects a provider integration from another organization', async () => {
     await withRollback(async (tx) => {
       const sourceWorkspace = await seed(tx);
-      const integrationWorkspace = await seed(tx);
+      const integrationWorkspace = await seed(tx, 'UTC', false);
       await seedSlackDmConnection(tx, integrationWorkspace, { mapped: false });
       const [foreignIntegration] = await tx
         .select({ id: integration.id })
@@ -983,7 +1004,10 @@ describe('notifyMany', () => {
         expect(action.model).toBe('notification');
         expect(action.action).toBe('insert');
         expect(action.syncId).toBeGreaterThan(0);
-        expect(action.scopes).toContain(`user:${action.data['userId'] as string}`);
+        expect(action.scopes).toContain(
+          `user:${outcome.notifications.find((row) => row.id === action.modelId)?.userId}`,
+        );
+        expect(Object.keys(action.data).sort()).toEqual(['id', 'syncId', 'visible']);
       }
       const rows = await tx
         .select()
@@ -1003,9 +1027,13 @@ describe('notifyMany', () => {
       const eventActions = outcome.actions.filter((action) => action.model === 'notification');
       expect(eventActions).toHaveLength(2);
       for (const action of eventActions) {
-        expect(action.scopes).toEqual([`user:${action.data['userId'] as string}`]);
+        expect(action.scopes).toEqual([
+          `user:${outcome.notifications.find((row) => row.id === action.modelId)?.userId}`,
+        ]);
       }
-      const recipients = eventActions.map((action) => action.data['userId']);
+      const recipients = eventActions.map(
+        (action) => outcome.notifications.find((row) => row.id === action.modelId)?.userId,
+      );
       expect(new Set(recipients)).toEqual(new Set([fixture.adaId, fixture.graceId]));
     });
   });
@@ -1017,7 +1045,7 @@ describe('notifyMany', () => {
         eventFor(fixture, { type: 'mention', reason: 'mentioned', userIds: [fixture.adaId] }),
       ]);
       expect(outcome.notifications[0]?.reason).toBe('mentioned');
-      expect(outcome.actions[0]?.data['reason']).toBe('mentioned');
+      expect(outcome.actions[0]?.data['reason']).toBeUndefined();
     });
   });
 
@@ -1034,7 +1062,7 @@ describe('notifyMany', () => {
 
       expect(stored['url']).toBe('/issue/ORB-1');
       expect(stored['externalUrl']).toBe('https://github.com/acme/web/pull/7');
-      expect(outcome.actions[0]?.data['externalUrl']).toBe('https://github.com/acme/web/pull/7');
+      expect(outcome.actions[0]?.data['externalUrl']).toBeUndefined();
     });
   });
 
@@ -1138,7 +1166,7 @@ describe('notifyMany', () => {
       expect(ada?.deliveredChannels).toEqual(['inbox']);
       expect(
         outcome.actions.find((action) => action.modelId === ada?.id)?.data['deliveredChannels'],
-      ).toEqual(['inbox']);
+      ).toBeUndefined();
     });
   });
 

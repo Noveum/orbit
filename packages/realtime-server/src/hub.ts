@@ -245,7 +245,15 @@ function parseDeltaActions(payload: string): SyncAction[] | null {
       logger.warn('discarded malformed delta action', { channel: REDIS_DELTA_CHANNEL });
       continue;
     }
-    actions.push(parsed.data);
+    const action = parsed.data;
+    actions.push(
+      action.model === 'notification'
+        ? {
+            ...action,
+            data: { id: action.modelId, syncId: action.syncId },
+          }
+        : action,
+    );
   }
   return actions;
 }

@@ -1,11 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { createIssue } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
+import { notificationActions } from '../../../../src/app/api/notifications/deltas.ts';
 import { mockSession } from '../../../../tests-support.ts';
 
 let workspace: Workspace;
+let issueId: string;
 
 interface Signed {
   user: { id: string; name: string; email: string };
@@ -58,7 +61,7 @@ async function seed(count: number): Promise<void> {
       actorId: workspace.admin.userId,
       actorName: 'Someone',
       entityType: 'issue',
-      entityId: `issue_${index}`,
+      entityId: issueId,
       title: `Notification ${String(index).padStart(3, '0')}`,
       body: '',
       url: `/issue/ENG-${index}`,
@@ -78,6 +81,11 @@ async function get(url: string): Promise<Response> {
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace();
+  const created = await createIssue(workspace.admin, {
+    title: 'Notification subject',
+    teamId: workspace.teamId,
+  });
+  issueId = created.issue.id;
 });
 
 beforeEach(async () => {
@@ -86,6 +94,13 @@ beforeEach(async () => {
 });
 
 describe('GET /api/notifications', () => {
+  it('publishes only identifiers and visibility instead of notification content', async () => {
+    await seed(1);
+    const rows = await db.select().from(schema.notification);
+    const action = notificationActions(workspace.admin, 'Admin', 'update', rows)[0];
+    expect(action?.data).toEqual({ id: rows[0]?.id, syncId: 0, visible: true });
+    expect(JSON.stringify(action?.data)).not.toContain('Notification');
+  });
   it('hands back a page and the cursor that follows it', async () => {
     await seed(60);
 

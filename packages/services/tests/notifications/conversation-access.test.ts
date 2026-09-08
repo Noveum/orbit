@@ -11,6 +11,13 @@ import {
   verifyNotificationConversationBackfill,
 } from '../../src/notifications/conversation-backfill.ts';
 import { wakeDueNotificationConversations } from '../../src/notifications/conversation-snooze.ts';
+import {
+  listInbox,
+  markAllRead,
+  markRead,
+  snooze,
+  unreadCounters,
+} from '../../src/notifications/index.ts';
 
 async function fixture(
   run: (data: {
@@ -118,6 +125,63 @@ it('hides restricted history, restores it after an exact grant, and keeps shared
     ).toBe(false);
     await db.delete(schema.member).where(eq(schema.member.userId, userId));
     expect(await check()).toBe(false);
+  });
+});
+
+it('enforces revoked document access on legacy reads, counters, and mutations', async () => {
+  await fixture(async ({ organizationId, userId, docId, conversationId }) => {
+    const ids = [randomUUIDv7(), randomUUIDv7()];
+    await db.insert(schema.notification).values(
+      ids.map((id, index) => ({
+        id,
+        organizationId,
+        userId,
+        type: 'comment_created',
+        actorType: 'system',
+        actorId: 'orbit',
+        actorName: 'Orbit',
+        entityType: 'doc',
+        entityId: docId,
+        title: 'Private document discussion',
+        body: 'Confidential content',
+        url: `/docs/${docId}`,
+        conversationId: index === 0 ? conversationId : null,
+        occurredAt: new Date(),
+        ingestedAt: new Date(),
+        ingestionSeq: index + 1,
+        surfaceInInbox: true,
+        deliveredChannels: ['inbox'],
+      })),
+    );
+    const input = { organizationId, userId };
+    expect((await listInbox(db, input)).items).toHaveLength(0);
+    expect(await unreadCounters(db, userId, organizationId)).toEqual({
+      total: 0,
+      mentions: 0,
+      activity: 0,
+    });
+    expect(await markRead(db, { ...input, notificationIds: ids })).toEqual([]);
+    expect(await markAllRead(db, input)).toBe(0);
+    await expect(
+      snooze(db, { ...input, notificationId: ids[0] ?? '', until: new Date(Date.now() + 60_000) }),
+    ).rejects.toThrow();
+    await db.insert(schema.docAccess).values({
+      id: randomUUIDv7(),
+      organizationId,
+      docId,
+      subjectType: 'user',
+      subjectId: userId,
+      level: 'read',
+    });
+    expect((await listInbox(db, { ...input, limit: 1 })).items).toHaveLength(1);
+    expect(await unreadCounters(db, userId, organizationId)).toEqual({
+      total: 2,
+      mentions: 0,
+      activity: 2,
+    });
+    expect(
+      (await markRead(db, { ...input, notificationIds: ids })).map((row) => row.id).sort(),
+    ).toEqual(ids.sort());
   });
 });
 

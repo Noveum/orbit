@@ -46,7 +46,7 @@ proof prevents the POST.
 ## Trust boundary
 
 `Vercel Preview` is a privileged default-branch workflow. It checks out
-`${{ github.sha }}`, which is the trusted base or default-branch commit for its
+the `github.sha` expression, which is the trusted base or default-branch commit for its
 three event types. It never selects, fetches, installs, caches, downloads an
 artifact from, builds, or executes pull request code. Dependency lifecycle
 scripts are disabled. The only operational command is

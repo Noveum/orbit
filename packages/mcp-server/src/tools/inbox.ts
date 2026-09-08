@@ -9,6 +9,7 @@ import {
   listInbox,
   markRead,
   notificationConversationActions,
+  notificationSubjectAccessMap,
 } from '@orbit/services/notifications';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
@@ -32,25 +33,45 @@ interface DocSummary {
   readonly title: string;
 }
 
-async function docIdsForComments(commentIds: readonly string[]): Promise<Map<string, string>> {
+async function docIdsForComments(
+  organizationId: string,
+  commentIds: readonly string[],
+): Promise<Map<string, string>> {
   if (commentIds.length === 0) return new Map();
   const rows = await db
     .select({ id: schema.docComment.id, docId: schema.docComment.docId })
     .from(schema.docComment)
-    .where(inArray(schema.docComment.id, [...commentIds]));
+    .where(
+      and(
+        eq(schema.docComment.organizationId, organizationId),
+        inArray(schema.docComment.id, [...commentIds]),
+      ),
+    );
   return new Map(rows.map((row) => [row.id, row.docId]));
 }
 
 async function docSummaries(
-  organizationId: string,
+  principal: Principal,
   docIds: readonly string[],
 ): Promise<Map<string, DocSummary>> {
   if (docIds.length === 0) return new Map();
-  const rows = await db
-    .select({ id: schema.doc.id, title: schema.doc.title })
-    .from(schema.doc)
-    .where(and(eq(schema.doc.organizationId, organizationId), inArray(schema.doc.id, [...docIds])));
-  return new Map(rows.map((row) => [row.id, { id: row.id, title: row.title }]));
+  return await db.transaction(async (tx) => {
+    const allowed = await notificationSubjectAccessMap(
+      tx,
+      principal.organizationId,
+      principal.userId,
+      docIds.map((id) => ({ id, subjectType: 'doc', subjectId: id })),
+    );
+    const ids = docIds.filter((id) => allowed.get(id) === true);
+    if (ids.length === 0) return new Map();
+    const rows = await tx
+      .select({ id: schema.doc.id, title: schema.doc.title })
+      .from(schema.doc)
+      .where(
+        and(eq(schema.doc.organizationId, principal.organizationId), inArray(schema.doc.id, ids)),
+      );
+    return new Map(rows.map((row) => [row.id, { id: row.id, title: row.title }]));
+  });
 }
 
 async function issueIdsForComments(
@@ -71,28 +92,41 @@ async function issueIdsForComments(
 }
 
 async function issueSummaries(
-  organizationId: string,
+  principal: Principal,
   issueIds: readonly string[],
 ): Promise<Map<string, IssueSummary>> {
   if (issueIds.length === 0) return new Map();
-  const rows = await db
-    .select({
-      id: schema.issue.id,
-      identifier: schema.issue.identifier,
-      title: schema.issue.title,
-      teamKey: schema.team.key,
-    })
-    .from(schema.issue)
-    .innerJoin(schema.team, eq(schema.team.id, schema.issue.teamId))
-    .where(
-      and(eq(schema.issue.organizationId, organizationId), inArray(schema.issue.id, [...issueIds])),
+  return await db.transaction(async (tx) => {
+    const allowed = await notificationSubjectAccessMap(
+      tx,
+      principal.organizationId,
+      principal.userId,
+      issueIds.map((id) => ({ id, subjectType: 'issue', subjectId: id })),
     );
-  return new Map(
-    rows.map((row) => [
-      row.id,
-      { identifier: row.identifier, title: row.title, teamKey: row.teamKey },
-    ]),
-  );
+    const ids = issueIds.filter((id) => allowed.get(id) === true);
+    if (ids.length === 0) return new Map();
+    const rows = await tx
+      .select({
+        id: schema.issue.id,
+        identifier: schema.issue.identifier,
+        title: schema.issue.title,
+        teamKey: schema.team.key,
+      })
+      .from(schema.issue)
+      .innerJoin(schema.team, eq(schema.team.id, schema.issue.teamId))
+      .where(
+        and(
+          eq(schema.issue.organizationId, principal.organizationId),
+          inArray(schema.issue.id, ids),
+        ),
+      );
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        { identifier: row.identifier, title: row.title, teamKey: row.teamKey },
+      ]),
+    );
+  });
 }
 
 export function registerInboxTools(server: McpServer, principal: Principal): void {
@@ -174,21 +208,21 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
       const docCommentIds = page.items
         .filter((item) => item.entityType === 'doc_comment')
         .map((item) => item.entityId);
-      const byDocComment = await docIdsForComments(docCommentIds);
+      const byDocComment = await docIdsForComments(principal.organizationId, docCommentIds);
 
       const docIds = page.items.flatMap((item) => {
         if (item.entityType === 'doc') return [item.entityId];
         const resolved = byDocComment.get(item.entityId);
         return resolved === undefined ? [] : [resolved];
       });
-      const byDoc = await docSummaries(principal.organizationId, docIds);
+      const byDoc = await docSummaries(principal, docIds);
 
       const issueIds = page.items.flatMap((item) => {
         if (item.entityType === 'issue') return [item.entityId];
         const resolved = byComment.get(item.entityId);
         return resolved === undefined ? [] : [resolved];
       });
-      const byIssue = await issueSummaries(principal.organizationId, issueIds);
+      const byIssue = await issueSummaries(principal, issueIds);
 
       return {
         notifications: page.items.map((item) => {

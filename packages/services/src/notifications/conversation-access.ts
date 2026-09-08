@@ -294,7 +294,7 @@ export async function refreshNotificationConversationAccess(
       schema.notificationConversation.subjectId,
       schema.notificationConversation.id,
     );
-  const accessible = await batchConversationAccess(tx, organizationId, userId, rows);
+  const accessible = await notificationSubjectAccessMap(tx, organizationId, userId, rows);
   await ensureAndLockInboxStates(tx, [{ organizationId, userId }], now);
   const changed: string[] = [];
   for (const allowed of [false, true]) {
@@ -337,7 +337,7 @@ async function normalizedSubjects(
   tx: Transaction,
   organizationId: string,
   userId: string,
-  rows: readonly AccessConversation[],
+  rows: readonly AccessSubject[],
 ): Promise<AccessSubject[]> {
   const legacyIds = rows
     .filter((row) => row.subjectType === 'legacy_notification')
@@ -389,8 +389,28 @@ async function normalizedSubjects(
           .orderBy(schema.docComment.id)
           .for('share');
   const docs = new Map(comments.map((row) => [row.id, row.docId]));
+  const issueCommentIds = resolved
+    .filter((row) => row.subjectType === 'comment')
+    .map((row) => row.subjectId);
+  const issueComments =
+    issueCommentIds.length === 0
+      ? []
+      : await tx
+          .select({ id: schema.comment.id, issueId: schema.comment.issueId })
+          .from(schema.comment)
+          .where(
+            and(
+              eq(schema.comment.organizationId, organizationId),
+              inArray(schema.comment.id, issueCommentIds),
+            ),
+          )
+          .orderBy(schema.comment.id)
+          .for('share');
+  const issues = new Map(issueComments.map((row) => [row.id, row.issueId]));
   return resolved.map((row) => {
     if (row.subjectType === 'task') return { ...row, subjectType: 'issue' };
+    if (row.subjectType === 'comment')
+      return { ...row, subjectType: 'issue', subjectId: issues.get(row.subjectId) ?? '' };
     if (row.subjectType !== 'doc_comment') return row;
     return { ...row, subjectType: 'doc', subjectId: docs.get(row.subjectId) ?? '' };
   });
@@ -525,11 +545,11 @@ function evaluateBatchSubjects(
   return bySubject;
 }
 
-async function batchConversationAccess(
+export async function notificationSubjectAccessMap(
   tx: Transaction,
   organizationId: string,
   userId: string,
-  rows: readonly AccessConversation[],
+  rows: readonly AccessSubject[],
 ): Promise<Map<string, boolean>> {
   if (rows.length === 0) return new Map();
   await tx.execute(

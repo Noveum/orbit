@@ -82,6 +82,9 @@ Before enabling grouped reads or new provider claims:
 1. Take a database backup, inspect notification volumes and set bounded release
    lock/statement timeouts. Drain old webhook and provider handlers before the
    migration. Do not run old tokenless webhook handlers alongside this rollout.
+   Confirm no historical `processing` webhook has a null claim token; reconcile
+   orphaned work before applying the processing-claim constraint. The release
+   deliberately refuses these rows instead of inventing ownership or success.
 2. Apply the complete committed migration chain with `bun run db:release` using
    the target's direct database connection. Verify schema and ledger equivalence.
 3. Deploy compatibility writes with grouped reads disabled and providers paused.

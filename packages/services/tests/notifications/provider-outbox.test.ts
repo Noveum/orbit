@@ -231,6 +231,14 @@ describe('durable notification provider delivery', () => {
         })
         .where(eq(schema.integration.id, fixture.integrationId));
       const healthy = await seedProviders(tx);
+      for (const [index, organizationId] of [
+        fixture.organizationId,
+        healthy.organizationId,
+      ].entries())
+        await tx
+          .update(schema.notificationDelivery)
+          .set({ availableAt: new Date(index) })
+          .where(eq(schema.notificationDelivery.organizationId, organizationId));
       let calls = 0;
       const fetch = fakeFetch(() => {
         calls += 1;
