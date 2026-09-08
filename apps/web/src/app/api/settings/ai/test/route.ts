@@ -64,7 +64,7 @@ export async function POST(request: Request): Promise<Response> {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Connection test failed.';
-      return Response.json({ ok: false, error: message }, { status: 400 });
+      return { ok: false, error: message };
     }
   });
 }
