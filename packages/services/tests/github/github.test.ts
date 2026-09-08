@@ -280,6 +280,40 @@ describe('parseGithubEvent', () => {
 });
 
 describe('normalizeGithubCheckEvent', () => {
+  it('accepts provider timestamp offsets and normalizes the same instant to UTC', () => {
+    for (const updatedAt of [
+      '2026-09-08T11:17:42+00:00',
+      '2026-09-08T16:47:42+05:30',
+      '2026-09-08T07:17:42-04:00',
+    ]) {
+      const result = normalizeGithubCheckEvent('status', {
+        id: 21,
+        sha: STATUS_SHA,
+        state: 'success',
+        context: 'Deploy',
+        updated_at: updatedAt,
+      });
+      expect(result).toMatchObject({
+        status: 'normalized',
+        value: { providerUpdatedAt: '2026-09-08T11:17:42.000Z' },
+      });
+    }
+  });
+
+  it('rejects malformed and timezone-free provider timestamps', () => {
+    for (const updatedAt of ['invalid', '2026-09-08T11:17:42', '2026-09-08T11:17:42+25:00']) {
+      expect(
+        normalizeGithubCheckEvent('status', {
+          id: 21,
+          sha: STATUS_SHA,
+          state: 'success',
+          context: 'Deploy',
+          updated_at: updatedAt,
+        }),
+      ).toEqual({ status: 'invalid', failure: { code: 'invalid_payload', path: 'updated_at' } });
+    }
+  });
+
   it('extracts the exact checked commit from every supported event shape', () => {
     const cases = [
       ['check_run', checkRunPayload()],
