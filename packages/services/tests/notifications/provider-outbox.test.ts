@@ -198,9 +198,12 @@ describe('durable notification provider delivery', () => {
             { slackEnabled: true },
           );
           let calls = 0;
-          const fetch = fakeFetch((url) => {
+          const requests: string[] = [];
+          const fetch = fakeFetch((url, init) => {
             calls += 1;
-            if (url.includes('resend.com')) return Response.json({ id: 'mail-test' });
+            requests.push(String(init?.body));
+            if (new URL(url).hostname === 'api.resend.com')
+              return Response.json({ id: 'mail-test' });
             return Response.json({ ok: true, channel: 'C-test', ts: '1.000' });
           });
           await deliverNotificationProviders(tx, worker(fixture, fetch, [channel]));
@@ -215,9 +218,41 @@ describe('durable notification provider delivery', () => {
               ),
             );
           expect(delivery?.status).toBe(scenario === 'current' ? 'delivered' : 'unavailable');
+          if (scenario === 'current') expect(requests[0]).toContain('Commit old-hea');
           if (scenario !== 'current') {
             expect(delivery?.lastError).toBe('github_check_failure_superseded');
             expect(delivery?.sendStartedAt).toBeNull();
+          }
+          if (scenario === 'superseded') {
+            await notifyMany(
+              tx,
+              [
+                {
+                  organizationId: fixture.organizationId,
+                  userIds: [fixture.userId],
+                  type: 'pr_checks_failed',
+                  reason: 'subscribed',
+                  entityType: 'github_pull_request',
+                  entityId: pullId,
+                  title: 'Checks failed on the current commit',
+                  body: 'example/repository#42',
+                  url: `/pulls/${pullId}`,
+                  actor: { type: 'integration', id: 'github', name: 'GitHub' },
+                  source: {
+                    sourceEventKey: 'github-pr:123:42:new-head:checks-failed',
+                    subjectType: 'github_pull_request',
+                    subjectKey: 'github-pr:123:42',
+                    occurredAt: new Date(),
+                    payload: { pullRequestId: pullId, headSha: 'new-head' },
+                  },
+                },
+              ],
+              { slackEnabled: true },
+            );
+            expect(await deliverNotificationProviders(tx, worker(fixture, fetch, [channel]))).toBe(
+              1,
+            );
+            expect(calls).toBe(1);
           }
         });
       });

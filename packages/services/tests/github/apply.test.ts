@@ -26,6 +26,7 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq } from 'drizzle-orm';
 import { applyGithubEvent, upsertGithubPullRequestHistory } from '../../src/github/apply.ts';
+import { githubFailureDetails } from '../../src/github/failure-details.ts';
 import { notifyMany } from '../../src/notifications/index.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
@@ -294,6 +295,39 @@ async function currentStateName(tx: TestTransaction, issueId: string): Promise<s
 }
 
 describe('applyGithubEvent', () => {
+  it('keeps failed-check links secure and check names Unicode-safe', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 1,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+        }),
+      );
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      if (pull === undefined) throw new Error('Missing pull request');
+      for (const url of ['http://checks.example.com/run/1', 'javascript:alert(1)', 'not a URL']) {
+        await tx
+          .update(githubCheckActivity)
+          .set({
+            payload: { context: `${'x'.repeat(79)}🙂`, conclusion: 'failure', url },
+          })
+          .where(eq(githubCheckActivity.organizationId, fixture.organizationId));
+        const details = await githubFailureDetails(tx, pull);
+        expect(details.externalUrl).toBe(pull.url);
+        expect(details.body).not.toMatch(/[\uD800-\uDBFF]$/u);
+      }
+    });
+  });
+
   for (const title of ['L'.repeat(256), `${'L'.repeat(236)}😀${'z'.repeat(18)}`]) {
     it('ingests a maximum-length pull title without rejecting its prefixed check notification', async () => {
       await withRollback(async (tx) => {

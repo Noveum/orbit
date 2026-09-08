@@ -3,7 +3,7 @@ import { renderPlainText } from '../markdown/index.ts';
 import { escapeSlackText, type PostMessageInput } from './index.ts';
 
 function messageExcerpt(value: string): string {
-  const lines = renderPlainText(value.slice(0, 4000))
+  const lines = renderPlainText(value.slice(0, 4000).replace(/[\uD800-\uDBFF]$/u, ''))
     .split(/\n+/)
     .filter((line) => line.trim().length > 0);
   const preview = [lines[0] ?? '', lines.slice(1).join(' ')].filter(Boolean).join('\n');

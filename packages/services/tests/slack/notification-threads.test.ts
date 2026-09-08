@@ -85,7 +85,11 @@ describe('notification Slack messages', () => {
   });
 
   it('truncates without splitting escaped entities or Unicode code points', () => {
-    for (const body of [`${'x'.repeat(1198)}& more`, `${'x'.repeat(1199)}🙂`]) {
+    for (const body of [
+      `${'x'.repeat(1198)}& more`,
+      `${'x'.repeat(1199)}🙂`,
+      `${' '.repeat(3999)}🙂`,
+    ]) {
       const message = notificationSlackMessage({
         channel: 'C-test',
         rootTs: null,
@@ -95,6 +99,7 @@ describe('notification Slack messages', () => {
       expect(section.text.text).toEndWith('…');
       expect(section.text.text).not.toMatch(/&(?:a|am|amp)?…$/);
       expect(section.text.text).not.toMatch(/[\uD800-\uDBFF]…$/u);
+      expect(section.text.text).not.toContain('\uFFFD');
       expect(section.text.text.length).toBeLessThanOrEqual(1204);
     }
   });

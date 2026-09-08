@@ -42,7 +42,12 @@ export async function githubFailureDetails(
   const names = failures.slice(0, 3).map(({ payload }) => {
     const context = payload['context'];
     const name =
-      typeof context === 'string' ? context.replace(/\s+/g, ' ').slice(0, 80) : 'CI check';
+      typeof context === 'string'
+        ? context
+            .replace(/\s+/g, ' ')
+            .slice(0, 80)
+            .replace(/[\uD800-\uDBFF]$/u, '')
+        : 'CI check';
     const conclusion = payload['conclusion'];
     if (conclusion === 'timed_out') return `${name} (timed out)`;
     if (conclusion === 'cancelled') return `${name} (cancelled)`;
@@ -58,7 +63,7 @@ export async function githubFailureDetails(
   if (typeof candidate === 'string') {
     try {
       const parsed = new URL(candidate);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') externalUrl = parsed.href;
+      if (parsed.protocol === 'https:') externalUrl = parsed.href;
     } catch {
       externalUrl = pull.url;
     }
