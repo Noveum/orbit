@@ -83,7 +83,7 @@ export function ConversationHeader({
           type="button"
           disabled={saving || snapshot.counters.unreadCount === 0}
           onClick={onReadAll}
-          className="ml-auto text-xs text-muted hover:text-text disabled:opacity-50"
+          className="ml-auto text-xs text-muted hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
         >
           Mark all read
         </button>

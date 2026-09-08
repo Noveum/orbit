@@ -21,6 +21,7 @@ const SECRET = 'a-github-webhook-secret';
 const existingWebhookSecret = process.env['GITHUB_WEBHOOK_SECRET'];
 const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
 const existingSlackEnabled = process.env['SLACK_ENABLED'];
+const existingSlackAppId = process.env['SLACK_APP_ID'];
 process.env['GITHUB_WEBHOOK_SECRET'] = SECRET;
 
 const published: SyncAction[][] = [];
@@ -91,6 +92,8 @@ function restoreSlackEnvironment(): void {
   else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
   if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
   else process.env['SLACK_ENABLED'] = existingSlackEnabled;
+  if (existingSlackAppId === undefined) delete process.env['SLACK_APP_ID'];
+  else process.env['SLACK_APP_ID'] = existingSlackAppId;
 }
 
 afterAll(() => {
@@ -266,6 +269,7 @@ async function githubEffectCounts() {
 
 beforeEach(async () => {
   restoreSlackEnvironment();
+  delete process.env['SLACK_APP_ID'];
   published.length = 0;
   dispatchSlackMessage.mockClear();
   deliverPendingSlackDms.mockClear();
@@ -380,6 +384,7 @@ describe('POST /api/webhooks/github', () => {
       connectedById: workspace.adminUser.id,
       botToken: 'xoxb-durable-channel',
       externalId: 'T-DURABLE-CHANNEL',
+      slackAppId: 'A-DURABLE-CHANNEL',
       scopes: ['chat:write'],
     });
     await services.connectSlackChannel(db, {
@@ -397,12 +402,16 @@ describe('POST /api/webhooks/github', () => {
       ),
     );
     const queued = await db
-      .select({ id: schema.notificationDelivery.id })
+      .select({
+        id: schema.notificationDelivery.id,
+        slackAppId: schema.notificationDelivery.slackAppId,
+      })
       .from(schema.notificationDelivery)
       .where(eq(schema.notificationDelivery.channel, 'slack'));
 
     expect(response.status).toBe(200);
     expect(queued).toHaveLength(1);
+    expect(queued[0]?.slackAppId).toBe('A-DURABLE-CHANNEL');
     expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
@@ -415,6 +424,7 @@ describe('POST /api/webhooks/github', () => {
       connectedById: workspace.adminUser.id,
       botToken: 'xoxb-encrypted',
       externalId: 'T-OLD-KEY',
+      slackAppId: 'A-OLD-KEY',
       scopes: ['chat:write'],
     });
     await services.connectSlackChannel(db, {
@@ -430,13 +440,17 @@ describe('POST /api/webhooks/github', () => {
       signed(pullRequestBody('orb-3-dashboard', 'closed'), 'delivery-old-slack-key'),
     );
     const queued = await db
-      .select({ id: schema.notificationDelivery.id })
+      .select({
+        id: schema.notificationDelivery.id,
+        slackAppId: schema.notificationDelivery.slackAppId,
+      })
       .from(schema.notificationDelivery)
       .where(eq(schema.notificationDelivery.channel, 'slack'));
 
     expect(response.status).toBe(200);
     expect((await deliveryRow('delivery-old-slack-key'))?.status).toBe('processed');
     expect(queued).toHaveLength(1);
+    expect(queued[0]?.slackAppId).toBe('A-OLD-KEY');
     expect(dispatchSlackMessage).not.toHaveBeenCalled();
   });
 
