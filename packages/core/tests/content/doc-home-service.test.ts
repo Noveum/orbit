@@ -24,7 +24,11 @@ beforeEach(async () => {
 });
 
 async function newDoc(title: string) {
-  const { doc } = await createDoc(workspace.admin, { title, content: `${title} body` });
+  const { doc } = await createDoc(workspace.admin, {
+    visibility: 'workspace',
+    title,
+    content: `${title} body`,
+  });
   return doc;
 }
 

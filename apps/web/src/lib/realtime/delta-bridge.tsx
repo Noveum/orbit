@@ -580,6 +580,12 @@ function recordOwnIssueEcho(client: QueryClient, action: SyncAction): void {
   recordIssueGeneration(client, action, action.data['departure'] === true);
 }
 
+function resetDocAccess(client: QueryClient, action: SyncAction): void {
+  if (action.model !== 'doc' || action.data['accessChanged'] !== true) return;
+  client.resetQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(noop);
+  client.resetQueries({ queryKey: [DOC_COMMENTS_ROOT, action.modelId] }).catch(noop);
+}
+
 function routeAction(
   client: QueryClient,
   action: SyncAction,
@@ -624,6 +630,7 @@ function routeAction(
   }
   if (DOC_MODELS.has(action.model)) {
     roots.docs = true;
+    resetDocAccess(client, action);
     if (action.model === 'doc') roots.docIds.add(action.modelId);
     return;
   }

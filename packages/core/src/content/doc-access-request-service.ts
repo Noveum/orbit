@@ -128,8 +128,8 @@ export async function listDocAccessRequests(
 ): Promise<DocAccessRequestRow[]> {
   assertCan(principal, 'doc:read');
   const doc = await loadDocForRequest(db, principal, docId);
-  if (principal.role !== 'admin' && doc.authorId !== principal.userId) {
-    throw forbidden('Only the author or an admin can see who asked for access.');
+  if (doc.authorId !== principal.userId) {
+    throw forbidden('Only the author can see who asked for access.');
   }
   return await db
     .select()
@@ -163,8 +163,8 @@ export async function decideDocAccessRequest(
     if (request.status !== 'pending') throw conflict('That request was already answered.');
 
     const doc = await loadDocForRequest(tx, principal, request.docId);
-    if (principal.role !== 'admin' && doc.authorId !== principal.userId) {
-      throw forbidden('Only the author or an admin can answer a request for access.');
+    if (doc.authorId !== principal.userId) {
+      throw forbidden('Only the author can answer a request for access.');
     }
 
     const syncId = await nextSyncId(tx);

@@ -73,7 +73,7 @@ export async function docReaderIds(
 
   const readers = new Set<string>();
   for (const row of members) {
-    if (row.role === 'admin' || row.userId === doc.authorId) readers.add(row.userId);
+    if (row.userId === doc.authorId) readers.add(row.userId);
   }
   const memberIds = new Set(members.map((row) => row.userId));
   for (const row of [...userGrants, ...teamGrants]) {
