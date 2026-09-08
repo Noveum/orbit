@@ -12,6 +12,7 @@ const argumentNames = [
   'batch-size',
   'max-batches',
   'max-equivalence-group-rows',
+  'source-concurrency',
 ] as const;
 
 for (const value of args) {
@@ -65,12 +66,14 @@ async function main(): Promise<void> {
   const batchSize = positiveInteger('batch-size');
   const maxBatches = positiveInteger('max-batches');
   const maxEquivalenceGroupRows = positiveInteger('max-equivalence-group-rows');
+  const sourceConcurrency = positiveInteger('source-concurrency');
   const result = await runNotificationConversationBackfill(db, {
     ...(organizationIds.length === 0 ? {} : { organizationIds }),
     ...(requestedPhases === undefined ? {} : { phases: requestedPhases }),
     ...(batchSize === undefined ? {} : { batchSize }),
     ...(maxBatches === undefined ? {} : { maxBatches }),
     ...(maxEquivalenceGroupRows === undefined ? {} : { maxEquivalenceGroupRows }),
+    ...(sourceConcurrency === undefined ? {} : { sourceConcurrency }),
   });
   console.log(JSON.stringify(result, null, 2));
 }
