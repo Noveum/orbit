@@ -62,7 +62,7 @@ export async function recordIdempotentResponse(
   response: Record<string, unknown>,
   now: Date = new Date(),
 ): Promise<void> {
-  const expiresAt = new Date(now.getTime() + 86_400_000);
+  const expiresAt = new Date(now.getTime() + 23 * 60 * 60_000);
   await db
     .insert(schema.mcpIdempotencyKey)
     .values({

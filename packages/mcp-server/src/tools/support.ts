@@ -132,6 +132,11 @@ export function defineTool<Shape extends z.ZodRawShape>(
             paramsHash,
           );
           if (cached !== null) {
+            logger.info('idempotent tool response returned', {
+              tool: config.name,
+              idempotencyKey,
+              grantId,
+            });
             return ok(cached);
           }
           const result = await run(args as z.infer<z.ZodObject<Shape>>);
