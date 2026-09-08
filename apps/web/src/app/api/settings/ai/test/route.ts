@@ -1,5 +1,5 @@
 import { and, db, eq, schema } from '@orbit/db';
-import { complete, decryptAiApiKey } from '@orbit/services/ai';
+import { AiClientError, AiDisabledError, complete, decryptAiApiKey } from '@orbit/services/ai';
 import { validationFailed } from '@orbit/shared/errors';
 import { assertCan } from '@orbit/shared/policy';
 import { aiProviderConfigSchema, testAiConnectionSchema } from '@orbit/shared/validators';
@@ -34,8 +34,9 @@ async function resolveTestApiKey(
 
   const parsedConfig = aiProviderConfigSchema.safeParse(existing.config);
   if (
-    parsedConfig.success &&
-    (parsedConfig.data.baseUrl !== body.baseUrl || parsedConfig.data.kind !== body.kind)
+    !parsedConfig.success ||
+    parsedConfig.data.baseUrl !== body.baseUrl ||
+    parsedConfig.data.kind !== body.kind
   ) {
     throw validationFailed('An API key is required when testing a new or modified endpoint.');
   }
@@ -75,8 +76,10 @@ export async function POST(request: Request): Promise<Response> {
         message: result.text.trim(),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Connection test failed.';
-      return { ok: false, error: message };
+      if (error instanceof AiClientError || error instanceof AiDisabledError) {
+        return { ok: false, error: error.message };
+      }
+      throw error;
     }
   });
 }

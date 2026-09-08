@@ -8,14 +8,16 @@ import { type SettingsNavControl, SettingsNavProvider } from './use-settings-nav
 
 export interface SettingsShellProps {
   readonly passwordEnabled: boolean;
+  readonly canManageAi?: boolean;
   readonly canManageDeployment?: boolean;
   readonly children: ReactNode;
 }
 
 export function SettingsShell({
   passwordEnabled,
-  children,
+  canManageAi = false,
   canManageDeployment = false,
+  children,
 }: SettingsShellProps) {
   const [open, setOpen] = useState(false);
 
@@ -53,6 +55,7 @@ export function SettingsShell({
         <div className="flex min-h-0 flex-1">
           <SettingsSidebar
             passwordEnabled={passwordEnabled}
+            canManageAi={canManageAi}
             canManageDeployment={canManageDeployment}
           />
           <div className="min-w-0 flex-1 overflow-y-auto">
