@@ -101,6 +101,22 @@ it('refreshes many direct, comment, and legacy subjects with a fixed query budge
       );
     expect(state?.unreadCount).toBe(54);
     await db.update(schema.member).set({ role: 'admin' }).where(eq(schema.member.userId, userId));
+    const afterPromotion = await counted.transaction(
+      async (tx) => await refreshNotificationConversationAccess(tx, organizationId, userId),
+    );
+    expect(afterPromotion).toHaveLength(0);
+    await db.insert(schema.docAccess).values(
+      docs
+        .filter((doc) => doc.visibility === 'private')
+        .map((doc) => ({
+          id: randomUUIDv7(),
+          organizationId,
+          docId: doc.id,
+          subjectType: 'user',
+          subjectId: userId,
+          level: 'read',
+        })),
+    );
     queries.length = 0;
     const revealed = await counted.transaction(
       async (tx) => await refreshNotificationConversationAccess(tx, organizationId, userId),

@@ -163,6 +163,7 @@ describe('list_notifications on docs', () => {
     const created = await admin.result('create_doc', {
       title: 'Revocable confidential roadmap',
       content: 'body',
+      visibility: 'workspace',
     });
     const docId = (created['doc'] as { id: string }).id;
     await admin.result('comment_on_doc', {

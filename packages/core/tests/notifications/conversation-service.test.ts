@@ -28,7 +28,11 @@ beforeEach(async () => {
 
 async function fixture() {
   const recipient = await addMember(workspace, 'member', { name: 'Reader' });
-  const { doc } = await createDoc(workspace.admin, { title: 'Release notes', content: 'Changes' });
+  const { doc } = await createDoc(workspace.admin, {
+    title: 'Release notes',
+    content: 'Changes',
+    visibility: 'workspace',
+  });
   return { recipient, doc };
 }
 
@@ -66,7 +70,10 @@ describe('conversation inbox', () => {
     const { recipient, doc } = await fixture();
     await emit(doc.id, recipient.user.id, 1, 'mention');
     await emit(doc.id, recipient.user.id, 2);
-    const { doc: other } = await createDoc(workspace.admin, { title: 'Another document' });
+    const { doc: other } = await createDoc(workspace.admin, {
+      title: 'Another document',
+      visibility: 'workspace',
+    });
     await emit(other.id, recipient.user.id, 3);
     const page = await listInboxConversations(recipient.principal, { tab: 'mentions', limit: 1 });
     expect(page.conversations).toHaveLength(1);
