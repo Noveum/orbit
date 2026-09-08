@@ -136,7 +136,11 @@ describe('mark_notification_read', () => {
 
 describe('list_notifications on docs', () => {
   it('resolves the doc for a mention in a doc comment', async () => {
-    const doc = await admin.result('create_doc', { title: 'RBAC permissions', content: 'body' });
+    const doc = await admin.result('create_doc', {
+      title: 'RBAC permissions',
+      content: 'body',
+      visibility: 'workspace',
+    });
     const docId = (doc['doc'] as { id: string }).id;
     await admin.result('comment_on_doc', {
       doc: docId,
