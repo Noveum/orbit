@@ -21,6 +21,20 @@ afterAll(() => {
 });
 
 describe('notification Slack messages', () => {
+  it('preserves literal CI check names rather than interpreting them as comment markup', () => {
+    const message = notificationSlackMessage({
+      channel: 'C-test',
+      rootTs: null,
+      payload: {
+        title: 'Checks failed',
+        body: 'repo#1 · Commit abc1234\nFailed: build <linux>',
+        bodyFormat: 'plain_text',
+        url: '/inbox',
+      },
+    });
+    expect(message.text).toContain('build &lt;linux&gt;');
+  });
+
   it('keeps comment previews short and readable without raw Markdown or HTML', () => {
     const message = notificationSlackMessage({
       channel: 'C-test',

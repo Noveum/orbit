@@ -458,7 +458,6 @@ async function githubCheckFailureNotifications(
     normalized?.kind === 'context'
       ? normalized.providerUpdatedAt
       : context.event.activity.occurredAt;
-  const externalUrl = normalized?.kind === 'context' ? normalized.url : '';
   return await Promise.all(
     pulls.map(async (pull): Promise<NotificationEvent> => {
       const linkedIssueIds = linkedIssueIdsByPull.get(pull.id) ?? [];
@@ -490,7 +489,7 @@ async function githubCheckFailureNotifications(
         title: `Checks failed on ${pull.title}`,
         body: details.body,
         url: `/pulls/${pull.id}`,
-        externalUrl: externalUrl.length > 0 ? externalUrl : details.externalUrl,
+        externalUrl: details.externalUrl,
         source: {
           sourceEventKey: `github-pr:${context.repo.repositoryId}:${pull.number}:${pull.headSha}:checks-failed`,
           subjectType: 'github_pull_request',

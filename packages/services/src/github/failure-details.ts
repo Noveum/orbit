@@ -63,12 +63,13 @@ export async function githubFailureDetails(
   if (typeof candidate === 'string') {
     try {
       const parsed = new URL(candidate);
-      if (parsed.protocol === 'https:') externalUrl = parsed.href;
+      if (parsed.protocol === 'https:' && parsed.href.length <= 2048) externalUrl = parsed.href;
     } catch {
       externalUrl = pull.url;
     }
   }
   return {
+    bodyFormat: 'plain_text' as const,
     body: `${pull.repositoryName}#${pull.number} · Commit ${pull.headSha.slice(0, 7)}\n${failed}`,
     externalUrl,
   };

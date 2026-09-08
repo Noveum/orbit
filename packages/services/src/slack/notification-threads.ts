@@ -2,8 +2,9 @@ import { notificationProviderPayloadSchema } from '@orbit/shared';
 import { renderPlainText } from '../markdown/index.ts';
 import { escapeSlackText, type PostMessageInput } from './index.ts';
 
-function messageExcerpt(value: string): string {
-  const lines = renderPlainText(value.slice(0, 4000).replace(/[\uD800-\uDBFF]$/u, ''))
+function messageExcerpt(value: string, format: 'markdown' | 'plain_text'): string {
+  const bounded = value.slice(0, 4000).replace(/[\uD800-\uDBFF]$/u, '');
+  const lines = (format === 'plain_text' ? bounded : renderPlainText(bounded))
     .split(/\n+/)
     .filter((line) => line.trim().length > 0);
   const preview = [lines[0] ?? '', lines.slice(1).join(' ')].filter(Boolean).join('\n');
@@ -50,7 +51,7 @@ export function notificationSlackMessage(input: {
   const payload = notificationProviderPayloadSchema.parse(input.payload);
   const links = messageLinks(payload.url, payload.externalUrl);
   const title = escapeSlackText(payload.title);
-  const body = messageExcerpt(payload.body);
+  const body = messageExcerpt(payload.body, payload.bodyFormat);
   const text = [title, body, ...links.map((link) => `${link.label}: ${link.url}`)]
     .filter((part) => part.length > 0)
     .join('\n');
