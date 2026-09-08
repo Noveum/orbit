@@ -258,6 +258,7 @@ describe('assignment and status', () => {
 describe('docs', () => {
   it('notifies a mentioned teammate on doc creation', async () => {
     const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Runbook',
       content: `Owner @${grace.user.handle}`,
     });
@@ -270,6 +271,7 @@ describe('docs', () => {
 
   it('does not notify the same person again when a later save keeps the mention', async () => {
     const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Runbook',
       content: `Owner @${grace.user.handle}`,
     });
@@ -284,6 +286,7 @@ describe('docs', () => {
 
   it('notifies a handle a later save introduces, long after the first one', async () => {
     const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Runbook',
       content: `Owner @${grace.user.handle}`,
     });
@@ -298,7 +301,11 @@ describe('docs', () => {
   });
 
   it('notifies a mentioned teammate on a doc comment and deep links to it', async () => {
-    const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: '# Runbook' });
+    const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'Runbook',
+      content: '# Runbook',
+    });
     const { comment } = await createDocComment(workspace.admin, doc.id, {
       body: `What do you think @${grace.user.handle}?`,
     });
@@ -309,7 +316,11 @@ describe('docs', () => {
   });
 
   it('notifies the author of a doc comment that was replied to', async () => {
-    const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: '# Runbook' });
+    const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'Runbook',
+      content: '# Runbook',
+    });
     const root = await createDocComment(grace.principal, doc.id, { body: 'First thought.' });
 
     await createDocComment(linus.principal, doc.id, {
