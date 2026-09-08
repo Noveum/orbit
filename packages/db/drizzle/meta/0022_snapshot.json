@@ -1,6 +1,6 @@
 {
-  "id": "18e9d656-fe50-466e-b1da-48a85cfb3392",
-  "prevId": "97898a76-de0a-49db-b01c-f8bd6418a638",
+  "id": "97898a76-de0a-49db-b01c-f8bd6418a638",
+  "prevId": "74a34fb2-ae98-47eb-9447-f7ce129aa184",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6599,7 +6599,7 @@
       "checkConstraints": {
         "notification_delivery_owner_shape_check": {
           "name": "notification_delivery_owner_shape_check",
-          "value": "(\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is not null\n          and \"notification_delivery\".\"organization_id\" is not null\n        )\n        or\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is null\n          and (\n            (\n              \"notification_delivery\".\"source_event_id\" is null\n              and \"notification_delivery\".\"notification_id\" is not null\n              and \"notification_delivery\".\"user_id\" is not null\n            )\n            or\n            (\n              \"notification_delivery\".\"source_event_id\" is not null\n              and \"notification_delivery\".\"organization_id\" is not null\n              and \"notification_delivery\".\"destination_kind\" is not null\n              and \"notification_delivery\".\"destination_id\" is not null\n              and (\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'slack_dm'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'email'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'shared_channel'\n                  and \"notification_delivery\".\"channel\" = 'slack'\n                  and \"notification_delivery\".\"notification_id\" is null\n                  and \"notification_delivery\".\"user_id\" is null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                  and \"notification_delivery\".\"provider_payload\" is not null\n                )\n              )\n            )\n          )\n        )\n      )"
+          "value": "(\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is not null\n          and \"notification_delivery\".\"organization_id\" is not null\n        )\n        or\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is null\n          and (\n            (\n              \"notification_delivery\".\"source_event_id\" is null\n              and \"notification_delivery\".\"notification_id\" is not null\n              and \"notification_delivery\".\"user_id\" is not null\n            )\n            or\n            (\n              \"notification_delivery\".\"source_event_id\" is not null\n              and \"notification_delivery\".\"organization_id\" is not null\n              and \"notification_delivery\".\"destination_kind\" is not null\n              and \"notification_delivery\".\"destination_id\" is not null\n              and (\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'slack_dm'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'shared_channel'\n                  and \"notification_delivery\".\"channel\" = 'slack'\n                  and \"notification_delivery\".\"notification_id\" is null\n                  and \"notification_delivery\".\"user_id\" is null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                  and \"notification_delivery\".\"provider_payload\" is not null\n                )\n              )\n            )\n          )\n        )\n      )"
         },
         "notification_delivery_deduplicated_shape_check": {
           "name": "notification_delivery_deduplicated_shape_check",
@@ -7427,272 +7427,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.slack_notification_thread": {
-      "name": "slack_notification_thread",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "integration_id": {
-          "name": "integration_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "slack_team_id": {
-          "name": "slack_team_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "slack_app_id": {
-          "name": "slack_app_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "credential_generation": {
-          "name": "credential_generation",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "destination_kind": {
-          "name": "destination_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "destination_id": {
-          "name": "destination_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "conversation_key": {
-          "name": "conversation_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "channel_id": {
-          "name": "channel_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "root_ts": {
-          "name": "root_ts",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'creating'"
-        },
-        "created_by_delivery_id": {
-          "name": "created_by_delivery_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claim_token": {
-          "name": "claim_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claimed_at": {
-          "name": "claimed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_expires_at": {
-          "name": "lease_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_error": {
-          "name": "last_error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sync_id": {
-          "name": "sync_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "nextval('sync_id_seq')"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "slack_notification_thread_namespace_unique": {
-          "name": "slack_notification_thread_namespace_unique",
-          "columns": [
-            {
-              "expression": "integration_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "slack_team_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "slack_app_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "destination_kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "destination_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "conversation_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "slack_notification_thread_state_idx": {
-          "name": "slack_notification_thread_state_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "slack_notification_thread_organization_id_organization_id_fk": {
-          "name": "slack_notification_thread_organization_id_organization_id_fk",
-          "tableFrom": "slack_notification_thread",
-          "tableTo": "organization",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "slack_notification_thread_org_integration_fk": {
-          "name": "slack_notification_thread_org_integration_fk",
-          "tableFrom": "slack_notification_thread",
-          "tableTo": "integration",
-          "columnsFrom": [
-            "organization_id",
-            "integration_id"
-          ],
-          "columnsTo": [
-            "organization_id",
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "slack_notification_thread_org_delivery_fk": {
-          "name": "slack_notification_thread_org_delivery_fk",
-          "tableFrom": "slack_notification_thread",
-          "tableTo": "notification_delivery",
-          "columnsFrom": [
-            "organization_id",
-            "created_by_delivery_id"
-          ],
-          "columnsTo": [
-            "organization_id",
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "slack_notification_thread_destination_check": {
-          "name": "slack_notification_thread_destination_check",
-          "value": "\"slack_notification_thread\".\"destination_kind\" in ('user', 'shared_channel')"
-        },
-        "slack_notification_thread_state_check": {
-          "name": "slack_notification_thread_state_check",
-          "value": "\"slack_notification_thread\".\"state\" in ('creating', 'ready', 'blocked', 'ambiguous', 'archived')"
-        },
-        "slack_notification_thread_ready_check": {
-          "name": "slack_notification_thread_ready_check",
-          "value": "\"slack_notification_thread\".\"state\" <> 'ready' or (\"slack_notification_thread\".\"channel_id\" is not null and \"slack_notification_thread\".\"root_ts\" is not null)"
-        },
-        "slack_notification_thread_generation_check": {
-          "name": "slack_notification_thread_generation_check",
-          "value": "\"slack_notification_thread\".\"credential_generation\" >= 0"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.slack_user_mapping": {
@@ -15883,7 +15617,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_health_check": {
+          "name": "project_health_check",
+          "value": "\"project\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_team": {
@@ -16103,7 +15842,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_update_health_check": {
+          "name": "project_update_health_check",
+          "value": "\"project_update\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.saved_analytics_view": {

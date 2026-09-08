@@ -1,6 +1,6 @@
 {
-  "id": "33543098-f75f-4112-a112-8e0177f1a551",
-  "prevId": "cead513e-6870-45b8-a615-c3288768e0ad",
+  "id": "cead513e-6870-45b8-a615-c3288768e0ad",
+  "prevId": "18e9d656-fe50-466e-b1da-48a85cfb3392",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6617,7 +6617,7 @@
       "checkConstraints": {
         "notification_delivery_owner_shape_check": {
           "name": "notification_delivery_owner_shape_check",
-          "value": "(\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is not null\n          and \"notification_delivery\".\"organization_id\" is not null\n        )\n        or\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is null\n          and (\n            (\n              \"notification_delivery\".\"source_event_id\" is null\n              and \"notification_delivery\".\"notification_id\" is not null\n              and \"notification_delivery\".\"user_id\" is not null\n            )\n            or\n            (\n              \"notification_delivery\".\"source_event_id\" is not null\n              and \"notification_delivery\".\"organization_id\" is not null\n              and \"notification_delivery\".\"destination_kind\" is not null\n              and \"notification_delivery\".\"destination_id\" is not null\n              and (\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'slack_dm'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                  and (\"notification_delivery\".\"integration_id\" is not null or \"notification_delivery\".\"status\" = 'unavailable')\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'email'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'shared_channel'\n                  and \"notification_delivery\".\"channel\" = 'slack'\n                  and \"notification_delivery\".\"notification_id\" is null\n                  and \"notification_delivery\".\"user_id\" is null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                  and \"notification_delivery\".\"provider_payload\" is not null\n                )\n              )\n            )\n          )\n        )\n      )"
+          "value": "(\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is not null\n          and \"notification_delivery\".\"organization_id\" is not null\n        )\n        or\n        (\n          \"notification_delivery\".\"deduplicated_into_delivery_id\" is null\n          and (\n            (\n              \"notification_delivery\".\"source_event_id\" is null\n              and \"notification_delivery\".\"notification_id\" is not null\n              and \"notification_delivery\".\"user_id\" is not null\n            )\n            or\n            (\n              \"notification_delivery\".\"source_event_id\" is not null\n              and \"notification_delivery\".\"organization_id\" is not null\n              and \"notification_delivery\".\"destination_kind\" is not null\n              and \"notification_delivery\".\"destination_id\" is not null\n              and (\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'slack_dm'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'user'\n                  and \"notification_delivery\".\"channel\" = 'email'\n                  and \"notification_delivery\".\"notification_id\" is not null\n                  and \"notification_delivery\".\"user_id\" is not null\n                )\n                or\n                (\n                  \"notification_delivery\".\"destination_kind\" = 'shared_channel'\n                  and \"notification_delivery\".\"channel\" = 'slack'\n                  and \"notification_delivery\".\"notification_id\" is null\n                  and \"notification_delivery\".\"user_id\" is null\n                  and \"notification_delivery\".\"integration_id\" is not null\n                  and \"notification_delivery\".\"provider_payload\" is not null\n                )\n              )\n            )\n          )\n        )\n      )"
         },
         "notification_delivery_deduplicated_shape_check": {
           "name": "notification_delivery_deduplicated_shape_check",
@@ -15901,7 +15901,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_health_check": {
+          "name": "project_health_check",
+          "value": "\"project\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_team": {
@@ -16121,7 +16126,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_update_health_check": {
+          "name": "project_update_health_check",
+          "value": "\"project_update\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.saved_analytics_view": {

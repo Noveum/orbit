@@ -26,7 +26,7 @@
 
 **Files:**
 - Modify: `packages/db/src/schema/comms.ts`
-- Create: `packages/db/drizzle/0017_notification_webhook_fencing.sql`
+- Create: `packages/db/drizzle/0018_notification_webhook_fencing.sql`
 - Modify: `apps/web/src/app/api/webhooks/github/route.ts`
 - Test: `apps/web/tests/app/api/webhooks/github/route.test.ts`
 
@@ -200,5 +200,5 @@
 - [x] Document current notification types, audience rules, Slack channel versus direct-message behavior, and exact-email member matching.
 - [x] Capture grouped PR and document-comment fixtures in light and dark themes, plus a labeled local Slack-thread formatter preview.
 - [ ] Run focused tests, `bun run verify`, `bun run docs:build`, and `git diff --check`.
-- [ ] Merge current `main`, rerun every check, resolve Greptile and CodeRabbit threads, and keep the PR draft until review is complete.
+- [ ] Merge current `main`, rerun every check, resolve actionable review findings, and publish ready for review. CodeRabbit is not a gate, as requested by the maintainer.
 - [x] Update the PR with screenshots, migration order, production smoke checks, and rollback switches.

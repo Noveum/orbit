@@ -305,7 +305,7 @@ SELECT
   1,
   0,
   'migration_bootstrap',
-  '0020_mixed_dust',
+  '0021_mixed_dust',
   0,
   now(),
   false,

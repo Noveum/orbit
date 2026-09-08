@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { readFile } from 'node:fs/promises';
+import { PROJECT_HEALTHS } from '@orbit/shared';
 import { SYNC_MODELS } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { getTableColumns, type SQL, type Table } from 'drizzle-orm';
@@ -389,6 +390,153 @@ describe('domain invariants', () => {
       'label_team_name_unique',
       'label_org_name_unique',
     ]);
+  });
+
+  it('enforces project health check constraints in the schema', () => {
+    const projectChecks = getTableConfig(schema.project).checks.map((entry) => entry.name);
+    const updateChecks = getTableConfig(schema.projectUpdate).checks.map((entry) => entry.name);
+    expect(projectChecks).toContain('project_health_check');
+    expect(updateChecks).toContain('project_update_health_check');
+  });
+
+  it('refuses project health values outside the allowed set', async () => {
+    const organizationId = randomUUIDv7();
+    let failure: unknown;
+    try {
+      await db.transaction(async (tx) => {
+        await tx.insert(schema.organization).values({
+          id: organizationId,
+          name: 'Health check org',
+          slug: organizationId,
+        });
+        await tx.insert(schema.project).values({
+          id: randomUUIDv7(),
+          organizationId,
+          name: 'Invalid project health',
+          slug: 'invalid-project-health',
+          health: 'invalid_health',
+        });
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as { cause?: { constraint_name?: string } })?.cause?.constraint_name).toBe(
+      'project_health_check',
+    );
+  });
+
+  it('refuses project update health values outside the allowed set', async () => {
+    const organizationId = randomUUIDv7();
+    const projectId = randomUUIDv7();
+    const authorId = randomUUIDv7();
+    let failure: unknown;
+    try {
+      await db.transaction(async (tx) => {
+        await tx.insert(schema.organization).values({
+          id: organizationId,
+          name: 'Health check org',
+          slug: organizationId,
+        });
+        await tx.insert(schema.user).values({
+          id: authorId,
+          name: 'Author',
+          email: `${authorId}@example.com`,
+          handle: authorId.slice(0, 16),
+        });
+        await tx.insert(schema.project).values({
+          id: projectId,
+          organizationId,
+          name: 'Health check project',
+          slug: 'health-check-project',
+          health: 'on_track',
+        });
+        await tx.insert(schema.projectUpdate).values({
+          id: randomUUIDv7(),
+          organizationId,
+          projectId,
+          authorId,
+          body: 'Update body',
+          health: 'invalid_health',
+        });
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as { cause?: { constraint_name?: string } })?.cause?.constraint_name).toBe(
+      'project_update_health_check',
+    );
+  });
+
+  it('accepts all allowed project health values', async () => {
+    const organizationId = randomUUIDv7();
+    const projectId = randomUUIDv7();
+    const authorId = randomUUIDv7();
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.insert(schema.organization).values({
+          id: organizationId,
+          name: 'Allowed health org',
+          slug: organizationId,
+        });
+        await tx.insert(schema.user).values({
+          id: authorId,
+          name: 'Author',
+          email: `${authorId}@example.com`,
+          handle: authorId.slice(0, 16),
+        });
+        for (const health of PROJECT_HEALTHS) {
+          await tx.insert(schema.project).values({
+            id: randomUUIDv7(),
+            organizationId,
+            name: `Project ${health}`,
+            slug: `project-${health}-${randomUUIDv7().slice(0, 8)}`,
+            health,
+          });
+        }
+        await tx.insert(schema.project).values({
+          id: projectId,
+          organizationId,
+          name: 'Base project',
+          slug: 'base-project',
+          health: 'on_track',
+        });
+        for (const health of PROJECT_HEALTHS) {
+          await tx.insert(schema.projectUpdate).values({
+            id: randomUUIDv7(),
+            organizationId,
+            projectId,
+            authorId,
+            body: `Update ${health}`,
+            health,
+          });
+        }
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('normalises legacy health values before adding constraints in the migration', async () => {
+    const migration = (
+      await readFile(new URL('../../drizzle/0017_typical_freak.sql', import.meta.url), 'utf8')
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    const projectNorm = migration.indexOf(
+      "UPDATE \"project\" SET \"health\" = 'no_update' WHERE \"health\" NOT IN ('on_track', 'at_risk', 'off_track', 'no_update');",
+    );
+    const updateNorm = migration.indexOf(
+      "UPDATE \"project_update\" SET \"health\" = 'no_update' WHERE \"health\" NOT IN ('on_track', 'at_risk', 'off_track', 'no_update');",
+    );
+    const projectConstraint = migration.indexOf(
+      'ALTER TABLE "project" ADD CONSTRAINT "project_health_check"',
+    );
+    const updateConstraint = migration.indexOf(
+      'ALTER TABLE "project_update" ADD CONSTRAINT "project_update_health_check"',
+    );
+
+    expect(projectNorm).toBeGreaterThanOrEqual(0);
+    expect(updateNorm).toBeGreaterThanOrEqual(0);
+    expect(projectConstraint).toBeGreaterThan(projectNorm);
+    expect(updateConstraint).toBeGreaterThan(updateNorm);
   });
 });
 

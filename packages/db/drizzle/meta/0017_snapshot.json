@@ -1,5 +1,5 @@
 {
-  "id": "0be23b53-917f-4fb5-b9c0-2c79eedbc2ef",
+  "id": "67c096a7-0647-408f-ba7f-b72e0f13bfab",
   "prevId": "eb80cfa5-987a-4884-b802-f1af432ef838",
   "version": "7",
   "dialect": "postgresql",
@@ -4506,12 +4506,6 @@
         },
         "error": {
           "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "claim_token": {
-          "name": "claim_token",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -11899,7 +11893,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_health_check": {
+          "name": "project_health_check",
+          "value": "\"project\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_team": {
@@ -12119,7 +12118,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_update_health_check": {
+          "name": "project_update_health_check",
+          "value": "\"project_update\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.saved_analytics_view": {

@@ -35,7 +35,7 @@ describe('GitHub check head migration bootstrap', () => {
     });
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
     const taskMigrationIndex = migrations.findIndex(
-      (migration) => migration.folderMillis === 1788264445370,
+      (migration) => migration.folderMillis === 1788724695589,
     );
     const taskMigration = migrations[taskMigrationIndex];
     if (taskMigrationIndex < 0 || taskMigration === undefined) {

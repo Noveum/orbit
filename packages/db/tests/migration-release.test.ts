@@ -45,6 +45,43 @@ describe('database release', () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);
 
+  it('upgrades the released main ledger before applying notification migrations', async () => {
+    await resetScratch();
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const released = migrations.filter((migration) => migration.folderMillis <= 1788724695585);
+    expect(released).toHaveLength(18);
+    await run(urlFor(SCRATCH), async (sql) => {
+      for (const migration of released) {
+        for (const statement of migration.sql) await sql.unsafe(statement);
+      }
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of released) {
+        await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+      }
+      await sql`insert into organization (id, name, slug) values ('upgrade-org', 'Upgrade', 'upgrade-org')`;
+      await sql`insert into project (id, organization_id, name, slug, health) values ('upgrade-project', 'upgrade-org', 'Preserved', 'preserved', 'at_risk')`;
+    });
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    expect(result.mode).toBe('migrated');
+    expect(result.applied).toBe(migrations.length - released.length);
+    await run(urlFor(SCRATCH), async (sql) => {
+      const [project] = await sql`select health from project where id = 'upgrade-project'`;
+      expect(project?.['health']).toBe('at_risk');
+      const constraints =
+        await sql`select conname from pg_constraint where conname in ('project_health_check', 'project_update_health_check', 'webhook_delivery_processing_claim_check') order by conname`;
+      expect(constraints.map((row) => row['conname'])).toEqual([
+        'project_health_check',
+        'project_update_health_check',
+        'webhook_delivery_processing_claim_check',
+      ]);
+      const ledger = await sql`select hash from drizzle.__drizzle_migrations order by created_at`;
+      expect(ledger.map((row) => row['hash'])).toEqual(
+        migrations.map((migration) => migration.hash),
+      );
+    });
+  }, 60_000);
+
   it('baselines a compatible legacy database without touching undeclared data', async () => {
     await resetScratch();
     await migrateScratch();

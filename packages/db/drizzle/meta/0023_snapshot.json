@@ -1,6 +1,6 @@
 {
-  "id": "cead513e-6870-45b8-a615-c3288768e0ad",
-  "prevId": "18e9d656-fe50-466e-b1da-48a85cfb3392",
+  "id": "18e9d656-fe50-466e-b1da-48a85cfb3392",
+  "prevId": "97898a76-de0a-49db-b01c-f8bd6418a638",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -6344,24 +6344,6 @@
               "expression": "channel",
               "isExpression": false,
               "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "coalesce(\"integration_id\", '')",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "coalesce(\"slack_team_id\", '')",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "coalesce(\"slack_app_id\", '')",
-              "asc": true,
-              "isExpression": true,
               "nulls": "last"
             },
             {
@@ -15901,7 +15883,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_health_check": {
+          "name": "project_health_check",
+          "value": "\"project\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_team": {
@@ -16121,7 +16108,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_update_health_check": {
+          "name": "project_update_health_check",
+          "value": "\"project_update\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.saved_analytics_view": {

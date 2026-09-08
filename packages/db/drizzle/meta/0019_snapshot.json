@@ -1,6 +1,6 @@
 {
-  "id": "e88fc286-289e-4f88-a927-79287b5c0c7e",
-  "prevId": "ce721424-b450-45a2-9208-b697c21a5e61",
+  "id": "ce721424-b450-45a2-9208-b697c21a5e61",
+  "prevId": "0be23b53-917f-4fb5-b9c0-2c79eedbc2ef",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3066,16 +3066,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "integration_org_id_unique": {
-          "name": "integration_org_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "organization_id",
-            "id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3533,35 +3524,10 @@
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
-        },
-        "notification_org_source_event_fk": {
-          "name": "notification_org_source_event_fk",
-          "tableFrom": "notification",
-          "tableTo": "notification_source_event",
-          "columnsFrom": [
-            "organization_id",
-            "source_event_id"
-          ],
-          "columnsTo": [
-            "organization_id",
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "notification_org_id_user_unique": {
-          "name": "notification_org_id_user_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "organization_id",
-            "id",
-            "user_id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3865,64 +3831,12 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "notification_delivery_org_source_event_fk": {
-          "name": "notification_delivery_org_source_event_fk",
-          "tableFrom": "notification_delivery",
-          "tableTo": "notification_source_event",
-          "columnsFrom": [
-            "organization_id",
-            "source_event_id"
-          ],
-          "columnsTo": [
-            "organization_id",
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "notification_delivery_org_notification_user_fk": {
-          "name": "notification_delivery_org_notification_user_fk",
-          "tableFrom": "notification_delivery",
-          "tableTo": "notification",
-          "columnsFrom": [
-            "organization_id",
-            "notification_id",
-            "user_id"
-          ],
-          "columnsTo": [
-            "organization_id",
-            "id",
-            "user_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "notification_delivery_org_integration_fk": {
-          "name": "notification_delivery_org_integration_fk",
-          "tableFrom": "notification_delivery",
-          "tableTo": "integration",
-          "columnsFrom": [
-            "organization_id",
-            "integration_id"
-          ],
-          "columnsTo": [
-            "organization_id",
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "notification_delivery_owner_shape_check": {
-          "name": "notification_delivery_owner_shape_check",
-          "value": "(\n        (\n          \"notification_delivery\".\"source_event_id\" is null\n          and \"notification_delivery\".\"notification_id\" is not null\n          and \"notification_delivery\".\"user_id\" is not null\n        )\n        or\n        (\n          \"notification_delivery\".\"source_event_id\" is not null\n          and \"notification_delivery\".\"organization_id\" is not null\n          and \"notification_delivery\".\"destination_kind\" is not null\n          and \"notification_delivery\".\"destination_id\" is not null\n          and (\n            (\n              \"notification_delivery\".\"destination_kind\" = 'user'\n              and \"notification_delivery\".\"channel\" = 'slack_dm'\n              and \"notification_delivery\".\"notification_id\" is not null\n              and \"notification_delivery\".\"user_id\" is not null\n              and \"notification_delivery\".\"integration_id\" is not null\n            )\n            or\n            (\n              \"notification_delivery\".\"destination_kind\" = 'shared_channel'\n              and \"notification_delivery\".\"channel\" = 'slack'\n              and \"notification_delivery\".\"notification_id\" is null\n              and \"notification_delivery\".\"user_id\" is null\n              and \"notification_delivery\".\"integration_id\" is not null\n              and \"notification_delivery\".\"provider_payload\" is not null\n            )\n          )\n        )\n      )"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.notification_preference": {
@@ -4227,16 +4141,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "notification_source_event_org_id_unique": {
-          "name": "notification_source_event_org_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "organization_id",
-            "id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -12303,7 +12208,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_health_check": {
+          "name": "project_health_check",
+          "value": "\"project\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_team": {
@@ -12523,7 +12433,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "project_update_health_check": {
+          "name": "project_update_health_check",
+          "value": "\"project_update\".\"health\" in ('on_track', 'at_risk', 'off_track', 'no_update')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.saved_analytics_view": {

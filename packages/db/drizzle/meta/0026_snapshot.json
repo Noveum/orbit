@@ -1,6 +1,6 @@
 {
-  "id": "33543098-f75f-4112-a112-8e0177f1a551",
-  "prevId": "cead513e-6870-45b8-a615-c3288768e0ad",
+  "id": "12905303-9cda-4152-9df0-aaf05714e1c7",
+  "prevId": "33543098-f75f-4112-a112-8e0177f1a551",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -8316,7 +8316,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "webhook_delivery_processing_claim_check": {
+          "name": "webhook_delivery_processing_claim_check",
+          "value": "\"webhook_delivery\".\"status\" <> 'processing' or \"webhook_delivery\".\"claim_token\" is not null"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.webhook_delivery_quarantine": {

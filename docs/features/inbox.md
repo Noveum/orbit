@@ -88,6 +88,11 @@ operational switches are independent of organization entitlement:
 
 Before enabling grouped reads or new provider claims:
 
+The released main migration `0017_typical_freak` remains unchanged. Notification
+migrations follow it as `0018` through `0026`. Recreate disposable preview or
+development databases that used the earlier draft notification migration numbers;
+do not rewrite a deployed ledger or force a baseline to hide a mismatch.
+
 1. Take a database backup, inspect notification volumes and set bounded release
    lock/statement timeouts. Drain old webhook and provider handlers before the
    migration. Do not run old tokenless webhook handlers alongside this rollout.
