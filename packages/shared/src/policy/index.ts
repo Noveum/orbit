@@ -169,7 +169,6 @@ export function canReadDoc(
   grantedDocIds: readonly string[],
 ): boolean {
   if (doc.organizationId !== principal.organizationId) return false;
-  if (principal.role === 'admin') return true;
   if (doc.authorId === principal.userId) return true;
   if (!isRestricted(doc.visibility)) return true;
   return grantedDocIds.includes(doc.id);
@@ -188,4 +187,20 @@ export function canReadView(principal: Principal, view: ReadableViewRow): boolea
   if (view.visibility === 'workspace') return true;
   if (view.visibility !== 'team' || view.teamId === null) return false;
   return isInTeam(principal, { id: view.teamId, organizationId: view.organizationId });
+}
+
+export function canManageDocAccess(principal: DocReader, doc: ReadableDocRow): boolean {
+  return principal.organizationId === doc.organizationId && principal.userId === doc.authorId;
+}
+
+export function canWriteDoc(
+  principal: Principal,
+  doc: ReadableDocRow,
+  hasWriteGrant: boolean,
+): boolean {
+  return (
+    principal.organizationId === doc.organizationId &&
+    can(principal, 'doc:write') &&
+    (doc.authorId === principal.userId || doc.visibility === 'workspace' || hasWriteGrant)
+  );
 }
