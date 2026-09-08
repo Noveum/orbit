@@ -1,6 +1,10 @@
 'use client';
 
 import type { AiProviderKind } from '@orbit/shared/validators';
+import {
+  type TestAiConnectionResponse,
+  testAiConnectionResponseSchema,
+} from '@orbit/shared/validators';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -27,30 +31,35 @@ export interface AiSettingsPanelProps {
   readonly canManage: boolean;
 }
 
-interface TestResponse {
-  readonly ok: boolean;
-  readonly latencyMs?: number;
-  readonly message?: string;
-  readonly error?: string;
-}
+const PROVIDER_DEFAULTS: Record<AiProviderKind, { baseUrl: string; model: string }> = {
+  'openai-compatible': {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+  },
+  anthropic: {
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-3-5-sonnet-20241022',
+  },
+};
 
 function defaultEndpoint(kind: AiProviderKind): { baseUrl: string; model: string } {
-  if (kind === 'anthropic') {
-    return { baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-20241022' };
-  }
-  return { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' };
+  return PROVIDER_DEFAULTS[kind];
 }
 
 function shouldResetBaseUrl(current: string): boolean {
   return (
     current === '' ||
-    current === 'https://api.anthropic.com' ||
-    current === 'https://api.openai.com/v1'
+    current === PROVIDER_DEFAULTS.anthropic.baseUrl ||
+    current === PROVIDER_DEFAULTS['openai-compatible'].baseUrl
   );
 }
 
 function shouldResetModel(current: string): boolean {
-  return current === '' || current === 'claude-3-5-sonnet-20241022' || current === 'gpt-4o-mini';
+  return (
+    current === '' ||
+    current === PROVIDER_DEFAULTS.anthropic.model ||
+    current === PROVIDER_DEFAULTS['openai-compatible'].model
+  );
 }
 
 function AiConsentNotice() {
@@ -102,7 +111,7 @@ function AiFeedbackBanner({
 }: {
   readonly statusMessage: string | null;
   readonly errorMessage: string | null;
-  readonly testResult: TestResponse | null;
+  readonly testResult: TestAiConnectionResponse | null;
 }) {
   if (statusMessage !== null) {
     return (
@@ -196,9 +205,7 @@ function AiProviderInputs(props: AiProviderInputsProps) {
           value={props.baseUrl}
           disabled={!props.canManage}
           onChange={(e) => props.onBaseUrlChange(e.target.value)}
-          placeholder={
-            props.kind === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
-          }
+          placeholder={PROVIDER_DEFAULTS[props.kind].baseUrl}
           className="mt-1 block w-full rounded-md border border-border bg-surface-2 px-3 py-1.5 text-dense text-text"
         />
         <p className="mt-1 text-2xs text-muted">
@@ -216,7 +223,7 @@ function AiProviderInputs(props: AiProviderInputsProps) {
           value={props.model}
           disabled={!props.canManage}
           onChange={(e) => props.onModelChange(e.target.value)}
-          placeholder={props.kind === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o-mini'}
+          placeholder={PROVIDER_DEFAULTS[props.kind].model}
           className="mt-1 block w-full rounded-md border border-border bg-surface-2 px-3 py-1.5 text-dense text-text"
         />
       </div>
@@ -326,7 +333,7 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
-  const [testResult, setTestResult] = useState<TestResponse | null>(null);
+  const [testResult, setTestResult] = useState<TestAiConnectionResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -343,7 +350,7 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
     setErrorMessage(null);
     setStatusMessage(null);
     try {
-      const payload = await apiRequest<TestResponse>('/api/settings/ai/test', {
+      const rawPayload = await apiRequest<unknown>('/api/settings/ai/test', {
         method: 'POST',
         body: {
           kind,
@@ -352,7 +359,12 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
           apiKey: apiKey.trim().length > 0 ? apiKey.trim() : undefined,
         },
       });
-      setTestResult(payload);
+      const parsed = testAiConnectionResponseSchema.safeParse(rawPayload);
+      if (parsed.success) {
+        setTestResult(parsed.data);
+      } else {
+        setTestResult({ ok: false, error: 'Invalid response payload from connection test.' });
+      }
     } catch (caught) {
       setTestResult({ ok: false, error: messageOf(caught) });
     } finally {
@@ -393,8 +405,15 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
       await apiRequest<{ ok: boolean }>('/api/settings/ai', {
         method: 'DELETE',
       });
-      setStatusMessage('AI provider disconnected.');
+      const defaultKind: AiProviderKind = 'openai-compatible';
+      const defaultEndpoints = defaultEndpoint(defaultKind);
+      setKind(defaultKind);
+      setBaseUrl(defaultEndpoints.baseUrl);
+      setModel(defaultEndpoints.model);
+      setEnabled(false);
       setApiKey('');
+      setTestResult(null);
+      setStatusMessage('AI provider disconnected.');
       router.refresh();
     } catch (caught) {
       setErrorMessage(messageOf(caught));
