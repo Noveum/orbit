@@ -440,12 +440,19 @@ describe('visibility modes', () => {
   it('uses the same workspace document for view and edit access without exposing it anonymously', async () => {
     const doc = await newDoc('Workspace handbook');
     const member = await addMember(workspace, 'member', { name: 'Casey' });
-    await shareDoc(workspace.admin, doc.id, { visibility: 'members' });
+    const membersShare = await shareDoc(workspace.admin, doc.id, { visibility: 'members' });
+    const token = membersShare.publishToken;
+    if (token === null) throw new Error('expected a signed-in reader token');
+    expect(await getPublishedDoc(token)).toBeNull();
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'sign-in' });
     expect((await getDoc(member.principal, doc.id)).access).toBe('read');
     await expect(updateDoc(member.principal, doc.id, { content: 'Changed' })).rejects.toMatchObject(
       { code: 'forbidden' },
     );
-    await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    const workspaceShare = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    expect(workspaceShare.publishToken).toBeNull();
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'missing' });
+    expect(await resolvePublishedDoc(token, member.user.id)).toEqual({ status: 'missing' });
     expect((await getDoc(member.principal, doc.id)).access).toBe('write');
     await updateDoc(member.principal, doc.id, { content: 'Changed' });
     expect((await getDoc(member.principal, doc.id)).doc.content).toBe('Changed');

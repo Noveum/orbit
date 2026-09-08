@@ -45,6 +45,7 @@ export const VISIBILITY_CHOICES: readonly VisibilityChoice[] = [
 
 export function visibilityChoice(visibility: string): VisibilityChoice {
   let audience = visibility;
+  if (visibility === 'team') audience = 'private';
   if (visibility === 'members') audience = 'workspace';
   if (visibility === 'public') audience = 'link';
   return (

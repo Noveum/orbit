@@ -113,6 +113,15 @@ describe('the share dialog', () => {
     expect(choiceFor('link')).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('keeps team grants private until the author explicitly selects Workspace', async () => {
+    const user = await openShare(doc('team'));
+    expect(choiceFor('private')).toHaveAttribute('aria-pressed', 'true');
+    expect(choiceFor('workspace')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('combobox', { name: 'Workspace access' })).toBeNull();
+    await user.click(choiceFor('workspace'));
+    expect(shareMutate).toHaveBeenCalledWith({ visibility: 'workspace' });
+  });
+
   it('switches visibility in one click', async () => {
     const user = await openShare(doc('workspace'));
 
