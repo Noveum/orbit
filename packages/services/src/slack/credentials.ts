@@ -52,7 +52,9 @@ function encryptionKey(): Uint8Array<ArrayBuffer> {
 }
 
 function authenticatedData(input: SlackCredentialIdentity): Uint8Array<ArrayBuffer> {
-  return new TextEncoder().encode(`${input.organizationId}\u0000${input.integrationId}\u0000slack`);
+  return Uint8Array.from(
+    new TextEncoder().encode(`${input.organizationId}\u0000${input.integrationId}\u0000slack`),
+  );
 }
 
 function decodeBase64Url(value: string): Uint8Array<ArrayBuffer> {
