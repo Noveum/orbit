@@ -118,4 +118,75 @@ describe('AI client complete()', () => {
   it('rejects when provider is not configured and no direct config provided', async () => {
     await expect(complete('Say hello', {})).rejects.toThrow(AiDisabledError);
   });
+
+  it('rejects direct configuration when enabled is false without calling fetch', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (() => {
+      fetchCalled = true;
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: false,
+        },
+        apiKey: 'sk-mock-key',
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiDisabledError);
+
+    expect(fetchCalled).toBe(false);
+  });
+
+  it('rejects malformed OpenAI HTTP 200 response payload', async () => {
+    globalThis.fetch = (() => {
+      return Promise.resolve(
+        new Response(JSON.stringify({ choices: 'not-an-array' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiClientError);
+  });
+
+  it('rejects malformed Anthropic HTTP 200 response payload', async () => {
+    globalThis.fetch = (() => {
+      return Promise.resolve(
+        new Response(JSON.stringify({ content: 'not-an-array' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-3-5-sonnet-20241022',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiClientError);
+  });
 });

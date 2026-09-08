@@ -69,6 +69,9 @@ interface ResolvedClientTarget {
 
 async function resolveTarget(options: AiCompletionOptions): Promise<ResolvedClientTarget> {
   if (options.config !== undefined && options.apiKey !== undefined) {
+    if (!options.config.enabled) {
+      throw new AiDisabledError();
+    }
     return {
       config: options.config,
       apiKey: options.apiKey,
@@ -191,16 +194,23 @@ async function callOpenAiCompatible(
 
   const rawJson: unknown = await response.json().catch(() => ({}));
   const parsed = openAiCompletionResponseSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    throw new AiClientError(
+      'Invalid response payload from OpenAI-compatible endpoint.',
+      undefined,
+      target.apiKey,
+    );
+  }
 
-  const text = parsed.success ? (parsed.data.choices?.[0]?.message?.content ?? '') : '';
+  const text = parsed.data.choices?.[0]?.message?.content ?? '';
   const usage: AiTokenUsage | undefined =
-    parsed.success && parsed.data.usage !== undefined
-      ? {
+    parsed.data.usage === undefined
+      ? undefined
+      : {
           promptTokens: parsed.data.usage.prompt_tokens,
           completionTokens: parsed.data.usage.completion_tokens,
           totalTokens: parsed.data.usage.total_tokens,
-        }
-      : undefined;
+        };
 
   return { text, usage };
 }
@@ -248,16 +258,21 @@ async function callAnthropic(
 
   const rawJson: unknown = await response.json().catch(() => ({}));
   const parsed = anthropicMessagesResponseSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    throw new AiClientError(
+      'Invalid response payload from Anthropic endpoint.',
+      undefined,
+      target.apiKey,
+    );
+  }
 
-  const textBlocks = parsed.success
-    ? (parsed.data.content ?? [])
-        .filter((block) => block.type === 'text' && typeof block.text === 'string')
-        .map((block) => block.text as string)
-    : [];
+  const textBlocks = (parsed.data.content ?? [])
+    .filter((block) => block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text as string);
   const text = textBlocks.join('');
 
-  const inputTokens = parsed.success ? parsed.data.usage?.input_tokens : undefined;
-  const outputTokens = parsed.success ? parsed.data.usage?.output_tokens : undefined;
+  const inputTokens = parsed.data.usage?.input_tokens;
+  const outputTokens = parsed.data.usage?.output_tokens;
   const totalTokens =
     inputTokens === undefined && outputTokens === undefined
       ? undefined

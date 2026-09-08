@@ -133,6 +133,23 @@ describe('AI provider settings API', () => {
     expect(body.model).toBe('gpt-4o');
   });
 
+  it('rejects changing endpoint without re-supplying the key', async () => {
+    const response = await POST(
+      new Request('https://orbit.local/api/settings/ai', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'openai-compatible',
+          baseUrl: 'https://other-api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: true,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
   it('disconnects and removes provider configuration', async () => {
     const deleteResponse = await DELETE();
     expect(deleteResponse.status).toBe(200);

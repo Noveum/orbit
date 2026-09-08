@@ -61,6 +61,14 @@ export const testAiConnectionSchema = z.object({
 });
 export type TestAiConnection = z.infer<typeof testAiConnectionSchema>;
 
+export const testAiConnectionResponseSchema = z.object({
+  ok: z.boolean(),
+  latencyMs: z.number().optional(),
+  message: z.string().optional(),
+  error: z.string().optional(),
+});
+export type TestAiConnectionResponse = z.infer<typeof testAiConnectionResponseSchema>;
+
 export const openAiCompletionResponseSchema = z.object({
   choices: z
     .array(
