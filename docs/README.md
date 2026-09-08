@@ -22,6 +22,8 @@ gated behind a plan.
 | Write or run the tests | [Testing](testing.md) |
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |
 | See what is coming | [Roadmap](roadmap.md) |
+| Review source release changes | [Changelog](https://github.com/Noveum/orbit/blob/main/CHANGELOG.md) |
+| Release or upgrade an installation | [Releases and upgrades](releases.md) |
 | Operate gated Vercel Preview deployments | [Vercel Preview deployment gate](VERCEL_BUILD_GATE.md) |
 | Contribute | [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md) |
 
@@ -34,7 +36,8 @@ that page for the full commands and troubleshooting notes.
 - **Issues** with priorities, labels, states, estimates, assignees, multiple
   reviewers and relations, as a fast list or a drag-and-drop board.
 - **Sprints and cycles** for timeboxed planning, with scope, points and burndown.
-- **Projects and milestones** that group work across teams.
+- **Projects and milestones** that group work across teams, with a workspace
+  feed of project health updates.
 - **Docs** with a rich editor, living next to the issues they describe.
 - **Standup** as a Kanban of the whole workspace, filtered to work a person
   owns or reviews with a click.
