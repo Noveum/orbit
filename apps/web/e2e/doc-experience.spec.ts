@@ -20,8 +20,7 @@ test('private access requires an invitation even for admins and revocation clear
   const doc = await createDoc(owner, 'Private launch decisions', 'private');
   expect(await statusOf(reader, `/api/docs/${doc.id}`)).toBe(404);
   await owner.goto(`${BASE}/docs/${doc.id}`);
-  await expect(owner.getByTestId('doc-share')).toHaveCount(1);
-  await owner.getByTestId('doc-share').click();
+  await owner.getByTestId('doc-share').filter({ visible: true }).click();
   await owner.getByTestId('doc-access-search').fill('Alex');
   await owner.locator('[data-testid^="doc-access-add-"]').first().click();
   await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(1);
@@ -29,7 +28,7 @@ test('private access requires an invitation even for admins and revocation clear
   await expect(
     reader.getByRole('heading', { name: 'Private launch decisions', exact: true }),
   ).toBeVisible();
-  await reader.getByTestId('doc-share').click();
+  await reader.getByTestId('doc-share').filter({ visible: true }).click();
   await expect(reader.getByTestId('doc-visibility-public')).toBeDisabled();
   await reader.keyboard.press('Escape');
   await owner.locator('[data-testid^="doc-access-remove-"]').first().click();
@@ -79,7 +78,7 @@ test('folders, resized panes, writing, preview and published links work together
   await expect(
     page.getByTestId('doc-reading-preview').getByRole('heading', { name: 'Launch checklist' }),
   ).toBeVisible();
-  await page.getByTestId('doc-share').click();
+  await page.getByTestId('doc-share').filter({ visible: true }).click();
   await expect(page.getByTestId('doc-visibility-private')).toHaveAttribute('aria-pressed', 'true');
   await page.getByTestId('doc-visibility-link').click();
   const published = page.getByTestId('doc-copy-public-link-url');

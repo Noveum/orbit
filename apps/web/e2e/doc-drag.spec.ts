@@ -67,7 +67,12 @@ test('a doc dragged onto a folder is filed there and stays after a reload', asyn
   const startedIn = await folderHolding(page, docId);
   expect(startedIn).not.toBe(folderTestId);
 
+  const moved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/docs/${docId}/move`) && response.request().method() === 'POST',
+  );
   await dragTo(page, `doc-row-wrap-${docId}`, `doc-group-toggle-${folderId}`);
+  expect((await moved).ok()).toBe(true);
 
   await expect
     .poll(async () => await folderHolding(page, docId), { timeout: 20_000 })
