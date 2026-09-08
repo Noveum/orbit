@@ -267,6 +267,15 @@ nothing is hidden, and Unread, Mentions and Pull requests still span both.
 In-app notification preferences are per event type, with quiet hours that
 respect your timezone.
 
+With conversation reads enabled, each pull request has one inbox row with its
+comments, reviews, lifecycle updates and current-head check failures in the
+history. Documents similarly group comments, replies, mentions and changes.
+Issue activity and issue field changes remain two separate conversations.
+Unread badges count conversations, not individual events. New activity clears
+a snooze or dismissal; marking a conversation read covers its existing events.
+
+See [Inbox conversations](features/inbox.md) for delivery behavior and rollout.
+
 ## Realtime
 
 Everything above is live. When someone changes something, the change writes to

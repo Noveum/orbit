@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
+import { updateDoc } from '@orbit/core';
 import {
   addMember,
   connect,
@@ -38,6 +39,29 @@ beforeAll(async () => {
 });
 
 describe('list_notifications', () => {
+  it('exposes additive conversation tools without changing event ids', async () => {
+    const grouped = await agent.result('list_inbox_conversations', { tab: 'mentions' });
+    const conversations = grouped['conversations'] as {
+      id: string;
+      eventCount: number;
+      hasMention: boolean;
+    }[];
+    const conversation = conversations.find((row) => row.hasMention);
+    expect(conversation).toBeDefined();
+    const id = conversation?.id ?? '';
+    const history = await agent.result('list_inbox_conversation_events', { conversationId: id });
+    const events = history['events'] as { id: string }[];
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0]?.id).not.toBe(id);
+    const unread = await agent.result('mark_inbox_conversations_read', {
+      conversationIds: [id],
+      read: false,
+    });
+    expect(unread['counterVersion']).toBeNumber();
+    expect(
+      (unread['conversations'] as { unreadMentionCount: number }[])[0]?.unreadMentionCount,
+    ).toBe(0);
+  });
   it('returns the mention with the issue resolved from the comment', async () => {
     const result = await agent.result('list_notifications', { unreadOnly: true });
     const rows = result['notifications'] as {
@@ -135,6 +159,24 @@ describe('mark_notification_read', () => {
 });
 
 describe('list_notifications on docs', () => {
+  it('withholds notification text and document context after access is revoked', async () => {
+    const created = await admin.result('create_doc', {
+      title: 'Revocable confidential roadmap',
+      content: 'body',
+    });
+    const docId = (created['doc'] as { id: string }).id;
+    await admin.result('comment_on_doc', {
+      doc: docId,
+      body: `@${agentHandle} confidential roadmap comment`,
+    });
+    const before = await agent.result('list_notifications', {});
+    expect(JSON.stringify(before)).toContain('confidential roadmap comment');
+    await updateDoc(workspace.admin, docId, { visibility: 'private' });
+    const after = await agent.result('list_notifications', {});
+    expect(JSON.stringify(after)).not.toContain('confidential roadmap comment');
+    expect(JSON.stringify(after)).not.toContain('Revocable confidential roadmap');
+  });
+
   it('resolves the doc for a mention in a doc comment', async () => {
     const doc = await admin.result('create_doc', {
       title: 'RBAC permissions',

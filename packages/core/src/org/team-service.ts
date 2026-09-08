@@ -7,6 +7,10 @@ import { assertCan, assertInTeam } from '@orbit/shared/policy';
 import { teamCreateSchema, teamMemberSchema, teamUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
+import {
+  lockNotificationPolicyMutation,
+  synchronizeNotificationAccess,
+} from '../notifications/access-sync.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
@@ -318,6 +322,7 @@ export async function addTeamMember(
   const parsed = teamMemberSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const team = await requireTeam(principal, teamId, tx);
 
     const [membership] = await tx
@@ -345,9 +350,16 @@ export async function addTeamMember(
       })
       .returning();
     const row = requireRow(inserted, 'That team membership could not be created.');
+    const notificationActions = await synchronizeNotificationAccess(
+      tx,
+      principal.organizationId,
+      [parsed.userId],
+      actor,
+    );
     return {
       teamMember: row,
       actions: [
+        ...notificationActions,
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -371,6 +383,7 @@ export async function removeTeamMember(
   assertCan(principal, 'team:manage');
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const team = await requireTeam(principal, teamId, tx);
     const [member] = await tx
       .select({ role: schema.member.role })
@@ -412,6 +425,7 @@ export async function removeTeamMember(
       .returning();
     const row = requireRow(removed, 'That person is not on this team.');
     return [
+      ...(await synchronizeNotificationAccess(tx, principal.organizationId, [userId], actor)),
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,

@@ -18,6 +18,7 @@ const oauthAccessSchema = z.object({
   team: z.object({ id: z.string().trim().min(1), name: z.string().default('') }).optional(),
   authed_user: z.object({ id: z.string().optional() }).optional(),
   scope: z.string().optional(),
+  app_id: z.string().min(1).optional(),
 });
 
 export async function completeSlackInstall(input: {
@@ -65,14 +66,13 @@ export async function completeSlackInstall(input: {
     .split(',')
     .map((scope) => scope.trim())
     .filter((scope) => scope.length > 0);
-  await db.transaction(async (tx) => {
-    return await ensureSlackIntegrationWithVersion(tx, {
-      organizationId: input.organizationId,
-      connectedById: input.userId,
-      botToken: accessToken,
-      externalId: slackTeamId,
-      scopes: grantedScopes,
-    });
+  await ensureSlackIntegrationWithVersion(db, {
+    organizationId: input.organizationId,
+    connectedById: input.userId,
+    botToken: accessToken,
+    externalId: slackTeamId,
+    scopes: grantedScopes,
+    ...(parsed.data.app_id === undefined ? {} : { slackAppId: parsed.data.app_id }),
   });
   await syncSlackUserMappings(db, {
     organizationId: input.organizationId,

@@ -1,9 +1,11 @@
+import { listInboxConversations } from '@orbit/core';
 import { db } from '@orbit/db';
 import { renderMarkdown } from '@orbit/services/markdown';
 import { listInbox, type NotificationRecord, unreadCounters } from '@orbit/services/notifications';
 import type { NotificationType } from '@orbit/shared/constants';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
+import type { InboxConversationPage } from '@orbit/shared/validators';
 
 export const INBOX_PAGE_SIZE = 50;
 
@@ -24,6 +26,7 @@ export interface InboxItem {
 }
 
 export interface InboxData {
+  readonly conversationPage: InboxConversationPage | null;
   readonly items: InboxItem[];
   readonly unreadCount: number;
   readonly unreadMentions: number;
@@ -54,19 +57,31 @@ export function toInboxItem(row: NotificationRecord): InboxItem {
 }
 
 export async function loadInbox(principal: Principal): Promise<InboxData> {
-  const [page, counters] = await Promise.all([
-    listInbox(db, {
-      userId: principal.userId,
-      organizationId: principal.organizationId,
-      limit: INBOX_PAGE_SIZE,
-    }),
-    unreadCounters(db, principal.userId, principal.organizationId),
-  ]);
+  if (process.env['NOTIFICATION_CONVERSATIONS_ENABLED'] !== 'true') {
+    const [page, counters] = await Promise.all([
+      listInbox(db, {
+        userId: principal.userId,
+        organizationId: principal.organizationId,
+        limit: INBOX_PAGE_SIZE,
+      }),
+      unreadCounters(db, principal.userId, principal.organizationId),
+    ]);
+    return {
+      conversationPage: null,
+      unreadCount: counters.total,
+      unreadMentions: counters.mentions,
+      unreadActivity: counters.activity,
+      nextCursor: page.nextCursor,
+      items: page.items.map(toInboxItem),
+    };
+  }
+  const page = await listInboxConversations(principal, { tab: 'activity', limit: INBOX_PAGE_SIZE });
   return {
-    unreadCount: counters.total,
-    unreadMentions: counters.mentions,
-    unreadActivity: counters.activity,
+    conversationPage: page,
+    unreadCount: page.counters.unreadCount,
+    unreadMentions: page.counters.unreadMentionCount,
+    unreadActivity: page.counters.unreadActivityCount,
     nextCursor: page.nextCursor,
-    items: page.items.map(toInboxItem),
+    items: [],
   };
 }

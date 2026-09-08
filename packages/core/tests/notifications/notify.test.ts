@@ -1,710 +1,174 @@
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { and, db, eq, schema } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
-import { claimSlackDmDeliveries } from '@orbit/services/notifications';
-import { SlackApiError } from '@orbit/services/slack';
-import { encryptSlackBotToken } from '@orbit/services/slack/credentials';
-import {
-  type dispatchSlackDmResult,
-  resolveSlackContext,
-  SlackDmDispatchError,
-} from '@orbit/services/slack/dispatch';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { deliverPendingSlackDms, notifyRecipients } from '../../src/notifications/notify.ts';
+import {
+  deliverPendingNotificationEmails,
+  deliverPendingSlackChannels,
+  deliverPendingSlackDms,
+  notifyRecipients,
+} from '../../src/notifications/notify.ts';
 import { resetDatabase } from '../../src/test-support.ts';
 
-const existingAppUrl = process.env['APP_URL'];
-const existingPublicAppUrl = process.env['NEXT_PUBLIC_APP_URL'];
-const existingSlackEnabled = process.env['SLACK_ENABLED'];
-const existingLegacySlackOrganizationId = process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-const existingAuthSecret = process.env['BETTER_AUTH_SECRET'];
+const previous = {
+  APP_URL: process.env['APP_URL'],
+  NEXT_PUBLIC_APP_URL: process.env['NEXT_PUBLIC_APP_URL'],
+  SLACK_ENABLED: process.env['SLACK_ENABLED'],
+  EMAIL_FROM: process.env['EMAIL_FROM'],
+  BETTER_AUTH_SECRET: process.env['BETTER_AUTH_SECRET'],
+};
 
-interface Fixture {
-  readonly organizationId: string;
-  readonly userId: string;
-  readonly integrationId: string;
-}
-
-function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
-  let resolve: (() => void) | undefined;
-  const promise = new Promise<void>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve: () => resolve?.() };
-}
-
-async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+beforeEach(async () => {
+  await resetDatabase();
+  process.env['APP_URL'] = 'https://orbit.example';
+  delete process.env['NEXT_PUBLIC_APP_URL'];
+  process.env['SLACK_ENABLED'] = 'true';
+  process.env['EMAIL_FROM'] = 'Orbit <updates@example.com>';
+  process.env['BETTER_AUTH_SECRET'] = 'provider-wrapper-test-secret';
+});
+afterAll(() => {
+  for (const [key, value] of Object.entries(previous)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
-  throw new Error('Timed out waiting for the worker state.');
-}
+});
 
-async function seedPendingSlackDm(): Promise<Fixture> {
-  const suffix = randomUUIDv7();
-  const organizationId = `org_${suffix}`;
-  const userId = `usr_${suffix}`;
-  const integrationId = `int_${suffix}`;
-  const notificationId = `not_${suffix}`;
-  await db.insert(schema.organization).values({
-    id: organizationId,
-    name: 'Acme',
-    slug: `acme-${suffix.toLowerCase()}`,
-  });
+async function seed() {
+  const organizationId = randomUUIDv7();
+  const userId = randomUUIDv7();
+  const projectId = randomUUIDv7();
+  const integrationId = randomUUIDv7();
+  await db
+    .insert(schema.organization)
+    .values({ id: organizationId, name: 'Provider workspace', slug: organizationId });
   await db.insert(schema.user).values({
     id: userId,
-    name: 'Ada',
-    email: `ada.${suffix}@orbit.local`,
-    handle: `ada-${suffix.toLowerCase()}`,
+    name: 'Recipient',
+    handle: userId,
+    email: `${userId}@example.com`,
+    emailVerified: true,
   });
-  await db.insert(schema.member).values({
-    id: `mem_${suffix}`,
-    organizationId,
-    userId,
-    role: 'member',
-  });
+  await db
+    .insert(schema.member)
+    .values({ id: randomUUIDv7(), organizationId, userId, role: 'member' });
+  await db.insert(schema.notificationSetting).values({ userId, quietHoursEnabled: false });
+  await db
+    .insert(schema.project)
+    .values({ id: projectId, organizationId, name: 'Project', slug: projectId });
   await db.insert(schema.integration).values({
     id: integrationId,
     organizationId,
     provider: 'slack',
     externalId: 'default',
     connectedById: userId,
-    credentials: { botToken: 'xoxb-old' },
-    config: { scopes: ['chat:write', 'im:write'] },
+    credentials: { botToken: 'test-token' },
+    config: {
+      slackTeamId: `T-${organizationId}`,
+      slackAppId: 'A-test',
+      credentialGeneration: 0,
+      scopes: ['chat:write', 'im:write'],
+    },
   });
   await db.insert(schema.slackUserMapping).values({
-    id: `map_${suffix}`,
-    organizationId,
+    id: randomUUIDv7(),
     integrationId,
-    userId,
-    slackUserId: 'U123',
-    slackDisplayName: 'Ada Slack',
-  });
-  await db.insert(schema.notification).values({
-    id: notificationId,
     organizationId,
     userId,
+    slackUserId: 'U-test',
+    slackChannelId: 'D-test',
+  });
+  await db.insert(schema.slackChannelSync).values({
+    id: randomUUIDv7(),
+    integrationId,
+    organizationId,
+    channelId: 'C-test',
+    channelName: 'updates',
+    events: [],
+  });
+  const event: NotificationEvent = {
+    organizationId,
+    userIds: [userId],
     type: 'mention',
     reason: 'mentioned',
-    actorId: `actor_${suffix}`,
-    actorName: 'Grace',
-    entityType: 'issue',
-    entityId: `issue_${suffix}`,
-    title: 'You were mentioned',
-    url: '/issue/ORB-1',
-  });
-  await db.insert(schema.notificationDelivery).values({
-    id: `delivery_${suffix}`,
-    notificationId,
-    userId,
-    channel: 'slack_dm',
-  });
-  return { organizationId, userId, integrationId };
+    entityType: 'project',
+    entityId: projectId,
+    title: 'Review requested',
+    body: 'Please review the project.',
+    url: '/inbox',
+    actor: { type: 'system', id: 'orbit', name: 'Orbit' },
+  };
+  return { organizationId, event };
 }
 
-beforeEach(async () => {
-  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
-  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
-  if (existingLegacySlackOrganizationId === undefined) {
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  } else {
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingLegacySlackOrganizationId;
-  }
-  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
-  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
-  await resetDatabase();
-  process.env['APP_URL'] = 'https://orbit.example';
-  delete process.env['NEXT_PUBLIC_APP_URL'];
-});
-
-afterAll(() => {
-  if (existingAppUrl === undefined) delete process.env['APP_URL'];
-  else process.env['APP_URL'] = existingAppUrl;
-  if (existingPublicAppUrl === undefined) delete process.env['NEXT_PUBLIC_APP_URL'];
-  else process.env['NEXT_PUBLIC_APP_URL'] = existingPublicAppUrl;
-  if (existingSlackEnabled === undefined) delete process.env['SLACK_ENABLED'];
-  else process.env['SLACK_ENABLED'] = existingSlackEnabled;
-  if (existingLegacySlackOrganizationId === undefined) {
-    delete process.env['SLACK_ENABLED_ORGANIZATION_ID'];
-  } else {
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = existingLegacySlackOrganizationId;
-  }
-  if (existingAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
-  else process.env['BETTER_AUTH_SECRET'] = existingAuthSecret;
-});
-
-describe('notifyRecipients global Slack rollout', () => {
-  it('enqueues personal Slack delivery for every eligible organization', async () => {
-    const first = await seedPendingSlackDm();
-    const second = await seedPendingSlackDm();
-    await db.delete(schema.notificationDelivery);
-    await db.delete(schema.notification);
-    process.env['SLACK_ENABLED'] = 'true';
-    const event = (fixture: Fixture): NotificationEvent => ({
-      organizationId: fixture.organizationId,
-      type: 'mention',
-      reason: 'mentioned',
-      actor: { type: 'user', id: `actor_${fixture.userId}`, name: 'Grace' },
-      entityType: 'issue',
-      entityId: `issue_${fixture.userId}`,
-      userIds: [fixture.userId],
-      title: 'You were mentioned',
-      body: 'Please take a look',
-      url: '/issue/ORB-1',
-    });
-
-    await notifyRecipients(db, [event(first), event(second)]);
-
-    const deliveries = await db
-      .select({ organizationId: schema.notification.organizationId })
+describe('global notification provider routing', () => {
+  it('persists shared-channel work even when an update has no personal recipients', async () => {
+    const fixture = await seed();
+    await notifyRecipients(db, [{ ...fixture.event, userIds: [] }]);
+    const rows = await db
+      .select()
       .from(schema.notificationDelivery)
-      .innerJoin(
-        schema.notification,
-        eq(schema.notification.id, schema.notificationDelivery.notificationId),
-      );
-    expect(deliveries.map((delivery) => delivery.organizationId).sort()).toEqual(
+      .where(eq(schema.notificationDelivery.organizationId, fixture.organizationId));
+    expect(rows.map((row) => row.channel)).toEqual(['slack']);
+    expect(rows[0]?.notificationId).toBeNull();
+  });
+  it('queues personal notifications across every eligible workspace', async () => {
+    const first = await seed();
+    const second = await seed();
+    await notifyRecipients(db, [first.event, second.event]);
+    const rows = await db
+      .select()
+      .from(schema.notificationDelivery)
+      .where(eq(schema.notificationDelivery.channel, 'slack_dm'));
+    expect(rows.map((row) => row.organizationId).sort()).toEqual(
       [first.organizationId, second.organizationId].sort(),
     );
   });
 
-  it('stays off when only the retired organization variable is set', async () => {
-    const fixture = await seedPendingSlackDm();
-    await db.delete(schema.notificationDelivery);
-    await db.delete(schema.notification);
+  it('keeps Slack disabled globally while retaining durable notification email', async () => {
+    const fixture = await seed();
     process.env['SLACK_ENABLED'] = 'false';
-    process.env['SLACK_ENABLED_ORGANIZATION_ID'] = fixture.organizationId;
-
-    await notifyRecipients(db, [
-      {
-        organizationId: fixture.organizationId,
-        type: 'mention',
-        reason: 'mentioned',
-        actor: { type: 'user', id: `actor_${fixture.userId}`, name: 'Grace' },
-        entityType: 'issue',
-        entityId: `issue_${fixture.userId}`,
-        userIds: [fixture.userId],
-        title: 'You were mentioned',
-        body: 'Please take a look',
-        url: '/issue/ORB-1',
-      },
-    ]);
-
-    expect(await db.select().from(schema.notificationDelivery)).toEqual([]);
-  });
-});
-
-describe('deliverPendingSlackDms', () => {
-  it('skips a queued private message after the recipient leaves the workspace', async () => {
-    const fixture = await seedPendingSlackDm();
-    await db
-      .delete(schema.member)
-      .where(
-        and(
-          eq(schema.member.organizationId, fixture.organizationId),
-          eq(schema.member.userId, fixture.userId),
-        ),
-      );
-    let providerCalls = 0;
-    const fetch = (() => {
-      providerCalls += 1;
-      return Promise.resolve(Response.json({ ok: true }));
-    }) as unknown as typeof globalThis.fetch;
-
-    expect(await deliverPendingSlackDms(db, 1, fetch)).toBe(0);
-    expect(providerCalls).toBe(0);
-    const [delivery] = await db
-      .select({ status: schema.notificationDelivery.status })
-      .from(schema.notificationDelivery);
-    expect(delivery?.status).toBe('skipped');
+    await notifyRecipients(db, [fixture.event]);
+    const rows = await db.select().from(schema.notificationDelivery);
+    expect(rows.map((row) => row.channel)).toEqual(['email']);
   });
 
-  it('delivers pending messages across every organization without a filter', async () => {
-    const first = await seedPendingSlackDm();
-    const second = await seedPendingSlackDm();
-    const dispatchedOrganizations: string[] = [];
-    const dispatch: typeof dispatchSlackDmResult = (_database, input) => {
-      dispatchedOrganizations.push(input.organizationId);
-      return Promise.resolve({ delivered: 1, channel: 'D123', ts: '123.456' });
-    };
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(2);
-    expect(dispatchedOrganizations.sort()).toEqual(
-      [first.organizationId, second.organizationId].sort(),
-    );
-  });
-
-  it('leaves another organization pending when the worker is scoped to one organization', async () => {
-    const allowed = await seedPendingSlackDm();
-    const blocked = await seedPendingSlackDm();
-    const dispatchedOrganizations: string[] = [];
-    const dispatch: typeof dispatchSlackDmResult = (_database, input) => {
-      dispatchedOrganizations.push(input.organizationId);
-      return Promise.resolve({ delivered: 1, channel: 'D123', ts: '123.456' });
-    };
-
-    expect(
-      await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch, undefined, {
-        organizationId: allowed.organizationId,
-      }),
-    ).toBe(1);
-    expect(dispatchedOrganizations).toEqual([allowed.organizationId]);
-
-    const rows = await db
-      .select({
-        status: schema.notificationDelivery.status,
-        userId: schema.notificationDelivery.userId,
-      })
-      .from(schema.notificationDelivery);
-    expect(rows.find((row) => row.userId === allowed.userId)?.status).toBe('succeeded');
-    expect(rows.find((row) => row.userId === blocked.userId)?.status).toBe('pending');
-  });
-
-  it('claims only the deliveries it can start concurrently', async () => {
-    await Promise.all(Array.from({ length: 6 }, () => seedPendingSlackDm()));
-    const gate = deferred();
-    let active = 0;
-    let maxActive = 0;
-    const dispatch = async () => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await gate.promise;
-      active -= 1;
-      return { delivered: 1, channel: 'D123', ts: randomUUIDv7() } as const;
-    };
-    const running = deliverPendingSlackDms(db, 6, globalThis.fetch, dispatch, undefined, {
-      concurrency: 2,
-    });
-
-    try {
-      await waitUntil(async () => active > 0);
-      const rows = await db
-        .select({ status: schema.notificationDelivery.status })
-        .from(schema.notificationDelivery);
-      expect(rows.filter((row) => row.status === 'processing')).toHaveLength(2);
-      expect(rows.filter((row) => row.status === 'pending')).toHaveLength(4);
-      expect(active).toBe(2);
-    } finally {
-      gate.resolve();
-      await running;
-    }
-
-    expect(await running).toBe(6);
-    expect(maxActive).toBe(2);
-  });
-
-  it('lets two workers race while dispatching one provider message', async () => {
-    await seedPendingSlackDm();
-    const gate = deferred();
-    let dispatches = 0;
-    const dispatch = async () => {
-      dispatches += 1;
-      await gate.promise;
-      return { delivered: 1, channel: 'D123', ts: '123.456' } as const;
-    };
-
-    const workers = [
-      deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch),
-      deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch),
-    ];
-    await waitUntil(async () => dispatches > 0);
-    gate.resolve();
-    const results = await Promise.all(workers);
-
-    expect(results.sort()).toEqual([0, 1]);
-    expect(dispatches).toBe(1);
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'succeeded', attempts: 1 });
-  });
-
-  it('does not finalize a Slack DM when Slack omits its message timestamp', async () => {
-    await seedPendingSlackDm();
-    const dispatch = () => Promise.resolve({ delivered: 1, channel: 'D123', ts: '' });
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
-  });
-
-  it('stops before another claim when its deadline is reached', async () => {
-    await Promise.all(Array.from({ length: 6 }, () => seedPendingSlackDm()));
-    let nowMs = Date.now() + 60_000;
-    const deadlineAt = new Date(nowMs + 100);
-    let dispatches = 0;
-    const dispatch = () => {
-      dispatches += 1;
-      if (dispatches === 2) nowMs = deadlineAt.getTime();
-      return Promise.resolve({ delivered: 1, channel: 'D123', ts: randomUUIDv7() } as const);
-    };
-
-    expect(
-      await deliverPendingSlackDms(db, 6, globalThis.fetch, dispatch, undefined, {
-        concurrency: 2,
-        deadlineAt,
-        now: () => new Date(nowMs),
-      }),
-    ).toBe(2);
-
-    const rows = await db
-      .select({ status: schema.notificationDelivery.status })
-      .from(schema.notificationDelivery);
-    expect(rows.filter((row) => row.status === 'succeeded')).toHaveLength(2);
-    expect(rows.filter((row) => row.status === 'pending')).toHaveLength(4);
-    expect(rows.filter((row) => row.status === 'processing')).toHaveLength(0);
-  });
-
-  it('escapes Slack markup in the title and preserves the notification link', async () => {
-    await seedPendingSlackDm();
-    await db
-      .update(schema.notification)
-      .set({ title: 'Deploy <!channel> <@U123> <https://evil.example|click>' });
-    const requests: Record<string, unknown>[] = [];
-    const fetch = ((_input: URL | RequestInfo, init?: RequestInit) => {
-      requests.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
-      return Promise.resolve(
-        requests.length === 1
-          ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
-          : new Response(JSON.stringify({ ok: true, channel: 'D123', ts: '123.456' })),
-      );
-    }) as unknown as typeof globalThis.fetch;
-
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(1);
-
-    const [storedDelivery] = await db.select().from(schema.notificationDelivery);
-    const [storedNotification] = await db
-      .select({ deliveredChannels: schema.notification.deliveredChannels })
-      .from(schema.notification);
-    expect(requests[1]).toEqual({
-      channel: 'D123',
-      text: 'Deploy &lt;!channel&gt; &lt;@U123&gt; &lt;https://evil.example|click&gt;: https://orbit.example/issue/ORB-1',
-    });
-    expect(storedDelivery).toMatchObject({
-      status: 'succeeded',
-      attempts: 1,
-      providerMessageChannel: 'D123',
-      providerMessageTs: '123.456',
-    });
-    expect(storedNotification?.deliveredChannels).toEqual(['slack_dm']);
-  });
-
-  it('reclaims an accepted DM after finalization is interrupted', async () => {
-    await seedPendingSlackDm();
-    let dispatches = 0;
-    const dispatch = () => {
-      dispatches += 1;
-      return Promise.resolve({ delivered: 1, channel: 'D123', ts: `123.${dispatches}` });
-    };
-
-    expect(
-      await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch, async () => false),
-    ).toBe(0);
-
-    const [interrupted] = await db.select().from(schema.notificationDelivery);
-    expect(interrupted).toMatchObject({ status: 'processing', attempts: 0 });
-    if (interrupted?.claimedAt === null || interrupted === undefined)
-      throw new Error('Expected a claimed delivery.');
-    await db
-      .update(schema.notificationDelivery)
-      .set({ claimedAt: new Date(interrupted.claimedAt.getTime() - 5 * 60_000 - 1) })
-      .where(eq(schema.notificationDelivery.id, interrupted.id));
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(1);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(dispatches).toBe(2);
-    expect(stored).toMatchObject({
-      id: interrupted.id,
-      status: 'succeeded',
-      attempts: 1,
-      providerMessageChannel: 'D123',
-      providerMessageTs: '123.2',
-    });
-  });
-
-  it('retries without calling Slack when an absolute application URL is unavailable', async () => {
-    await seedPendingSlackDm();
-    delete process.env['APP_URL'];
-    const fetch = (() => {
-      throw new Error('Slack must not receive a relative notification URL.');
-    }) as unknown as typeof globalThis.fetch;
-
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
-
-    const [stored] = await db
-      .select({
-        status: schema.notificationDelivery.status,
-        attempts: schema.notificationDelivery.attempts,
-        lastError: schema.notificationDelivery.lastError,
-      })
-      .from(schema.notificationDelivery);
-    expect(stored).toEqual({
-      status: 'failed',
-      attempts: 1,
-      lastError: 'APP_URL is required for Slack notification links',
-    });
-  });
-
-  it('does not finalize a Slack DM when Slack omits its message timestamp', async () => {
-    await seedPendingSlackDm();
-    const dispatch = () => Promise.resolve({ delivered: 1, channel: 'D123', ts: '' });
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
-  });
-
-  it('keeps a transient provider failure available for retry', async () => {
-    await seedPendingSlackDm();
-    let calls = 0;
-    const fetch = (() => {
-      calls += 1;
-      return Promise.resolve(
-        calls === 1
-          ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
-          : new Response(JSON.stringify({ ok: false, error: 'ratelimited' })),
-      );
-    }) as unknown as typeof globalThis.fetch;
-
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
-    expect(stored?.lastError).toContain('ratelimited');
-    if (stored === undefined) throw new Error('Expected a failed delivery.');
-    const reclaimed = await db.transaction((tx) =>
-      claimSlackDmDeliveries(tx, 10, new Date(stored.availableAt.getTime() + 1)),
-    );
-    expect(reclaimed).toHaveLength(1);
-    expect(reclaimed[0]?.id).toBe(stored.id);
-  });
-
-  it('uses exponential backoff for a repeated transient failure', async () => {
-    await seedPendingSlackDm();
-    await db.update(schema.notificationDelivery).set({ attempts: 2 });
-    const now = new Date(Date.now() + 86_400_000);
-    const dispatch = () => Promise.reject(new SlackApiError('chat.postMessage', 'internal_error'));
-
-    expect(
-      await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch, undefined, {
-        now: () => now,
-        deadlineAt: new Date(now.getTime() + 1_000),
-      }),
-    ).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'failed', attempts: 3 });
-    expect(stored?.availableAt.getTime()).toBe(now.getTime() + 120_000);
-  });
-
-  it('honors a longer provider Retry-After delay', async () => {
-    await seedPendingSlackDm();
-    const now = new Date(Date.now() + 86_400_000);
-    const dispatch = () =>
-      Promise.reject(new SlackApiError('chat.postMessage', 'ratelimited', 90_000));
-
-    expect(
-      await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch, undefined, {
-        now: () => now,
-        deadlineAt: new Date(now.getTime() + 1_000),
-      }),
-    ).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'failed', attempts: 1 });
-    expect(stored?.availableAt.getTime()).toBe(now.getTime() + 90_000);
-  });
-
-  it('dead-letters a transient failure at the fifth attempt', async () => {
-    await seedPendingSlackDm();
-    await db.update(schema.notificationDelivery).set({ attempts: 4 });
-    const dispatch = () => Promise.reject(new SlackApiError('chat.postMessage', 'internal_error'));
-
-    expect(await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch)).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({ status: 'dead_letter', attempts: 5 });
-    expect(await claimSlackDmDeliveries(db, 1, new Date(Date.now() + 86_400_000))).toEqual([]);
-  });
-
-  it('dead-letters a permanent Slack API failure without retrying', async () => {
-    await seedPendingSlackDm();
-    const dispatch = () =>
-      Promise.reject(new SlackApiError('chat.postMessage', 'channel_not_found'));
-
-    expect(await deliverPendingSlackDms(db, 1, globalThis.fetch, dispatch)).toBe(0);
-
-    const [stored] = await db.select().from(schema.notificationDelivery);
-    expect(stored).toMatchObject({
-      status: 'dead_letter',
-      attempts: 1,
-      lastError: 'Slack chat.postMessage failed: channel_not_found.',
-    });
-    expect(await claimSlackDmDeliveries(db, 1, new Date(Date.now() + 86_400_000))).toEqual([]);
-  });
-
-  it('does not count an attempt when Slack becomes unavailable before dispatch', async () => {
-    await seedPendingSlackDm();
-    const dispatch = async () => ({ delivered: 0, channel: null, ts: null });
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
-
-    const [stored] = await db
-      .select({
-        status: schema.notificationDelivery.status,
-        attempts: schema.notificationDelivery.attempts,
-        lastError: schema.notificationDelivery.lastError,
-      })
-      .from(schema.notificationDelivery);
-    expect(stored).toEqual({
-      status: 'skipped',
-      attempts: 0,
-      lastError: 'Slack user mapping unavailable',
-    });
-  });
-
-  it('records a permanent provider failure and requires Slack reauthorization', async () => {
-    const fixture = await seedPendingSlackDm();
-    let calls = 0;
-    const fetch = (() => {
-      calls += 1;
-      return Promise.resolve(
-        calls === 1
-          ? new Response(JSON.stringify({ ok: true, channel: { id: 'D123' } }))
-          : new Response(JSON.stringify({ ok: false, error: 'token_revoked' })),
-      );
-    }) as unknown as typeof globalThis.fetch;
-
-    expect(await deliverPendingSlackDms(db, 10, fetch)).toBe(0);
-
-    const [storedIntegration] = await db
-      .select({ config: schema.integration.config })
-      .from(schema.integration)
-      .where(eq(schema.integration.id, fixture.integrationId));
-    const [storedDelivery] = await db
-      .select({
-        status: schema.notificationDelivery.status,
-        attempts: schema.notificationDelivery.attempts,
-        lastError: schema.notificationDelivery.lastError,
-      })
-      .from(schema.notificationDelivery);
-    expect(storedDelivery).toEqual({ status: 'skipped', attempts: 1, lastError: 'token_revoked' });
-    expect(storedIntegration?.config['slackReauthorize']).toBe(true);
-  });
-
-  it('requires reauthorization without retrying when stored credentials use an old key', async () => {
-    process.env['BETTER_AUTH_SECRET'] = 'slack-old-key';
-    const fixture = await seedPendingSlackDm();
-    const envelope = encryptSlackBotToken({
-      organizationId: fixture.organizationId,
-      integrationId: fixture.integrationId,
-      token: 'xoxb-encrypted',
-    });
-    await db
-      .update(schema.integration)
-      .set({ credentials: { botToken: envelope } })
-      .where(eq(schema.integration.id, fixture.integrationId));
-    process.env['BETTER_AUTH_SECRET'] = 'slack-rotated-key';
-    let providerCalls = 0;
-    const fetch = (() => {
-      providerCalls += 1;
-      return Promise.resolve(Response.json({ ok: true }));
-    }) as unknown as typeof globalThis.fetch;
-
-    expect(await deliverPendingSlackDms(db, 1, fetch)).toBe(0);
-
-    const [storedIntegration] = await db
-      .select({ config: schema.integration.config })
-      .from(schema.integration)
-      .where(eq(schema.integration.id, fixture.integrationId));
-    const [storedDelivery] = await db.select().from(schema.notificationDelivery);
-    expect(providerCalls).toBe(0);
-    expect(storedIntegration?.config['slackReauthorize']).toBe(true);
-    expect(storedDelivery).toMatchObject({
-      status: 'skipped',
-      attempts: 1,
-      lastError: 'credential_unavailable',
-    });
-  });
-
-  it('retries a permanent failure after a concurrent token refresh', async () => {
-    const fixture = await seedPendingSlackDm();
-    const staleContext = await resolveSlackContext(db, fixture.organizationId, 'default');
-    if (staleContext === null) throw new Error('Expected the Slack integration context.');
-    let dispatchCalls = 0;
-    const dispatch: typeof dispatchSlackDmResult = async () => {
-      dispatchCalls += 1;
-      if (dispatchCalls === 1) {
-        await db
-          .update(schema.integration)
-          .set({
-            credentials: { botToken: 'xoxb-refreshed' },
-            config: { scopes: ['chat:write', 'im:write'] },
-            updatedAt: new Date(Date.now() + 1_000),
-          })
-          .where(eq(schema.integration.id, fixture.integrationId));
-        throw new SlackDmDispatchError(
-          staleContext,
-          new SlackApiError('chat.postMessage', 'invalid_auth'),
+  for (const [channel, deliver] of [
+    ['slack_dm', deliverPendingSlackDms],
+    ['slack', deliverPendingSlackChannels],
+    ['email', deliverPendingNotificationEmails],
+  ] as const) {
+    it(`routes ${channel} through the shared durable worker without sending another provider`, async () => {
+      const fixture = await seed();
+      await notifyRecipients(db, [fixture.event]);
+      const urls: string[] = [];
+      const fetch = ((input: URL | RequestInfo) => {
+        urls.push(String(input));
+        return Promise.resolve(
+          channel === 'email'
+            ? Response.json({ id: 'email-confirmed' })
+            : Response.json({
+                ok: true,
+                channel: channel === 'slack' ? 'C-test' : 'D-test',
+                ts: '1.000',
+              }),
         );
-      }
-      return { delivered: 1, channel: 'D123', ts: '123.456' };
-    };
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
-
-    const [storedIntegration] = await db
-      .select({ config: schema.integration.config, credentials: schema.integration.credentials })
-      .from(schema.integration)
-      .where(eq(schema.integration.id, fixture.integrationId));
-    const [failedDelivery] = await db.select().from(schema.notificationDelivery);
-    expect(storedIntegration).toEqual({
-      config: { scopes: ['chat:write', 'im:write'] },
-      credentials: { botToken: 'xoxb-refreshed' },
+      }) as unknown as typeof globalThis.fetch;
+      expect(await deliver(db, 100, fetch)).toBe(1);
+      expect(urls).toEqual([
+        channel === 'email'
+          ? 'https://api.resend.com/emails'
+          : 'https://slack.com/api/chat.postMessage',
+      ]);
+      const rows = await db
+        .select()
+        .from(schema.notificationDelivery)
+        .where(
+          and(
+            eq(schema.notificationDelivery.organizationId, fixture.organizationId),
+            eq(schema.notificationDelivery.status, 'delivered'),
+          ),
+        );
+      expect(rows.map((row) => row.channel)).toEqual([channel]);
     });
-    expect(failedDelivery).toMatchObject({ status: 'failed', attempts: 1 });
-    if (failedDelivery === undefined) throw new Error('Expected a retryable delivery.');
-    await db
-      .update(schema.notificationDelivery)
-      .set({ availableAt: new Date(0) })
-      .where(eq(schema.notificationDelivery.id, failedDelivery.id));
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(1);
-    expect(dispatchCalls).toBe(2);
-    const refreshedContext = await resolveSlackContext(db, fixture.organizationId, 'default');
-    expect(refreshedContext?.token).toBe('xoxb-refreshed');
-  });
-
-  it('does not mark a same-token refreshed Slack integration for reauthorization', async () => {
-    const fixture = await seedPendingSlackDm();
-    const staleContext = await resolveSlackContext(db, fixture.organizationId, 'default');
-    if (staleContext === null) throw new Error('Expected the Slack integration context.');
-    const dispatch: typeof dispatchSlackDmResult = async () => {
-      await db
-        .update(schema.integration)
-        .set({
-          config: { scopes: ['chat:write', 'im:write'], reconnectMarker: 'fresh' },
-          updatedAt: new Date(Date.now() + 1_000),
-        })
-        .where(eq(schema.integration.id, fixture.integrationId));
-      throw new SlackDmDispatchError(
-        staleContext,
-        new SlackApiError('chat.postMessage', 'invalid_auth'),
-      );
-    };
-
-    expect(await deliverPendingSlackDms(db, 10, globalThis.fetch, dispatch)).toBe(0);
-
-    const [storedIntegration] = await db
-      .select({ config: schema.integration.config })
-      .from(schema.integration)
-      .where(eq(schema.integration.id, fixture.integrationId));
-    const [storedDelivery] = await db.select().from(schema.notificationDelivery);
-    expect(storedIntegration?.config).toEqual({
-      scopes: ['chat:write', 'im:write'],
-      reconnectMarker: 'fresh',
-    });
-    expect(storedDelivery).toMatchObject({ status: 'failed', attempts: 1 });
-  });
+  }
 });

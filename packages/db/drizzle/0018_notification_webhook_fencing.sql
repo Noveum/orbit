@@ -1,0 +1,1 @@
+ALTER TABLE "webhook_delivery" ADD COLUMN "claim_token" text;

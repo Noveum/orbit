@@ -12,6 +12,7 @@ describe('documentationNavigation', () => {
       { text: 'Keyboard shortcuts', link: '/keyboard-shortcuts' },
       { text: 'MCP server', link: '/mcp' },
       { text: 'Integrations', link: '/integrations' },
+      { text: 'Inbox conversations', link: '/features/inbox' },
       { text: 'Architecture', link: '/architecture' },
       { text: 'Testing', link: '/testing' },
       { text: 'Troubleshooting', link: '/troubleshooting' },

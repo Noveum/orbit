@@ -199,11 +199,11 @@ Slack integration behavior:
   scoping continue to isolate every connection and delivery.
 - **Granted scope storage.** Granted scopes are stored as non-secret
   integration metadata. The bot token is never exposed to the browser.
-- **Notification routing.** The GitHub webhook broadcast path sends eligible
-  pull request activity to configured team channels. Generic team and project
-  notifications are not yet dispatched to Slack channels. Personal
-  notifications use Slack DMs when the recipient is mapped and has that channel
-  enabled.
+- **Notification routing.** Eligible pull request activity is queued durably for
+  configured team channels. Personal notifications use Slack DMs when the
+  recipient is mapped, can still access the subject and has that channel
+  enabled. Channel mappings are workspace or team managed; personal DM settings
+  do not opt an entire shared channel out of delivery.
 - **Availability states.** Notification settings distinguish available,
   unmapped, reauthorization-required, and unavailable states so a user is not
   offered a DM preference that the current integration cannot satisfy.
@@ -211,14 +211,13 @@ Slack integration behavior:
   window ends; urgent assignments can bypass quiet hours using the existing
   notification setting. A DM-only notification with no other enabled channel
   is persisted with a deferred delivery time and sent after quiet hours end.
-- **Delivery guarantee.** Slack DMs use at-least-once delivery. A worker claim
-  that is not finalized within five minutes is reclaimed so an interrupted
-  send is not silently lost. If Slack accepted the message immediately before
-  the worker stopped, the retry can produce a duplicate DM because
-  `chat.postMessage` does not provide a documented idempotency contract. The
-  replacement claim becomes authoritative, and a late worker cannot finalize
-  the superseded attempt. The scheduled worker runs every minute, takes small
-  concurrent batches, and stops claiming new work before its runtime deadline.
+- **Threads and delivery safety.** Each conversation has one root per Slack
+  destination. Later events become ordered replies with broadcast disabled.
+  Confirmed rate limits retry with backoff. A timeout or crash after a send may
+  have succeeded becomes `ambiguous`, blocks later replies and is not resent
+  automatically. This avoids turning an unknown Slack result into a duplicate
+  message. It is not an exactly-once provider guarantee. The scheduled worker
+  runs every minute in bounded batches with claim-token fencing.
 - **Member mapping.** OAuth loads the complete Slack user directory before it
   maps every current Orbit workspace member whose normalized email has exactly
   one matching active human Slack user. Ambiguous emails remain unmapped so a
@@ -240,10 +239,12 @@ either, both, or neither. See [Configuration](configuration.md#authentication).
 
 ## Email
 
-Not an integration you connect, but worth listing since it carries invites and
-sign-in codes. Event notification email and digests are not currently
-dispatched. Slack channel delivery remains limited to channels explicitly
-mapped by each Orbit organization.
+Email carries invites, sign-in codes and enabled personal event notifications.
+Notification email is queued and sent only to the recipient's current verified
+address after checking preferences and subject access again. Retries reuse an
+encrypted frozen payload and the same Resend idempotency key. Unknown outcomes
+stop before the provider's idempotency window expires. Digests are not included.
+Transactional sign-in and invitation email retains its existing delivery path.
 
 Orbit sends through [Resend](https://resend.com) only.
 
@@ -254,6 +255,9 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 
 `EMAIL_FROM` must be on a domain verified in Resend. If it is not, every send
 fails, including sign-in codes and invitations.
+
+See [Inbox conversations](features/inbox.md) for notification categories,
+worker diagnostics, migration order and rollback switches.
 
 ## Webhooks out
 

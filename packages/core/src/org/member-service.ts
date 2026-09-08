@@ -8,6 +8,10 @@ import { assertCan, canAssignRole } from '@orbit/shared/policy';
 import { memberUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, requireRow } from '../internal.ts';
+import {
+  lockNotificationPolicyMutation,
+  synchronizeNotificationAccess,
+} from '../notifications/access-sync.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { issueScopes } from '../work/issue-service.ts';
@@ -135,6 +139,7 @@ export async function updateMemberRole(
   }
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const [existing] = await tx
       .select()
       .from(schema.member)
@@ -186,10 +191,17 @@ export async function updateMemberRole(
       .where(eq(schema.member.id, memberId))
       .returning();
     const member = requireRow(updated, 'That member does not exist.');
+    const notificationActions = await synchronizeNotificationAccess(
+      tx,
+      principal.organizationId,
+      [member.userId],
+      actor,
+    );
 
     return {
       member,
       actions: [
+        ...notificationActions,
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -217,6 +229,7 @@ export async function removeMember(
   assertCan(principal, 'member:manage');
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const [existing] = await tx
       .select()
       .from(schema.member)
@@ -322,6 +335,12 @@ export async function removeMember(
       reviewerIdsByIssue(tx, changedIssueIds),
     ]);
     const actions: SyncAction[] = [
+      ...(await synchronizeNotificationAccess(
+        tx,
+        principal.organizationId,
+        [current.userId],
+        actor,
+      )),
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,

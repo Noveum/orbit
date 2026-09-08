@@ -22,7 +22,7 @@ import * as issuesQuery from '@/lib/query/use-issues.ts';
 import { render } from '@/test/render.tsx';
 import { restoreModulesAfterThisFile } from '../../tests-support.ts';
 
-await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
+await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts', '@orbit/realtime-client/react']);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),
@@ -37,6 +37,7 @@ mock.module('next-themes', () => ({
 mock.module('@orbit/realtime-client/react', () => ({
   useScopeSubscription: () => undefined,
   useDeltaHandler: () => undefined,
+  useResumeHandler: () => undefined,
 }));
 
 mock.module('@/lib/auth/client.ts', () => ({

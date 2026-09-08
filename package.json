@@ -49,6 +49,8 @@
     "db:studio": "bun run --filter '@orbit/db' studio",
     "bench:outline": "bun apps/web/bench/outline-cost.ts",
     "labels:sync": "bun scripts/sync-labels.ts",
+    "notifications:conversations-backfill": "bun scripts/notification-conversation-backfill.ts",
+    "notifications:conversations-verify": "bun scripts/notification-conversation-verify.ts",
     "screenshots": "bun --env-file=.env apps/web/scripts/capture-screenshots.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",

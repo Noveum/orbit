@@ -229,7 +229,11 @@ jobs:
           curl -fsS --connect-timeout 2 --max-time 10 --output /dev/null "http://127.0.0.1:3001/_next$static_path"
 
   e2e:
-    name: End-to-end (Playwright)
+    name: ${{ matrix.inbox == 'legacy' && 'End-to-end (Playwright)' || 'End-to-end (Inbox conversations)' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        inbox: [legacy, conversations]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -265,6 +269,7 @@ jobs:
       REALTIME_PORT: "3100"
       ORBIT_DEV_LOGIN: "1"
       ORBIT_E2E_BASE_URL: http://localhost:3000
+      NOTIFICATION_CONVERSATIONS_ENABLED: ${{ matrix.inbox == 'conversations' && 'true' || 'false' }}
       S3_ENDPOINT: http://localhost:9010
       S3_REGION: us-east-1
       S3_BUCKET: orbit-uploads
@@ -291,6 +296,7 @@ jobs:
             echo "REALTIME_PORT=$REALTIME_PORT"
             echo "ORBIT_DEV_LOGIN=$ORBIT_DEV_LOGIN"
             echo "ORBIT_E2E_BASE_URL=$ORBIT_E2E_BASE_URL"
+            echo "NOTIFICATION_CONVERSATIONS_ENABLED=$NOTIFICATION_CONVERSATIONS_ENABLED"
             echo "S3_ENDPOINT=$S3_ENDPOINT"
             echo "S3_REGION=$S3_REGION"
             echo "S3_BUCKET=$S3_BUCKET"
@@ -351,7 +357,12 @@ jobs:
           cat "$RUNNER_TEMP/realtime.log" >&2 || true
           exit 1
       - name: Run the end-to-end suite
+        if: matrix.inbox == 'legacy'
         run: bun run test:e2e
+      - name: Run grouped inbox end-to-end tests
+        if: matrix.inbox == 'conversations'
+        working-directory: apps/web
+        run: bunx playwright test e2e/notification-conversations.spec.ts
       - name: Show what the servers logged
         if: failure()
         run: |
@@ -365,7 +376,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.inbox }}
           path: apps/web/test-results/
           if-no-files-found: ignore
       - name: Dump server logs on failure

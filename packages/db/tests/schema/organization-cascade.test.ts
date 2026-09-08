@@ -23,6 +23,7 @@ describe('organization deletion schema', () => {
       left join pg_constraint foreign_key
         on foreign_key.conrelid = child.oid
         and foreign_key.contype = 'f'
+        and array_length(foreign_key.conkey, 1) = 1
         and organization_column.attnum = any(foreign_key.conkey)
       left join pg_class parent on parent.oid = foreign_key.confrelid
       where namespace.nspname = 'public'
@@ -31,8 +32,18 @@ describe('organization deletion schema', () => {
     `);
 
     expect(rows.length).toBeGreaterThan(30);
-    expect(
-      rows.filter((row) => row.referencedTable !== 'organization' || row.deleteAction !== 'c'),
-    ).toEqual([]);
+    expect(rows.filter((row) => row.referencedTable !== 'organization')).toEqual([]);
+    expect(rows.filter((row) => row.deleteAction !== 'c')).toEqual([
+      {
+        tableName: 'webhook_delivery',
+        referencedTable: 'organization',
+        deleteAction: 'n',
+      },
+      {
+        tableName: 'webhook_delivery_quarantine',
+        referencedTable: 'organization',
+        deleteAction: 'n',
+      },
+    ]);
   });
 });
