@@ -189,4 +189,78 @@ describe('AI client complete()', () => {
       }),
     ).rejects.toThrow(AiClientError);
   });
+
+  it('rejects oversized chunked OpenAI response and cancels stream', async () => {
+    let canceled = false;
+    const chunk = new TextEncoder().encode('x'.repeat(1024 * 1024));
+    const stream = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    globalThis.fetch = (() => {
+      return Promise.resolve(
+        new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiClientError);
+
+    expect(canceled).toBe(true);
+  });
+
+  it('rejects oversized chunked Anthropic response and cancels stream', async () => {
+    let canceled = false;
+    const chunk = new TextEncoder().encode('x'.repeat(1024 * 1024));
+    const stream = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    globalThis.fetch = (() => {
+      return Promise.resolve(
+        new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-3-5-sonnet-20241022',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiClientError);
+
+    expect(canceled).toBe(true);
+  });
 });

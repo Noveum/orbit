@@ -287,7 +287,9 @@ function AiActionButtons(props: AiActionButtonsProps) {
           type="button"
           variant="secondary"
           size="sm"
-          disabled={props.isTesting || props.isSaving || !props.isFormValid}
+          disabled={
+            props.isTesting || props.isSaving || props.isDisconnecting || !props.isFormValid
+          }
           onClick={props.onTest}
         >
           {props.isTesting ? 'Testing...' : 'Test connection'}
@@ -296,7 +298,9 @@ function AiActionButtons(props: AiActionButtonsProps) {
           type="button"
           variant="primary"
           size="sm"
-          disabled={props.isSaving || props.isTesting || !props.isFormValid}
+          disabled={
+            props.isSaving || props.isTesting || props.isDisconnecting || !props.isFormValid
+          }
           onClick={props.onSave}
         >
           {props.isSaving ? 'Saving...' : 'Save settings'}
