@@ -2,7 +2,10 @@ import type { Database, Transaction } from '@orbit/db';
 import { PULL_REQUEST_NOTIFICATION_TYPES } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { sql } from 'drizzle-orm';
-import { lockNotificationSubjectAccess } from './conversation-access.ts';
+import {
+  lockNotificationSubjectAccess,
+  notificationSubjectAccessMap,
+} from './conversation-access.ts';
 import {
   type NotificationConversationIdentity,
   resolveNotificationConversation,
@@ -161,6 +164,7 @@ export interface NotificationConversationBackfillOptions
   extends ResumableConversationBackfillOptions {
   readonly resolveLegacySource?: ResolveLegacyNotificationSource;
   readonly maxEquivalenceGroupRows?: number;
+  readonly sourceConcurrency?: number;
 }
 
 export interface ConversationBackfillOrganizationResult {
@@ -1381,12 +1385,31 @@ async function readSourceSeeds(
   `);
 }
 
+async function mapSourceWork<Input, Output>(
+  inputs: readonly Input[],
+  concurrency: number,
+  operation: (input: Input) => Promise<Output>,
+): Promise<Output[]> {
+  const outputs: Output[] = [];
+  for (let offset = 0; offset < inputs.length; offset += concurrency) {
+    const results = await Promise.allSettled(
+      inputs.slice(offset, offset + concurrency).map(operation),
+    );
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+      outputs.push(result.value);
+    }
+  }
+  return outputs;
+}
+
 async function resolveSourceGroups(
   database: Database,
   seeds: readonly SourceSeedRow[],
   resolver: ResolveLegacyNotificationSource,
   batchSize: number,
   maxEquivalenceGroupRows: number,
+  sourceConcurrency: number,
 ): Promise<{
   readonly groups: readonly SourceResolutionGroup[];
   readonly cursor: string | null;
@@ -1395,33 +1418,42 @@ async function resolveSourceGroups(
   let selectedRows = 0;
   let cursor: string | null = null;
 
-  for (const seed of seeds) {
-    const resolution = validateSourceResolution(
-      seed.id,
-      await resolver(database, notificationSourceInput(seed)),
-      maxEquivalenceGroupRows,
+  for (let offset = 0; offset < seeds.length; offset += sourceConcurrency) {
+    const resolved = await mapSourceWork(
+      seeds.slice(offset, offset + sourceConcurrency),
+      sourceConcurrency,
+      async (seed) => ({
+        seed,
+        resolution: validateSourceResolution(
+          seed.id,
+          await resolver(database, notificationSourceInput(seed)),
+          maxEquivalenceGroupRows,
+        ),
+      }),
     );
-    const existing = groups.get(resolution.sourceEventKey);
-    if (existing !== undefined) {
-      if (!sameSourceResolution(existing.resolution, resolution)) {
-        throw new Error(`Conflicting resolutions for ${resolution.sourceEventKey}.`);
+    for (const { seed, resolution } of resolved) {
+      const existing = groups.get(resolution.sourceEventKey);
+      if (existing !== undefined) {
+        if (!sameSourceResolution(existing.resolution, resolution)) {
+          throw new Error(`Conflicting resolutions for ${resolution.sourceEventKey}.`);
+        }
+        groups.set(resolution.sourceEventKey, {
+          resolution,
+          seedIds: [...existing.seedIds, seed.id],
+        });
+        cursor = seed.id;
+        continue;
       }
-      groups.set(resolution.sourceEventKey, {
-        resolution,
-        seedIds: [...existing.seedIds, seed.id],
-      });
+      if (
+        selectedRows > 0 &&
+        selectedRows + resolution.equivalentNotificationIds.length > batchSize
+      ) {
+        return { groups: [...groups.values()], cursor };
+      }
+      groups.set(resolution.sourceEventKey, { resolution, seedIds: [seed.id] });
+      selectedRows += resolution.equivalentNotificationIds.length;
       cursor = seed.id;
-      continue;
     }
-    if (
-      selectedRows > 0 &&
-      selectedRows + resolution.equivalentNotificationIds.length > batchSize
-    ) {
-      break;
-    }
-    groups.set(resolution.sourceEventKey, { resolution, seedIds: [seed.id] });
-    selectedRows += resolution.equivalentNotificationIds.length;
-    cursor = seed.id;
   }
   return { groups: [...groups.values()], cursor };
 }
@@ -1432,6 +1464,7 @@ async function processSourceBatch(
   highWaterMark: string | null,
   resolver: ResolveLegacyNotificationSource,
   maxEquivalenceGroupRows: number,
+  sourceConcurrency: number,
 ): Promise<ConversationBackfillBatchResult> {
   const actualHighWater =
     highWaterMark ?? (await notificationHighWaterMark(database, input.organizationId));
@@ -1456,21 +1489,23 @@ async function processSourceBatch(
     resolver,
     input.batchSize,
     maxEquivalenceGroupRows,
+    sourceConcurrency,
   );
   if (planned.groups.length === 0 || planned.cursor === null) {
     throw new Error('Source batch planning made no progress.');
   }
-  let processedRows = 0;
+  const notificationIds = new Set<string>();
   for (const group of planned.groups) {
-    processedRows += await applySourceResolutionGroup(
-      database,
-      input.organizationId,
-      group,
-      input.now,
-    );
+    for (const id of group.resolution.equivalentNotificationIds) {
+      if (notificationIds.has(id)) throw new Error('Source equivalence groups overlap.');
+      notificationIds.add(id);
+    }
   }
+  const counts = await mapSourceWork(planned.groups, sourceConcurrency, (group) =>
+    applySourceResolutionGroup(database, input.organizationId, group, input.now),
+  );
   return {
-    processedRows,
+    processedRows: counts.reduce((total, count) => total + count, 0),
     cursor: planned.cursor,
     highWaterMark: actualHighWater,
     done: false,
@@ -2157,6 +2192,7 @@ async function processTailBatch(
   maxEquivalenceGroupRows: number,
   passNumber: number,
   previousWatermark: string | null,
+  sourceConcurrency: number,
 ): Promise<ConversationBackfillBatchResult> {
   const before = JSON.stringify([
     await notificationHighWaterMark(database, input.organizationId),
@@ -2169,6 +2205,7 @@ async function processTailBatch(
     null,
     resolver,
     maxEquivalenceGroupRows,
+    sourceConcurrency,
   );
   if (!sources.done) {
     return {
@@ -2233,6 +2270,7 @@ class DatabaseConversationBackfillStore implements ConversationBackfillStore {
     private readonly database: Database,
     private readonly resolver: ResolveLegacyNotificationSource,
     private readonly maxEquivalenceGroupRows: number,
+    private readonly sourceConcurrency: number,
   ) {}
 
   async listOrganizationIds(): Promise<readonly string[]> {
@@ -2320,6 +2358,7 @@ class DatabaseConversationBackfillStore implements ConversationBackfillStore {
         highWaterMark,
         this.resolver,
         this.maxEquivalenceGroupRows,
+        this.sourceConcurrency,
       );
     }
     if (input.phase === 'recipients') {
@@ -2338,6 +2377,7 @@ class DatabaseConversationBackfillStore implements ConversationBackfillStore {
       this.maxEquivalenceGroupRows,
       progress?.passNumber ?? 1,
       progress?.highWaterMark ?? null,
+      this.sourceConcurrency,
     );
   }
 }
@@ -2347,6 +2387,10 @@ export async function runNotificationConversationBackfill(
   options: NotificationConversationBackfillOptions = {},
 ): Promise<ConversationBackfillRunResult> {
   const maxEquivalenceGroupRows = options.maxEquivalenceGroupRows ?? 10_000;
+  const sourceConcurrency = options.sourceConcurrency ?? 1;
+  if (!Number.isInteger(sourceConcurrency) || sourceConcurrency < 1 || sourceConcurrency > 8) {
+    throw new Error('Source concurrency must be an integer between 1 and 8.');
+  }
   if (!Number.isInteger(maxEquivalenceGroupRows) || maxEquivalenceGroupRows < 1) {
     throw new Error('Maximum source equivalence group size must be positive.');
   }
@@ -2354,6 +2398,7 @@ export async function runNotificationConversationBackfill(
     database,
     options.resolveLegacySource ?? defaultLegacySourceResolution,
     maxEquivalenceGroupRows,
+    sourceConcurrency,
   );
   return await runResumableConversationBackfill(store, options);
 }
@@ -2836,31 +2881,41 @@ export async function verifyNotificationConversationBackfill(
       sql`select id from organization where id = ${organizationId}`,
     );
     if (existing.length === 0) throw new Error(`Organization ${organizationId} does not exist.`);
-    const drift = await database.transaction(async (tx) => {
-      const drift = await verifyOrganizationBackfill(tx, organizationId, now);
-      const conversations = await tx.execute<{
-        subjectType: string;
-        subjectId: string;
-        userId: string;
-        hidden: boolean;
-      }>(sql`
-        select subject_type as "subjectType", subject_id as "subjectId", user_id as "userId", access_hidden_at is not null as hidden
-        from notification_conversation where organization_id = ${organizationId} order by subject_type, subject_id, user_id
+    const drift = await database.transaction(async (tx) =>
+      verifyOrganizationBackfill(tx, organizationId, now),
+    );
+    const conversations = await database.execute<{
+      id: string;
+      subjectType: string;
+      subjectId: string;
+      userId: string;
+      hidden: boolean;
+    }>(sql`
+        select id, subject_type as "subjectType", subject_id as "subjectId", user_id as "userId", access_hidden_at is not null as hidden
+        from notification_conversation where organization_id = ${organizationId} order by user_id, id
       `);
-      let accessStateDrift = 0;
-      for (const row of conversations) {
-        const allowed = await lockNotificationSubjectAccess(tx, {
-          organizationId,
-          userId: row.userId,
-          subjectType: row.subjectType,
-          subjectId: row.subjectId,
-        });
-        if (allowed === row.hidden) accessStateDrift += 1;
-      }
-      return { ...drift, accessStateDrift };
-    });
-    organizations.push({ organizationId, drift });
-    totals = addBackfillDrift(totals, drift);
+    let accessStateDrift = 0;
+    for (let offset = 0; offset < conversations.length; ) {
+      const userId = conversations[offset]?.userId;
+      if (userId === undefined) break;
+      const batch = conversations.slice(offset, offset + 50).filter((row) => row.userId === userId);
+      accessStateDrift += await database.transaction(async (tx) => {
+        await tx.execute(sql`set local lock_timeout = '2s'`);
+        await tx.execute(sql`set local statement_timeout = '10s'`);
+        const access = await notificationSubjectAccessMap(tx, organizationId, userId, batch);
+        const current = await tx.execute<{ id: string; hidden: boolean }>(sql`
+          select id, access_hidden_at is not null as hidden
+          from notification_conversation
+          where organization_id = ${organizationId} and user_id = ${userId}
+            and id in (${sqlList(batch.map((row) => row.id))})
+        `);
+        return current.filter((row) => access.get(row.id) === row.hidden).length;
+      });
+      offset += batch.length;
+    }
+    const verified = { ...drift, accessStateDrift };
+    organizations.push({ organizationId, drift: verified });
+    totals = addBackfillDrift(totals, verified);
   }
   return { ok: driftIsZero(totals), organizations, totals };
 }

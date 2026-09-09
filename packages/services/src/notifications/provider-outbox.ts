@@ -8,6 +8,7 @@ import {
 } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, count, eq, inArray, isNull, lte, min, or, sql } from 'drizzle-orm';
+import { githubFailureDetails } from '../github/failure-details.ts';
 import { decryptSlackBotToken } from '../slack/credentials.ts';
 import { SlackApiError, SlackClient } from '../slack/index.ts';
 import {
@@ -416,6 +417,46 @@ async function subjectAllowed(tx: Transaction, delivery: Delivery, subject: Prov
   });
 }
 
+async function subjectRelevance(tx: Transaction, delivery: Delivery, subject: ProviderSubject) {
+  const type = subject.recipientEvent?.type ?? delivery.providerPayload?.['notificationType'];
+  if (type !== 'pr_checks_failed') return { relevant: true, details: null };
+  const pullRequestId = subject.source?.payload?.['pullRequestId'];
+  const headSha = subject.source?.payload?.['headSha'];
+  if (typeof pullRequestId !== 'string' || typeof headSha !== 'string' || headSha.length === 0)
+    return { relevant: false, details: null };
+  const [pull] = await tx
+    .select()
+    .from(schema.githubPullRequest)
+    .where(
+      and(
+        eq(schema.githubPullRequest.organizationId, delivery.organizationId ?? ''),
+        eq(schema.githubPullRequest.id, pullRequestId),
+        eq(schema.githubPullRequest.headSha, headSha),
+        eq(schema.githubPullRequest.checkStatus, 'failure'),
+        eq(schema.githubPullRequest.state, 'open'),
+        eq(schema.githubPullRequest.merged, false),
+      ),
+    )
+    .for('share');
+  return pull === undefined
+    ? { relevant: false, details: null }
+    : { relevant: true, details: await githubFailureDetails(tx, pull) };
+}
+
+function providerContent(
+  delivery: Delivery,
+  subject: ProviderSubject,
+  details: Awaited<ReturnType<typeof githubFailureDetails>> | null,
+) {
+  const event = subject.recipientEvent;
+  const payload = event ?? delivery.providerPayload;
+  if (details === null) return { event, payload };
+  return {
+    event: event === undefined ? undefined : { ...event, ...details },
+    payload: { ...payload, ...details },
+  };
+}
+
 async function slackConnection(
   tx: Transaction,
   delivery: Delivery,
@@ -642,6 +683,17 @@ async function recordProviderStart(
   return started;
 }
 
+function providerPreflightError(
+  allowed: boolean,
+  relevant: boolean,
+  destinationError: string | null,
+  recipientError: string | null,
+) {
+  if (!allowed) return 'subject_access_lost';
+  if (!relevant) return 'github_check_failure_superseded';
+  return destinationError ?? recipientError;
+}
+
 async function preflight(
   database: ProviderDatabase,
   claim: Claim,
@@ -651,11 +703,13 @@ async function preflight(
     const delivery = claim.delivery;
     const subject = await loadProviderSubject(tx, delivery);
     const allowed = await subjectAllowed(tx, delivery, subject);
+    const relevance = await subjectRelevance(tx, delivery, subject);
+    const content = providerContent(delivery, subject, relevance.details);
     const destination =
       delivery.channel === 'email'
         ? { token: null, channelId: null, error: null, draining: false }
         : await slackDestination(tx, delivery, subject);
-    const recipient = await recipientPreflight(tx, delivery, subject.recipientEvent);
+    const recipient = await recipientPreflight(tx, delivery, content.event);
     const thread = claim.thread === null ? null : await lockThread(tx, delivery);
     const [current] = await tx
       .select()
@@ -670,12 +724,17 @@ async function preflight(
       !threadClaimIsCurrent(thread, delivery)
     )
       return null;
-    const error = allowed ? (destination.error ?? recipient.error) : 'subject_access_lost';
+    const error = providerPreflightError(
+      allowed,
+      relevance.relevant,
+      destination.error,
+      recipient.error,
+    );
     if (error !== null) {
       await markPreflightUnavailable(tx, current, error, destination.draining, now);
       return null;
     }
-    const payload = subject.recipientEvent ?? current.providerPayload;
+    const payload = content.payload;
     if (current.channel !== 'email') {
       const validated = notificationProviderPayloadSchema.parse(payload);
       absoluteNotificationUrl(validated.externalUrl ?? validated.url);

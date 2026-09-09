@@ -26,6 +26,7 @@ import {
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, eq } from 'drizzle-orm';
 import { applyGithubEvent, upsertGithubPullRequestHistory } from '../../src/github/apply.ts';
+import { githubFailureDetails } from '../../src/github/failure-details.ts';
 import { notifyMany } from '../../src/notifications/index.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
@@ -204,6 +205,7 @@ function checkRunEvent(input: {
   readonly id: number;
   readonly name: string;
   readonly conclusion: string;
+  readonly url?: string;
   readonly headSha?: string;
   readonly appId?: number;
   readonly completedAt?: string;
@@ -219,7 +221,7 @@ function checkRunEvent(input: {
         app: { id: input.appId ?? 10 },
         status: 'completed',
         conclusion: input.conclusion,
-        html_url: `https://github.com/acme/web/actions/runs/${input.id}`,
+        html_url: input.url ?? `https://github.com/acme/web/actions/runs/${input.id}`,
         head_sha: input.headSha ?? HEAD_SHA,
         pull_requests: (input.pullRequestNumbers ?? [7]).map((number) => ({ number })),
         check_suite: { head_branch: 'eng-3-dashboard' },
@@ -294,6 +296,105 @@ async function currentStateName(tx: TestTransaction, issueId: string): Promise<s
 }
 
 describe('applyGithubEvent', () => {
+  it('bounds failure summaries and excludes recovered checks and old head generations', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      for (const [index, name] of ['alpha', 'beta', 'gamma', 'omega', 'recovered'].entries()) {
+        await applyCheckEvent(
+          tx,
+          fixture.organizationId,
+          checkRunEvent({
+            id: index + 1,
+            name,
+            conclusion: name === 'recovered' ? 'success' : 'failure',
+            completedAt: '2026-08-13T05:00:00.000Z',
+          }),
+        );
+      }
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      if (pull === undefined) throw new Error('Missing pull request');
+      const details = await githubFailureDetails(tx, pull);
+      const shown = details.body.match(/\b(alpha|beta|gamma|omega)\b/g) ?? [];
+      expect(shown).toHaveLength(3);
+      expect(new Set(shown).size).toBe(3);
+      expect(details.body).toContain('and more');
+      expect(details.body).not.toContain('recovered');
+      expect(details.externalUrl).toMatch(
+        /^https:\/\/github\.com\/acme\/web\/actions\/runs\/[1-4]$/,
+      );
+      const laterGeneration = await githubFailureDetails(tx, {
+        ...pull,
+        headEpoch: pull.headEpoch + 1,
+      });
+      expect(laterGeneration.body).not.toContain('Failed:');
+      expect(laterGeneration.externalUrl).toBe(pull.url);
+    });
+  });
+
+  it('uses a secure fallback instead of the triggering check HTTP URL', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      const result = await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 1,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+          url: 'http://checks.example.com/run/1',
+        }),
+      );
+      expect(result.notificationEvents).toHaveLength(1);
+      const outcome = await notifyMany(tx, result.notificationEvents, { slackEnabled: false });
+      expect(outcome.notifications.length).toBeGreaterThan(0);
+      expect(outcome.notifications[0]?.externalUrl).toBe('https://github.com/acme/web/pull/7');
+    });
+  });
+
+  it('keeps failed-check links secure and check names Unicode-safe', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await applyGithubEvent(tx, prEvent({}));
+      await applyCheckEvent(
+        tx,
+        fixture.organizationId,
+        checkRunEvent({
+          id: 1,
+          name: 'verify',
+          conclusion: 'failure',
+          completedAt: '2026-08-13T05:00:00.000Z',
+        }),
+      );
+      const [pull] = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      if (pull === undefined) throw new Error('Missing pull request');
+      for (const url of [
+        'http://checks.example.com/run/1',
+        'javascript:alert(1)',
+        'not a URL',
+        `https://checks.example.com/${'x'.repeat(2048)}`,
+      ]) {
+        await tx
+          .update(githubCheckActivity)
+          .set({
+            payload: { context: `${'x'.repeat(79)}🙂`, conclusion: 'failure', url },
+          })
+          .where(eq(githubCheckActivity.organizationId, fixture.organizationId));
+        const details = await githubFailureDetails(tx, pull);
+        expect(details.externalUrl).toBe(pull.url);
+        expect(details.body).not.toMatch(/[\uD800-\uDBFF]$/u);
+      }
+    });
+  });
+
   for (const title of ['L'.repeat(256), `${'L'.repeat(236)}😀${'z'.repeat(18)}`]) {
     it('ingests a maximum-length pull title without rejecting its prefixed check notification', async () => {
       await withRollback(async (tx) => {
@@ -315,6 +416,8 @@ describe('applyGithubEvent', () => {
         for (const event of outcome.notifications) {
           expect(event.title.length).toBeLessThanOrEqual(255);
           expect(event.title).toStartWith('Checks failed on ');
+          expect(event.body).toContain(`Commit ${HEAD_SHA.slice(0, 7)}`);
+          expect(event.body).toContain('Failed: verify');
           expect(event.title).not.toMatch(/[\uD800-\uDBFF]…$/u);
           expect(event.externalUrl).toBe('https://github.com/acme/web/actions/runs/1');
           expect(event.url).toBe(result.notificationEvents[0]?.url ?? '');

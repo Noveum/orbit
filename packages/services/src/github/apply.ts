@@ -33,6 +33,7 @@ import { declaredIssueIdentifiers, randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, getTableColumns, inArray, lte, or, sql } from 'drizzle-orm';
 import type { NotificationEvent } from '../notifications/index.ts';
 import type { GithubPullRequestHistoryEntry } from './app.ts';
+import { githubFailureDetails } from './failure-details.ts';
 import {
   canAdvance,
   type NormalizedGithubCheckContext,
@@ -457,51 +458,55 @@ async function githubCheckFailureNotifications(
     normalized?.kind === 'context'
       ? normalized.providerUpdatedAt
       : context.event.activity.occurredAt;
-  const externalUrl = normalized?.kind === 'context' ? normalized.url : '';
-  return pulls.map((pull) => {
-    const linkedIssueIds = linkedIssueIdsByPull.get(pull.id) ?? [];
-    const linkedUserIds = linkedIssueIds.flatMap((issueId) => context.audiences.get(issueId) ?? []);
-    const unlinkedCandidate = unlinkedCandidates.get(pull.id) ?? null;
-    const userIds = checkFailureUserIds(
-      linkedUserIds,
-      unlinkedCandidate,
-      linkedIssueIds.length === 0 ? authorizedUnlinked : authorizedLinkedAuthors,
-    );
-    const teamIds = unique([
-      ...context.defaultTeamIds,
-      ...linkedIssueIds.flatMap((issueId) => {
-        const linked = issueById.get(issueId);
-        return linked === undefined ? [] : [linked.teamId];
-      }),
-    ]);
-    return {
-      organizationId: context.repo.organizationId,
-      type: 'pr_checks_failed',
-      reason: 'subscribed',
-      actor: context.actor,
-      entityType: 'github_pull_request',
-      entityId: pull.id,
-      userIds,
-      title: `Checks failed on ${pull.title}`,
-      body: `${context.repo.repositoryName}#${pull.number}`,
-      url: `/pulls/${pull.id}`,
-      externalUrl: externalUrl.length > 0 ? externalUrl : pull.url,
-      source: {
-        sourceEventKey: `github-pr:${context.repo.repositoryId}:${pull.number}:${pull.headSha}:checks-failed`,
-        subjectType: 'github_pull_request',
-        subjectKey: `github-pr:${context.repo.repositoryId}:${pull.number}`,
-        occurredAt: eventDate(providerOccurredAt, context.now),
-        teamIds,
-        payload: {
-          action: context.event.action,
-          headSha: pull.headSha,
-          repository: context.event.repository,
-          pullRequestId: pull.id,
-          pullRequestNumber: pull.number,
+  return await Promise.all(
+    pulls.map(async (pull): Promise<NotificationEvent> => {
+      const linkedIssueIds = linkedIssueIdsByPull.get(pull.id) ?? [];
+      const linkedUserIds = linkedIssueIds.flatMap(
+        (issueId) => context.audiences.get(issueId) ?? [],
+      );
+      const unlinkedCandidate = unlinkedCandidates.get(pull.id) ?? null;
+      const userIds = checkFailureUserIds(
+        linkedUserIds,
+        unlinkedCandidate,
+        linkedIssueIds.length === 0 ? authorizedUnlinked : authorizedLinkedAuthors,
+      );
+      const teamIds = unique([
+        ...context.defaultTeamIds,
+        ...linkedIssueIds.flatMap((issueId) => {
+          const linked = issueById.get(issueId);
+          return linked === undefined ? [] : [linked.teamId];
+        }),
+      ]);
+      const details = await githubFailureDetails(database, pull);
+      return {
+        organizationId: context.repo.organizationId,
+        type: 'pr_checks_failed',
+        reason: 'subscribed',
+        actor: context.actor,
+        entityType: 'github_pull_request',
+        entityId: pull.id,
+        userIds,
+        title: `Checks failed on ${pull.title}`,
+        body: details.body,
+        url: `/pulls/${pull.id}`,
+        externalUrl: details.externalUrl,
+        source: {
+          sourceEventKey: `github-pr:${context.repo.repositoryId}:${pull.number}:${pull.headSha}:checks-failed`,
+          subjectType: 'github_pull_request',
+          subjectKey: `github-pr:${context.repo.repositoryId}:${pull.number}`,
+          occurredAt: eventDate(providerOccurredAt, context.now),
+          teamIds,
+          payload: {
+            action: context.event.action,
+            headSha: pull.headSha,
+            repository: context.event.repository,
+            pullRequestId: pull.id,
+            pullRequestNumber: pull.number,
+          },
         },
-      },
-    };
-  });
+      };
+    }),
+  );
 }
 
 function checkFailureUserIds(

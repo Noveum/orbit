@@ -146,6 +146,119 @@ async function waitForBlockedWorker(tx: TestTransaction) {
 }
 
 describe('durable notification provider delivery', () => {
+  for (const scenario of ['superseded', 'recovered', 'closed', 'current'] as const) {
+    for (const channel of ['slack', 'slack_dm', 'email'] as const) {
+      it(`checks CI failure freshness before sending a ${scenario} pull request notification via ${channel}`, async () => {
+        await withRollback(async (tx) => {
+          const fixture = await seedProviders(tx, 0);
+          const repositoryId = randomUUIDv7();
+          const pullId = randomUUIDv7();
+          await tx.insert(schema.githubRepositorySync).values({
+            id: repositoryId,
+            organizationId: fixture.organizationId,
+            integrationId: fixture.integrationId,
+            repositoryId: '123',
+            repositoryName: 'example/repository',
+          });
+          await tx.insert(schema.githubPullRequest).values({
+            id: pullId,
+            organizationId: fixture.organizationId,
+            repositorySyncId: repositoryId,
+            repositoryId: '123',
+            repositoryName: 'example/repository',
+            number: 42,
+            url: 'https://github.com/example/repository/pull/42',
+            headSha: scenario === 'superseded' ? 'new-head' : 'old-head',
+            checkStatus: scenario === 'recovered' ? 'success' : 'failure',
+            state: scenario === 'closed' ? 'closed' : 'open',
+          });
+          await notifyMany(
+            tx,
+            [
+              {
+                organizationId: fixture.organizationId,
+                userIds: [fixture.userId],
+                type: 'pr_checks_failed',
+                reason: 'subscribed',
+                entityType: 'github_pull_request',
+                entityId: pullId,
+                title: 'Checks failed on example',
+                body: 'example/repository#42',
+                url: `/pulls/${pullId}`,
+                actor: { type: 'integration', id: 'github', name: 'GitHub' },
+                source: {
+                  sourceEventKey: 'github-pr:123:42:old-head:checks-failed',
+                  subjectType: 'github_pull_request',
+                  subjectKey: 'github-pr:123:42',
+                  occurredAt: new Date(),
+                  payload: { pullRequestId: pullId, headSha: 'old-head' },
+                },
+              },
+            ],
+            { slackEnabled: true },
+          );
+          let calls = 0;
+          const requests: string[] = [];
+          const fetch = fakeFetch((url, init) => {
+            calls += 1;
+            requests.push(String(init?.body));
+            if (new URL(url).hostname === 'api.resend.com')
+              return Response.json({ id: 'mail-test' });
+            return Response.json({ ok: true, channel: 'C-test', ts: '1.000' });
+          });
+          await deliverNotificationProviders(tx, worker(fixture, fetch, [channel]));
+          expect(calls).toBe(scenario === 'current' ? 1 : 0);
+          const [delivery] = await tx
+            .select()
+            .from(schema.notificationDelivery)
+            .where(
+              and(
+                eq(schema.notificationDelivery.organizationId, fixture.organizationId),
+                eq(schema.notificationDelivery.channel, channel),
+              ),
+            );
+          expect(delivery?.status).toBe(scenario === 'current' ? 'delivered' : 'unavailable');
+          if (scenario === 'current') expect(requests[0]).toContain('Commit old-hea');
+          if (scenario !== 'current') {
+            expect(delivery?.lastError).toBe('github_check_failure_superseded');
+            expect(delivery?.sendStartedAt).toBeNull();
+          }
+          if (scenario === 'superseded') {
+            await notifyMany(
+              tx,
+              [
+                {
+                  organizationId: fixture.organizationId,
+                  userIds: [fixture.userId],
+                  type: 'pr_checks_failed',
+                  reason: 'subscribed',
+                  entityType: 'github_pull_request',
+                  entityId: pullId,
+                  title: 'Checks failed on the current commit',
+                  body: 'example/repository#42',
+                  url: `/pulls/${pullId}`,
+                  actor: { type: 'integration', id: 'github', name: 'GitHub' },
+                  source: {
+                    sourceEventKey: 'github-pr:123:42:new-head:checks-failed',
+                    subjectType: 'github_pull_request',
+                    subjectKey: 'github-pr:123:42',
+                    occurredAt: new Date(),
+                    payload: { pullRequestId: pullId, headSha: 'new-head' },
+                  },
+                },
+              ],
+              { slackEnabled: true },
+            );
+            expect(await deliverNotificationProviders(tx, worker(fixture, fetch, [channel]))).toBe(
+              1,
+            );
+            expect(calls).toBe(1);
+          }
+        });
+      });
+    }
+  }
+
   for (const phase of ['preflight', 'finalization'] as const) {
     it(`rejects a lease that expires while ${phase} waits for a database lock`, async () => {
       const fixture = await db.transaction((tx) => seedProviders(tx));

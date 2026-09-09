@@ -16,6 +16,7 @@ export const notificationTitleSchema = z
 export const notificationProviderPayloadSchema = z.object({
   title: notificationTitleSchema,
   body: z.string().max(100_000).default(''),
+  bodyFormat: z.enum(['markdown', 'plain_text']).default('markdown'),
   url: z.string().min(1).max(2048),
   externalUrl: z.string().max(2048).nullable().optional(),
 });

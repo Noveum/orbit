@@ -371,7 +371,12 @@ export interface NormalizedGithubEvent {
 
 const githubCommitShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
 const githubProviderObjectIdSchema = z.number().int().positive();
-const nullableProviderTimestampSchema = z.string().datetime().nullable().optional();
+const nullableProviderTimestampSchema = z
+  .string()
+  .datetime({ offset: true })
+  .transform((value) => new Date(value).toISOString())
+  .nullable()
+  .optional();
 const checkRunNormalizationEnvelopeSchema = z.object({
   check_run: z.object({
     id: githubProviderObjectIdSchema,

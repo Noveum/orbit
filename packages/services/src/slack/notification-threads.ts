@@ -1,13 +1,20 @@
 import { notificationProviderPayloadSchema } from '@orbit/shared';
+import { renderPlainText } from '../markdown/index.ts';
 import { escapeSlackText, type PostMessageInput } from './index.ts';
 
-function messageExcerpt(value: string): string {
-  const escaped = escapeSlackText(value);
-  if (escaped.length <= 1200) return escaped;
+function messageExcerpt(value: string, format: 'markdown' | 'plain_text'): string {
+  const bounded = value.slice(0, 4000).replace(/[\uD800-\uDBFF]$/u, '');
+  const lines = (format === 'plain_text' ? bounded : renderPlainText(bounded))
+    .split(/\n+/)
+    .filter((line) => line.trim().length > 0);
+  const preview = [lines[0] ?? '', lines.slice(1).join(' ')].filter(Boolean).join('\n');
+  const omitted = value.length > 4000;
+  const escaped = escapeSlackText(preview);
+  if (escaped.length <= 400) return `${escaped}${omitted ? '…' : ''}`;
   let excerpt = '';
-  for (const character of value) {
+  for (const character of preview) {
     const next = escapeSlackText(character);
-    if (excerpt.length + next.length > 1199) break;
+    if (excerpt.length + next.length > 399) break;
     excerpt += next;
   }
   return `${excerpt}…`;
@@ -44,7 +51,7 @@ export function notificationSlackMessage(input: {
   const payload = notificationProviderPayloadSchema.parse(input.payload);
   const links = messageLinks(payload.url, payload.externalUrl);
   const title = escapeSlackText(payload.title);
-  const body = messageExcerpt(payload.body);
+  const body = messageExcerpt(payload.body, payload.bodyFormat);
   const text = [title, body, ...links.map((link) => `${link.label}: ${link.url}`)]
     .filter((part) => part.length > 0)
     .join('\n');
@@ -68,19 +75,6 @@ export function notificationSlackMessage(input: {
           url: link.url,
         })),
       },
-      ...(input.rootTs === null
-        ? [
-            {
-              type: 'context',
-              elements: [
-                {
-                  type: 'plain_text',
-                  text: 'Later updates to this conversation appear in this thread.',
-                },
-              ],
-            },
-          ]
-        : []),
     ],
     ...(input.rootTs === null ? {} : { threadTs: input.rootTs }),
     replyBroadcast: false,

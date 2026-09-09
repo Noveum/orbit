@@ -28,6 +28,11 @@ GitHub check notifications describe current PR-head transitions. Old-head
 failures remain history without changing current status. Several failing jobs
 on one commit do not create several failure notifications.
 
+Before sending a queued CI failure to Slack or email, the worker checks that the
+PR is still open, still on that commit, and still failing. Superseded failures
+stay in the audit history but are not delivered. Resuming a paused queue must
+not replay failure alerts for every earlier commit.
+
 ## Reading and triage
 
 Activity, Status, Unread, Mentions and Pull requests filter on the server before
@@ -48,13 +53,22 @@ disabled. Personal DMs and admin-managed channel mappings are separate routes.
 A PR connected to several issues does not multiply messages to the same channel.
 
 Each Slack update includes an Orbit link and, when available, a separate GitHub
-or source link. Long comments use a bounded excerpt. Untrusted comment text does
-not automatically trigger Slack channel or user mentions.
+or source link. CI alerts identify the commit and up to three failed checks,
+including timeout or cancellation when GitHub supplies that conclusion. The
+source button opens the failed check when its URL is available. It does not
+invent an error diagnosis from build logs that Orbit has not fetched.
+
+Comment previews use readable plain text, at most two nonempty lines and about
+400 escaped characters, instead of raw Markdown or HTML. Full content remains
+available through the links. Untrusted comment text does not automatically
+trigger Slack channel or user mentions. Roots no longer repeat a thread-guidance
+footer, and replies never broadcast back to the channel.
 
 ![A local preview of the Slack root, reply and document message](../assets/screenshots/notification-slack-formatter-preview.png)
 
-This preview renders the actual formatter's blocks with sample data. It is not
-a message sent to Slack; the Slack client's final layout can differ.
+This earlier preview renders formatter blocks with sample data, not production
+messages. The current layout uses shorter previews and omits the guidance
+footer shown above. The Slack client's final layout can differ.
 
 Notification email uses Resend and a verified address. Neither Slack nor email
 is recorded as delivered until the provider confirms a message identity.
@@ -74,6 +88,16 @@ destination for the original message. There is no documented Slack send
 idempotency guarantee. A reconnect to another Slack team/app cannot reuse an old
 destination or thread. Notification email freezes its first attempted request
 and reuses its idempotency key only within the permitted retention window.
+
+An obsolete CI alert is also marked `unavailable`, with
+`github_check_failure_superseded`, without starting a provider request. Already
+delivered messages are not deleted or rewritten by this check.
+
+Historical notifications without canonical source identity can still appear as
+separate conversations. In particular, older issue-comment records need a
+separate parent-issue regrouping repair. Similar titles alone are not proof of
+duplicate events. Such a repair must preserve read state, recipients, source
+identities and delivery confirmations; do not reset or resend provider records.
 
 ## Deployment and migration
 

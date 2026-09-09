@@ -123,6 +123,26 @@ export async function lockNotificationSubjectAccess(
       subjectId: event.entityId,
     });
   }
+  if (input.subjectType === 'comment' && subjectId !== undefined) {
+    const [comment] = await tx
+      .select({ issueId: schema.comment.issueId })
+      .from(schema.comment)
+      .where(
+        and(
+          eq(schema.comment.id, subjectId),
+          eq(schema.comment.organizationId, input.organizationId),
+        ),
+      )
+      .for('share');
+    return (
+      comment !== undefined &&
+      (await lockNotificationSubjectAccess(tx, {
+        ...input,
+        subjectType: 'issue',
+        subjectId: comment.issueId,
+      }))
+    );
+  }
   if (input.subjectType === 'doc_comment' && subjectId !== undefined) {
     const [comment] = await tx
       .select({ docId: schema.docComment.docId })
