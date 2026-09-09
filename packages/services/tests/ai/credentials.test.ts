@@ -78,15 +78,21 @@ describe('AI API key credentials', () => {
     }
   });
 
-  it('detects encrypted key presence', () => {
+  it('detects encrypted key presence and rejects plaintext keys', () => {
     const envelope = encryptAiApiKey({
       organizationId: 'org_test_1',
       apiKey: 'sk-test-secret-key-12345',
     });
 
     expect(hasAiApiKey({ apiKey: envelope })).toBe(true);
-    expect(hasAiApiKey({ apiKey: 'sk-plaintext' })).toBe(true);
+    expect(hasAiApiKey({ apiKey: 'sk-plaintext' })).toBe(false);
     expect(hasAiApiKey({ apiKey: '' })).toBe(false);
     expect(hasAiApiKey({})).toBe(false);
+  });
+
+  it('rejects unencrypted plaintext keys on decryption', () => {
+    expect(() =>
+      decryptAiApiKey({ apiKey: 'sk-unencrypted-plaintext' }, { organizationId: 'org_test_1' }),
+    ).toThrow(DomainError);
   });
 });

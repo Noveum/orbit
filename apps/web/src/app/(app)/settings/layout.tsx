@@ -1,19 +1,13 @@
 import { can } from '@orbit/shared/policy';
 import type { ReactNode } from 'react';
 import { SettingsShell } from '@/features/settings/settings-shell.tsx';
-import { apiContext } from '@/lib/api/handler.ts';
+import { pageContext } from '@/lib/api/handler.ts';
 import { passwordAuthEnabled } from '@/lib/auth/server.ts';
 
 export default async function SettingsLayout({ children }: { children: ReactNode }) {
-  let canManageAi: boolean;
-  let canManageDeployment = false;
-  try {
-    const { principal } = await apiContext();
-    canManageAi = can(principal, 'ai:manage');
-    canManageDeployment = can(principal, 'org:manage');
-  } catch {
-    canManageAi = false;
-  }
+  const { principal } = await pageContext({ allowDeleting: true });
+  const canManageAi = can(principal, 'ai:manage');
+  const canManageDeployment = can(principal, 'org:manage');
 
   return (
     <SettingsShell
