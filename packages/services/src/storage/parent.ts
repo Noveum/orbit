@@ -95,10 +95,10 @@ async function docAllowing(
   const allowed =
     level === 'read'
       ? canReadDoc(
-        principal,
-        row,
-        grants.map((grant) => grant.docId),
-      )
+          principal,
+          row,
+          grants.map((grant) => grant.docId),
+        )
       : canWriteDoc(principal, row, grants.length > 0);
   return allowed ? row : undefined;
 }
