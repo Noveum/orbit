@@ -2,14 +2,12 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { internal } from '@orbit/shared';
-import postgres from 'postgres';
 import { assertSafeKey } from '../storage/key.ts';
 import type { StorageDriver } from '../storage/types.ts';
 import type { AttachmentRecord, StorageCaptureResult } from './types.ts';
 
 export interface CaptureStorageOptions {
-  readonly databaseUrl?: string | undefined;
-  readonly records?: readonly AttachmentRecord[] | undefined;
+  readonly records: readonly AttachmentRecord[];
   readonly outputObjectsDir: string;
   readonly driver: StorageDriver;
 }
@@ -17,31 +15,7 @@ export interface CaptureStorageOptions {
 export async function captureStorageObjects(
   options: CaptureStorageOptions,
 ): Promise<StorageCaptureResult> {
-  const { databaseUrl, records: passedRecords, outputObjectsDir, driver } = options;
-
-  let records: readonly AttachmentRecord[];
-  if (passedRecords !== undefined) {
-    records = passedRecords;
-  } else if (databaseUrl === undefined) {
-    records = [];
-  } else {
-    const sql = postgres(databaseUrl, {
-      max: 1,
-      connect_timeout: 5,
-      idle_timeout: 10,
-      prepare: false,
-    });
-    try {
-      records = await sql<AttachmentRecord[]>`
-        select id, storage_key, size, content_type
-        from attachment
-        where status = 'ready'
-        order by id
-      `;
-    } finally {
-      await sql.end({ timeout: 5 });
-    }
-  }
+  const { records, outputObjectsDir, driver } = options;
 
   const objects: {
     readonly key: string;
