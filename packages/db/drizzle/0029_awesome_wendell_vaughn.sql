@@ -1,0 +1,1 @@
+ALTER TABLE "mcp_idempotency_key" ALTER COLUMN "response" DROP NOT NULL;

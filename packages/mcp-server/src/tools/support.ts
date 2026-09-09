@@ -1,10 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import {
-  getIdempotentResponse,
+  claimIdempotencySlot,
   hashParams,
   publishDeltas,
-  recordIdempotentResponse,
+  resolveIdempotencySlot,
 } from '@orbit/core';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
@@ -125,22 +125,23 @@ export function defineTool<Shape extends z.ZodRawShape>(
         ) {
           const { idempotencyKey: _, ...restArgs } = rawArgs;
           const paramsHash = hashParams(restArgs);
-          const cached = await getIdempotentResponse(
-            grantId,
-            idempotencyKey,
-            config.name,
-            paramsHash,
-          );
-          if (cached !== null) {
+          const slot = await claimIdempotencySlot(grantId, idempotencyKey, config.name, paramsHash);
+          if (slot.status === 'done') {
             logger.info('idempotent tool response returned', {
               tool: config.name,
               idempotencyKey,
               grantId,
             });
-            return ok(cached);
+            return ok(slot.response);
+          }
+          if (slot.status === 'processing') {
+            return ok({
+              retryAfterMs: 500,
+              message: 'Request is still processing. Retry shortly.',
+            });
           }
           const result = await run(args as z.infer<z.ZodObject<Shape>>);
-          await recordIdempotentResponse(grantId, idempotencyKey, config.name, paramsHash, result);
+          await resolveIdempotencySlot(slot.slotId, result);
           return ok(result);
         }
 

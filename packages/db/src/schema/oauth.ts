@@ -98,7 +98,7 @@ export const mcpIdempotencyKey = pgTable(
     key: text('key').notNull(),
     tool: text('tool').notNull(),
     paramsHash: text('params_hash').notNull(),
-    response: text('response').notNull(),
+    response: text('response'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },

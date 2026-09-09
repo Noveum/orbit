@@ -26,14 +26,40 @@ export function hashParams(params: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
-export async function getIdempotentResponse(
+export type IdempotencySlot =
+  | { readonly status: 'claimed'; readonly slotId: string }
+  | { readonly status: 'processing' }
+  | { readonly status: 'done'; readonly response: Record<string, unknown> };
+
+export async function claimIdempotencySlot(
   grantId: string,
   key: string,
   tool: string,
   paramsHash: string,
   now: Date = new Date(),
-): Promise<Record<string, unknown> | null> {
-  const [row] = await db
+): Promise<IdempotencySlot> {
+  const expiresAt = new Date(now.getTime() + 23 * 60 * 60_000);
+
+  const inserted = await db
+    .insert(schema.mcpIdempotencyKey)
+    .values({
+      id: newId(),
+      grantId,
+      key,
+      tool,
+      paramsHash,
+      response: null,
+      createdAt: now,
+      expiresAt,
+    })
+    .onConflictDoNothing()
+    .returning({ id: schema.mcpIdempotencyKey.id });
+
+  if (inserted.length > 0 && inserted[0] !== undefined) {
+    return { status: 'claimed', slotId: inserted[0].id };
+  }
+
+  const [existing] = await db
     .select()
     .from(schema.mcpIdempotencyKey)
     .where(
@@ -45,35 +71,30 @@ export async function getIdempotentResponse(
     )
     .limit(1);
 
-  if (row === undefined) return null;
+  if (existing === undefined) {
+    return { status: 'claimed', slotId: newId() };
+  }
 
-  if (row.tool !== tool || row.paramsHash !== paramsHash) {
+  if (existing.tool !== tool || existing.paramsHash !== paramsHash) {
     throw validationFailed('Idempotency key was previously used with different arguments.');
   }
 
-  return JSON.parse(row.response) as Record<string, unknown>;
+  if (existing.response === null) {
+    return { status: 'processing' };
+  }
+
+  return {
+    status: 'done',
+    response: JSON.parse(existing.response) as Record<string, unknown>,
+  };
 }
 
-export async function recordIdempotentResponse(
-  grantId: string,
-  key: string,
-  tool: string,
-  paramsHash: string,
+export async function resolveIdempotencySlot(
+  slotId: string,
   response: Record<string, unknown>,
-  now: Date = new Date(),
 ): Promise<void> {
-  const expiresAt = new Date(now.getTime() + 23 * 60 * 60_000);
   await db
-    .insert(schema.mcpIdempotencyKey)
-    .values({
-      id: newId(),
-      grantId,
-      key,
-      tool,
-      paramsHash,
-      response: JSON.stringify(response),
-      createdAt: now,
-      expiresAt,
-    })
-    .onConflictDoNothing();
+    .update(schema.mcpIdempotencyKey)
+    .set({ response: JSON.stringify(response) })
+    .where(eq(schema.mcpIdempotencyKey.id, slotId));
 }
