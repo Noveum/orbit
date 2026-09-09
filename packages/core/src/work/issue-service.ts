@@ -2802,11 +2802,53 @@ async function assertSurvivorAllowed(
     if (row === undefined) {
       cursor = null;
     } else {
+      if (row.relatedIssueId === sourceId) {
+        throw validationFailed(
+          'An issue cannot be marked as a duplicate of an issue that duplicates it.',
+        );
+      }
       if (cursor === target.id) {
         throw validationFailed('A duplicate issue cannot be a survivor.');
       }
       cursor = row.relatedIssueId;
     }
+  }
+}
+
+async function loadIssuesForUpdate(
+  tx: Executor,
+  principal: Principal,
+  sourceId: string,
+  targetId: string,
+): Promise<{ source: IssueRow; target: IssueRow }> {
+  const [firstId, secondId] = sourceId < targetId ? [sourceId, targetId] : [targetId, sourceId];
+  const firstIssue = await loadIssueForUpdate(tx, principal, firstId);
+  const secondIssue = await loadIssueForUpdate(tx, principal, secondId);
+  return {
+    source: sourceId === firstId ? firstIssue : secondIssue,
+    target: targetId === firstId ? firstIssue : secondIssue,
+  };
+}
+
+async function assertSourceAllowed(
+  tx: Executor,
+  organizationId: string,
+  sourceId: string,
+): Promise<void> {
+  const [sourceHasDuplicates] = await tx
+    .select()
+    .from(schema.issueRelation)
+    .where(
+      and(
+        eq(schema.issueRelation.organizationId, organizationId),
+        eq(schema.issueRelation.issueId, sourceId),
+        eq(schema.issueRelation.type, 'duplicated_by'),
+      ),
+    )
+    .limit(1);
+
+  if (sourceHasDuplicates !== undefined) {
+    throw validationFailed('An issue with duplicates cannot be marked as a duplicate.');
   }
 }
 
@@ -2822,8 +2864,12 @@ export async function markAsDuplicate(
   }
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssueForUpdate(tx, principal, issueId);
-    const target = await loadIssue(tx, principal, parsed.survivorIssueId);
+    const { source, target } = await loadIssuesForUpdate(
+      tx,
+      principal,
+      issueId,
+      parsed.survivorIssueId,
+    );
 
     const [existingDuplicateOf] = await tx
       .select()
@@ -2842,6 +2888,7 @@ export async function markAsDuplicate(
     }
 
     await assertSurvivorAllowed(tx, principal.organizationId, source.id, target);
+    await assertSourceAllowed(tx, principal.organizationId, source.id);
 
     const canceledStates = await tx
       .select()
@@ -2927,6 +2974,17 @@ export async function markAsDuplicate(
       }
     }
 
+    const statusNotifications = stateChanged
+      ? await issueNotifications(tx, principal, actor, [
+          {
+            issue: updatedIssue,
+            mentionHandles: [],
+            assigneeId: null,
+            statusName: canceledState.name,
+          },
+        ])
+      : [];
+
     const subActions = await transferSubscriptions(
       tx,
       principal.organizationId,
@@ -2989,17 +3047,6 @@ export async function markAsDuplicate(
       labelIds: decorations.labels.get(updatedIssue.id) ?? [],
       reviewerIds: decorations.reviewers.get(updatedIssue.id) ?? [],
     });
-
-    const statusNotifications = stateChanged
-      ? await issueNotifications(tx, principal, actor, [
-          {
-            issue: updatedIssue,
-            mentionHandles: [],
-            assigneeId: null,
-            statusName: canceledState.name,
-          },
-        ])
-      : [];
 
     return {
       issue: updatedIssue,
