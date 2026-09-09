@@ -147,6 +147,9 @@ describe('WorkspaceSwitcher', () => {
     );
     await openMenu();
 
+    expect(screen.queryByText('Account settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Workspace settings')).not.toBeInTheDocument();
+
     await user.click(screen.getByTestId('settings-link'));
 
     expect(push).toHaveBeenCalledWith('/settings/general');
