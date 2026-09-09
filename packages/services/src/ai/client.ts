@@ -148,6 +148,61 @@ function resolveAnthropicUrl(baseUrl: string): string {
   return `${trimmed}/v1/messages`;
 }
 
+const MAX_SUCCESS_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+
+async function readBoundedText(
+  response: Response,
+  maxBytes: number,
+  apiKey?: string,
+): Promise<string> {
+  const body = response.body;
+  if (body === null) return '';
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let receivedBytes = 0;
+  let result = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new AiClientError(
+          'Response payload exceeded maximum allowed size.',
+          undefined,
+          apiKey,
+        );
+      }
+      result += decoder.decode(value, { stream: true });
+    }
+    result += decoder.decode();
+    return result;
+  } catch (error) {
+    if (error instanceof AiClientError) throw error;
+    await reader.cancel().catch(() => undefined);
+    throw new AiClientError('Failed to read response body from provider.', error, apiKey);
+  }
+}
+
+async function readBoundedJson(
+  response: Response,
+  maxBytes: number,
+  apiKey?: string,
+): Promise<unknown> {
+  const text = await readBoundedText(response, maxBytes, apiKey);
+  if (text.trim() === '') return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new AiClientError('Response payload is not valid JSON.', error, apiKey);
+  }
+}
+
 async function callOpenAiCompatible(
   prompt: string,
   target: ResolvedClientTarget,
@@ -184,7 +239,12 @@ async function callOpenAiCompatible(
   }
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
+    const errorText = await readBoundedText(response, MAX_ERROR_BODY_BYTES, target.apiKey).catch(
+      (error) => {
+        if (error instanceof AiClientError) throw error;
+        return '';
+      },
+    );
     throw new AiClientError(
       `OpenAI-compatible endpoint returned HTTP ${response.status}: ${errorText.slice(0, 256)}`,
       undefined,
@@ -192,7 +252,7 @@ async function callOpenAiCompatible(
     );
   }
 
-  const rawJson: unknown = await response.json().catch(() => ({}));
+  const rawJson = await readBoundedJson(response, MAX_SUCCESS_BODY_BYTES, target.apiKey);
   const parsed = openAiCompletionResponseSchema.safeParse(rawJson);
   if (!parsed.success) {
     throw new AiClientError(
@@ -248,7 +308,12 @@ async function callAnthropic(
   }
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
+    const errorText = await readBoundedText(response, MAX_ERROR_BODY_BYTES, target.apiKey).catch(
+      (error) => {
+        if (error instanceof AiClientError) throw error;
+        return '';
+      },
+    );
     throw new AiClientError(
       `Anthropic endpoint returned HTTP ${response.status}: ${errorText.slice(0, 256)}`,
       undefined,
@@ -256,7 +321,7 @@ async function callAnthropic(
     );
   }
 
-  const rawJson: unknown = await response.json().catch(() => ({}));
+  const rawJson = await readBoundedJson(response, MAX_SUCCESS_BODY_BYTES, target.apiKey);
   const parsed = anthropicMessagesResponseSchema.safeParse(rawJson);
   if (!parsed.success) {
     throw new AiClientError(

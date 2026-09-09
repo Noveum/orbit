@@ -45,6 +45,7 @@ export async function POST(request: Request): Promise<Response> {
         id: schema.integration.id,
         config: schema.integration.config,
         credentials: schema.integration.credentials,
+        updatedAt: schema.integration.updatedAt,
       })
       .from(schema.integration)
       .where(
@@ -118,13 +119,14 @@ export async function POST(request: Request): Promise<Response> {
             eq(schema.integration.organizationId, principal.organizationId),
             eq(schema.integration.provider, 'ai'),
             eq(schema.integration.externalId, 'default'),
+            eq(schema.integration.updatedAt, existing.updatedAt),
           ),
         )
         .returning({ id: schema.integration.id });
 
       if (updated.length === 0) {
         throw validationFailed(
-          'The AI integration was disconnected before changes could be saved.',
+          'The AI integration was disconnected or modified before changes could be saved.',
         );
       }
     }
