@@ -192,17 +192,10 @@
       "breakpoints": true
     },
     {
-      "idx": 27,
+      "idx": 28,
       "version": "7",
       "when": 1788898197021,
-      "tag": "0027_yummy_vulcan",
-      "breakpoints": true
-    },
-    {
-      "idx": 29,
-      "version": "7",
-      "when": 1788979487587,
-      "tag": "0029_awesome_wendell_vaughn",
+      "tag": "0028_mcp_idempotency_keys",
       "breakpoints": true
     }
   ]
