@@ -174,7 +174,10 @@ describe('markAsDuplicate', () => {
     } catch (e) {
       error = e;
     }
-    expect(error).toBeDefined();
+    expect(error).toMatchObject({
+      code: 'validation_failed',
+      message: 'An issue cannot be marked as a duplicate of itself.',
+    });
   });
 
   it('replaces previous survivor relation when marked as duplicate of a new survivor', async () => {
@@ -226,7 +229,10 @@ describe('markAsDuplicate', () => {
     } catch (e) {
       error = e;
     }
-    expect(error).toBeDefined();
+    expect(error).toMatchObject({
+      code: 'validation_failed',
+      message: 'An issue cannot be marked as a duplicate of an issue that duplicates it.',
+    });
   });
 
   it('rejects marking an archived issue as a survivor', async () => {
@@ -246,7 +252,10 @@ describe('markAsDuplicate', () => {
     } catch (e) {
       error = e;
     }
-    expect(error).toBeDefined();
+    expect(error).toMatchObject({
+      code: 'validation_failed',
+      message: 'An archived issue cannot be a survivor.',
+    });
   });
 
   it('rejects marking an issue as duplicate of an issue that is already a duplicate', async () => {
@@ -271,6 +280,37 @@ describe('markAsDuplicate', () => {
     } catch (e) {
       error = e;
     }
-    expect(error).toBeDefined();
+    expect(error).toMatchObject({
+      code: 'validation_failed',
+      message: 'A duplicate issue cannot be a survivor.',
+    });
+  });
+
+  it('rejects marking an issue that has duplicates as a duplicate', async () => {
+    const { issue: issueA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue A',
+    });
+    const { issue: issueB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue B',
+    });
+    const { issue: issueC } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue C',
+    });
+
+    await markAsDuplicate(workspace.admin, issueA.id, { survivorIssueId: issueB.id });
+
+    let error: unknown;
+    try {
+      await markAsDuplicate(workspace.admin, issueB.id, { survivorIssueId: issueC.id });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({
+      code: 'validation_failed',
+      message: 'An issue with duplicates cannot be marked as a duplicate.',
+    });
   });
 });
