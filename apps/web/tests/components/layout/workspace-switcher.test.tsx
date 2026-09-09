@@ -135,6 +135,23 @@ describe('WorkspaceSwitcher', () => {
     expect(push).toHaveBeenCalledWith('/workspaces/new');
   });
 
+  it('routes to settings from a single menu entry', async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkspaceSwitcher
+        workspace={NOVEUM}
+        workspaces={[NOVEUM, COMET]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+    await openMenu();
+
+    await user.click(screen.getByTestId('settings-link'));
+
+    expect(push).toHaveBeenCalledWith('/settings/general');
+  });
+
   it('routes to the MCP server page, so connecting a client is one click from the menu', async () => {
     const user = userEvent.setup();
     render(
