@@ -2279,7 +2279,7 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
     direct !== undefined || identifier === null
       ? []
       : await db
-          .select(getTableColumns(schema.issue))
+          .select({ issue: schema.issue })
           .from(schema.issueIdentifierAlias)
           .innerJoin(schema.issue, eq(schema.issue.id, schema.issueIdentifierAlias.issueId))
           .where(
@@ -2290,7 +2290,7 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
             ),
           )
           .limit(1);
-  const row = direct ?? aliased;
+  const row = direct ?? aliased?.issue;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
   return issue;
@@ -2766,6 +2766,50 @@ async function transferSubscriptions(
   ]);
 }
 
+async function assertSurvivorAllowed(
+  executor: Executor,
+  organizationId: string,
+  sourceId: string,
+  target: IssueRow,
+): Promise<void> {
+  if (target.archivedAt !== null) {
+    throw validationFailed('An archived issue cannot be a survivor.');
+  }
+
+  let cursor: string | null = target.id;
+  const visited = new Set<string>();
+  while (cursor !== null) {
+    if (cursor === sourceId) {
+      throw validationFailed(
+        'An issue cannot be marked as a duplicate of an issue that duplicates it.',
+      );
+    }
+    if (visited.has(cursor)) break;
+    visited.add(cursor);
+
+    const [row] = await executor
+      .select({ relatedIssueId: schema.issueRelation.relatedIssueId })
+      .from(schema.issueRelation)
+      .where(
+        and(
+          eq(schema.issueRelation.organizationId, organizationId),
+          eq(schema.issueRelation.issueId, cursor),
+          eq(schema.issueRelation.type, 'duplicate_of'),
+        ),
+      )
+      .limit(1);
+
+    if (row === undefined) {
+      cursor = null;
+    } else {
+      if (cursor === target.id) {
+        throw validationFailed('A duplicate issue cannot be a survivor.');
+      }
+      cursor = row.relatedIssueId;
+    }
+  }
+}
+
 export async function markAsDuplicate(
   principal: Principal,
   issueId: string,
@@ -2778,8 +2822,26 @@ export async function markAsDuplicate(
   }
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal, issueId);
+    const source = await loadIssueForUpdate(tx, principal, issueId);
     const target = await loadIssue(tx, principal, parsed.survivorIssueId);
+
+    const [existingDuplicateOf] = await tx
+      .select()
+      .from(schema.issueRelation)
+      .where(
+        and(
+          eq(schema.issueRelation.organizationId, principal.organizationId),
+          eq(schema.issueRelation.issueId, source.id),
+          eq(schema.issueRelation.type, 'duplicate_of'),
+        ),
+      )
+      .limit(1);
+
+    if (existingDuplicateOf !== undefined && existingDuplicateOf.relatedIssueId === target.id) {
+      return { issue: source, relations: [existingDuplicateOf], actions: [] };
+    }
+
+    await assertSurvivorAllowed(tx, principal.organizationId, source.id, target);
 
     const canceledStates = await tx
       .select()
@@ -2802,22 +2864,6 @@ export async function markAsDuplicate(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const now = new Date();
-
-    const [existingDuplicateOf] = await tx
-      .select()
-      .from(schema.issueRelation)
-      .where(
-        and(
-          eq(schema.issueRelation.organizationId, principal.organizationId),
-          eq(schema.issueRelation.issueId, source.id),
-          eq(schema.issueRelation.type, 'duplicate_of'),
-        ),
-      )
-      .limit(1);
-
-    if (existingDuplicateOf !== undefined && existingDuplicateOf.relatedIssueId === target.id) {
-      return { issue: source, relations: [existingDuplicateOf], actions: [] };
-    }
 
     const oldRelationDeleteActions = await removeExistingDuplicates(
       tx,
@@ -2890,7 +2936,7 @@ export async function markAsDuplicate(
       syncId,
     );
 
-    const activitiesToAppend: Parameters<typeof appendActivities>[1] = [
+    const activitiesToAppend: Parameters<typeof appendActivities>[1][number][] = [
       {
         organizationId: principal.organizationId,
         issueId: source.id,
@@ -2938,21 +2984,33 @@ export async function markAsDuplicate(
       }),
     );
 
-    const issueAction = buildSyncAction({
-      syncId,
-      organizationId: principal.organizationId,
-      scopes: [scopes.team(updatedIssue.teamId), scopes.issue(updatedIssue.id)],
-      action: 'update',
-      model: 'issue',
-      modelId: updatedIssue.id,
-      data: updatedIssue,
-      actor,
+    const decorations = await issueDecorationsByIssue(tx, [updatedIssue.id]);
+    const updatedIssueAction = issueAction(updatedIssue, syncId, actor, 'update', {
+      labelIds: decorations.labels.get(updatedIssue.id) ?? [],
+      reviewerIds: decorations.reviewers.get(updatedIssue.id) ?? [],
     });
+
+    const statusNotifications = stateChanged
+      ? await issueNotifications(tx, principal, actor, [
+          {
+            issue: updatedIssue,
+            mentionHandles: [],
+            assigneeId: null,
+            statusName: canceledState.name,
+          },
+        ])
+      : [];
 
     return {
       issue: updatedIssue,
       relations,
-      actions: [issueAction, ...relationActions, ...subActions, ...oldRelationDeleteActions],
+      actions: [
+        updatedIssueAction,
+        ...relationActions,
+        ...subActions,
+        ...oldRelationDeleteActions,
+        ...statusNotifications,
+      ],
     };
   });
 }
