@@ -168,9 +168,13 @@ describe('markAsDuplicate', () => {
       title: 'Self Duplicate Test',
     });
 
-    expect(
-      markAsDuplicate(workspace.admin, issue.id, { survivorIssueId: issue.id }),
-    ).rejects.toThrow();
+    let error: unknown;
+    try {
+      await markAsDuplicate(workspace.admin, issue.id, { survivorIssueId: issue.id });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
   });
 
   it('replaces previous survivor relation when marked as duplicate of a new survivor', async () => {
@@ -202,5 +206,71 @@ describe('markAsDuplicate', () => {
     expect(survivorBRelations).toHaveLength(1);
     expect(survivorBRelations[0]?.type).toBe('duplicated_by');
     expect(survivorBRelations[0]?.issue.id).toBe(duplicate.id);
+  });
+
+  it('rejects creating duplicate cycles (A to B then B to A)', async () => {
+    const { issue: issueA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue A',
+    });
+    const { issue: issueB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue B',
+    });
+
+    await markAsDuplicate(workspace.admin, issueA.id, { survivorIssueId: issueB.id });
+
+    let error: unknown;
+    try {
+      await markAsDuplicate(workspace.admin, issueB.id, { survivorIssueId: issueA.id });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+  });
+
+  it('rejects marking an archived issue as a survivor', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivor } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue',
+    });
+    await archiveIssue(workspace.admin, survivor.id);
+
+    let error: unknown;
+    try {
+      await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivor.id });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+  });
+
+  it('rejects marking an issue as duplicate of an issue that is already a duplicate', async () => {
+    const { issue: issueA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue A',
+    });
+    const { issue: issueB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue B',
+    });
+    const { issue: issueC } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue C',
+    });
+
+    await markAsDuplicate(workspace.admin, issueB.id, { survivorIssueId: issueC.id });
+
+    let error: unknown;
+    try {
+      await markAsDuplicate(workspace.admin, issueA.id, { survivorIssueId: issueB.id });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
   });
 });
