@@ -940,6 +940,7 @@ describe('what a token is allowed to do', () => {
       'remove_member',
       'remove_relation',
       'remove_team_member',
+      'unlink_github_repository',
     ];
 
     const actualDestructive = tools
