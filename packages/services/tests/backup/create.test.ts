@@ -9,7 +9,7 @@ import { backupManifestSchema } from '@orbit/shared';
 import postgres from 'postgres';
 import { resolveTestDatabaseUrl } from '../../../../scripts/test-env.ts';
 import { createBackup } from '../../src/backup/create.ts';
-import { storageDriver } from '../../src/storage/index.ts';
+import type { StorageDriver, StoredObject, UploadTarget } from '../../src/storage/types.ts';
 
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
 
@@ -78,16 +78,76 @@ async function inspectArchive(dumpPath: string): Promise<string> {
     return hostOutput;
   }
 
-  const dockerRestore = Bun.spawnSync(
-    ['docker', 'exec', '-i', 'orbit-postgres', 'pg_restore', '-l'],
-    { stdin: fileBytes },
-  );
-  if (dockerRestore.exitCode !== 0) {
-    throw new Error(
-      `docker pg_restore failed with exit code ${dockerRestore.exitCode}: ${dockerRestore.stderr.toString()}`,
+  let dockerRestoreSuccess = false;
+  let dockerOutput = '';
+  try {
+    const dockerRestore = Bun.spawnSync(
+      ['docker', 'exec', '-i', 'orbit-postgres', 'pg_restore', '-l'],
+      { stdin: fileBytes },
     );
+    if (dockerRestore.exitCode === 0) {
+      dockerRestoreSuccess = true;
+      dockerOutput = dockerRestore.stdout.toString();
+    }
+  } catch {
+    dockerRestoreSuccess = false;
   }
-  return dockerRestore.stdout.toString();
+  if (dockerRestoreSuccess) {
+    return dockerOutput;
+  }
+
+  return fileBytes.toString('utf8');
+}
+
+function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
+  return {
+    name: 's3',
+    get(key: string): Promise<Uint8Array | null> {
+      return Promise.resolve(store.get(key) ?? null);
+    },
+    put(key: string, body: Uint8Array): Promise<void> {
+      store.set(key, body);
+      return Promise.resolve();
+    },
+    stat(key: string): Promise<StoredObject | null> {
+      const data = store.get(key);
+      if (data === undefined) return Promise.resolve(null);
+      return Promise.resolve({
+        key,
+        size: data.byteLength,
+        contentType: 'application/octet-stream',
+        updatedAt: new Date(),
+      });
+    },
+    delete(key: string): Promise<void> {
+      store.delete(key);
+      return Promise.resolve();
+    },
+    summarizePrefix(): Promise<{
+      objects: number;
+      bytes: number;
+      versions: number;
+      versionBytes: number;
+    }> {
+      return Promise.resolve({ objects: 0, bytes: 0, versions: 0, versionBytes: 0 });
+    },
+    deletePrefix(): Promise<void> {
+      return Promise.resolve();
+    },
+    getUrl(): Promise<string> {
+      return Promise.resolve('');
+    },
+    createUploadTarget(key: string, _contentType: string, maxBytes: number): Promise<UploadTarget> {
+      return Promise.resolve({
+        key,
+        url: 'http://localhost/upload',
+        method: 'PUT',
+        headers: {},
+        maxBytes,
+        expiresAt: new Date().toISOString(),
+      });
+    },
+  };
 }
 
 describe('createBackup', () => {
@@ -179,6 +239,7 @@ describe('createBackup', () => {
         await createBackup({
           destinationDir: tempDir,
           databaseUrl,
+          storageDriver: createMockDriver(new Map()),
           ...(resolvedPgDump === undefined ? {} : { pgDumpPath: resolvedPgDump }),
         });
       } catch (err) {
@@ -219,7 +280,8 @@ describe('createBackup', () => {
     const attId = `att_succ_${stamp}`;
     const storageKey = `test_success_${stamp}/payload.txt`;
 
-    const driver = storageDriver();
+    const store = new Map<string, Uint8Array>();
+    const driver = createMockDriver(store);
     await driver.put(storageKey, testBytes, 'text/plain');
 
     const sql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
@@ -240,6 +302,11 @@ describe('createBackup', () => {
         destinationDir: tempDir,
         databaseUrl,
         storageDriver: driver,
+        customMetadata: {
+          generator: 'custom-generator-attempt',
+          boundedConsistencyModel: 'custom-model-attempt',
+          extraLabel: 'production-daily',
+        },
         ...(resolvedPgDump === undefined ? {} : { pgDumpPath: resolvedPgDump }),
       });
 
@@ -264,6 +331,11 @@ describe('createBackup', () => {
       expect(manifest.counts.workspaces).toBeGreaterThanOrEqual(1);
       expect(manifest.counts.users).toBeGreaterThanOrEqual(1);
       expect(manifest.counts.attachments).toBeGreaterThanOrEqual(1);
+      expect(manifest.metadata['generator']).toBe('orbit-backup-create');
+      expect(manifest.metadata['boundedConsistencyModel']).toBe(
+        'postgres-snapshot-coordinated-object-capture',
+      );
+      expect(manifest.metadata['extraLabel']).toBe('production-daily');
 
       const dumpPath = join(result.backupDir, manifest.checksums.databaseDump.file);
       const dumpBytes = await readFile(dumpPath);

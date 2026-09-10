@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { parseDatabaseConnection } from '../../src/backup/database.ts';
+import { DomainError } from '@orbit/shared';
+import { dumpDatabase, parseDatabaseConnection } from '../../src/backup/database.ts';
 
 describe('parseDatabaseConnection', () => {
   it('parses standard connection url', () => {
@@ -32,6 +33,26 @@ describe('parseDatabaseConnection', () => {
     expect(() => parseDatabaseConnection('postgres:///empty_host')).toThrow();
   });
 
+  it('throws validationFailed on invalid connection url format', () => {
+    try {
+      parseDatabaseConnection('not-a-valid-url');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(DomainError);
+      expect((err as DomainError).code).toBe('validation_failed');
+    }
+  });
+
+  it('throws validationFailed on malformed percent-encoded credentials', () => {
+    try {
+      parseDatabaseConnection('postgres://invalid%FFuser@localhost:5432/orbit');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(DomainError);
+      expect((err as DomainError).code).toBe('validation_failed');
+    }
+  });
+
   it('preserves TLS and libpq parameters when URL is sanitized', () => {
     const rawUrl =
       'postgres://orbit_user:secret_pass@db.example.com:5433/orbit_db?sslmode=verify-full&sslrootcert=%2Fpath%2Froot.crt';
@@ -47,5 +68,38 @@ describe('parseDatabaseConnection', () => {
     expect(sanitizedUrl).toContain('sslmode=verify-full');
     expect(sanitizedUrl).toContain('sslrootcert=');
     expect(sanitizedUrl).not.toContain('secret_pass');
+  });
+});
+
+describe('dumpDatabase', () => {
+  it('throws validationFailed when databaseUrl is invalid', async () => {
+    await expect(
+      dumpDatabase({
+        databaseUrl: 'invalid-url',
+        outputFile: '/tmp/test.dump',
+        databaseVersion: 'PostgreSQL 16',
+        ledger: [],
+        snapshotId: 'test-snap',
+        counts: { workspaces: 0, users: 0, attachments: 0, issues: 0 },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejects with internal error when binary cannot be spawned', async () => {
+    try {
+      await dumpDatabase({
+        databaseUrl: 'postgres://orbit:orbit@localhost:5432/orbit',
+        outputFile: '/tmp/test.dump',
+        databaseVersion: 'PostgreSQL 16',
+        ledger: [],
+        snapshotId: 'test-snap',
+        pgDumpPath: '/nonexistent/path/to/pg_dump_binary',
+        counts: { workspaces: 0, users: 0, attachments: 0, issues: 0 },
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(DomainError);
+      expect((err as DomainError).code).toBe('internal');
+    }
   });
 });

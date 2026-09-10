@@ -15,11 +15,25 @@ export interface ParsedConnection {
 }
 
 export function parseDatabaseConnection(connectionUrl: string): ParsedConnection {
-  const parsed = new URL(connectionUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(connectionUrl);
+  } catch (error) {
+    throw validationFailed('Invalid database connection URL.', { cause: error });
+  }
+
   const host = parsed.hostname;
   const port = parsed.port.length > 0 ? parsed.port : '5432';
-  const user = decodeURIComponent(parsed.username);
-  const password = parsed.password.length > 0 ? decodeURIComponent(parsed.password) : undefined;
+  let user: string;
+  let password: string | undefined;
+  try {
+    user = decodeURIComponent(parsed.username);
+    password = parsed.password.length > 0 ? decodeURIComponent(parsed.password) : undefined;
+  } catch (error) {
+    throw validationFailed('Database connection credentials could not be decoded.', {
+      cause: error,
+    });
+  }
   const database = parsed.pathname.replace(/^\//, '');
 
   if (host.length === 0 || user.length === 0 || database.length === 0) {
@@ -50,8 +64,20 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
 
   await mkdir(dirname(outputFile), { recursive: true, mode: 0o700 });
 
-  const parsed = new URL(databaseUrl);
-  const password = parsed.password.length > 0 ? decodeURIComponent(parsed.password) : undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch (error) {
+    throw validationFailed('Invalid database connection URL.', { cause: error });
+  }
+  let password: string | undefined;
+  try {
+    password = parsed.password.length > 0 ? decodeURIComponent(parsed.password) : undefined;
+  } catch (error) {
+    throw validationFailed('Database connection credentials could not be decoded.', {
+      cause: error,
+    });
+  }
   parsed.password = '';
   const sanitizedUrl = parsed.toString();
 
@@ -88,11 +114,22 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
       child.stderr.on('data', (chunk: string) => {
         stderrText += chunk;
       });
+      child.stderr.on('error', (err) => {
+        fileStream.destroy();
+        child.kill('SIGTERM');
+        settleReject(internal(`pg_dump stderr stream error: ${err.message}`, err));
+      });
     }
 
     child.stdout.on('data', (chunk: Buffer) => {
       byteCount += chunk.length;
       hash.update(chunk);
+    });
+
+    child.stdout.on('error', (err) => {
+      fileStream.destroy();
+      child.kill('SIGTERM');
+      settleReject(internal(`pg_dump stdout stream error: ${err.message}`, err));
     });
 
     let settled = false;
@@ -138,7 +175,7 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
       child.stdout?.unpipe(fileStream);
       child.stdout?.destroy();
       child.kill('SIGTERM');
-      settleReject(err);
+      settleReject(internal(`Database dump write stream error: ${err.message}`, err));
     });
 
     child.on('error', (err) => {

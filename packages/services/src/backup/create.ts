@@ -98,9 +98,9 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
         enabled: false,
       },
       metadata: {
+        ...(options.customMetadata ?? {}),
         generator: 'orbit-backup-create',
         boundedConsistencyModel: 'postgres-snapshot-coordinated-object-capture',
-        ...(options.customMetadata ?? {}),
       },
     };
 
