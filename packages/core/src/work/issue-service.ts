@@ -1827,7 +1827,13 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
-  const filters = [buildIssueWhere(principal, { visibility: 'team', filter, now: new Date() })];
+  const filters = [
+    buildIssueWhere(principal, {
+      visibility: filter.view === 'standup' ? 'standup' : 'team',
+      filter,
+      now: new Date(),
+    }),
+  ];
 
   if (filter.cursor !== undefined) {
     const { value, id } = decodeCursor(filter.cursor);
@@ -1839,7 +1845,9 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
 
   const direction = ordering.descending ? desc : asc;
   const rows = await db
-    .select(filter.select === 'full' ? ISSUE_COLUMNS : ISSUE_LIST_COLUMNS)
+    .select(
+      filter.view !== 'standup' && filter.select === 'full' ? ISSUE_COLUMNS : ISSUE_LIST_COLUMNS,
+    )
     .from(schema.issue)
     .where(and(...filters))
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
@@ -1851,7 +1859,19 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
     rows.length > filter.limit && last !== undefined
       ? encodeCursor(ordering.read(last), last.id)
       : null;
-  return { issues: page, nextCursor };
+  return {
+    issues:
+      filter.view === 'standup'
+        ? page.map((issue) => ({
+            ...issue,
+            canOpen: isInTeam(principal, {
+              id: issue.teamId,
+              organizationId: principal.organizationId,
+            }),
+          }))
+        : page,
+    nextCursor,
+  };
 }
 
 export async function getIssueCounts(
@@ -2188,7 +2208,7 @@ export async function getIssueSummary(
   assertCan(principal, 'issue:read');
   const filter = issueSummaryQuerySchema.parse(input);
   const matching = buildIssueWhere(principal, {
-    visibility: 'team',
+    visibility: filter.view === 'standup' ? 'standup' : 'team',
     filter,
     now: new Date(),
   });
@@ -2219,7 +2239,7 @@ export async function getIssueFacets(
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const scope = buildIssueWhere(principal, {
-    visibility: 'team',
+    visibility: filter.view === 'standup' ? 'standup' : 'team',
     filter,
     now: new Date(),
     advancedFilter: 'omit',
