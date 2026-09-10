@@ -673,12 +673,17 @@ async function assertCycleInWorkspace(
       id: schema.cycle.id,
       completedAt: schema.cycle.completedAt,
       archivedAt: schema.cycle.archivedAt,
+      endsAt: schema.cycle.endsAt,
     })
     .from(schema.cycle)
     .where(and(eq(schema.cycle.id, cycleId), eq(schema.cycle.organizationId, organizationId)))
     .limit(1);
   const cycle = requireRow(row, 'That sprint does not exist.');
-  if (cycle.completedAt !== null || cycle.archivedAt !== null) {
+  if (
+    cycle.completedAt !== null ||
+    cycle.archivedAt !== null ||
+    cycle.endsAt.getTime() <= Date.now()
+  ) {
     throw validationFailed('That sprint is no longer open.');
   }
 }
