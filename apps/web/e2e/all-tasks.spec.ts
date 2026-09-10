@@ -58,6 +58,15 @@ test('a member sees other teams in All tasks and can search and filter them', as
   await page.getByRole('combobox', { name: 'Filter by status' }).click();
   await page.getByRole('option', { name: 'Completed', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Filter by status' })).toContainText('Completed');
+  const completed = tasks.filter((task) => task.assignee === 'Jordan Lee' && task.state === 'Done');
+  expect(completed.length).toBeGreaterThan(0);
+  await expect(table.locator('tbody tr')).toHaveCount(completed.length);
+  for (const row of await table.locator('tbody tr').all()) {
+    await expect(row.getByRole('cell', { name: 'Done', exact: true })).toBeVisible();
+  }
+  expect((await page.request.get(`${BASE}/api/workspace-tasks?limit=201`)).status()).toBe(422);
+  await page.getByRole('checkbox', { name: 'Include archived' }).check();
+  await expect(page.getByRole('checkbox', { name: 'Include archived' })).toBeChecked();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('heading', { name: 'All tasks' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(

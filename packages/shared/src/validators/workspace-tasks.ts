@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { STATE_CATEGORIES } from '../constants/index.ts';
 import { idSchema, paginationSchema } from './common.ts';
-import { booleanFlag } from './issue.ts';
+import { booleanFlag, prioritySchema } from './issue.ts';
 
 export const workspaceTasksQuerySchema = z.object({
   query: z.string().trim().max(200).optional(),
@@ -19,7 +19,7 @@ export const workspaceTaskSchema = z.object({
   state: z.string(),
   assignee: z.string().nullable(),
   project: z.string().nullable(),
-  priority: z.number(),
+  priority: prioritySchema,
   updatedAt: z.string(),
   canOpen: z.boolean(),
 });

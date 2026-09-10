@@ -117,9 +117,11 @@ describe('workspace task overview', () => {
         DomainError,
       );
     }
-    await expect(listWorkspaceTasks(workspace.admin, { limit: 201 })).rejects.toThrow();
+    await expect(listWorkspaceTasks(workspace.admin, { limit: 201 })).rejects.toBeInstanceOf(
+      DomainError,
+    );
     await expect(
       listWorkspaceTasks(workspace.admin, { stateCategory: 'invalid' }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(DomainError);
   });
 });

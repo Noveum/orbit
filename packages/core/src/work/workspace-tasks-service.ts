@@ -3,7 +3,7 @@ import { validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan, isInTeam } from '@orbit/shared/policy';
 import { issueFilterSchema, workspaceTasksQuerySchema } from '@orbit/shared/validators';
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 import { buildIssueWhere } from './issue-query.ts';
 
 const cursorSchema = z.tuple([z.string().datetime(), z.string().uuid()]);
@@ -16,13 +16,25 @@ function decodeCursor(cursor: string): [string, string] {
   }
 }
 
+function parseFilters(input: unknown) {
+  try {
+    const query = workspaceTasksQuerySchema.parse(input);
+    return { query, filter: issueFilterSchema.parse({ ...query, query: undefined }) };
+  } catch (cause) {
+    if (cause instanceof ZodError) {
+      throw validationFailed('Those workspace task filters are not valid.', { cause });
+    }
+    throw cause;
+  }
+}
+
 export async function listWorkspaceTasks(principal: Principal, input: unknown = {}) {
   assertCan(principal, 'issue:read:workspace');
-  const query = workspaceTasksQuerySchema.parse(input);
+  const { query, filter } = parseFilters(input);
   const filters = [
     buildIssueWhere(principal, {
       visibility: 'workspace-tasks',
-      filter: issueFilterSchema.parse({ ...query, query: undefined }),
+      filter,
       now: new Date(),
     }),
   ];

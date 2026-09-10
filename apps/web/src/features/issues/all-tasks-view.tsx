@@ -12,6 +12,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
+import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import {
   Select,
@@ -116,11 +117,14 @@ export function AllTasksView({ organizationId }: { readonly organizationId: stri
             ))}
           </SelectContent>
         </Select>
-        <label className="flex items-center gap-2 text-muted text-xs">
-          <input
-            type="checkbox"
+        <label
+          htmlFor="all-tasks-include-archived"
+          className="flex items-center gap-2 text-muted text-xs"
+        >
+          <Checkbox
+            id="all-tasks-include-archived"
             checked={includeArchived}
-            onChange={(event) => setIncludeArchived(event.target.checked)}
+            onCheckedChange={(checked) => setIncludeArchived(checked === true)}
           />
           Include archived
         </label>
