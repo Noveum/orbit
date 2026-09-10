@@ -362,6 +362,13 @@ describe('standup work types and agents', () => {
     });
     await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Human' });
     const other = await createWorkspace('Other');
+    await db.insert(schema.member).values({
+      id: 'foreign_agent_membership',
+      organizationId: other.organizationId,
+      userId: workspace.admin.userId,
+      role: 'member',
+      isAgent: true,
+    });
     await createIssue(other.admin, { teamId: other.teamId, title: 'Other workspace' });
     expect(await listedTitles(workspace.admin, { aiOnly: true })).toEqual([
       'Activity',
