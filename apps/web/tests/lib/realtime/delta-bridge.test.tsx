@@ -1964,7 +1964,7 @@ describe('DeltaBridge deletions', () => {
 });
 
 describe('DeltaBridge agent involvement', () => {
-  it.each(['member', 'comment', 'reaction'] as const)(
+  it.each(['member', 'comment', 'reaction', 'issue_relation'] as const)(
     'refreshes agent task lists and aggregates after a %s change',
     (model) => {
       const client = mount();

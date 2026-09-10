@@ -870,7 +870,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       };
 
       for (const action of actions) {
-        if (['issue', 'member', 'comment', 'reaction'].includes(action.model))
+        if (['issue', 'member', 'comment', 'reaction', 'issue_relation'].includes(action.model))
           roots.agentWork = true;
         if (ANALYTICS_MODELS.has(action.model)) roots.analytics = true;
         if (action.model === 'issue') {
