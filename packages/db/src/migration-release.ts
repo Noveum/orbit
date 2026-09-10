@@ -207,14 +207,14 @@ async function baselineLedger(
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
-    const notificationAuditMigration = pendingMigrations.find(
+    const notificationAuditMigration = migrations.find(
       (migration) => migration.folderMillis === NOTIFICATION_AUDIT_MIGRATION,
     );
     if (notificationAuditMigration !== undefined) {
       await reconcileNotificationAuditArtifacts(tx, notificationAuditMigration);
     }
-    await reconcileNotificationAuditReplacements(tx, pendingMigrations);
-    await reconcileNotificationChecks(tx, pendingMigrations);
+    await reconcileNotificationAuditReplacements(tx, migrations);
+    await reconcileNotificationChecks(tx, migrations);
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
       await tx`
         update attachment
