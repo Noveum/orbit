@@ -157,20 +157,21 @@ describe('cycle window invariant', () => {
     expect(cycle.startsAt.getTime()).toBe(bootstrap.startsAt.getTime());
   });
 
-  it('derives a two week window when no end date is given', async () => {
+  it('derives a one week window when no end date is given', async () => {
     const startsAt = daysFromNow(30);
     const { cycle } = await createCycle(workspace.admin, {
       startsAt,
     });
-    expect(cycle.endsAt.getTime()).toBe(startsAt.getTime() + 14 * 86_400_000);
+    expect(cycle.endsAt.getTime()).toBe(startsAt.getTime() + 7 * 86_400_000);
   });
 
   it('appends a sprint after the last one when no dates are given at all', async () => {
     const bootstrap = await firstCycle();
     const { cycle } = await createCycle(workspace.admin, {});
 
+    expect(bootstrap.endsAt.getTime() - bootstrap.startsAt.getTime()).toBe(7 * 86_400_000);
     expect(cycle.startsAt.getTime()).toBe(bootstrap.endsAt.getTime());
-    expect(cycle.endsAt.getTime()).toBe(bootstrap.endsAt.getTime() + 14 * 86_400_000);
+    expect(cycle.endsAt.getTime()).toBe(bootstrap.endsAt.getTime() + 7 * 86_400_000);
 
     const { cycle: third } = await createCycle(workspace.admin, {});
     expect(third.startsAt.getTime()).toBe(cycle.endsAt.getTime());
