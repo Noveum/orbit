@@ -4,7 +4,10 @@ import { z } from 'zod';
 const deploymentSchema = z.object({
   BETTER_AUTH_URL: z.url().default('http://localhost:3000'),
   ORBIT_AUTH_ALLOWED_HOSTS: z.string().default(''),
-  OAUTH_PROXY_SECRET: z.string().min(32).optional(),
+  OAUTH_PROXY_SECRET: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(32).optional(),
+  ),
   VERCEL_URL: z.string().optional(),
   VERCEL_BRANCH_URL: z.string().optional(),
 });
@@ -21,7 +24,9 @@ export function deploymentAuthOptions(
     ...env.ORBIT_AUTH_ALLOWED_HOSTS.split(',')
       .map((host) => host.trim())
       .filter(Boolean),
-    ...[env.VERCEL_URL, env.VERCEL_BRANCH_URL].filter((host) => host !== undefined),
+    ...[env.VERCEL_URL, env.VERCEL_BRANCH_URL]
+      .map((host) => host?.trim())
+      .filter((host) => host !== undefined && host.length > 0),
   ].map((host) => hostSchema.parse(host));
   const plugins: [] | [ReturnType<typeof oAuthProxy>] = env.OAUTH_PROXY_SECRET
     ? [oAuthProxy({ productionURL: canonical.origin, secret: env.OAUTH_PROXY_SECRET })]
@@ -33,7 +38,6 @@ export function deploymentAuthOptions(
         ? canonical.origin
         : {
             allowedHosts: [...new Set(allowedHosts)],
-            fallback: canonical.origin,
           },
     plugins,
   };

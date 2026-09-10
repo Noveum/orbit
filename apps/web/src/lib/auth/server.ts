@@ -18,8 +18,8 @@ import { nextCookies } from 'better-auth/next-js';
 import { emailOTP, mcp, organization } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
+import { deploymentAuthOptions } from '@/lib/auth/deployment.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
-import { deploymentAuthOptions } from './deployment.ts';
 import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 

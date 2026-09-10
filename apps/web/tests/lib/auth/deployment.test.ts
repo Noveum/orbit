@@ -87,7 +87,10 @@ describe('deployment authentication', () => {
     expect(cookies.some((cookie) => cookie.includes('session_token='))).toBe(true);
     expect(cookies.join(';')).not.toContain('Domain=');
     const session = await previewAuth.api.getSession({
-      headers: new Headers({ cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; ') }),
+      headers: new Headers({
+        host: new URL(preview).host,
+        cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '),
+      }),
     });
     expect(session?.user.email).toBe('tester@example.com');
     expect(
@@ -118,6 +121,16 @@ describe('deployment authentication', () => {
       deploymentAuthOptions({ ORBIT_AUTH_ALLOWED_HOSTS: 'https://example.com/path' }),
     ).toThrow();
     expect(() => deploymentAuthOptions({ OAUTH_PROXY_SECRET: 'short' })).toThrow();
+  });
+
+  it('ignores empty optional deployment values in local configuration', () => {
+    const options = deploymentAuthOptions({
+      VERCEL_URL: '',
+      VERCEL_BRANCH_URL: ' ',
+      OAUTH_PROXY_SECRET: '',
+    });
+    expect(options.baseURL).toBe('http://localhost:3000');
+    expect(options.plugins).toEqual([]);
   });
 
   it.each(['google', 'github'])(
@@ -157,8 +170,7 @@ describe('deployment authentication', () => {
   });
 
   it('rejects another Vercel project', async () => {
-    const response = await socialSignIn('https://other-magicapi.vercel.app', 'google');
-    expect(response.status).toBe(403);
+    await expect(socialSignIn('https://other-magicapi.vercel.app', 'google')).rejects.toThrow();
   });
 
   it('rejects an external post-login redirect', async () => {
