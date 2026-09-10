@@ -42,13 +42,14 @@ import {
   type WorkspaceData,
 } from '@/features/issues/workspace-provider.tsx';
 import type { FacetProperty, IssueFacets } from '@/lib/query/schemas.ts';
-import { sprintOptions } from '@/lib/sprint-options.ts';
+import { sprintFilterOptions } from '@/lib/sprint-options.ts';
 import { PRIORITY_ORDER } from './grouping.ts';
 
 export interface FilterOption {
   readonly value: string;
   readonly label: string;
   readonly icon: ReactNode;
+  readonly facetValues?: readonly string[];
 }
 
 export type FilterInputKind = 'values' | 'text' | 'dates';
@@ -247,7 +248,8 @@ export function buildFilterFields(
       property: 'cycle',
       input: 'values',
       options: [
-        ...sprintOptions(cycles).map((cycle) => ({
+        ...sprintFilterOptions(cycles).map((cycle) => ({
+          ...('facetValues' in cycle ? { facetValues: cycle.facetValues } : {}),
           value: cycle.id,
           label: cycle.label,
           icon: glyph(RefreshCcw),
@@ -312,7 +314,16 @@ export function countValues(
 ): ReadonlyMap<string, number> {
   const property = definition.facet;
   if (property === null || facets === undefined) return EMPTY_COUNTS;
-  return new Map(Object.entries(facets[property] ?? {}));
+  const counts = new Map(Object.entries(facets[property] ?? {}));
+  for (const option of definition.options) {
+    if (option.facetValues !== undefined) {
+      counts.set(
+        option.value,
+        option.facetValues.reduce((total, id) => total + (counts.get(id) ?? 0), 0),
+      );
+    }
+  }
+  return counts;
 }
 
 export function operatorLabel(condition: FilterCondition): string {

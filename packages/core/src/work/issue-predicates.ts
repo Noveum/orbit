@@ -2,6 +2,7 @@ import {
   and,
   db,
   eq,
+  gt,
   gte,
   ilike,
   inArray,
@@ -20,7 +21,12 @@ import type {
   FilterNode,
   RelativeDate,
 } from '@orbit/shared/filters';
-import { NAMED_DATE_VALUES, resolveRelativeRange, UNSET_FILTER_VALUE } from '@orbit/shared/filters';
+import {
+  CURRENT_SPRINT_FILTER_VALUE,
+  NAMED_DATE_VALUES,
+  resolveRelativeRange,
+  UNSET_FILTER_VALUE,
+} from '@orbit/shared/filters';
 import type { AnyColumn, SQL } from 'drizzle-orm';
 import { addUtcDays } from '../internal.ts';
 
@@ -69,6 +75,43 @@ function setPredicate(column: AnyColumn, values: readonly string[], negate: bool
   const positive = anyOf(parts);
   if (positive === null) return null;
   return negate ? negateWithNulls(positive, column, matchesUnset) : positive;
+}
+
+function cyclePredicate(
+  values: readonly string[],
+  negate: boolean,
+  context: FilterContext,
+): SQL | null {
+  const fixed = setPredicate(
+    schema.issue.cycleId,
+    values.filter((value) => value !== CURRENT_SPRINT_FILTER_VALUE),
+    false,
+  );
+  const parts: SQL[] = fixed === null ? [] : [fixed];
+  if (values.includes(CURRENT_SPRINT_FILTER_VALUE)) {
+    parts.push(
+      inArray(
+        schema.issue.cycleId,
+        db
+          .select({ id: schema.cycle.id })
+          .from(schema.cycle)
+          .where(
+            and(
+              eq(schema.cycle.organizationId, schema.issue.organizationId),
+              isNull(schema.cycle.archivedAt),
+              isNull(schema.cycle.completedAt),
+              lte(schema.cycle.startsAt, context.now),
+              gt(schema.cycle.endsAt, context.now),
+            ),
+          ),
+      ),
+    );
+  }
+  const positive = anyOf(parts);
+  if (positive === null) return null;
+  return negate
+    ? negateWithNulls(positive, schema.issue.cycleId, values.includes(UNSET_FILTER_VALUE))
+    : positive;
 }
 
 function numberSetPredicate(
@@ -360,7 +403,7 @@ function setSql(condition: FilterCondition, context: FilterContext): SQL | null 
     case 'project':
       return setPredicate(schema.issue.projectId, values, negate);
     case 'cycle':
-      return setPredicate(schema.issue.cycleId, values, negate);
+      return cyclePredicate(values, negate, context);
     case 'priority':
       return numberSetPredicate(schema.issue.priority, values, negate);
     case 'estimate':

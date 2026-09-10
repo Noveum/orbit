@@ -53,7 +53,7 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
       name: 'create_cycle',
       title: 'Create a sprint',
       description:
-        'Open a new sprint (cycle) for a team over a date range. Send neither date and the server appends a two week sprint straight after the last one the team has.',
+        'Open a new sprint (cycle) for a team over a date range. Send neither date and the server appends a one week sprint straight after the last one the team has.',
       readOnly: false,
       inputSchema: {
         team: teamRef,
@@ -64,7 +64,7 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
         endsAt: instant
           .optional()
           .describe(
-            'ISO timestamp or date the sprint closes. Defaults to two weeks after it opens.',
+            'ISO timestamp or date the sprint closes. Defaults to one week after it opens.',
           ),
       },
     },

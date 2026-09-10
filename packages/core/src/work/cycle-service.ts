@@ -18,6 +18,7 @@ import {
   schema,
   sql,
 } from '@orbit/db';
+import { DEFAULT_SPRINT_DAYS } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -44,7 +45,7 @@ import { reviewerIdsByIssue } from './reviewer-service.ts';
 
 export type CycleRow = typeof schema.cycle.$inferSelect;
 
-export const DEFAULT_SPRINT_DAYS = 14;
+export { DEFAULT_SPRINT_DAYS } from '@orbit/shared/constants';
 
 function cycleScopes(row: CycleRow): string[] {
   return [scopes.organization(row.organizationId)];

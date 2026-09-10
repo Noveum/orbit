@@ -1,4 +1,5 @@
 import { and, asc, db, eq, inArray, isNull, schema } from '@orbit/db';
+import { DEFAULT_SPRINT_DAYS } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -96,7 +97,7 @@ export async function createFirstCycle(
       number: 1,
       name: '',
       startsAt,
-      endsAt: addUtcDays(startsAt, 14),
+      endsAt: addUtcDays(startsAt, DEFAULT_SPRINT_DAYS),
       syncId: params.syncId,
     })
     .returning();

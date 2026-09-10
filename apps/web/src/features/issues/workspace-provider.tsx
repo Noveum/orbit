@@ -7,7 +7,15 @@ import {
   type StateCategory,
 } from '@orbit/shared/constants';
 import { usePathname } from 'next/navigation';
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type {
   Bootstrap,
@@ -24,6 +32,7 @@ import { QuickCreateDialog } from './quick-create.tsx';
 
 export interface WorkspaceData {
   readonly ready: boolean;
+  readonly now?: number;
   readonly userId: string | null;
   readonly role: OrgRole;
   readonly teams: readonly Team[];
@@ -101,12 +110,14 @@ export function teamKeyFromPath(pathname: string): string | null {
 export function workspaceFrom(
   data: Bootstrap | undefined,
   openQuickCreate: (teamId?: string) => void,
+  now = Date.now(),
 ): WorkspaceData {
   const states = data?.states ?? [];
   const labels = data?.labels ?? [];
   const members = data?.members ?? [];
   return {
     ready: data !== undefined,
+    now,
     userId: data?.userId ?? null,
     role: toOrgRole(data?.role),
     teams: data?.teams ?? [],
@@ -114,7 +125,7 @@ export function workspaceFrom(
     labels,
     members,
     projects: data?.projects ?? [],
-    cycles: data?.cycles ?? [],
+    cycles: [...(data?.cycles ?? [])],
     seedIssues: data?.issues ?? [],
     stateById: new Map(states.map((state) => [state.id, state])),
     labelById: new Map(labels.map((label) => [label.id, label])),
@@ -129,6 +140,17 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const refresh = () => setNow(Date.now());
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
   const data = bootstrap.data;
   const routeTeamKey = teamKeyFromPath(pathname);
   const routeTeamId = data?.teams.find((team) => team.key === routeTeamKey)?.id ?? null;
@@ -139,8 +161,8 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<WorkspaceData>(
-    () => workspaceFrom(data, openQuickCreate),
-    [data, openQuickCreate],
+    () => workspaceFrom(data, openQuickCreate, now),
+    [data, openQuickCreate, now],
   );
 
   useHotkey(

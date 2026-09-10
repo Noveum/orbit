@@ -110,6 +110,7 @@ export const FILTER_PROPERTY_GROUPS: readonly {
 ];
 
 export const UNSET_FILTER_VALUE = 'none';
+export const CURRENT_SPRINT_FILTER_VALUE = 'current';
 export const ANY_FILTER_VALUE = 'any';
 
 export const RELATION_FILTER_VALUES = [
@@ -866,5 +867,14 @@ function comparableViewState(state: ViewState) {
 export function viewStateDirty(current: ViewState, saved: ViewState): boolean {
   return (
     JSON.stringify(comparableViewState(current)) !== JSON.stringify(comparableViewState(saved))
+  );
+}
+
+export function hasCurrentSprintFilter(node: FilterNode): boolean {
+  if (node.kind === 'group') return node.children.some(hasCurrentSprintFilter);
+  return (
+    node.property === 'cycle' &&
+    node.operator === 'in' &&
+    node.values.includes(CURRENT_SPRINT_FILTER_VALUE)
   );
 }
