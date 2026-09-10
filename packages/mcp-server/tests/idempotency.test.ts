@@ -149,4 +149,24 @@ describe('MCP write tool idempotency keys', () => {
     expect(issueA.title).toBe('Grant A Issue');
     expect(issueB.title).toBe('Grant B Issue');
   });
+
+  it('a failed call records terminal failure and replays error on retry', async () => {
+    const key = 'idem-failed-call-001';
+    const firstCall = await clientGrantA.call('create_issue', {
+      team: 'NONEXISTENT_TEAM_KEY',
+      title: 'Should fail',
+      idempotencyKey: key,
+    });
+    expect(firstCall.isError).toBe(true);
+    const err1 = errorPayload(firstCall);
+
+    const retryCall = await clientGrantA.call('create_issue', {
+      team: 'NONEXISTENT_TEAM_KEY',
+      title: 'Should fail',
+      idempotencyKey: key,
+    });
+    expect(retryCall.isError).toBe(true);
+    const err2 = errorPayload(retryCall);
+    expect(err1).toEqual(err2);
+  });
 });

@@ -99,6 +99,29 @@ export async function claimIdempotencySlot(
   }
 
   if (existing.response === null) {
+    if (now.getTime() - existing.createdAt.getTime() > 60_000) {
+      const reclaimed = await db
+        .update(schema.mcpIdempotencyKey)
+        .set({
+          tool,
+          paramsHash,
+          response: null,
+          createdAt: now,
+          expiresAt,
+        })
+        .where(
+          and(
+            eq(schema.mcpIdempotencyKey.id, existing.id),
+            eq(schema.mcpIdempotencyKey.response, null),
+          ),
+        )
+        .returning({ id: schema.mcpIdempotencyKey.id });
+
+      if (reclaimed.length > 0 && reclaimed[0] !== undefined) {
+        return { status: 'claimed', slotId: reclaimed[0].id };
+      }
+    }
+
     return { status: 'processing' };
   }
 

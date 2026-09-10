@@ -82,6 +82,42 @@ const idempotencyKeySchema = z
   .optional()
   .describe('Optional idempotency key to prevent duplicate execution on retries.');
 
+function formatDoneSlot(response: Record<string, unknown>): CallToolResult {
+  if (response['ok'] === false) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(response['error'] ?? response),
+        },
+      ],
+    };
+  }
+  const payload = (response['payload'] ?? response) as ToolPayload;
+  return ok(payload);
+}
+
+async function runAndResolveSlot(
+  slotId: string,
+  toolName: string,
+  execute: () => Promise<ToolPayload>,
+): Promise<CallToolResult> {
+  try {
+    const result = await execute();
+    await resolveIdempotencySlot(slotId, { ok: true, payload: result });
+    return ok(result);
+  } catch (error) {
+    const domain = asDomainError(error);
+    const body =
+      domain.status >= 500
+        ? { error: { code: domain.code, message: 'Something went wrong on our side.' } }
+        : domain.toJSON();
+    await resolveIdempotencySlot(slotId, { ok: false, error: body }).catch(() => undefined);
+    return failed(toolName, error);
+  }
+}
+
 export function defineTool<Shape extends z.ZodRawShape>(
   server: McpServer,
   config: ToolConfig<Shape>,
@@ -132,7 +168,7 @@ export function defineTool<Shape extends z.ZodRawShape>(
               idempotencyKey,
               grantId,
             });
-            return ok(slot.response);
+            return formatDoneSlot(slot.response);
           }
           if (slot.status === 'processing') {
             return ok({
@@ -140,9 +176,9 @@ export function defineTool<Shape extends z.ZodRawShape>(
               message: 'Request is still processing. Retry shortly.',
             });
           }
-          const result = await run(args as z.infer<z.ZodObject<Shape>>);
-          await resolveIdempotencySlot(slot.slotId, result);
-          return ok(result);
+          return await runAndResolveSlot(slot.slotId, config.name, () =>
+            run(args as z.infer<z.ZodObject<Shape>>),
+          );
         }
 
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
