@@ -765,7 +765,7 @@ describe('loadPeopleAnalytics', () => {
         number: 1,
         name: 'Previous',
         startsAt: new Date('2026-07-20T00:00:00.000Z'),
-        endsAt: new Date('2026-07-31T00:00:00.000Z'),
+        endsAt: new Date(Date.now() + 86_400_000),
       },
       {
         id: activeCycleId,
@@ -774,7 +774,7 @@ describe('loadPeopleAnalytics', () => {
         number: 2,
         name: 'Current',
         startsAt: new Date('2026-07-31T00:00:00.000Z'),
-        endsAt: new Date('2026-08-21T00:00:00.000Z'),
+        endsAt: new Date(Date.now() + 86_400_000),
       },
     ]);
     const currentIssue = await issue(
@@ -797,8 +797,15 @@ describe('loadPeopleAnalytics', () => {
     );
     await db
       .update(schema.cycle)
-      .set({ completedAt: new Date('2026-07-31T00:00:00.000Z') })
+      .set({
+        completedAt: new Date('2026-07-31T00:00:00.000Z'),
+        endsAt: new Date('2026-07-31T00:00:00.000Z'),
+      })
       .where(eq(schema.cycle.id, previousCycleId));
+    await db
+      .update(schema.cycle)
+      .set({ endsAt: new Date('2026-08-21T00:00:00.000Z') })
+      .where(eq(schema.cycle.id, activeCycleId));
     for (const [cycleId, issueId, addedAt] of [
       [activeCycleId, currentIssue, '2026-07-31T00:00:00.000Z'],
       [previousCycleId, previousIssue, '2026-07-20T00:00:00.000Z'],

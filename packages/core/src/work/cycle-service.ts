@@ -19,7 +19,7 @@ import {
   sql,
 } from '@orbit/db';
 import { conflict } from '@orbit/shared/errors';
-import type { SyncAction } from '@orbit/shared/events';
+import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
@@ -92,7 +92,7 @@ async function lockIssueTeams(
 
 async function requireCycleForUpdate(
   executor: Executor,
-  principal: Principal,
+  principal: Pick<Principal, 'organizationId'>,
   cycleId: string,
 ): Promise<CycleRow> {
   const [found] = await executor
@@ -1105,18 +1105,59 @@ export async function completeCycle(
 ): Promise<CompletedCycle> {
   assertCan(principal, 'cycle:manage');
 
+  const result = await closeCycle(principal, cycleId, now, database, principal);
+  if (result === null) throw conflict('That cycle is no longer open.');
+  return result;
+}
+
+function successorActions(
+  created: boolean,
+  cycle: CycleRow,
+  syncId: number,
+  actor: Actor,
+): SyncAction[] {
+  if (!created) return [];
+  return [
+    buildSyncAction({
+      syncId,
+      organizationId: cycle.organizationId,
+      scopes: cycleScopes(cycle),
+      action: 'insert',
+      model: 'cycle',
+      modelId: cycle.id,
+      data: cycle,
+      actor,
+    }),
+  ];
+}
+
+function expiredCycle(cycle: CycleRow, now: Date): boolean {
+  return cycle.completedAt === null && cycle.archivedAt === null && cycle.endsAt <= now;
+}
+
+async function closeCycle(
+  scope: Pick<Principal, 'organizationId'>,
+  cycleId: string,
+  now: Date,
+  database: Database,
+  principal: Principal | null,
+): Promise<CompletedCycle | null> {
   return await database.transaction(async (tx) => {
-    const found = await requireCycleForUpdate(tx, principal, cycleId);
+    const found = await requireCycleForUpdate(tx, scope, cycleId);
     await lockCycleIssues(tx, found.organizationId, cycleId);
     await lockCycles(tx, found.organizationId);
-    const cycle = await requireCycleForUpdate(tx, principal, cycleId);
+    const cycle = await requireCycleForUpdate(tx, scope, cycleId);
     const lockedIssues = await lockCycleIssues(tx, cycle.organizationId, cycleId);
     await lockIssueTeams(tx, lockedIssues);
+    if (principal === null && !expiredCycle(cycle, now)) return null;
     if (cycle.completedAt !== null) {
       throw conflict('That cycle is already complete.');
     }
 
-    const actor = await principalActor(tx, principal);
+    const actor =
+      principal === null
+        ? { type: 'system' as const, id: 'sprint-rollover', name: 'Sprint rollover' }
+        : await principalActor(tx, principal);
 
     const [existingNext] = await tx
       .select()
@@ -1169,7 +1210,7 @@ export async function completeCycle(
           name: '',
           timezone: cycle.timezone,
           startsAt,
-          endsAt: addUtcDays(startsAt, 14),
+          endsAt: new Date(startsAt.getTime() + cycle.endsAt.getTime() - cycle.startsAt.getTime()),
         })
         .returning();
       nextCycle = requireRow(created, 'The next cycle could not be created.');
@@ -1290,9 +1331,10 @@ export async function completeCycle(
       rolledOverIssueIds: rolled.map((row) => row.id),
       releasedIssueIds: released.map((row) => row.id),
       actions: [
+        ...successorActions(createdSuccessor, nextCycle, syncId, actor),
         buildSyncAction({
           syncId,
-          organizationId: principal.organizationId,
+          organizationId: scope.organizationId,
           scopes: cycleScopes(completed),
           action: 'update',
           model: 'cycle',
@@ -1303,7 +1345,7 @@ export async function completeCycle(
         ...affectedIssues.map((row) =>
           buildSyncAction({
             syncId,
-            organizationId: principal.organizationId,
+            organizationId: scope.organizationId,
             scopes: issueScopes(row),
             action: 'update',
             model: 'issue',
@@ -1319,6 +1361,36 @@ export async function completeCycle(
       ],
     };
   });
+}
+
+export async function rolloverExpiredCycles(
+  options: { now?: Date; limit?: number; publish?: (actions: SyncAction[]) => Promise<void> } = {},
+): Promise<{ completed: number; actions: SyncAction[] }> {
+  const now = options.now ?? new Date();
+  const limit = whole(options.limit, 100, 100);
+  const actions: SyncAction[] = [];
+  let completed = 0;
+  for (let attempt = 0; attempt < limit; attempt += 1) {
+    const [cycle] = await db
+      .select()
+      .from(schema.cycle)
+      .where(
+        and(
+          isNull(schema.cycle.archivedAt),
+          isNull(schema.cycle.completedAt),
+          lte(schema.cycle.endsAt, now),
+        ),
+      )
+      .orderBy(asc(schema.cycle.endsAt), asc(schema.cycle.id))
+      .limit(1);
+    if (cycle === undefined) break;
+    const result = await closeCycle(cycle, cycle.id, now, db, null);
+    if (result === null) continue;
+    completed += 1;
+    actions.push(...result.actions);
+    await options.publish?.(result.actions);
+  }
+  return { completed, actions };
 }
 
 export async function cycleIssueCount(principal: Principal, cycleId: string): Promise<number> {
