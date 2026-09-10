@@ -47,6 +47,9 @@ export function createOrbitMcpServer(
   workspaceInstructions = '',
   grantId?: string,
 ): McpServer {
+  if (grantsWrites(scopes) && (grantId === undefined || grantId.length === 0)) {
+    throw forbidden('Write access requires a valid OAuth grant.');
+  }
   const instructions = [INSTRUCTIONS, workspaceInstructions]
     .filter((entry) => entry.length > 0)
     .join('\n\n');

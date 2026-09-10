@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, db, eq, gt, schema } from '@orbit/db';
+import { and, db, eq, lte, schema } from '@orbit/db';
 import { validationFailed } from '@orbit/shared/errors';
 import { newId } from '../internal.ts';
 
@@ -63,16 +63,35 @@ export async function claimIdempotencySlot(
     .select()
     .from(schema.mcpIdempotencyKey)
     .where(
-      and(
-        eq(schema.mcpIdempotencyKey.grantId, grantId),
-        eq(schema.mcpIdempotencyKey.key, key),
-        gt(schema.mcpIdempotencyKey.expiresAt, now),
-      ),
+      and(eq(schema.mcpIdempotencyKey.grantId, grantId), eq(schema.mcpIdempotencyKey.key, key)),
     )
     .limit(1);
 
   if (existing === undefined) {
     return { status: 'claimed', slotId: newId() };
+  }
+
+  if (existing.expiresAt <= now) {
+    const reclaimed = await db
+      .update(schema.mcpIdempotencyKey)
+      .set({
+        tool,
+        paramsHash,
+        response: null,
+        createdAt: now,
+        expiresAt,
+      })
+      .where(
+        and(
+          eq(schema.mcpIdempotencyKey.id, existing.id),
+          lte(schema.mcpIdempotencyKey.expiresAt, now),
+        ),
+      )
+      .returning({ id: schema.mcpIdempotencyKey.id });
+
+    if (reclaimed.length > 0 && reclaimed[0] !== undefined) {
+      return { status: 'claimed', slotId: reclaimed[0].id };
+    }
   }
 
   if (existing.tool !== tool || existing.paramsHash !== paramsHash) {

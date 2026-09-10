@@ -61,7 +61,7 @@ Every write tool accepts an optional `idempotencyKey` string argument. When an M
 Key details:
 
 - Idempotency keys are scoped to your OAuth grant. A key used under one grant does not conflict with another grant.
-- Cached responses are stored for 24 hours.
+- Cached responses are stored for 23 hours.
 - Reusing an idempotency key with different arguments or a different tool will return a validation error.
 
 ## Workspace instructions
