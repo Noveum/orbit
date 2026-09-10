@@ -92,7 +92,11 @@ describe('current sprint refresh', () => {
 describe('combined standup and sprint refresh', () => {
   it('keeps standup refresh faster while refreshing current sprint summaries and all facets', () => {
     const current = new URLSearchParams({
-      filter: encodeFilter(inCondition('cycle', ['current'])),
+      filter: encodeFilter({
+        kind: 'group',
+        combinator: 'and',
+        children: [inCondition('cycle', ['current'])],
+      }),
     }).toString();
     expect(issueSummaryQueryOptions('view=standup').refetchInterval).toBe(30_000);
     expect(issueSummaryQueryOptions(`view=standup&${current}`).refetchInterval).toBe(30_000);
