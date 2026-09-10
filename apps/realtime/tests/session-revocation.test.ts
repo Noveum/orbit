@@ -152,7 +152,7 @@ describe('session revocation', () => {
     let terminalCode: number | undefined;
 
     const client = createRealtimeClient({
-      url: `ws://127.0.0.1:${server.port}`,
+      url: `ws://127.0.0.1:${server.port}/api/ws`,
       fetchTicket: () => Promise.resolve(ticketFor(member, organizationId)),
       maxBackoffMs: 200,
       onStatus: (status) => statuses.push(status),

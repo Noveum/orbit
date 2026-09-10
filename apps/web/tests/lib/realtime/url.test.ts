@@ -4,7 +4,13 @@ import { configuredRealtimeUrl, resolveRealtimeUrl } from '../../../src/lib/real
 describe('resolveRealtimeUrl', () => {
   it('honours a configured url while the page is served locally', () => {
     expect(resolveRealtimeUrl('ws://localhost:3100', 'http://localhost:3000')).toBe(
-      'ws://localhost:3100',
+      'ws://localhost:3100/api/ws',
+    );
+  });
+
+  it('keeps a path the configured url already carries', () => {
+    expect(resolveRealtimeUrl('ws://localhost:3100/custom', 'http://localhost:3000')).toBe(
+      'ws://localhost:3100/custom',
     );
   });
 
@@ -16,22 +22,22 @@ describe('resolveRealtimeUrl', () => {
 
   it('treats a loopback address as local too', () => {
     expect(resolveRealtimeUrl('ws://localhost:3100', 'http://127.0.0.1:3000')).toBe(
-      'ws://localhost:3100',
+      'ws://localhost:3100/api/ws',
     );
   });
 
   it('treats the whole 127.0.0.0/8 range as loopback', () => {
     expect(resolveRealtimeUrl('ws://localhost:3100', 'http://127.0.0.2:3000')).toBe(
-      'ws://localhost:3100',
+      'ws://localhost:3100/api/ws',
     );
     expect(resolveRealtimeUrl('ws://localhost:3100', 'http://127.255.255.254:3000')).toBe(
-      'ws://localhost:3100',
+      'ws://localhost:3100/api/ws',
     );
   });
 
   it('treats the IPv6 loopback as local', () => {
     expect(resolveRealtimeUrl('ws://localhost:3100', 'http://[::1]:3000')).toBe(
-      'ws://localhost:3100',
+      'ws://localhost:3100/api/ws',
     );
   });
 

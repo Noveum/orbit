@@ -15,8 +15,8 @@ describe('doc preferences', () => {
     expect(DEFAULT_DOC_PREFERENCES.toolbar).toBe(false);
   });
 
-  it('gives a document more room than the old fixed measure by default', () => {
-    expect(READING_WIDTH_CLASS[DEFAULT_DOC_PREFERENCES.width]).toBe('max-w-[68rem]');
+  it('defaults to a comfortable reading measure', () => {
+    expect(READING_WIDTH_CLASS[DEFAULT_DOC_PREFERENCES.width]).toBe('max-w-[45rem]');
     expect(READING_WIDTH_CLASS.comfortable).toBe('max-w-[45rem]');
     expect(READING_WIDTH_CLASS.full).toBe('max-w-none');
   });
@@ -80,7 +80,7 @@ describe('the preference store', () => {
 
   it('re-reads what another tab wrote when storage announces a change', () => {
     const { result } = renderHook(() => useDocPreferences());
-    expect(result.current.width).toBe('wide');
+    expect(result.current.width).toBe('comfortable');
 
     act(() => {
       window.localStorage.setItem(

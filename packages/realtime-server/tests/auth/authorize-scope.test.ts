@@ -188,6 +188,13 @@ const CASES: readonly ScopeCase[] = [
     allowed: false,
   },
   {
+    name: 'doc scope never treats an admin expanded team list as a private grant',
+    scope: () => `doc:${home.docGrantedToCore}`,
+    principal: () =>
+      reader({ userId: home.strangerUserId, role: 'admin', teamIds: [home.teamCore] }),
+    allowed: false,
+  },
+  {
     name: 'doc scope on a private doc the principal wrote',
     scope: () => `doc:${home.privateDoc}`,
     principal: () => reader({ userId: home.adminUserId }),

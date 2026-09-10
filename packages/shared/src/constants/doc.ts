@@ -30,5 +30,5 @@ export function isPublished(visibility: string): boolean {
 }
 
 export function isRestricted(visibility: string): boolean {
-  return visibility === 'private' || visibility === 'team';
+  return !['workspace', 'members', 'link', 'public'].includes(visibility);
 }

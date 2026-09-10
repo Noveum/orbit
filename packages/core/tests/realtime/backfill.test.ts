@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { SYNC_MODELS, scopes } from '@orbit/shared/events';
 import { createComment, toggleReaction } from '../../src/content/comment-service.ts';
 import { createDoc, createDocCollection, setDocAccess } from '../../src/content/doc-service.ts';
@@ -37,6 +37,31 @@ function modelIds(actions: { model: string; modelId: string }[], model: string):
 }
 
 describe('catchUp', () => {
+  it('never embeds legacy notification content in reconnect packets', async () => {
+    const id = newId();
+    await db.insert(schema.notification).values({
+      id,
+      organizationId: workspace.organizationId,
+      userId: workspace.admin.userId,
+      type: 'comment_created',
+      actorType: 'system',
+      actorId: 'orbit',
+      actorName: 'Orbit',
+      entityType: 'doc',
+      entityId: newId(),
+      title: 'Private roadmap',
+      body: 'Confidential detail',
+      url: '/docs/restricted',
+      surfaceInInbox: true,
+      syncId: schema.nextSyncId,
+    });
+    const action = (await catchUp(workspace.admin, 0)).actions.find(
+      (row) => row.model === 'notification' && row.modelId === id,
+    );
+    expect(action).toBeDefined();
+    expect(Object.keys(action?.data ?? {}).sort()).toEqual(['id', 'syncId', 'visible']);
+  });
+
   it('covers every synced model so no model silently misses a backfill', () => {
     expect([...SYNC_CATCHUP_MODELS].sort()).toEqual([...SYNC_MODELS].sort());
   });
@@ -75,6 +100,37 @@ describe('catchUp', () => {
     expect(issues).toHaveLength(1);
     expect(issues[0]?.data['title']).toBe('Third title');
     expect(issues[0]?.syncId).toBe(third.issue.syncId);
+  });
+
+  it('replays a dismissed notification as a delete', async () => {
+    const id = newId();
+    await db.insert(schema.notification).values({
+      id,
+      organizationId: workspace.organizationId,
+      userId: workspace.admin.userId,
+      type: 'comment_created',
+      actorType: 'user',
+      actorId: workspace.admin.userId,
+      actorName: 'Someone',
+      entityType: 'issue',
+      entityId: newId(),
+      title: 'A notification',
+      url: '/inbox',
+      deliveredChannels: ['inbox'],
+      syncId: schema.nextSyncId,
+    });
+    const cursor = (await catchUp(workspace.admin, 0)).syncId;
+    await db
+      .update(schema.notification)
+      .set({ dismissedAt: new Date(), syncId: schema.nextSyncId })
+      .where(eq(schema.notification.id, id));
+
+    const result = await catchUp(workspace.admin, cursor);
+    const action = result.actions.find(
+      (candidate) => candidate.model === 'notification' && candidate.modelId === id,
+    );
+
+    expect(action?.action).toBe('delete');
   });
 
   it('backfills reviewer ids with each issue', async () => {
@@ -308,19 +364,16 @@ describe('catchUp', () => {
       url: '/inbox',
       syncId,
     });
-    await db
-      .insert(schema.notification)
-      .values([
-        notify(workspace.admin.userId, 'For the admin', 1000),
-        notify(teammate.id, 'For a teammate', 1001),
-      ]);
+    const mine = notify(workspace.admin.userId, 'For the admin', 1000);
+    const theirs = notify(teammate.id, 'For a teammate', 1001);
+    await db.insert(schema.notification).values([mine, theirs]);
 
     const result = await catchUp(workspace.admin, 0);
     const notifications = result.actions.filter((action) => action.model === 'notification');
-    expect(notifications.length).toBeGreaterThan(0);
+    expect(notifications.map((action) => action.modelId)).toEqual([mine.id]);
     for (const action of notifications) {
-      expect(action.data['userId']).toBe(workspace.admin.userId);
-      expect(action.data['userId']).not.toBe(teammate.id);
+      expect(action.scopes).toEqual([scopes.user(workspace.admin.userId)]);
+      expect(action.data['userId']).toBeUndefined();
     }
   });
 

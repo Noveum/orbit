@@ -158,6 +158,13 @@ export function NotificationMatrix(props: NotificationMatrixProps) {
       </div>
 
       {slackDmNotice === null ? null : <p className="text-muted text-xs">{slackDmNotice}</p>}
+      {props.slackDm === 'disabled' ? null : (
+        <p className="text-muted text-xs">
+          These Slack preferences control your personal DMs. Shared channel updates are managed by
+          workspace and team admins under Integrations. Updates to the same issue, document or pull
+          request stay in one Slack thread.
+        </p>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
         <label htmlFor="quiet-hours" className="flex items-center justify-between gap-3">

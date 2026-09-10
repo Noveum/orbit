@@ -20,6 +20,7 @@ export const VIEWS_ROOT = 'views';
 export const MILESTONES_ROOT = 'milestones';
 export const SEARCH_ROOT = 'search';
 export const VIEW_PREFERENCES_ROOT = 'view-preferences';
+export const DUPLICATES_ROOT = 'issue-duplicates';
 
 export const queryKeys = {
   bootstrap: (teamKey: string | null) => ['bootstrap', teamKey ?? 'default'] as const,
@@ -36,6 +37,7 @@ export const queryKeys = {
   issueFacets: (search: string) => ['issue-facets', search] as const,
   issue: (identifier: string) => ['issue', identifier] as const,
   issueRelations: (issueId: string) => ['issue-relations', issueId] as const,
+  issueDuplicates: (teamId: string, title: string) => [DUPLICATES_ROOT, teamId, title] as const,
   comments: (issueId: string) => ['comments', issueId] as const,
   boardPage: (search: string) => [BOARD_ROOT, search] as const,
   docAccess: (docId: string) => [DOC_ROOT, docId, 'access'] as const,

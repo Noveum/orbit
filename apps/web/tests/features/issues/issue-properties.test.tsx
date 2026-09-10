@@ -14,7 +14,10 @@ import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Member, Milestone } from '@/lib/query/schemas.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
-await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
+await restoreModulesAfterThisFile([
+  '@/features/issues/workspace-provider.tsx',
+  '@/lib/query/use-issues.ts',
+]);
 
 const patches: Record<string, unknown>[] = [];
 

@@ -1,5 +1,5 @@
 import { and, asc, db, eq, gt, inArray, schema, sql } from '@orbit/db';
-import type { SyncAction, SyncModel } from '@orbit/shared/events';
+import type { SyncAction, SyncActionKind, SyncModel } from '@orbit/shared/events';
 import { CATCHUP_LIMIT, scopes } from '@orbit/shared/events';
 import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
@@ -20,6 +20,7 @@ interface BackfilledRow {
   readonly modelId: string;
   readonly syncId: number;
   readonly scopes: string[];
+  readonly action?: SyncActionKind;
   readonly data: Record<string, unknown>;
 }
 
@@ -680,8 +681,59 @@ const LOADERS: Record<SyncModel, Loader> = {
       modelId: row.id,
       syncId: row.syncId,
       scopes: [scopes.user(row.userId)],
-      data: row,
+      action: row.dismissedAt === null ? 'update' : 'delete',
+      data: { id: row.id, syncId: row.syncId, visible: row.dismissedAt === null },
     })),
+
+  notification_conversation: async (executor, principal, since, limit) => {
+    const rows = await executor
+      .select({
+        conversation: schema.notificationConversation,
+        state: schema.notificationInboxState,
+      })
+      .from(schema.notificationConversation)
+      .innerJoin(
+        schema.notificationInboxState,
+        and(
+          eq(
+            schema.notificationInboxState.organizationId,
+            schema.notificationConversation.organizationId,
+          ),
+          eq(schema.notificationInboxState.userId, schema.notificationConversation.userId),
+        ),
+      )
+      .where(
+        and(
+          eq(schema.notificationConversation.organizationId, principal.organizationId),
+          eq(schema.notificationConversation.userId, principal.userId),
+          gt(schema.notificationConversation.syncId, since),
+        ),
+      )
+      .orderBy(asc(schema.notificationConversation.syncId))
+      .limit(limit);
+    const now = new Date();
+    return rows.map(({ conversation: row, state }) => ({
+      modelId: row.id,
+      syncId: row.syncId,
+      scopes: [scopes.user(row.userId)],
+      data: {
+        id: row.id,
+        syncId: row.syncId,
+        lastActivitySeq: row.lastActivitySeq,
+        visible:
+          row.eventCount > 0 &&
+          row.dismissedAt === null &&
+          row.accessHiddenAt === null &&
+          (row.snoozedUntil === null || row.snoozedUntil <= now),
+        counterVersion: state.syncId,
+        counters: {
+          unreadCount: state.unreadCount,
+          unreadActivityCount: state.unreadActivityCount,
+          unreadMentionCount: state.unreadMentionCount,
+        },
+      },
+    }));
+  },
 
   view: async (executor, principal, since, limit) =>
     (
@@ -778,7 +830,7 @@ export async function catchUp(
           syncId: row.syncId,
           organizationId: principal.organizationId,
           scopes: row.scopes,
-          action: 'update',
+          action: row.action ?? 'update',
           model,
           modelId: row.modelId,
           data: row.data,

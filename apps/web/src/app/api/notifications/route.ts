@@ -1,5 +1,5 @@
 import { db } from '@orbit/db';
-import { listInbox } from '@orbit/services/notifications';
+import { listInbox, unreadCounters } from '@orbit/services/notifications';
 import { paginationSchema } from '@orbit/shared/validators';
 import { INBOX_PAGE_SIZE, toInboxItem } from '@/features/inbox/data.ts';
 import { handle, searchParamsOf } from '@/lib/api/handler.ts';
@@ -14,6 +14,15 @@ export async function GET(request: Request): Promise<Response> {
       ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
     });
 
-    return { notifications: page.items.map(toInboxItem), nextCursor: page.nextCursor };
+    const counters = await unreadCounters(db, principal.userId, principal.organizationId);
+    return {
+      notifications: page.items.map(toInboxItem),
+      nextCursor: page.nextCursor,
+      counters: {
+        unreadCount: counters.total,
+        unreadActivityCount: counters.activity,
+        unreadMentionCount: counters.mentions,
+      },
+    };
   });
 }

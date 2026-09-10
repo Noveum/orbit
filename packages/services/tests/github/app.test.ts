@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import {
   exchangeGithubUserCode,
+  fetchGithubCheckHeadSnapshot,
   fetchGithubInstallation,
   fetchGithubOpenPullRequests,
+  fetchGithubPullRequestHead,
   fetchGithubPullRequestHistory,
   fetchInstalledRepositories,
   forgetGithubInstallationTokens,
+  GITHUB_CHECK_HEAD_PAGE_SIZE,
+  GITHUB_MAX_CHECK_HEAD_PAGES,
   GITHUB_MAX_REPOSITORY_PAGES,
   GITHUB_REPOSITORY_PAGE_SIZE,
   GITHUB_TOKEN_REFRESH_MARGIN_MS,
@@ -227,6 +231,63 @@ describe('fetchGithubOpenPullRequests', () => {
   });
 });
 
+describe('fetchGithubPullRequestHead', () => {
+  it('loads and validates the authoritative head for one pull request', async () => {
+    const requested: string[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      requested.push(url);
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_pull_head' }), { status: 201 });
+      }
+      return new Response(
+        JSON.stringify({
+          number: 17,
+          head: { sha: '0123456789abcdef0123456789abcdef01234567' },
+          updated_at: '2026-09-01T00:00:04.000Z',
+        }),
+      );
+    });
+
+    const head = await fetchGithubPullRequestHead({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'Noveum/orbit',
+      pullRequestNumber: 17,
+      fetch: fetchImpl,
+    });
+
+    expect(head).toEqual({
+      number: 17,
+      headSha: '0123456789abcdef0123456789abcdef01234567',
+      providerUpdatedAt: '2026-09-01T00:00:04.000Z',
+    });
+    expect(requested[1]).toEndWith('/repos/Noveum/orbit/pulls/17');
+  });
+
+  it('rejects a malformed authoritative pull request head', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_pull_head_invalid' }), { status: 201 });
+      }
+      return new Response(
+        JSON.stringify({ number: 17, head: { sha: 'not-a-sha' }, updated_at: null }),
+      );
+    });
+
+    await expect(
+      fetchGithubPullRequestHead({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'Noveum/orbit',
+        pullRequestNumber: 17,
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/unexpected payload/);
+  });
+});
+
 describe('fetchGithubPullRequestHistory', () => {
   it('loads conversation comments, reviews, inline comments, and checks', async () => {
     const fetchImpl = jsonFetch((url) => {
@@ -337,6 +398,571 @@ describe('fetchGithubPullRequestHistory', () => {
     expect(history[3]?.state).toBe('success');
     expect(history[4]?.body).toBe('Vercel');
     expect(history[4]?.state).toBe('failure');
+  });
+});
+
+describe('fetchGithubCheckHeadSnapshot', () => {
+  const headSha = '0123456789abcdef0123456789abcdef01234567';
+
+  it('normalizes every provider activity and selects one authoritative context per identity', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      const path = parsed.pathname;
+      if (path.endsWith(`/commits/${headSha}/check-runs`)) {
+        expect(parsed.searchParams.get('filter')).toBe('latest');
+        return new Response(
+          JSON.stringify({
+            total_count: 2,
+            check_runs: [
+              {
+                id: 42,
+                head_sha: headSha,
+                name: '安全',
+                app: { id: 901 },
+                status: 'completed',
+                conclusion: 'failure',
+                html_url: 'https://github.com/acme/web/runs/42',
+                details_url: 'https://ci.example.com/runs/42',
+                started_at: '2026-08-13T04:00:00.000Z',
+                completed_at: '2026-08-13T05:00:00.000Z',
+              },
+              {
+                id: 43,
+                head_sha: headSha,
+                name: '安全',
+                app: { id: 902 },
+                status: 'in_progress',
+                conclusion: null,
+                html_url: 'https://github.com/acme/web/runs/43',
+                started_at: '2026-08-13T06:00:00.000Z',
+                completed_at: null,
+              },
+            ],
+          }),
+        );
+      }
+      if (path.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 51,
+              state: 'failure',
+              context: 'Vercel',
+              target_url: 'https://vercel.com/acme/web/51',
+              creator: { login: 'old-vercel-app', id: 80 },
+              created_at: '2026-08-13T05:30:00.000Z',
+              updated_at: '2026-08-13T06:00:00.000Z',
+            },
+            {
+              id: 52,
+              state: 'success',
+              context: 'vercel',
+              target_url: 'https://vercel.com/acme/web/52',
+              creator: { login: 'new-vercel-app', id: 81 },
+              created_at: '2026-08-13T06:30:00.000Z',
+              updated_at: '2026-08-13T07:00:00.000Z',
+            },
+          ]),
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const snapshot = await fetchGithubCheckHeadSnapshot({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      headSha,
+      fetch: fetchImpl,
+    });
+
+    expect(snapshot.headSha).toBe(headSha);
+    expect(snapshot.activities).toHaveLength(4);
+    expect(snapshot.activities[0]).toEqual({
+      sourceKind: 'check_run',
+      contextKey: 'v1:9:check_run3:9016:安全',
+      providerObjectId: '42',
+      providerRunId: '42',
+      providerContext: '安全',
+      appId: 901,
+      state: 'failure',
+      status: 'completed',
+      conclusion: 'failure',
+      providerUpdatedAt: '2026-08-13T05:00:00.000Z',
+      url: 'https://github.com/acme/web/runs/42',
+      creator: null,
+    });
+    expect(snapshot.activities[2]).toEqual({
+      sourceKind: 'commit_status',
+      contextKey: 'v1:13:commit_status6:vercel',
+      providerObjectId: '52',
+      providerRunId: null,
+      providerContext: 'vercel',
+      appId: null,
+      state: 'success',
+      status: 'success',
+      conclusion: 'success',
+      providerUpdatedAt: '2026-08-13T07:00:00.000Z',
+      url: 'https://vercel.com/acme/web/52',
+      creator: { login: 'new-vercel-app', id: 81 },
+    });
+    expect(snapshot.contexts.map((context) => context.providerObjectId)).toEqual([
+      '42',
+      '43',
+      '52',
+    ]);
+  });
+
+  it('walks every check-run and commit-status page before returning a snapshot', async () => {
+    const checkPages: number[] = [];
+    const statusPages: number[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      const page = Number(parsed.searchParams.get('page') ?? '1');
+      if (parsed.pathname.endsWith(`/commits/${headSha}/check-runs`)) {
+        checkPages.push(page);
+        const count = page === 1 ? 100 : 1;
+        return new Response(
+          JSON.stringify({
+            total_count: 101,
+            check_runs: Array.from({ length: count }, (_unused, index) => ({
+              id: (page - 1) * 100 + index + 1,
+              head_sha: headSha,
+              name: `check-${(page - 1) * 100 + index + 1}`,
+              app: { id: 901 },
+              status: 'completed',
+              conclusion: 'success',
+              html_url: `https://github.com/acme/web/runs/${(page - 1) * 100 + index + 1}`,
+              started_at: '2026-08-13T01:00:00.000Z',
+              completed_at: '2026-08-13T02:00:00.000Z',
+            })),
+          }),
+        );
+      }
+      if (parsed.pathname.endsWith(`/commits/${headSha}/statuses`)) {
+        statusPages.push(page);
+        const count = page === 1 ? 100 : 1;
+        return new Response(
+          JSON.stringify(
+            Array.from({ length: count }, (_unused, index) => ({
+              id: (page - 1) * 100 + index + 1,
+              state: 'success',
+              context: `status-${(page - 1) * 100 + index + 1}`,
+              target_url: null,
+              creator: null,
+              created_at: '2026-08-13T01:00:00.000Z',
+              updated_at: '2026-08-13T02:00:00.000Z',
+            })),
+          ),
+          {
+            headers:
+              page === 1 ? { link: '<https://api.github.com/statuses?page=2>; rel="next"' } : {},
+          },
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const snapshot = await fetchGithubCheckHeadSnapshot({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      headSha,
+      fetch: fetchImpl,
+    });
+
+    expect(checkPages).toEqual([1, 2]);
+    expect(statusPages).toEqual([1, 2]);
+    expect(snapshot.activities).toHaveLength(202);
+    expect(snapshot.contexts).toHaveLength(202);
+  });
+
+  it('stops on a full check-run page when GitHub reports the snapshot is complete', async () => {
+    const checkPages: number[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith(`/commits/${headSha}/check-runs`)) {
+        const page = Number(parsed.searchParams.get('page') ?? '1');
+        checkPages.push(page);
+        if (page > 1) return new Response('{}', { status: 500 });
+        return new Response(
+          JSON.stringify({
+            total_count: 100,
+            check_runs: Array.from({ length: 100 }, (_unused, index) => ({
+              id: index + 1,
+              head_sha: headSha,
+              name: `check-${index + 1}`,
+              app: { id: 901 },
+              status: 'completed',
+              conclusion: 'success',
+              html_url: `https://github.com/acme/web/runs/${index + 1}`,
+              started_at: '2026-08-13T01:00:00.000Z',
+              completed_at: '2026-08-13T02:00:00.000Z',
+            })),
+          }),
+        );
+      }
+      if (parsed.pathname.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const snapshot = await fetchGithubCheckHeadSnapshot({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      headSha,
+      fetch: fetchImpl,
+    });
+
+    expect(checkPages).toEqual([1]);
+    expect(snapshot.activities).toHaveLength(100);
+  });
+
+  it('uses GitHub status ordering when two versions have the same provider timestamp', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith(`/commits/${headSha}/check-runs`)) {
+        return new Response(JSON.stringify({ total_count: 0, check_runs: [] }));
+      }
+      if (path.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 70,
+              state: 'success',
+              context: 'deploy',
+              target_url: 'https://deploy.example.com/70',
+              creator: { login: 'deployer', id: 8 },
+              created_at: '2026-08-13T01:00:00.000Z',
+              updated_at: '2026-08-13T02:00:00.000Z',
+            },
+            {
+              id: 71,
+              state: 'failure',
+              context: 'DEPLOY',
+              target_url: 'https://deploy.example.com/71',
+              creator: { login: 'deployer', id: 8 },
+              created_at: '2026-08-13T01:00:00.000Z',
+              updated_at: '2026-08-13T02:00:00Z',
+            },
+          ]),
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const snapshot = await fetchGithubCheckHeadSnapshot({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      headSha,
+      fetch: fetchImpl,
+    });
+
+    expect(snapshot.contexts).toHaveLength(1);
+    expect(snapshot.contexts[0]?.providerObjectId).toBe('70');
+    expect(snapshot.contexts[0]?.state).toBe('success');
+  });
+
+  it('rejects a check-run snapshot whose result array is missing', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith(`/commits/${headSha}/check-runs`)) {
+        return new Response(JSON.stringify({ total_count: 0 }));
+      }
+      if (path.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    await expect(
+      fetchGithubCheckHeadSnapshot({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'acme/web',
+        headSha,
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/unexpected payload/);
+  });
+
+  it('rejects a short check-run page that contradicts the provider total', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith(`/commits/${headSha}/check-runs`)) {
+        return new Response(
+          JSON.stringify({
+            total_count: 2,
+            check_runs: [
+              {
+                id: 1,
+                head_sha: headSha,
+                name: 'verify',
+                app: { id: 901 },
+                status: 'completed',
+                conclusion: 'success',
+                html_url: 'https://github.com/acme/web/runs/1',
+                started_at: '2026-08-13T01:00:00.000Z',
+                completed_at: '2026-08-13T02:00:00.000Z',
+              },
+            ],
+          }),
+        );
+      }
+      if (path.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    await expect(
+      fetchGithubCheckHeadSnapshot({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'acme/web',
+        headSha,
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/incomplete/);
+  });
+
+  it.each([
+    {
+      label: 'app identity',
+      checkRun: {
+        id: 1,
+        head_sha: headSha,
+        name: 'verify',
+        app: null,
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'https://github.com/acme/web/runs/1',
+        started_at: '2026-08-13T01:00:00.000Z',
+        completed_at: '2026-08-13T02:00:00.000Z',
+      },
+    },
+    {
+      label: 'exact non-empty name',
+      checkRun: {
+        id: 1,
+        head_sha: headSha,
+        name: '',
+        app: { id: 901 },
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'https://github.com/acme/web/runs/1',
+        started_at: '2026-08-13T01:00:00.000Z',
+        completed_at: '2026-08-13T02:00:00.000Z',
+      },
+    },
+    {
+      label: 'provider timestamp',
+      checkRun: {
+        id: 1,
+        head_sha: headSha,
+        name: 'verify',
+        app: { id: 901 },
+        status: 'queued',
+        conclusion: null,
+        html_url: 'https://github.com/acme/web/runs/1',
+        started_at: null,
+        completed_at: null,
+      },
+    },
+  ])('rejects a check run without a valid $label', async ({ checkRun }) => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith(`/commits/${headSha}/check-runs`)) {
+        return new Response(JSON.stringify({ total_count: 1, check_runs: [checkRun] }));
+      }
+      if (path.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    await expect(
+      fetchGithubCheckHeadSnapshot({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'acme/web',
+        headSha,
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/unexpected payload|identity|timestamp/);
+  });
+
+  it('rejects a provider check run that belongs to a different head', async () => {
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const path = new URL(url).pathname;
+      if (path.endsWith(`/commits/${headSha}/check-runs`)) {
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 1,
+                head_sha: 'abcdef0123456789abcdef0123456789abcdef01',
+                name: 'verify',
+                app: { id: 901 },
+                status: 'completed',
+                conclusion: 'success',
+                html_url: 'https://github.com/acme/web/runs/1',
+                started_at: '2026-08-13T01:00:00.000Z',
+                completed_at: '2026-08-13T02:00:00.000Z',
+              },
+            ],
+          }),
+        );
+      }
+      if (path.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    await expect(
+      fetchGithubCheckHeadSnapshot({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'acme/web',
+        headSha,
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/different head/);
+  });
+
+  it('rejects a snapshot when check-run pagination reaches its safety bound', async () => {
+    const checkPages: number[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith(`/commits/${headSha}/check-runs`)) {
+        const page = Number(parsed.searchParams.get('page') ?? '1');
+        checkPages.push(page);
+        return new Response(
+          JSON.stringify({
+            total_count: 1001,
+            check_runs: Array.from({ length: 100 }, (_unused, index) => ({
+              id: (page - 1) * 100 + index + 1,
+              head_sha: headSha,
+              name: `check-${(page - 1) * 100 + index + 1}`,
+              app: { id: 901 },
+              status: 'completed',
+              conclusion: 'success',
+              html_url: `https://github.com/acme/web/runs/${(page - 1) * 100 + index + 1}`,
+              started_at: '2026-08-13T01:00:00.000Z',
+              completed_at: '2026-08-13T02:00:00.000Z',
+            })),
+          }),
+        );
+      }
+      if (parsed.pathname.endsWith(`/commits/${headSha}/statuses`)) {
+        return new Response(JSON.stringify([]));
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    await expect(
+      fetchGithubCheckHeadSnapshot({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        repository: 'acme/web',
+        headSha,
+        fetch: fetchImpl,
+      }),
+    ).rejects.toThrow(/snapshot size/);
+    expect(checkPages).toHaveLength(GITHUB_MAX_CHECK_HEAD_PAGES);
+  });
+
+  it('accepts an exact-bound status snapshot when GitHub reports no next page', async () => {
+    const statusPages: number[] = [];
+    const fetchImpl = jsonFetch((url) => {
+      if (url.includes('access_tokens')) {
+        return new Response(JSON.stringify({ token: 'ghs_checks' }), { status: 201 });
+      }
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith(`/commits/${headSha}/check-runs`)) {
+        return new Response(JSON.stringify({ total_count: 0, check_runs: [] }));
+      }
+      if (parsed.pathname.endsWith(`/commits/${headSha}/statuses`)) {
+        const page = Number(parsed.searchParams.get('page') ?? '1');
+        statusPages.push(page);
+        const headers =
+          page < GITHUB_MAX_CHECK_HEAD_PAGES
+            ? {
+                link: `<https://api.github.com/statuses?page=${page + 1}>; rel="next"`,
+              }
+            : {};
+        return new Response(
+          JSON.stringify(
+            Array.from({ length: GITHUB_CHECK_HEAD_PAGE_SIZE }, (_unused, index) => ({
+              id: (page - 1) * GITHUB_CHECK_HEAD_PAGE_SIZE + index + 1,
+              state: 'success',
+              context: `status-${(page - 1) * GITHUB_CHECK_HEAD_PAGE_SIZE + index + 1}`,
+              target_url: null,
+              creator: null,
+              created_at: '2026-08-13T01:00:00.000Z',
+              updated_at: '2026-08-13T02:00:00.000Z',
+            })),
+          ),
+          { headers },
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const snapshot = await fetchGithubCheckHeadSnapshot({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      repository: 'acme/web',
+      headSha,
+      fetch: fetchImpl,
+    });
+
+    expect(statusPages).toHaveLength(GITHUB_MAX_CHECK_HEAD_PAGES);
+    expect(snapshot.activities).toHaveLength(
+      GITHUB_MAX_CHECK_HEAD_PAGES * GITHUB_CHECK_HEAD_PAGE_SIZE,
+    );
   });
 });
 

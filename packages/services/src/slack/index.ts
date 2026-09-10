@@ -356,6 +356,7 @@ export interface PostMessageInput {
   readonly blocks?: SlackBlock[];
   readonly clientMsgId?: string;
   readonly threadTs?: string;
+  readonly replyBroadcast?: boolean;
   readonly unfurlLinks?: boolean;
 }
 
@@ -391,6 +392,7 @@ export class SlackClient {
       ...(input.clientMsgId === undefined ? {} : { client_msg_id: input.clientMsgId }),
       ...(input.blocks === undefined ? {} : { blocks: input.blocks }),
       ...(input.threadTs === undefined ? {} : { thread_ts: input.threadTs }),
+      ...(input.replyBroadcast === undefined ? {} : { reply_broadcast: input.replyBroadcast }),
       ...(input.unfurlLinks === undefined ? {} : { unfurl_links: input.unfurlLinks }),
     });
     if (!body.ok) throw internal('Slack chat.postMessage did not return a message identity.');

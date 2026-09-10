@@ -137,7 +137,11 @@ beforeEach(async () => {
   issueId = issue.id;
   const comment = await createComment(nova.admin, issue.id, { body: 'Look at this' });
   commentId = comment.comment.id;
-  const created = await createDoc(nova.admin, { title: 'With a file', content: '' });
+  const created = await createDoc(nova.admin, {
+    visibility: 'workspace',
+    title: 'With a file',
+    content: '',
+  });
   docId = created.doc.id;
 });
 

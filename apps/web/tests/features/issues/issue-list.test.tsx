@@ -13,7 +13,10 @@ import type { WorkspaceData } from '../../../src/features/issues/workspace-provi
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
-await restoreModulesAfterThisFile(['@/lib/query/use-issues.ts']);
+await restoreModulesAfterThisFile([
+  '@/features/issues/workspace-provider.tsx',
+  '@/lib/query/use-issues.ts',
+]);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),

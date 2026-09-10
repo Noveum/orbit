@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 
 async function newDoc(title = 'Runbook', content = '# Runbook\n\nSteps.') {
-  const { doc } = await createDoc(workspace.admin, { title, content });
+  const { doc } = await createDoc(workspace.admin, { visibility: 'workspace', title, content });
   return doc;
 }
 
@@ -53,19 +53,20 @@ describe('createDoc', () => {
     });
 
     expect(doc.title).toBe('Realtime protocol');
-    expect(doc.visibility).toBe('workspace');
+    expect(doc.visibility).toBe('private');
     expect(doc.publishToken).toBeNull();
     expect(actions).toHaveLength(1);
     expect(actions[0]?.model).toBe('doc');
     expect(actions[0]?.action).toBe('insert');
     expect(actions[0]?.scopes).toContain(scopes.doc(doc.id));
-    expect(actions[0]?.scopes).toContain(scopes.organization(workspace.organizationId));
+    expect(actions[0]?.scopes).not.toContain(scopes.organization(workspace.organizationId));
     expect(actions[0]?.syncId).toBeGreaterThan(0);
     expect(doc.kind).toBe('markdown');
   });
 
   it('stores a self-contained html page as its own kind', async () => {
     const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Sync health',
       kind: 'html',
       content: '<!DOCTYPE html><html><body>ok</body></html>',
@@ -90,10 +91,14 @@ describe('createDoc', () => {
     const guest = await addMember(workspace, 'guest', { name: 'Gia Guest' });
     const contributor = await addMember(workspace, 'contributor', { name: 'Cody' });
 
-    await expect(createDoc(guest.principal, { title: 'Nope' })).rejects.toMatchObject({
+    await expect(
+      createDoc(guest.principal, { visibility: 'workspace', title: 'Nope' }),
+    ).rejects.toMatchObject({
       code: 'forbidden',
     });
-    await expect(createDoc(contributor.principal, { title: 'Nope' })).rejects.toMatchObject({
+    await expect(
+      createDoc(contributor.principal, { visibility: 'workspace', title: 'Nope' }),
+    ).rejects.toMatchObject({
       code: 'forbidden',
     });
   });
@@ -103,7 +108,11 @@ describe('createDoc', () => {
     const { collection } = await createDocCollection(other.admin, { name: 'Theirs' });
 
     await expect(
-      createDoc(workspace.admin, { title: 'Cross tenant', collectionId: collection.id }),
+      createDoc(workspace.admin, {
+        visibility: 'workspace',
+        title: 'Cross tenant',
+        collectionId: collection.id,
+      }),
     ).rejects.toMatchObject({ code: 'not_found' });
   });
 });
@@ -139,7 +148,7 @@ describe('listDocs', () => {
   it('never returns docs from another workspace', async () => {
     await newDoc('Ours');
     const other = await createWorkspace('Other');
-    await createDoc(other.admin, { title: 'Theirs' });
+    await createDoc(other.admin, { visibility: 'workspace', title: 'Theirs' });
 
     const rows = await listDocs(workspace.admin);
     expect(rows.map((row) => row.title)).toEqual(['Ours']);
@@ -253,6 +262,7 @@ describe('collections', () => {
   it('creates, renames, deletes, and orphans its docs on delete', async () => {
     const { collection } = await createDocCollection(workspace.admin, { name: 'Engineering' });
     const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Protocol',
       collectionId: collection.id,
     });
@@ -290,7 +300,7 @@ describe('collections', () => {
     await expect(deleteDocCollection(member1.principal, collection.id)).rejects.toMatchObject({
       code: 'forbidden',
     });
-    const detail = await getDoc(workspace.admin, doc.id);
+    const detail = await getDoc(member2.principal, doc.id);
     expect(detail.doc.collectionId).toBe(collection.id);
   });
 
@@ -317,11 +327,11 @@ describe('collections', () => {
       code: 'forbidden',
       message: expect.stringContaining('Design Specs'),
     });
-    const detail = await getDoc(workspace.admin, doc.id);
+    const detail = await getDoc(member2.principal, doc.id);
     expect(detail.doc.collectionId).toBe(collection.id);
   });
 
-  it("allows an admin to delete a collection containing another member's private document", async () => {
+  it("refuses an admin deleting a collection containing another member's private document", async () => {
     const member = await addMember(workspace, 'member', { name: 'Member' });
     const { collection } = await createDocCollection(workspace.admin, { name: 'Shared Folder' });
     await createDoc(member.principal, {
@@ -329,11 +339,12 @@ describe('collections', () => {
       collectionId: collection.id,
       visibility: 'private',
     });
-    const actions = await deleteDocCollection(workspace.admin, collection.id);
-    expect(actions[0]?.action).toBe('delete');
+    await expect(deleteDocCollection(workspace.admin, collection.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
   });
 
-  it("allows a member to delete a collection containing another member's published document", async () => {
+  it("requires edit access to move another member's published document", async () => {
     const member1 = await addMember(workspace, 'member', { name: 'Member One' });
     const member2 = await addMember(workspace, 'member', { name: 'Member Two' });
     const { collection } = await createDocCollection(member1.principal, { name: 'Shared Folder' });
@@ -342,8 +353,9 @@ describe('collections', () => {
       collectionId: collection.id,
       visibility: 'public',
     });
-    const actions = await deleteDocCollection(member1.principal, collection.id);
-    expect(actions[0]?.action).toBe('delete');
+    await expect(deleteDocCollection(member1.principal, collection.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
   });
 });
 
@@ -422,7 +434,28 @@ describe('visibility modes', () => {
     expect(await getPublishedDoc(first)).toBeNull();
     expect(await getPublishedDoc(second)).not.toBeNull();
     expect(rotated.actions[0]?.action).toBe('update');
-    expect(rotated.actions[0]?.data['publishToken']).toBe('redacted');
+    expect(rotated.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true, revoked: false });
+  });
+
+  it('uses the same workspace document for view and edit access without exposing it anonymously', async () => {
+    const doc = await newDoc('Workspace handbook');
+    const member = await addMember(workspace, 'member', { name: 'Casey' });
+    const membersShare = await shareDoc(workspace.admin, doc.id, { visibility: 'members' });
+    const token = membersShare.publishToken;
+    if (token === null) throw new Error('expected a signed-in reader token');
+    expect(await getPublishedDoc(token)).toBeNull();
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'sign-in' });
+    expect((await getDoc(member.principal, doc.id)).access).toBe('read');
+    await expect(updateDoc(member.principal, doc.id, { content: 'Changed' })).rejects.toMatchObject(
+      { code: 'forbidden' },
+    );
+    const workspaceShare = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    expect(workspaceShare.publishToken).toBeNull();
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'missing' });
+    expect(await resolvePublishedDoc(token, member.user.id)).toEqual({ status: 'missing' });
+    expect((await getDoc(member.principal, doc.id)).access).toBe('write');
+    await updateDoc(member.principal, doc.id, { content: 'Changed' });
+    expect((await getDoc(member.principal, doc.id)).doc.content).toBe('Changed');
   });
 
   it('mints a members link that only a signed-in workspace member can open', async () => {
@@ -466,9 +499,12 @@ describe('doc nesting', () => {
 
   it('refuses a parent from another workspace', async () => {
     const other = await createWorkspace('Other');
-    const { doc: theirs } = await createDoc(other.admin, { title: 'Theirs' });
+    const { doc: theirs } = await createDoc(other.admin, {
+      visibility: 'workspace',
+      title: 'Theirs',
+    });
     await expect(
-      createDoc(workspace.admin, { title: 'Ours', parentId: theirs.id }),
+      createDoc(workspace.admin, { visibility: 'workspace', title: 'Ours', parentId: theirs.id }),
     ).rejects.toMatchObject({ code: 'not_found' });
   });
 });
@@ -596,7 +632,7 @@ describe('doc access', () => {
     expect((await getDoc(guest, doc.id)).doc.id).toBe(doc.id);
   });
 
-  it('lets an admin reach a private doc they do not own', async () => {
+  it('refuses an admin without an invitation to a private doc', async () => {
     const { principal: author, user: authorUser } = await addMember(workspace, 'member');
     const { doc } = await createDoc(author, {
       title: 'Personal notes',
@@ -604,7 +640,7 @@ describe('doc access', () => {
       visibility: 'private',
     });
     expect(doc.authorId).toBe(authorUser.id);
-    expect((await getDoc(workspace.admin, doc.id)).doc.id).toBe(doc.id);
+    await expect(getDoc(workspace.admin, doc.id)).rejects.toMatchObject({ code: 'not_found' });
   });
 });
 
@@ -763,7 +799,11 @@ describe('sharing a doc with named people', () => {
   });
 
   it('refuses to share with somebody outside the workspace', async () => {
-    const { doc } = await createDoc(workspace.admin, { title: 'Board deck', content: 'x' });
+    const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'Board deck',
+      content: 'x',
+    });
     const other = await createWorkspace('Vega');
     await expect(
       setDocAccess(workspace.admin, doc.id, {
@@ -795,7 +835,11 @@ describe('sharing a doc with named people', () => {
   });
 
   it('keeps one row per subject when the same person is named twice', async () => {
-    const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: 'x' });
+    const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'Runbook',
+      content: 'x',
+    });
     const { user } = await addMember(workspace, 'member');
     const saved = await setDocAccess(workspace.admin, doc.id, {
       grants: [
@@ -808,7 +852,11 @@ describe('sharing a doc with named people', () => {
   });
 
   it('stops somebody who is neither the author nor an admin from regranting it', async () => {
-    const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: 'x' });
+    const { doc } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'Runbook',
+      content: 'x',
+    });
     const { principal: member, user } = await addMember(workspace, 'member');
     await expect(
       setDocAccess(member, doc.id, {
@@ -861,7 +909,7 @@ describe('who may widen the audience of a doc', () => {
     expect(widened.doc.visibility).toBe('workspace');
   });
 
-  it('lets a write grantee narrow it back down, which takes nothing away from anyone', async () => {
+  it('refuses a write grantee changing the audience in either direction', async () => {
     const alice = await addMember(workspace, 'member', { name: 'Alice' });
     const bob = await addMember(workspace, 'member', { name: 'Bob' });
     const { doc } = await createDoc(alice.principal, {
@@ -872,8 +920,9 @@ describe('who may widen the audience of a doc', () => {
     await setDocAccess(alice.principal, doc.id, {
       grants: [{ subjectType: 'user', subjectId: bob.user.id, level: 'write' }],
     });
-    const narrowed = await updateDoc(bob.principal, doc.id, { visibility: 'private' });
-    expect(narrowed.doc.visibility).toBe('private');
+    await expect(updateDoc(bob.principal, doc.id, { visibility: 'private' })).rejects.toMatchObject(
+      { code: 'forbidden' },
+    );
   });
 });
 
@@ -895,7 +944,7 @@ describe('a restricted doc reaches the people it is shared with', () => {
     expect(reach).not.toContain(scopes.organization(workspace.organizationId));
   });
 
-  it('addresses a team grant at the team', async () => {
+  it('addresses a team grant at its actual readers', async () => {
     const { doc } = await createDoc(workspace.admin, {
       title: 'Board deck',
       content: 'Numbers.',
@@ -904,7 +953,8 @@ describe('a restricted doc reaches the people it is shared with', () => {
     const saved = await setDocAccess(workspace.admin, doc.id, {
       grants: [{ subjectType: 'team', subjectId: workspace.teamId, level: 'read' }],
     });
-    expect(saved.actions[0]?.scopes).toContain(scopes.team(workspace.teamId));
+    expect(saved.actions[0]?.scopes).toContain(scopes.user(workspace.admin.userId));
+    expect(saved.actions[0]?.data).toEqual({ id: doc.id, accessChanged: true, revoked: false });
   });
 });
 
@@ -970,7 +1020,6 @@ describe('the access level a doc reports is the level the write path enforces', 
       'writer/Board deck/write',
       'writer/Handbook/write',
       'guest/Handbook/read',
-      'admin/Board deck/write',
       'admin/Handbook/write',
     ]);
   });
@@ -990,11 +1039,13 @@ describe('duplicateDoc', () => {
   it('copies the body and placement under a copy title owned by the duplicator', async () => {
     const { collection } = await createDocCollection(workspace.admin, { name: 'Playbooks' });
     const { doc: parent } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Parent',
       content: 'Top.',
       collectionId: collection.id,
     });
     const { doc: source } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Incident runbook',
       content: '# Incident runbook\n\nPage the on call.',
       parentId: parent.id,
@@ -1098,7 +1149,11 @@ describe('duplicateDoc', () => {
 
   it('keeps a very long title inside the stored limit', async () => {
     const long = 'N'.repeat(DOC_TITLE_LIMIT);
-    const { doc: source } = await createDoc(workspace.admin, { title: long, content: 'Body.' });
+    const { doc: source } = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: long,
+      content: 'Body.',
+    });
 
     const { doc: copy } = await duplicateDoc(workspace.admin, source.id);
 
@@ -1123,10 +1178,12 @@ describe('a folder that goes away leaves its pages somewhere real', () => {
     const collection = await createDocCollection(workspace.admin, { name: 'Handbook' });
     const loose = await newDoc('Loose');
     const first = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'First',
       collectionId: collection.collection.id,
     });
     const nested = await createDoc(workspace.admin, {
+      visibility: 'workspace',
       title: 'Nested',
       collectionId: collection.collection.id,
       parentId: first.doc.id,
@@ -1149,8 +1206,16 @@ describe('deleting a page for good', () => {
   it('gives every orphan a place of its own after its new siblings', async () => {
     const parent = await newDoc('Parent');
     const neighbour = await newDoc('Neighbour');
-    const one = await createDoc(workspace.admin, { title: 'One', parentId: parent.id });
-    const two = await createDoc(workspace.admin, { title: 'Two', parentId: parent.id });
+    const one = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'One',
+      parentId: parent.id,
+    });
+    const two = await createDoc(workspace.admin, {
+      visibility: 'workspace',
+      title: 'Two',
+      parentId: parent.id,
+    });
 
     const { promoted } = await deleteDoc(workspace.admin, parent.id);
 
@@ -1181,7 +1246,10 @@ describe('nesting under a page you cannot read', () => {
   it('refuses, so a private page never gains a child from an outsider', async () => {
     const secret = await createDoc(workspace.admin, { title: 'Secret', visibility: 'private' });
     const outsider = await addMember(workspace, 'member', { name: 'Mo Member' });
-    const { doc: mine } = await createDoc(outsider.principal, { title: 'Mine' });
+    const { doc: mine } = await createDoc(outsider.principal, {
+      visibility: 'workspace',
+      title: 'Mine',
+    });
 
     await expect(
       updateDoc(outsider.principal, mine.id, { parentId: secret.doc.id }),

@@ -17,7 +17,7 @@ import {
   MoreHorizontal,
   Search,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
@@ -34,14 +34,12 @@ import type { DocMove } from './doc-drop.ts';
 import type { DocRowActions } from './doc-row-menu.tsx';
 import { DocSearchResults } from './doc-search-results.tsx';
 import {
-  ancestorsOf,
   collapsibleKeys,
   type DocGroup,
   docDisclosureKey,
   docTreeOf,
   groupDisclosureKey,
   groupDocs,
-  groupIdOf,
 } from './doc-tree-model.ts';
 import { FolderRow, folderActionClassName, PageRow } from './doc-tree-rows.tsx';
 import { useDocDrag } from './use-doc-drag.ts';
@@ -138,11 +136,11 @@ export function DocTree({
     () => (showingResults ? [] : groupDocs(docs, collections)),
     [docs, collections, showingResults],
   );
-  const { isOpen, toggle, openAll, setAll } = useSidebarDisclosure();
+  const { isOpen, toggle, setAll } = useSidebarDisclosure();
 
   const collapsed = useMemo(
     () =>
-      new Set(docs.filter((doc) => !isOpen(docDisclosureKey(doc.id), true)).map((doc) => doc.id)),
+      new Set(docs.filter((doc) => !isOpen(docDisclosureKey(doc.id), false)).map((doc) => doc.id)),
     [docs, isOpen],
   );
 
@@ -154,24 +152,7 @@ export function DocTree({
       ),
     [groups, docs],
   );
-  const anyOpen = disclosureKeys.some((key) => isOpen(key, true));
-
-  const revealed = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (activeDocId === null) {
-      revealed.current = null;
-      return;
-    }
-    const active = docs.find((doc) => doc.id === activeDocId);
-    if (active === undefined) return;
-    if (revealed.current === activeDocId) return;
-    revealed.current = activeDocId;
-    openAll([
-      groupDisclosureKey(groupIdOf(active)),
-      ...ancestorsOf(docs, activeDocId).map(docDisclosureKey),
-    ]);
-  }, [activeDocId, docs, openAll]);
+  const anyOpen = disclosureKeys.some((key) => isOpen(key, false));
 
   const [draftName, setDraftName] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
@@ -201,7 +182,7 @@ export function DocTree({
   return (
     <div
       data-testid="doc-tree"
-      className="flex h-full w-64 shrink-0 flex-col border-border border-r bg-surface"
+      className="flex h-full w-full shrink-0 flex-col border-border border-r bg-surface-2/40"
     >
       <div className="flex items-center gap-1 border-border border-b p-2">
         <div className="relative min-w-0 flex-1">
@@ -290,7 +271,7 @@ export function DocTree({
             >
               {groups.map((group) => {
                 const groupKey = groupDisclosureKey(group.id);
-                const open = isOpen(groupKey, true);
+                const open = isOpen(groupKey, false);
                 return (
                   <FolderRow
                     key={group.id}
@@ -299,7 +280,7 @@ export function DocTree({
                     count={group.docs.length}
                     canWrite={canWrite}
                     hint={drag.hint}
-                    onToggle={() => toggle(groupKey, true)}
+                    onToggle={() => toggle(groupKey, false)}
                     onCreate={() => onCreateDoc(group.collectionId)}
                     actions={
                       <CollectionActions
@@ -341,7 +322,7 @@ export function DocTree({
                           unsaved={unsavedDocId === node.doc.id}
                           draggable={canWrite}
                           hint={drag.hint}
-                          onToggle={() => toggle(docDisclosureKey(node.doc.id), true)}
+                          onToggle={() => toggle(docDisclosureKey(node.doc.id), false)}
                           onNavigate={onNavigate}
                           renaming={renamingDocId === node.doc.id}
                           onRenameSubmit={(title) => {

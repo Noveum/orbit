@@ -1,6 +1,10 @@
 'use client';
 
-import { useDeltaHandler, useScopeSubscription } from '@orbit/realtime-client/react';
+import {
+  useDeltaHandler,
+  useResumeHandler,
+  useScopeSubscription,
+} from '@orbit/realtime-client/react';
 import type { NotificationType } from '@orbit/shared/constants';
 import {
   isPullRequestNotification,
@@ -9,6 +13,7 @@ import {
 } from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
+import { inboxCountersSchema } from '@orbit/shared/validators';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertTriangle,
@@ -41,7 +46,6 @@ import { apiRequest } from '@/lib/api/client.ts';
 import { cn } from '@/lib/cn.ts';
 import { rowHover, tabHover } from '@/lib/interaction.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
-import { clientId } from '@/lib/query/client-id.ts';
 import type { InboxItem } from './data.ts';
 import { docIdFromUrl, issueIdentifierFromUrl } from './inbox-links.ts';
 
@@ -105,22 +109,6 @@ const SNOOZE_HOURS = 24;
 
 const FAILED_SAVE = 'That did not save. Check your connection and try again.';
 
-const notificationDeltaSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  entityType: z.string().default(''),
-  entityId: z.string().default(''),
-  actorName: z.string(),
-  title: z.string(),
-  body: z.string(),
-  bodyHtml: z.string().default(''),
-  url: z.string(),
-  externalUrl: z.httpUrl().max(2048).nullable().default(null),
-  readAt: z.string().nullable(),
-  snoozedUntil: z.string().nullable(),
-  createdAt: z.string(),
-});
-
 const unreadCountSchema = z.object({ unreadCount: z.number() });
 
 function toNotificationType(value: string): NotificationType {
@@ -146,38 +134,13 @@ const inboxPageSchema = z.object({
     }),
   ),
   nextCursor: z.string().nullable(),
+  counters: inboxCountersSchema.optional(),
 });
 
-function toInboxItem(data: Record<string, unknown>): InboxItem | null {
-  const parsed = notificationDeltaSchema.safeParse(data);
-  if (!parsed.success) return null;
-  const row = parsed.data;
-  return {
-    id: row.id,
-    type: toNotificationType(row.type),
-    entityType: row.entityType,
-    entityId: row.entityId,
-    actorName: row.actorName,
-    title: row.title,
-    body: row.body,
-    bodyHtml: row.bodyHtml,
-    url: row.url,
-    externalUrl: row.externalUrl,
-    read: row.readAt !== null,
-    snoozedUntil: row.snoozedUntil,
-    createdAt: row.createdAt,
-  };
-}
-
-interface InboxPatch {
-  readonly rows: readonly InboxItem[];
-  readonly unreadDelta: number;
-  readonly mentionDelta: number;
-  readonly activityDelta: number;
-}
-
-function readChange(read: boolean): number {
-  return read ? -1 : 1;
+export function notificationDeltaInvalidatesInbox(actions: readonly SyncAction[]): boolean {
+  return actions.some(
+    (action) => action.model === 'notification' || action.model === 'notification_conversation',
+  );
 }
 
 function isActivity(item: InboxItem): boolean {
@@ -213,49 +176,6 @@ export function snoozeRollback(
     rows: rows.map((row) => (row.id === id ? { ...row, snoozedUntil: previous } : row)),
     restoreCounts: true,
   };
-}
-
-function applyOne(patch: InboxPatch, action: SyncAction): InboxPatch {
-  const item = toInboxItem(action.data);
-  if (item === null) return patch;
-  const previous = patch.rows.find((row) => row.id === item.id);
-
-  if (action.action === 'delete') {
-    if (previous === undefined) return patch;
-    return {
-      rows: patch.rows.filter((row) => row.id !== item.id),
-      unreadDelta: patch.unreadDelta - (previous.read ? 0 : 1),
-      mentionDelta: patch.mentionDelta - unreadMentionCount(previous),
-      activityDelta: patch.activityDelta - unreadActivityCount(previous),
-    };
-  }
-  if (previous === undefined) {
-    if (action.action !== 'insert') return patch;
-    return {
-      rows: [item, ...patch.rows],
-      unreadDelta: patch.unreadDelta + (item.read ? 0 : 1),
-      mentionDelta: patch.mentionDelta + unreadMentionCount(item),
-      activityDelta: patch.activityDelta + unreadActivityCount(item),
-    };
-  }
-  const change = previous.read === item.read ? 0 : readChange(item.read);
-  return {
-    rows: patch.rows.map((row) => (row.id === item.id ? item : row)),
-    unreadDelta: patch.unreadDelta + change,
-    mentionDelta: patch.mentionDelta + (unreadMentionCount(item) - unreadMentionCount(previous)),
-    activityDelta:
-      patch.activityDelta + (unreadActivityCount(item) - unreadActivityCount(previous)),
-  };
-}
-
-export function applyNotificationDeltas(
-  rows: readonly InboxItem[],
-  actions: readonly SyncAction[],
-  tabClientId: string,
-): InboxPatch {
-  return actions
-    .filter((action) => action.model === 'notification' && action.originClientId !== tabClientId)
-    .reduce(applyOne, { rows, unreadDelta: 0, mentionDelta: 0, activityDelta: 0 });
 }
 
 function LoadMoreRow({
@@ -351,7 +271,7 @@ function NotificationRow({
   );
 }
 
-function NotificationBody({
+export function NotificationBody({
   item,
   canWriteDocs,
   canPublishDocs,
@@ -496,6 +416,7 @@ export function InboxView({
   const [loadingMore, setLoadingMore] = useState(false);
   const [pagingError, setPagingError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const invalidationEpoch = useRef(0);
   const cursorRef = useRef<string | null>(nextCursor);
   const [tab, setTab] = useState<TabId>('activity');
   const [retainedUnreadIds, setRetainedUnreadIds] = useState<ReadonlySet<string>>(new Set());
@@ -511,23 +432,43 @@ export function InboxView({
     cursorRef.current = nextCursor;
   }, [items, unreadCount, unreadMentions, unreadActivity, nextCursor]);
 
+  const refreshAuthorizedInbox = useCallback(() => {
+    const epoch = ++invalidationEpoch.current;
+    setRows([]);
+    rowsRef.current = [];
+    setSelectedId(null);
+    setRetainedUnreadIds(new Set());
+    setUnread(0);
+    setMentions(0);
+    setActivity(0);
+    setCursor(null);
+    cursorRef.current = null;
+    apiRequest('/api/notifications')
+      .then((payload) => {
+        if (epoch !== invalidationEpoch.current) return;
+        const page = inboxPageSchema.extend({ counters: inboxCountersSchema }).parse(payload);
+        setRows(page.notifications.map((row) => ({ ...row, type: toNotificationType(row.type) })));
+        setUnread(page.counters.unreadCount);
+        setMentions(page.counters.unreadMentionCount);
+        setActivity(page.counters.unreadActivityCount);
+        setCursor(page.nextCursor);
+        cursorRef.current = page.nextCursor;
+        setError(null);
+      })
+      .catch(() => {
+        if (epoch === invalidationEpoch.current)
+          setError('Could not refresh the inbox. Reload to try again.');
+      });
+  }, []);
+
   useScopeSubscription([scopes.user(userId)]);
+  useResumeHandler(refreshAuthorizedInbox);
   useDeltaHandler(
     useCallback(
       (actions) => {
-        const patch = applyNotificationDeltas(rows, actions, clientId());
-        if (patch.rows !== rows) setRows(patch.rows);
-        if (patch.unreadDelta !== 0) {
-          setUnread((current) => Math.max(0, current + patch.unreadDelta));
-        }
-        if (patch.mentionDelta !== 0) {
-          setMentions((current) => Math.max(0, current + patch.mentionDelta));
-        }
-        if (patch.activityDelta !== 0) {
-          setActivity((current) => Math.max(0, current + patch.activityDelta));
-        }
+        if (notificationDeltaInvalidatesInbox(actions)) refreshAuthorizedInbox();
       },
-      [rows],
+      [refreshAuthorizedInbox],
     ),
   );
 
@@ -546,6 +487,7 @@ export function InboxView({
 
   const loadMore = useCallback(async () => {
     const from = cursorRef.current;
+    const epoch = invalidationEpoch.current;
     if (from === null || inFlight.current) return;
     inFlight.current = true;
     setLoadingMore(true);
@@ -553,6 +495,7 @@ export function InboxView({
       const page = await apiRequest<unknown>(
         `/api/notifications?cursor=${encodeURIComponent(from)}`,
       );
+      if (epoch !== invalidationEpoch.current) return;
       const parsed = inboxPageSchema.parse(page);
       const older = parsed.notifications.map((row) => ({
         ...row,
@@ -602,7 +545,8 @@ export function InboxView({
     setRetainedUnreadIds(new Set());
   }, []);
 
-  const applyServerCount = useCallback((payload: unknown) => {
+  const applyServerCount = useCallback((payload: unknown, epoch: number) => {
+    if (epoch !== invalidationEpoch.current) return;
     const parsed = unreadCountSchema.safeParse(payload);
     if (parsed.success) setUnread(parsed.data.unreadCount);
   }, []);
@@ -610,6 +554,7 @@ export function InboxView({
   const setReadState = useCallback(
     async (item: InboxItem, next: boolean) => {
       if (item.read === next) return;
+      const epoch = invalidationEpoch.current;
       const counted = countsTowardUnread(item);
       const isMention = counted && item.type === 'mention';
       const countsAsActivity = counted && isActivity(item);
@@ -635,8 +580,10 @@ export function InboxView({
             method: 'POST',
             body: { notificationIds: [item.id], read: next },
           }),
+          epoch,
         );
       } catch (cause) {
+        if (epoch !== invalidationEpoch.current) throw cause;
         applyLocally(item.read, next ? 1 : -1);
         setError(FAILED_SAVE);
         throw cause;
@@ -665,6 +612,7 @@ export function InboxView({
 
   const snooze = useCallback(async () => {
     if (current === undefined || snoozing.current.has(current.id)) return;
+    const epoch = invalidationEpoch.current;
     snoozing.current.add(current.id);
     const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3_600_000).toISOString();
     const previousSnoozedUntil = current.snoozedUntil;
@@ -679,8 +627,10 @@ export function InboxView({
           method: 'PATCH',
           body: { snoozeHours: SNOOZE_HOURS },
         }),
+        epoch,
       );
     } catch {
+      if (epoch !== invalidationEpoch.current) return;
       const rollback = snoozeRollback(
         rowsRef.current,
         current.id,
@@ -699,13 +649,18 @@ export function InboxView({
     if (current === undefined) return;
     const wasUnreadMention = unreadMentionCount(current) === 1;
     const wasUnreadActivity = unreadActivityCount(current) === 1;
+    const epoch = invalidationEpoch.current;
     const removedAt = rows.findIndex((row) => row.id === current.id);
     setRows((list) => list.filter((row) => row.id !== current.id));
     if (wasUnreadMention) setMentions((count) => Math.max(0, count - 1));
     if (wasUnreadActivity) setActivity((count) => Math.max(0, count - 1));
     try {
-      applyServerCount(await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }));
+      applyServerCount(
+        await apiRequest(`/api/notifications/${current.id}`, { method: 'DELETE' }),
+        epoch,
+      );
     } catch {
+      if (epoch !== invalidationEpoch.current) return;
       const stillRemoved = !rowsRef.current.some((row) => row.id === current.id);
       if (stillRemoved) {
         setRows((list) => {

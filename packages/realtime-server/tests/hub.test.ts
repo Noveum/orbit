@@ -237,6 +237,39 @@ describe('subscribe is the authorization gate', () => {
 });
 
 describe('delta fan out', () => {
+  it('turns cached legacy notification bodies into content-free invalidations', async () => {
+    const hub = await newHub();
+    try {
+      const recipient = await connect(hub, home.readerUserId, home.organizationId);
+      await subscribe(recipient, [`user:${home.readerUserId}`]);
+      await publishDelta(
+        action({
+          model: 'notification',
+          modelId: 'notification_cached_before_revoke',
+          scopes: [`user:${home.readerUserId}`],
+          data: {
+            id: 'notification_cached_before_revoke',
+            title: 'Restricted document title',
+            body: 'Private comment cached before access was revoked',
+            bodyHtml: '<p>Private comment</p>',
+            url: '/docs/restricted',
+            syncId: 10,
+          },
+        }),
+      );
+      await waitFor(
+        () => recipient.socket.frames('delta').length > 0,
+        'a notification invalidation',
+      );
+      expect(recipient.socket.last('delta')?.actions[0]?.data).toEqual({
+        id: 'notification_cached_before_revoke',
+        syncId: 10,
+      });
+    } finally {
+      await hub.close();
+    }
+  });
+
   it('reaches only the connections whose scopes and workspace both match', async () => {
     const hub = await newHub();
     try {
@@ -487,7 +520,15 @@ describe('delta fan out', () => {
           syncId: 201,
         }),
       );
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await waitFor(
+        () =>
+          wired.socket
+            .frames('delta')
+            .some((frame) =>
+              frame.actions.some((entry) => entry.modelId === 'comment_after_forged_delete'),
+            ),
+        'the authorized comment after a forged delete',
+      );
 
       const delivered = JSON.stringify(wired.socket.frames('delta'));
       expect(delivered).not.toContain('CORE-LIVE');
@@ -1227,7 +1268,15 @@ describe('delta fan out', () => {
           syncId: 131,
         }),
       );
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await waitFor(
+        () =>
+          destination.socket
+            .frames('delta')
+            .some((frame) =>
+              frame.actions.some((entry) => entry.modelId === 'comment_after_future_replay'),
+            ),
+        'the authoritative comment after a forged future move',
+      );
 
       const delivered = JSON.stringify(destination.socket.frames('delta'));
       expect(delivered).not.toContain('Forged future arrival');

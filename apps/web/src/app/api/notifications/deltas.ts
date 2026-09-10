@@ -1,34 +1,8 @@
 import { buildSyncAction } from '@orbit/core';
-import { renderMarkdown } from '@orbit/services/markdown';
 import type { NotificationRecord } from '@orbit/services/notifications';
 import type { SyncAction, SyncActionKind } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-
-function toData(row: NotificationRecord): Record<string, unknown> {
-  return {
-    id: row.id,
-    organizationId: row.organizationId,
-    userId: row.userId,
-    type: row.type,
-    reason: row.reason,
-    actorType: row.actorType,
-    actorId: row.actorId,
-    actorName: row.actorName,
-    entityType: row.entityType,
-    entityId: row.entityId,
-    title: row.title,
-    body: row.body,
-    bodyHtml: renderMarkdown(row.body),
-    url: row.url,
-    externalUrl: row.externalUrl,
-    readAt: row.readAt?.toISOString() ?? null,
-    snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
-    deliveredChannels: row.deliveredChannels,
-    syncId: row.syncId,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
 
 export function notificationActions(
   principal: Principal,
@@ -44,7 +18,11 @@ export function notificationActions(
       action,
       model: 'notification',
       modelId: row.id,
-      data: toData(row),
+      data: {
+        id: row.id,
+        syncId: row.syncId,
+        visible: action !== 'delete' && row.dismissedAt === null,
+      },
       actor: { type: 'user', id: principal.userId, name: actorName },
     }),
   );

@@ -6,6 +6,8 @@ import {
   notificationDelivery,
   notificationPreference,
   notificationSetting,
+  notificationSourceEvent,
+  slackChannelSync,
   slackUserMapping,
   user,
 } from '@orbit/db/schema';
@@ -16,19 +18,36 @@ import {
   NOTIFICATION_AUDIENCE_BY_REASON,
   NOTIFICATION_REASONS,
   NOTIFICATION_TYPES,
+  notificationSlackNamespaceSchema,
+  notificationSourceInputSchema,
+  notificationTitleSchema,
   type SyncAction,
   scopes,
   syncActionSchema,
   unique,
   validationFailed,
 } from '@orbit/shared';
+import { notFound } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { renderMarkdown } from '../markdown/index.ts';
 import { hasSlackBotToken } from '../slack/credentials.ts';
 import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
 import { slackFeatureEnabled } from '../slack/feature.ts';
+import {
+  applyLiveNotificationConversations,
+  compatibleInboxSurface,
+  mutateLegacyNotifications,
+  type NotificationConversationPlan,
+  notificationConversationLookupKey,
+  prepareNotificationConversations,
+} from './compatibility.ts';
+import { notificationConversationActions } from './conversation-deltas.ts';
+import { type ConversationIdentity, resolveNotificationConversation } from './conversations.ts';
+import {
+  readableLegacyNotificationIds,
+  readableLegacyNotificationPredicate,
+} from './legacy-access.ts';
 import {
   DEFAULT_SETTINGS,
   disabledPreferenceIndex,
@@ -37,11 +56,22 @@ import {
 } from './preferences.ts';
 import { isWithinQuietHours, nextQuietHoursEnd, type QuietHours } from './quiet-hours.ts';
 
+export { mutateNotificationConversations } from './compatibility.ts';
+export * from './conversation-access.ts';
+export * from './conversation-backfill.ts';
+export * from './conversation-deltas.ts';
+export * from './conversation-snooze.ts';
+export * from './conversations.ts';
 export * from './preferences.ts';
+export * from './provider-outbox.ts';
 export * from './quiet-hours.ts';
 
 export type NotificationDatabase = Database | Transaction;
 export type NotificationRecord = typeof notification.$inferSelect;
+export type SlackDmDelivery = typeof notificationDelivery.$inferSelect & {
+  readonly notificationId: string;
+  readonly userId: string;
+};
 export const SLACK_DM_MAX_ATTEMPTS = 5;
 const SLACK_DM_RETRY_BASE_MS = 30_000;
 const SLACK_DM_RETRY_MAX_MS = 60 * 60_000;
@@ -185,7 +215,7 @@ export async function claimSlackDmDeliveries(
   now = new Date(),
   atomic = false,
   organizationId?: string,
-): Promise<(typeof notificationDelivery.$inferSelect)[]> {
+): Promise<SlackDmDelivery[]> {
   if (atomic && 'transaction' in database) {
     return await database.transaction((tx) =>
       claimSlackDmDeliveries(tx, limit, now, false, organizationId),
@@ -196,7 +226,7 @@ export async function claimSlackDmDeliveries(
     organizationId === undefined
       ? sql``
       : sql`AND ${notification.organizationId} = ${organizationId}`;
-  return await database
+  const claimed = await database
     .update(notificationDelivery)
     .set({ status: 'processing', claimedAt: now })
     .where(
@@ -206,6 +236,7 @@ export async function claimSlackDmDeliveries(
         INNER JOIN ${notification}
           ON ${notification.id} = ${notificationDelivery.notificationId}
         WHERE ${notificationDelivery.channel} = 'slack_dm'
+          AND ${notificationDelivery.userId} IS NOT NULL
           AND ${notificationDelivery.availableAt} <= ${now.toISOString()}
           ${organizationFilter}
           AND (
@@ -225,14 +256,19 @@ export async function claimSlackDmDeliveries(
       )`,
     )
     .returning();
+  return claimed.filter(isSlackDmDelivery);
+}
+
+function isSlackDmDelivery(
+  delivery: typeof notificationDelivery.$inferSelect,
+): delivery is SlackDmDelivery {
+  return delivery.notificationId !== null && delivery.userId !== null;
 }
 
 export const DEDUPE_WINDOW_MS = 60_000;
 export const INBOX_CHANNEL = 'inbox';
 
-function deliveredToInbox() {
-  return sql`${notification.deliveredChannels} @> '["inbox"]'::jsonb`;
-}
+export type NotificationSourceInput = z.input<typeof notificationSourceInputSchema>;
 
 export const notificationEventSchema = z.object({
   organizationId: idSchema,
@@ -242,11 +278,12 @@ export const notificationEventSchema = z.object({
   entityType: z.string().trim().min(1).max(32),
   entityId: idSchema,
   userIds: z.array(idSchema).max(500),
-  title: z.string().trim().min(1).max(255),
+  title: notificationTitleSchema,
   body: z.string().max(4000).default(''),
   url: z.string().trim().min(1).max(2048),
   externalUrl: z.httpUrl().max(2048).nullish(),
   priority: z.number().int().min(0).max(4).optional(),
+  source: notificationSourceInputSchema.optional(),
 });
 
 export type NotificationEvent = z.input<typeof notificationEventSchema>;
@@ -286,6 +323,14 @@ interface Recipient {
   readonly timezone: string;
 }
 
+interface SlackDmDestination {
+  readonly integrationId: string;
+  readonly destinationId: string;
+  readonly slackTeamId: string;
+  readonly slackAppId: string;
+  readonly credentialGeneration: number;
+}
+
 interface Plan {
   readonly id: string;
   readonly event: ParsedEvent;
@@ -294,6 +339,9 @@ interface Plan {
   readonly emailAt: Date | null;
   readonly emailDeferred: boolean;
   readonly slackDmAt: Date | null;
+  readonly slackDmDestination: SlackDmDestination | null;
+  readonly sourceEventId: string | null;
+  readonly conversation: ConversationIdentity;
 }
 
 const slackDmEligibilitySchema = z.object({
@@ -313,21 +361,76 @@ export async function notifyMany(
     readonly sourceDeliveryId?: string;
   } = {},
 ): Promise<NotifyOutcome> {
-  const parsed = events.map((event) => notificationEventSchema.parse(event));
+  if ('$client' in database) {
+    return await database.transaction((tx) => notifyMany(tx, events, options));
+  }
   const now = options.now ?? new Date();
+  const generatedSourceKeys = new Set<string>();
+  const parsed = events.map((event) => {
+    const validated = notificationEventSchema.parse(event);
+    if (validated.source !== undefined) return validated;
+    const eventId = randomUUIDv7(now);
+    generatedSourceKeys.add(`orbit-notification:${eventId}`);
+    const identity = resolveNotificationConversation({
+      notificationId: eventId,
+      type: validated.type,
+      entityType: validated.entityType,
+      entityId: validated.entityId,
+    });
+    return notificationEventSchema.parse({
+      ...validated,
+      source: {
+        sourceEventKey: `orbit-notification:${eventId}`,
+        subjectType: identity.subjectType,
+        subjectKey: identity.conversationKey,
+        occurredAt: now,
+        payload: {
+          entityType: validated.entityType,
+          entityId: validated.entityId,
+          subjectId: identity.subjectId,
+        },
+      },
+    });
+  });
+  const claimedSources = await claimNotificationSources(
+    database,
+    parsed,
+    now,
+    options.sourceDeliveryId,
+  );
+  const activeEvents = parsed.filter(
+    (event) =>
+      event.source === undefined ||
+      claimedSources.has(sourceIdentity(event.organizationId, event.source.sourceEventKey)),
+  );
+  let deduped = parsed
+    .filter(
+      (event) =>
+        event.source !== undefined &&
+        !claimedSources.has(sourceIdentity(event.organizationId, event.source.sourceEventKey)),
+    )
+    .reduce(
+      (total, event) =>
+        total + unique(event.userIds.filter((userId) => userId !== event.actor.id)).length,
+      0,
+    );
   const slackEnabled = resolveSlackFeatureEnabled(options.slackEnabled);
   const recipientIds = unique(
-    parsed.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
+    activeEvents.flatMap((event) => event.userIds.filter((id) => id !== event.actor.id)),
   );
-  if (recipientIds.length === 0) return emptyOutcome();
+  if (recipientIds.length === 0) {
+    await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
+    await completeNotificationSources(database, claimedSources, now);
+    return { ...emptyOutcome(), deduped };
+  }
 
   const recipients = await loadRecipients(database, recipientIds);
   const settings = await loadSettings(database, recipientIds);
-  const slackEnabledEvents = slackEnabled ? parsed : [];
+  const slackEnabledEvents = slackEnabled ? activeEvents : [];
   const slackDmEligibleRecipients =
     slackEnabledEvents.length > 0
       ? await loadSlackDmEligibleRecipients(database, slackEnabledEvents, recipientIds)
-      : new Map<string, ReadonlySet<string>>();
+      : new Map<string, ReadonlyMap<string, SlackDmDestination>>();
   const disabled = disabledPreferenceIndex(
     await database
       .select({
@@ -364,8 +467,12 @@ export async function notifyMany(
         );
 
   const plans: Plan[] = [];
-  let deduped = 0;
-  for (const event of parsed) {
+  for (const event of activeEvents) {
+    const sourceEventId =
+      event.source === undefined
+        ? null
+        : (claimedSources.get(sourceIdentity(event.organizationId, event.source.sourceEventKey)) ??
+          null);
     for (const userId of event.userIds) {
       const recipient = recipients.get(userId);
       if (userId === event.actor.id || recipient === undefined) continue;
@@ -374,7 +481,10 @@ export async function notifyMany(
         continue;
       }
       const key = dedupeKey(userId, event.type, event.entityId, event.externalUrl ?? null);
-      if (seen.has(key)) {
+      if (
+        (event.source === undefined || generatedSourceKeys.has(event.source.sourceEventKey)) &&
+        seen.has(key)
+      ) {
         deduped += 1;
         continue;
       }
@@ -385,25 +495,160 @@ export async function notifyMany(
         disabled,
         now,
         slackEnabled,
-        slackDmEligibleRecipients.get(event.organizationId)?.has(userId) === true,
+        slackDmEligibleRecipients.get(event.organizationId)?.get(userId) ?? null,
+        sourceEventId,
       );
       if (plan !== null) {
-        seen.add(key);
+        if (event.source === undefined || generatedSourceKeys.has(event.source.sourceEventKey))
+          seen.add(key);
         plans.push(plan);
       }
     }
   }
-  if (plans.length === 0) return { ...emptyOutcome(), deduped };
+  if (plans.length === 0) {
+    await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
+    await completeNotificationSources(database, claimedSources, now);
+    return { ...emptyOutcome(), deduped };
+  }
 
+  const conversationPlans: NotificationConversationPlan[] = plans.map((plan) => ({
+    notificationId: plan.id,
+    organizationId: plan.event.organizationId,
+    userId: plan.recipient.id,
+    conversation: plan.conversation,
+  }));
+  const conversations = await prepareNotificationConversations(database, conversationPlans, now);
   const rows = await database
     .insert(notification)
-    .values(plans.map((plan) => toInsert(plan, now)))
+    .values(
+      plans.map((plan) => {
+        const conversation = conversations.get(
+          notificationConversationLookupKey(
+            plan.event.organizationId,
+            plan.recipient.id,
+            plan.conversation.conversationKey,
+          ),
+        );
+        if (conversation === undefined) {
+          throw validationFailed('Notification conversation could not be created.');
+        }
+        return toInsert(plan, conversation.id, now);
+      }),
+    )
+    .onConflictDoNothing()
     .returning();
+  deduped += plans.length - rows.length;
 
+  await applyLiveNotificationConversations(database, rows, conversationPlans, conversations, now);
   const deliveryRows = slackDeliveryRows(rows, plans, now, options.sourceDeliveryId);
   if (deliveryRows.length > 0) await database.insert(notificationDelivery).values(deliveryRows);
+  await enqueueSharedSlackDeliveries(database, activeEvents, claimedSources, now, slackEnabled);
+  await completeNotificationSources(database, claimedSources, now);
 
-  return buildOutcome(plans, rows, deduped);
+  const outcome = buildOutcome(plans, rows, deduped);
+  const conversationActions = await notificationConversationActions(
+    database,
+    rows,
+    { type: 'system', id: 'orbit', name: 'Orbit' },
+    now,
+  );
+  return { ...outcome, actions: [...outcome.actions, ...conversationActions] };
+}
+
+function sourceIdentity(organizationId: string, sourceEventKey: string): string {
+  return JSON.stringify([organizationId, sourceEventKey]);
+}
+
+async function claimNotificationSources(
+  database: NotificationDatabase,
+  events: readonly ParsedEvent[],
+  now: Date,
+  sourceDeliveryId: string | undefined,
+): Promise<Map<string, string>> {
+  const byIdentity = new Map<string, ParsedEvent>();
+  for (const event of events) {
+    if (event.source === undefined) continue;
+    const identity = sourceIdentity(event.organizationId, event.source.sourceEventKey);
+    if (!byIdentity.has(identity)) byIdentity.set(identity, event);
+  }
+  if (byIdentity.size === 0) return new Map();
+  const orderedEvents = [...byIdentity.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, event]) => event);
+  await database
+    .insert(notificationSourceEvent)
+    .values(
+      orderedEvents.map((event) => {
+        const source = event.source;
+        if (source === undefined) throw validationFailed('Notification source is missing.');
+        return {
+          id: randomUUIDv7(now),
+          organizationId: event.organizationId,
+          sourceEventKey: source.sourceEventKey,
+          sourceDeliveryId: sourceDeliveryId ?? null,
+          subjectType: source.subjectType,
+          subjectKey: source.subjectKey,
+          occurredAt: source.occurredAt,
+          ingestedAt: now,
+          payload: source.payload,
+          createdAt: now,
+          updatedAt: now,
+        };
+      }),
+    )
+    .onConflictDoNothing();
+  const organizationIds = unique(orderedEvents.map((event) => event.organizationId));
+  const sourceEventKeys = unique(
+    orderedEvents.flatMap((event) =>
+      event.source === undefined ? [] : [event.source.sourceEventKey],
+    ),
+  );
+  const rows = await database
+    .select({
+      id: notificationSourceEvent.id,
+      organizationId: notificationSourceEvent.organizationId,
+      sourceEventKey: notificationSourceEvent.sourceEventKey,
+      subjectType: notificationSourceEvent.subjectType,
+      subjectKey: notificationSourceEvent.subjectKey,
+      fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt,
+      prunedAt: notificationSourceEvent.prunedAt,
+    })
+    .from(notificationSourceEvent)
+    .where(
+      and(
+        inArray(notificationSourceEvent.organizationId, organizationIds),
+        inArray(notificationSourceEvent.sourceEventKey, sourceEventKeys),
+      ),
+    )
+    .orderBy(notificationSourceEvent.organizationId, notificationSourceEvent.sourceEventKey)
+    .for('update');
+  const claimed = new Map<string, string>();
+  for (const row of rows) {
+    const identity = sourceIdentity(row.organizationId, row.sourceEventKey);
+    const requested = byIdentity.get(identity);
+    if (requested?.source === undefined) continue;
+    if (
+      row.subjectType !== requested.source.subjectType ||
+      row.subjectKey !== requested.source.subjectKey
+    ) {
+      throw validationFailed('Notification source identity conflicts with its subject.');
+    }
+    if (row.fanoutCompletedAt === null && row.prunedAt === null) claimed.set(identity, row.id);
+  }
+  return claimed;
+}
+
+async function completeNotificationSources(
+  database: NotificationDatabase,
+  claimedSources: ReadonlyMap<string, string>,
+  now: Date,
+): Promise<void> {
+  const ids = [...claimedSources.values()];
+  if (ids.length === 0) return;
+  await database
+    .update(notificationSourceEvent)
+    .set({ fanoutCompletedAt: now, updatedAt: now })
+    .where(inArray(notificationSourceEvent.id, ids));
 }
 
 function slackDeliveryRows(
@@ -413,19 +658,46 @@ function slackDeliveryRows(
   sourceDeliveryId?: string,
 ) {
   const planById = new Map(plans.map((plan) => [plan.id, plan]));
-  return rows.flatMap((row) => {
+  return rows.flatMap((row): (typeof notificationDelivery.$inferInsert)[] => {
     const plan = planById.get(row.id);
-    if (plan === undefined || !plan.channels.includes('slack_dm')) return [];
-    return [
-      {
+    if (plan === undefined) return [];
+    const result: (typeof notificationDelivery.$inferInsert)[] = [];
+    if (plan.emailAt !== null) {
+      const id = randomUUIDv7(now);
+      result.push({
+        id,
+        notificationId: row.id,
+        organizationId: row.organizationId,
+        sourceEventId: plan.sourceEventId,
+        userId: row.userId,
+        channel: 'email',
+        conversationKey: plan.conversation.conversationKey,
+        destinationKind: 'user',
+        destinationId: row.userId,
+        providerRequestId: `notification/${id}`,
+        availableAt: plan.emailAt,
+      });
+    }
+    if (plan.channels.includes('slack_dm') && plan.slackDmDestination !== null) {
+      result.push({
         id: randomUUIDv7(now),
         notificationId: row.id,
+        organizationId: row.organizationId,
+        sourceEventId: plan.sourceEventId,
         sourceDeliveryId: sourceDeliveryId ?? null,
         userId: row.userId,
         channel: 'slack_dm',
+        conversationKey: plan.conversation.conversationKey,
+        destinationKind: 'user',
+        destinationId: plan.slackDmDestination.destinationId,
+        integrationId: plan.slackDmDestination.integrationId,
+        slackTeamId: plan.slackDmDestination.slackTeamId,
+        slackAppId: plan.slackDmDestination.slackAppId,
+        credentialGeneration: plan.slackDmDestination.credentialGeneration,
         availableAt: plan.slackDmAt ?? now,
-      },
-    ];
+      });
+    }
+    return result;
   });
 }
 
@@ -440,7 +712,8 @@ function planFor(
   disabled: ReadonlySet<string>,
   now: Date,
   slackFeatureEnabled: boolean,
-  slackDmEligible: boolean,
+  slackDmDestination: SlackDmDestination | null,
+  sourceEventId: string | null,
 ): Plan | null {
   const inboxEnabled = isChannelEnabled(disabled, recipient.id, 'inbox', event.type);
   const emailEnabled = isChannelEnabled(disabled, recipient.id, 'email', event.type);
@@ -452,7 +725,7 @@ function planFor(
   const slackDmEnabled =
     slackFeatureEnabled &&
     personal &&
-    slackDmEligible &&
+    slackDmDestination !== null &&
     isChannelEnabled(disabled, recipient.id, 'slack_dm', event.type);
   if (!(inboxEnabled || emailEnabled || slackEnabled || slackDmEnabled)) return null;
   const quietHours: QuietHours = {
@@ -464,8 +737,9 @@ function planFor(
   const bypass = isUrgent(event) && settings.urgentBypassEnabled;
   const deferred =
     (emailEnabled || slackDmEnabled) && !bypass && isWithinQuietHours(now, quietHours);
+  const id = randomUUIDv7(now);
   return {
-    id: randomUUIDv7(now),
+    id,
     event,
     recipient,
     channels: [
@@ -477,6 +751,24 @@ function planFor(
     emailAt: emailSendAt(emailEnabled, deferred, now, quietHours),
     emailDeferred: deferred,
     slackDmAt: slackDmSendAt(slackDmEnabled, deferred, now, quietHours),
+    slackDmDestination,
+    sourceEventId,
+    conversation: resolveNotificationConversation({
+      notificationId: id,
+      type: event.type,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      url: event.url,
+      ...(event.source === undefined
+        ? {}
+        : {
+            source: {
+              subjectType: event.source.subjectType,
+              subjectKey: event.source.subjectKey,
+              payload: event.source.payload,
+            },
+          }),
+    }),
   };
 }
 
@@ -484,7 +776,7 @@ async function loadSlackDmEligibleRecipients(
   database: NotificationDatabase,
   events: readonly ParsedEvent[],
   recipientIds: readonly string[],
-): Promise<Map<string, ReadonlySet<string>>> {
+): Promise<Map<string, ReadonlyMap<string, SlackDmDestination>>> {
   const organizationIds = unique(
     events.filter(isPersonalNotification).map((event) => event.organizationId),
   );
@@ -492,7 +784,9 @@ async function loadSlackDmEligibleRecipients(
   const rows = await database
     .select({
       organizationId: integration.organizationId,
+      integrationId: integration.id,
       userId: slackUserMapping.userId,
+      slackUserId: slackUserMapping.slackUserId,
       credentials: integration.credentials,
       config: integration.config,
     })
@@ -512,15 +806,26 @@ async function loadSlackDmEligibleRecipients(
         inArray(slackUserMapping.userId, [...recipientIds]),
       ),
     );
-  const eligible = new Map<string, Set<string>>();
+  const eligible = new Map<string, Map<string, SlackDmDestination>>();
   for (const row of rows) {
     const parsed = slackDmEligibilitySchema.safeParse(row);
     if (!(parsed.success && hasSlackBotToken(row.credentials))) continue;
+    const namespace = notificationSlackNamespaceSchema.safeParse({
+      ...row.config,
+      slackAppId: row.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+    });
+    if (!namespace.success || namespace.data.notificationDeliveryState !== 'active') continue;
     if (parsed.data.config.slackReauthorize === true) continue;
     const scopes = parsed.data.config.scopes;
     if (!(scopes.includes('chat:write') && scopes.includes('im:write'))) continue;
-    const recipients = eligible.get(row.organizationId) ?? new Set<string>();
-    recipients.add(row.userId);
+    const recipients = eligible.get(row.organizationId) ?? new Map<string, SlackDmDestination>();
+    recipients.set(row.userId, {
+      integrationId: row.integrationId,
+      destinationId: row.slackUserId,
+      slackTeamId: namespace.data.slackTeamId,
+      slackAppId: namespace.data.slackAppId,
+      credentialGeneration: namespace.data.credentialGeneration,
+    });
     eligible.set(row.organizationId, recipients);
   }
   return eligible;
@@ -555,7 +860,7 @@ function isPersonalNotification(event: ParsedEvent): boolean {
   return NOTIFICATION_AUDIENCE_BY_REASON[event.reason] === 'personal';
 }
 
-function toInsert(plan: Plan, now: Date) {
+function toInsert(plan: Plan, conversationId: string, now: Date) {
   const { event } = plan;
   return {
     id: plan.id,
@@ -572,10 +877,110 @@ function toInsert(plan: Plan, now: Date) {
     body: event.body,
     url: event.url,
     externalUrl: event.externalUrl ?? null,
-    deliveredChannels: plan.channels.filter((channel) => channel !== 'slack_dm'),
+    sourceEventId: plan.sourceEventId,
+    conversationId,
+    occurredAt: event.source?.occurredAt ?? now,
+    ingestedAt: now,
+    ingestionSeq: nextSyncId,
+    surfaceInInbox: plan.channels.includes(INBOX_CHANNEL),
+    deliveredChannels: plan.channels.filter((channel) => channel === 'inbox'),
     syncId: nextSyncId,
     createdAt: now,
   };
+}
+
+async function enqueueSharedSlackDeliveries(
+  database: NotificationDatabase,
+  events: readonly ParsedEvent[],
+  claimedSources: ReadonlyMap<string, string>,
+  now: Date,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) return;
+  const sourceEvents = new Map<string, ParsedEvent>();
+  for (const event of events) {
+    if (event.source === undefined) continue;
+    if (event.reason === 'access_requested' || event.reason === 'access_granted') continue;
+    const sourceEventId = claimedSources.get(
+      sourceIdentity(event.organizationId, event.source.sourceEventKey),
+    );
+    if (sourceEventId === undefined || sourceEvents.has(sourceEventId)) continue;
+    sourceEvents.set(sourceEventId, event);
+  }
+  if (sourceEvents.size === 0) return;
+  const organizationIds = unique([...sourceEvents.values()].map((event) => event.organizationId));
+  const targets = await database
+    .select({
+      organizationId: slackChannelSync.organizationId,
+      integrationId: slackChannelSync.integrationId,
+      teamId: slackChannelSync.teamId,
+      channelId: slackChannelSync.channelId,
+      events: slackChannelSync.events,
+      config: integration.config,
+    })
+    .from(slackChannelSync)
+    .innerJoin(
+      integration,
+      and(
+        eq(integration.id, slackChannelSync.integrationId),
+        eq(integration.organizationId, slackChannelSync.organizationId),
+        eq(integration.provider, 'slack'),
+      ),
+    )
+    .where(
+      and(
+        inArray(slackChannelSync.organizationId, organizationIds),
+        eq(slackChannelSync.enabled, true),
+      ),
+    );
+  const values = [...sourceEvents.entries()].flatMap(([sourceEventId, event]) =>
+    targets
+      .filter(
+        (target) =>
+          target.organizationId === event.organizationId &&
+          (target.events.length === 0 || target.events.includes(event.type)) &&
+          notificationSlackNamespaceSchema.safeParse({
+            ...target.config,
+            slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+          }).success &&
+          (target.teamId === null || event.source?.teamIds.includes(target.teamId) === true),
+      )
+      .map((target) => ({
+        id: randomUUIDv7(now),
+        notificationId: null,
+        organizationId: event.organizationId,
+        sourceEventId,
+        userId: null,
+        channel: 'slack',
+        conversationKey: event.source?.subjectKey ?? null,
+        destinationKind: 'shared_channel',
+        destinationId: `${target.integrationId}:${target.channelId}`,
+        integrationId: target.integrationId,
+        slackTeamId: notificationSlackNamespaceSchema.parse({
+          ...target.config,
+          slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+        }).slackTeamId,
+        slackAppId: notificationSlackNamespaceSchema.parse({
+          ...target.config,
+          slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+        }).slackAppId,
+        credentialGeneration: notificationSlackNamespaceSchema.parse({
+          ...target.config,
+          slackAppId: target.config['slackAppId'] ?? process.env['SLACK_APP_ID'],
+        }).credentialGeneration,
+        providerPayload: {
+          notificationType: event.type,
+          title: event.title,
+          body: event.body,
+          url: event.url,
+          externalUrl: event.externalUrl ?? null,
+        },
+        availableAt: now,
+        createdAt: now,
+      })),
+  );
+  if (values.length === 0) return;
+  await database.insert(notificationDelivery).values(values).onConflictDoNothing();
 }
 
 function buildOutcome(
@@ -621,25 +1026,8 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
     modelId: row.id,
     data: {
       id: row.id,
-      organizationId: row.organizationId,
-      userId: row.userId,
-      type: row.type,
-      reason: row.reason,
-      actorType: row.actorType,
-      actorId: row.actorId,
-      actorName: row.actorName,
-      entityType: row.entityType,
-      entityId: row.entityId,
-      title: row.title,
-      body: row.body,
-      bodyHtml: renderMarkdown(row.body),
-      url: row.url,
-      externalUrl: row.externalUrl,
-      readAt: row.readAt?.toISOString() ?? null,
-      snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
-      deliveredChannels: row.deliveredChannels,
       syncId: row.syncId,
-      createdAt: row.createdAt.toISOString(),
+      visible: row.dismissedAt === null,
     },
     actor: plan.event.actor,
     at: row.createdAt.toISOString(),
@@ -685,6 +1073,7 @@ async function loadRecentKeys(
       and(
         inArray(notification.userId, [...userIds]),
         gte(notification.createdAt, new Date(now.getTime() - DEDUPE_WINDOW_MS)),
+        isNull(notification.deduplicatedIntoNotificationId),
       ),
     );
   return new Set(rows.map((row) => dedupeKey(row.userId, row.type, row.entityId, row.externalUrl)));
@@ -715,17 +1104,22 @@ export async function markRead(
   input: z.input<typeof markReadSchema>,
 ): Promise<NotificationRecord[]> {
   const params = markReadSchema.parse(input);
-  return await database
-    .update(notification)
-    .set({ readAt: params.read ? new Date() : null, syncId: nextSyncId })
-    .where(
-      and(
-        eq(notification.userId, params.userId),
-        eq(notification.organizationId, params.organizationId),
-        inArray(notification.id, params.notificationIds),
-      ),
-    )
-    .returning();
+  if ('$client' in database) {
+    return await database.transaction((tx) => markRead(tx, params));
+  }
+  return await mutateLegacyNotifications(database, {
+    kind: 'read',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+      params.notificationIds,
+    ),
+    read: params.read,
+    now: new Date(),
+  });
 }
 
 export const markAllReadSchema = z.object({
@@ -738,17 +1132,20 @@ export async function markAllRead(
   input: z.input<typeof markAllReadSchema>,
 ): Promise<number> {
   const params = markAllReadSchema.parse(input);
-  const updated = await database
-    .update(notification)
-    .set({ readAt: new Date(), syncId: nextSyncId })
-    .where(
-      and(
-        eq(notification.userId, params.userId),
-        eq(notification.organizationId, params.organizationId),
-        isNull(notification.readAt),
-      ),
-    )
-    .returning({ id: notification.id });
+  if ('$client' in database) {
+    return await database.transaction((tx) => markAllRead(tx, params));
+  }
+  const updated = await mutateLegacyNotifications(database, {
+    kind: 'read_all',
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+    ),
+    userId: params.userId,
+    organizationId: params.organizationId,
+    now: new Date(),
+  });
   return updated.length;
 }
 
@@ -764,19 +1161,55 @@ export async function snooze(
   input: z.input<typeof snoozeSchema>,
 ): Promise<NotificationRecord> {
   const params = snoozeSchema.parse(input);
-  const updated = await database
-    .update(notification)
-    .set({ snoozedUntil: params.until, syncId: nextSyncId })
-    .where(
-      and(
-        eq(notification.userId, params.userId),
-        eq(notification.organizationId, params.organizationId),
-        eq(notification.id, params.notificationId),
-      ),
-    )
-    .returning();
+  if ('$client' in database) {
+    return await database.transaction((tx) => snooze(tx, params));
+  }
+  const updated = await mutateLegacyNotifications(database, {
+    kind: 'snooze',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+      [params.notificationId],
+    ),
+    until: params.until,
+    now: new Date(),
+  });
   const row = updated[0];
   if (row === undefined) throw validationFailed('That notification does not exist.');
+  return row;
+}
+
+export const dismissNotificationSchema = z.object({
+  userId: idSchema,
+  organizationId: idSchema,
+  notificationId: idSchema,
+});
+
+export async function dismissNotification(
+  database: NotificationDatabase,
+  input: z.input<typeof dismissNotificationSchema>,
+): Promise<NotificationRecord> {
+  const params = dismissNotificationSchema.parse(input);
+  if ('$client' in database) {
+    return await database.transaction((tx) => dismissNotification(tx, params));
+  }
+  const updated = await mutateLegacyNotifications(database, {
+    kind: 'dismiss',
+    userId: params.userId,
+    organizationId: params.organizationId,
+    notificationIds: await readableLegacyNotificationIds(
+      database,
+      params.organizationId,
+      params.userId,
+      [params.notificationId],
+    ),
+    now: new Date(),
+  });
+  const row = updated[0];
+  if (row === undefined) throw notFound('That notification does not exist.');
   return row;
 }
 
@@ -800,10 +1233,17 @@ export async function listInbox(
   input: z.input<typeof listInboxSchema>,
 ): Promise<InboxPage> {
   const params = listInboxSchema.parse(input);
+  if ('$client' in database) return await database.transaction((tx) => listInbox(tx, params));
+  const access = readableLegacyNotificationPredicate(
+    await readableLegacyNotificationIds(database, params.organizationId, params.userId),
+  );
   const filters = [
+    access,
     eq(notification.userId, params.userId),
     eq(notification.organizationId, params.organizationId),
-    deliveredToInbox(),
+    compatibleInboxSurface(),
+    isNull(notification.deduplicatedIntoNotificationId),
+    isNull(notification.dismissedAt),
   ];
   if (params.cursor !== undefined) filters.push(lt(notification.id, params.cursor));
   if (params.unreadOnly) filters.push(isNull(notification.readAt));
@@ -830,6 +1270,11 @@ export async function unreadCount(
   organizationId: string,
   at: Date = new Date(),
 ): Promise<number> {
+  if ('$client' in database)
+    return await database.transaction((tx) => unreadCount(tx, userId, organizationId, at));
+  const access = readableLegacyNotificationPredicate(
+    await readableLegacyNotificationIds(database, organizationId, userId),
+  );
   const rows = await database
     .select({ value: count() })
     .from(notification)
@@ -837,8 +1282,11 @@ export async function unreadCount(
       and(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
+        access,
         isNull(notification.readAt),
-        deliveredToInbox(),
+        compatibleInboxSurface(),
+        isNull(notification.deduplicatedIntoNotificationId),
+        isNull(notification.dismissedAt),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
     );
@@ -857,6 +1305,11 @@ export async function unreadCounters(
   organizationId: string,
   at: Date = new Date(),
 ): Promise<UnreadCounters> {
+  if ('$client' in database)
+    return await database.transaction((tx) => unreadCounters(tx, userId, organizationId, at));
+  const access = readableLegacyNotificationPredicate(
+    await readableLegacyNotificationIds(database, organizationId, userId),
+  );
   const rows = await database
     .select({ type: notification.type, value: count() })
     .from(notification)
@@ -864,8 +1317,11 @@ export async function unreadCounters(
       and(
         eq(notification.userId, userId),
         eq(notification.organizationId, organizationId),
+        access,
         isNull(notification.readAt),
-        deliveredToInbox(),
+        compatibleInboxSurface(),
+        isNull(notification.deduplicatedIntoNotificationId),
+        isNull(notification.dismissedAt),
         or(isNull(notification.snoozedUntil), lte(notification.snoozedUntil, at)),
       ),
     )

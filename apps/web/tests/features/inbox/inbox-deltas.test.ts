@@ -2,11 +2,9 @@ import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import type { InboxItem } from '../../../src/features/inbox/data.ts';
 import {
-  applyNotificationDeltas,
+  notificationDeltaInvalidatesInbox,
   snoozeRollback,
 } from '../../../src/features/inbox/inbox-view.tsx';
-
-const TAB = 'tab_a';
 
 function item(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
@@ -52,200 +50,35 @@ function action(overrides: Partial<SyncAction> = {}): SyncAction {
   };
 }
 
-function comment(overrides: Partial<SyncAction> = {}): SyncAction {
-  const base = action(overrides);
-  return { ...base, data: { ...base.data, type: 'comment_created' } };
-}
-
-function read(base: SyncAction): SyncAction {
-  return {
-    ...base,
-    action: 'update',
-    data: { ...base.data, readAt: '2026-01-01T00:01:00.000Z' },
-  };
-}
-
-describe('applyNotificationDeltas', () => {
-  it('counts an insert once and adds the row', () => {
-    const patch = applyNotificationDeltas([], [action()], TAB);
-    expect(patch.unreadDelta).toBe(1);
-    expect(patch.rows.map((row) => row.id)).toEqual(['notification_1']);
+describe('legacy notification invalidation', () => {
+  it('treats every notification update as an authorized refetch, never a content patch', () => {
+    for (const kind of ['insert', 'update', 'delete'] as const)
+      expect(notificationDeltaInvalidatesInbox([action({ action: kind })])).toBe(true);
   });
-
-  it('does not raise the badge for a subscription toggle on the same issue', () => {
-    const patch = applyNotificationDeltas(
-      [],
-      [action({ model: 'issue_subscription', modelId: 'issue_1:user_1', data: { id: 'issue_1' } })],
-      TAB,
+  it('invalidates on an access-change conversation delta, including after all rows were dismissed', () => {
+    expect(
+      notificationDeltaInvalidatesInbox([
+        action({
+          model: 'notification_conversation',
+          data: { id: 'conversation', visible: false },
+        }),
+      ]),
+    ).toBe(true);
+  });
+  it('ignores unrelated workspace events', () => {
+    expect(notificationDeltaInvalidatesInbox([action({ model: 'issue_subscription' })])).toBe(
+      false,
     );
-    expect(patch.unreadDelta).toBe(0);
-    expect(patch.rows).toEqual([]);
   });
-
-  it('lowers the badge when another tab marks the notification read', () => {
-    const patch = applyNotificationDeltas([item()], [read(action())], TAB);
-    expect(patch.unreadDelta).toBe(-1);
-    expect(patch.rows[0]?.read).toBe(true);
-  });
-
-  it('raises the badge again when another tab marks it unread', () => {
-    const patch = applyNotificationDeltas(
-      [item({ read: true })],
-      [action({ action: 'update' })],
-      TAB,
-    );
-    expect(patch.unreadDelta).toBe(1);
-    expect(patch.rows[0]?.read).toBe(false);
-  });
-
-  it('lowers the badge and drops the row when another tab deletes an unread item', () => {
-    const patch = applyNotificationDeltas([item()], [action({ action: 'delete' })], TAB);
-    expect(patch.unreadDelta).toBe(-1);
-    expect(patch.rows).toEqual([]);
-  });
-
-  it('leaves the badge alone when a read notification is deleted', () => {
-    const patch = applyNotificationDeltas(
-      [item({ read: true })],
-      [action({ action: 'delete' })],
-      TAB,
-    );
-    expect(patch.unreadDelta).toBe(0);
-    expect(patch.rows).toEqual([]);
-  });
-
-  it('ignores the echo of a write this tab made', () => {
-    const patch = applyNotificationDeltas([], [{ ...action(), originClientId: TAB }], TAB);
-    expect(patch.unreadDelta).toBe(0);
-    expect(patch.rows).toEqual([]);
-  });
-
-  it('applies an insert and its read update in one burst without double counting', () => {
-    const inserted = action();
-    const patch = applyNotificationDeltas([], [inserted, read(inserted)], TAB);
-    expect(patch.unreadDelta).toBe(0);
-    expect(patch.rows).toHaveLength(1);
-    expect(patch.rows[0]?.read).toBe(true);
-  });
-
-  it('never inserts a row from an update for something it has never seen', () => {
-    const patch = applyNotificationDeltas([], [action({ action: 'update' })], TAB);
-    expect(patch.rows).toEqual([]);
-    expect(patch.unreadDelta).toBe(0);
-  });
-
-  it('raises the mention badge when a new unread mention arrives', () => {
-    const base = action();
-    const patch = applyNotificationDeltas(
-      [],
-      [{ ...base, data: { ...base.data, type: 'mention' } }],
-      TAB,
-    );
-    expect(patch.mentionDelta).toBe(1);
-    expect(patch.unreadDelta).toBe(1);
-  });
-
-  it('lowers the mention badge when an unread mention is deleted', () => {
-    const patch = applyNotificationDeltas(
-      [item({ type: 'mention' })],
-      [action({ action: 'delete' })],
-      TAB,
-    );
-    expect(patch.mentionDelta).toBe(-1);
-  });
-
-  it('lowers the mention badge when another tab reads a mention', () => {
-    const patch = applyNotificationDeltas([item({ type: 'mention' })], [read(action())], TAB);
-    expect(patch.mentionDelta).toBe(-1);
-  });
-
-  it('leaves the activity count alone when an assignment arrives', () => {
-    const patch = applyNotificationDeltas([], [action()], TAB);
-    expect(patch.unreadDelta).toBe(1);
-    expect(patch.activityDelta).toBe(0);
-  });
-
-  it('raises the activity count when an unread comment arrives', () => {
-    const patch = applyNotificationDeltas([], [comment()], TAB);
-    expect(patch.unreadDelta).toBe(1);
-    expect(patch.activityDelta).toBe(1);
-  });
-
-  it('lowers the activity count when another tab reads a comment', () => {
-    const patch = applyNotificationDeltas(
-      [item({ type: 'comment_created' })],
-      [read(comment())],
-      TAB,
-    );
-    expect(patch.activityDelta).toBe(-1);
-  });
-
-  it('lowers the activity count when an unread comment is deleted', () => {
-    const patch = applyNotificationDeltas(
-      [item({ type: 'comment_created' })],
-      [comment({ action: 'delete' })],
-      TAB,
-    );
-    expect(patch.activityDelta).toBe(-1);
-  });
-
-  it('leaves the activity count alone when a status change is deleted', () => {
-    const patch = applyNotificationDeltas(
-      [item({ type: 'issue_status_changed' })],
-      [action({ action: 'delete' })],
-      TAB,
-    );
-    expect(patch.unreadDelta).toBe(-1);
-    expect(patch.activityDelta).toBe(0);
-  });
-});
-
-describe('what the reading pane is looking at', () => {
-  it('keeps pointing at the same notification when a newer one arrives above it', () => {
-    const first = item({ id: 'n_1', title: 'Older' });
-    const second = item({ id: 'n_2', title: 'Newer' });
-    const rows = [first];
-
-    const patched = applyNotificationDeltas(
-      rows,
-      [
-        {
-          syncId: 5,
-          organizationId: 'org_1',
-          scopes: [],
-          action: 'insert',
-          model: 'notification',
-          modelId: 'n_2',
-          data: {
-            id: 'n_2',
-            type: 'mention',
-            entityType: 'issue',
-            entityId: 'issue_2',
-            actorName: 'Bea',
-            title: 'Newer',
-            body: '',
-            url: '/issue/ENG-9',
-            readAt: null,
-            snoozedUntil: null,
-            createdAt: '2026-01-02T00:00:00.000Z',
-          },
-          actor: { type: 'user', id: 'user_2' },
-          at: '2026-01-02T00:00:00.000Z',
-        },
-      ],
-      'other-tab',
-    );
-
-    expect(patched.rows.map((row) => row.id)).toContain('n_1');
-    expect(patched.rows.map((row) => row.id)).toContain('n_2');
-    expect(patched.rows.find((row) => row.id === 'n_1')?.title).toBe('Older');
-    expect(second.id).toBe('n_2');
-  });
-
-  it('carries the entity a notification points at, so the pane can open it', () => {
-    const row = item({ entityType: 'issue', entityId: 'issue_42' });
-    expect(row.entityType).toBe('issue');
-    expect(row.entityId).toBe('issue_42');
+  it('never trusts a cached body or own-client echo instead of rechecking access', () => {
+    expect(
+      notificationDeltaInvalidatesInbox([
+        action({
+          originClientId: 'this-client',
+          data: { body: 'REVOKED_PRIVATE_BODY', title: 'Private title' },
+        }),
+      ]),
+    ).toBe(true);
   });
 });
 
@@ -284,25 +117,5 @@ describe('rolling back a snooze the server rejected', () => {
     const rollback = snoozeRollback(rows, 'notification_1', '2026-03-01T00:00:00.000Z', null);
 
     expect(rollback.rows[1]?.snoozedUntil).toBe('2026-03-01T00:00:00.000Z');
-  });
-});
-
-describe('a snoozed mention', () => {
-  it('is not counted, because the server counter excludes it too', () => {
-    const patch = applyNotificationDeltas(
-      [item({ type: 'mention', snoozedUntil: '2999-01-01T00:00:00.000Z' })],
-      [action({ action: 'delete' })],
-      TAB,
-    );
-    expect(patch.mentionDelta).toBe(0);
-  });
-
-  it('is counted again once the snooze has expired', () => {
-    const patch = applyNotificationDeltas(
-      [item({ type: 'mention', snoozedUntil: '2020-01-01T00:00:00.000Z' })],
-      [action({ action: 'delete' })],
-      TAB,
-    );
-    expect(patch.mentionDelta).toBe(-1);
   });
 });

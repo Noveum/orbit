@@ -8,6 +8,9 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),

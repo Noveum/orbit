@@ -116,16 +116,19 @@ export function DocReader({
 
   return (
     <article
-      className={cn('mx-auto flex w-full gap-10 px-6 pt-4 pb-16', READING_WIDTH_CLASS[width])}
+      className={cn(
+        'mx-auto flex w-full gap-6 px-8 pt-10 pb-24',
+        width === 'comfortable' ? READING_WIDTH_CLASS.wide : READING_WIDTH_CLASS[width],
+      )}
       data-testid="doc-reader"
       data-reading-width={width}
     >
       <div className={cn('min-w-0 flex-1', width === 'comfortable' && 'xl:max-w-[45rem]')}>
         <DocContextRow doc={doc} collectionName={collectionName} projectName={projectName} />
 
-        <h1 className="mt-2 font-semibold text-2xl text-text tracking-tight">{doc.title}</h1>
+        <h1 className="mt-5 font-semibold text-4xl text-text tracking-tight">{doc.title}</h1>
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-border border-b pb-3 text-2xs text-faint">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-border border-b pb-6 text-2xs text-faint">
           <span className="flex items-center gap-1.5">
             <Avatar name={author.name} src={author.image} size="sm" />
             <span className="text-muted">{author.name}</span>
@@ -137,7 +140,7 @@ export function DocReader({
           </span>
         </div>
 
-        <DocBody html={contentHtml} onHeadings={setHeadings} className="mt-2" />
+        <DocBody html={contentHtml} onHeadings={setHeadings} className="mt-8" />
         <AttachmentGallery attachments={attachments} />
 
         <DocBacklinks backlinks={backlinks} />

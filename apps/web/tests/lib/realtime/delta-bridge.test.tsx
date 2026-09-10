@@ -1265,6 +1265,22 @@ describe('DeltaBridge workspace sprint membership', () => {
 });
 
 describe('DeltaBridge root invalidation', () => {
+  it('clears document metadata immediately when access is revoked', () => {
+    const client = mount();
+    const keys = [[DOCS_ROOT, ''], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']];
+    for (const key of keys) client.setQueryData(key, { id: 'doc_1', title: 'Private notes' });
+    act(() =>
+      capturedHandler?.([
+        action({
+          model: 'doc',
+          modelId: 'doc_1',
+          data: { id: 'doc_1', accessChanged: true, revoked: true },
+        }),
+      ]),
+    );
+    for (const key of keys) expect(client.getQueryData(key)).toBeUndefined();
+  });
+
   it('invalidates the bootstrap root once for a burst of org config models', () => {
     const client = mount();
     const seen = trackInvalidations(client);

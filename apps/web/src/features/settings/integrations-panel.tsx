@@ -16,6 +16,7 @@ import type {
   SlackIntegrationSettings,
 } from './integrations-data.ts';
 import { type McpConnection, McpPanel } from './mcp-panel.tsx';
+import { SlackDeliveryHealth } from './slack-delivery-health.tsx';
 import { type PickerChannel, useChannelSearch } from './use-integration-lists.ts';
 
 function teamName(teams: readonly IntegrationTeam[], teamId: string | null): string {
@@ -282,11 +283,12 @@ function SlackSection({
   return (
     <IntegrationCard
       title="Slack"
-      description="Add Orbit to your Slack workspace, then map a channel to a team. Orbit unfurls issue links and posts pull request updates. One channel per team, one team per channel."
+      description="Map a channel to a team or workspace. Orbit groups issue, document and pull request updates into one thread per conversation. Personal Slack DMs follow each member's notification preferences."
       status={<ConnectionBadge connected={settings.slackHasToken} />}
     >
       {settings.slackHasToken ? (
         <div className="flex flex-col gap-2.5">
+          <SlackDeliveryHealth settings={settings} />
           <p className="text-faint text-xs">
             {settings.memberSync.mapped} of {settings.memberSync.eligible} workspace members matched
             by email.
