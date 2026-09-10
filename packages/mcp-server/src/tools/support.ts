@@ -112,18 +112,44 @@ async function runAndResolveSlot(
       domain.status >= 500
         ? { error: { code: domain.code, message: 'Something went wrong on our side.' } }
         : domain.toJSON();
-    await resolveIdempotencySlot(slotId, { ok: false, error: body }).catch(() => undefined);
+
+    try {
+      await resolveIdempotencySlot(slotId, { ok: false, error: body });
+    } catch (persistenceError) {
+      logger.error('failed to persist tool error in idempotency slot', {
+        tool: toolName,
+        slotId,
+        ...errorFields(persistenceError),
+      });
+    }
+
     return failed(toolName, error);
   }
 
   try {
     await resolveIdempotencySlot(slotId, { ok: true, payload: result });
   } catch (error) {
-    logger.error('failed to persist idempotency slot response', {
+    logger.error('failed to persist successful response in idempotency slot', {
       tool: toolName,
       slotId,
       ...errorFields(error),
     });
+
+    const uncertainBody = {
+      error: {
+        code: 'uncertain',
+        message: 'Operation executed successfully, but response caching failed.',
+      },
+    };
+    try {
+      await resolveIdempotencySlot(slotId, { ok: false, error: uncertainBody });
+    } catch (secondaryError) {
+      logger.error('failed to persist uncertain state in idempotency slot', {
+        tool: toolName,
+        slotId,
+        ...errorFields(secondaryError),
+      });
+    }
   }
 
   return ok(result);
