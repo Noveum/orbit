@@ -31,6 +31,80 @@ export type IdempotencySlot =
   | { readonly status: 'processing' }
   | { readonly status: 'done'; readonly response: Record<string, unknown> };
 
+type IdempotencyRow = typeof schema.mcpIdempotencyKey.$inferSelect;
+
+async function tryReclaimExpiredSlot(
+  current: IdempotencyRow,
+  tool: string,
+  paramsHash: string,
+  now: Date,
+  expiresAt: Date,
+): Promise<{ readonly reclaimedSlotId?: string; readonly current: IdempotencyRow }> {
+  if (current.expiresAt > now) {
+    return { current };
+  }
+
+  const reclaimed = await db
+    .update(schema.mcpIdempotencyKey)
+    .set({ tool, paramsHash, response: null, createdAt: now, expiresAt })
+    .where(
+      and(
+        eq(schema.mcpIdempotencyKey.id, current.id),
+        eq(schema.mcpIdempotencyKey.createdAt, current.createdAt),
+        lte(schema.mcpIdempotencyKey.expiresAt, now),
+      ),
+    )
+    .returning({ id: schema.mcpIdempotencyKey.id });
+
+  if (reclaimed.length > 0 && reclaimed[0] !== undefined) {
+    return { reclaimedSlotId: reclaimed[0].id, current };
+  }
+
+  const [reloaded] = await db
+    .select()
+    .from(schema.mcpIdempotencyKey)
+    .where(eq(schema.mcpIdempotencyKey.id, current.id))
+    .limit(1);
+
+  return { current: reloaded ?? current };
+}
+
+async function tryReclaimStalledSlot(
+  current: IdempotencyRow,
+  tool: string,
+  paramsHash: string,
+  now: Date,
+  expiresAt: Date,
+): Promise<{ readonly reclaimedSlotId?: string; readonly current: IdempotencyRow }> {
+  if (current.response !== null || now.getTime() - current.createdAt.getTime() <= 60_000) {
+    return { current };
+  }
+
+  const reclaimed = await db
+    .update(schema.mcpIdempotencyKey)
+    .set({ tool, paramsHash, response: null, createdAt: now, expiresAt })
+    .where(
+      and(
+        eq(schema.mcpIdempotencyKey.id, current.id),
+        eq(schema.mcpIdempotencyKey.createdAt, current.createdAt),
+        isNull(schema.mcpIdempotencyKey.response),
+      ),
+    )
+    .returning({ id: schema.mcpIdempotencyKey.id });
+
+  if (reclaimed.length > 0 && reclaimed[0] !== undefined) {
+    return { reclaimedSlotId: reclaimed[0].id, current };
+  }
+
+  const [reloaded] = await db
+    .select()
+    .from(schema.mcpIdempotencyKey)
+    .where(eq(schema.mcpIdempotencyKey.id, current.id))
+    .limit(1);
+
+  return { current: reloaded ?? current };
+}
+
 export async function claimIdempotencySlot(
   grantId: string,
   key: string,
@@ -71,63 +145,30 @@ export async function claimIdempotencySlot(
     return { status: 'claimed', slotId: newId() };
   }
 
-  if (existing.expiresAt <= now) {
-    const reclaimed = await db
-      .update(schema.mcpIdempotencyKey)
-      .set({
-        tool,
-        paramsHash,
-        response: null,
-        createdAt: now,
-        expiresAt,
-      })
-      .where(
-        and(
-          eq(schema.mcpIdempotencyKey.id, existing.id),
-          lte(schema.mcpIdempotencyKey.expiresAt, now),
-        ),
-      )
-      .returning({ id: schema.mcpIdempotencyKey.id });
-
-    if (reclaimed.length > 0 && reclaimed[0] !== undefined) {
-      return { status: 'claimed', slotId: reclaimed[0].id };
-    }
+  let current = existing;
+  const expiredOutcome = await tryReclaimExpiredSlot(current, tool, paramsHash, now, expiresAt);
+  if (expiredOutcome.reclaimedSlotId !== undefined) {
+    return { status: 'claimed', slotId: expiredOutcome.reclaimedSlotId };
   }
+  current = expiredOutcome.current;
 
-  if (existing.tool !== tool || existing.paramsHash !== paramsHash) {
+  if (current.tool !== tool || current.paramsHash !== paramsHash) {
     throw validationFailed('Idempotency key was previously used with different arguments.');
   }
 
-  if (existing.response === null) {
-    if (now.getTime() - existing.createdAt.getTime() > 60_000) {
-      const reclaimed = await db
-        .update(schema.mcpIdempotencyKey)
-        .set({
-          tool,
-          paramsHash,
-          response: null,
-          createdAt: now,
-          expiresAt,
-        })
-        .where(
-          and(
-            eq(schema.mcpIdempotencyKey.id, existing.id),
-            isNull(schema.mcpIdempotencyKey.response),
-          ),
-        )
-        .returning({ id: schema.mcpIdempotencyKey.id });
+  const stalledOutcome = await tryReclaimStalledSlot(current, tool, paramsHash, now, expiresAt);
+  if (stalledOutcome.reclaimedSlotId !== undefined) {
+    return { status: 'claimed', slotId: stalledOutcome.reclaimedSlotId };
+  }
+  current = stalledOutcome.current;
 
-      if (reclaimed.length > 0 && reclaimed[0] !== undefined) {
-        return { status: 'claimed', slotId: reclaimed[0].id };
-      }
-    }
-
+  if (current.response === null) {
     return { status: 'processing' };
   }
 
   return {
     status: 'done',
-    response: JSON.parse(existing.response) as Record<string, unknown>,
+    response: JSON.parse(current.response) as Record<string, unknown>,
   };
 }
 

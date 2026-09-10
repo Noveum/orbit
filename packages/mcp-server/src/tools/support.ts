@@ -103,10 +103,9 @@ async function runAndResolveSlot(
   toolName: string,
   execute: () => Promise<ToolPayload>,
 ): Promise<CallToolResult> {
+  let result: ToolPayload;
   try {
-    const result = await execute();
-    await resolveIdempotencySlot(slotId, { ok: true, payload: result });
-    return ok(result);
+    result = await execute();
   } catch (error) {
     const domain = asDomainError(error);
     const body =
@@ -116,6 +115,18 @@ async function runAndResolveSlot(
     await resolveIdempotencySlot(slotId, { ok: false, error: body }).catch(() => undefined);
     return failed(toolName, error);
   }
+
+  try {
+    await resolveIdempotencySlot(slotId, { ok: true, payload: result });
+  } catch (error) {
+    logger.error('failed to persist idempotency slot response', {
+      tool: toolName,
+      slotId,
+      ...errorFields(error),
+    });
+  }
+
+  return ok(result);
 }
 
 export function defineTool<Shape extends z.ZodRawShape>(
