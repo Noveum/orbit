@@ -14,36 +14,80 @@ import type { StorageDriver, StoredObject, UploadTarget } from '../../src/storag
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
 
 let resolvedPgDump: string | undefined;
+let discoveredContainerId: string | undefined;
 let temporaryShimDir: string | undefined;
 
-async function setupPgDump(): Promise<string | undefined> {
-  let hasHostPgDump = false;
+async function getServerMajorVersion(databaseUrl: string): Promise<number | undefined> {
+  try {
+    const sql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    try {
+      const [row] = await sql<{ major: number }[]>`
+        select current_setting('server_version_num')::int / 10000 as major
+      `;
+      return row?.major;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+function getHostPgDumpMajor(): number | undefined {
   try {
     const probe = Bun.spawnSync(['pg_dump', '--version']);
-    hasHostPgDump = probe.exitCode === 0;
+    if (probe.exitCode !== 0) return undefined;
+    const match = probe.stdout.toString().match(/\b(\d+)\./);
+    return match ? Number.parseInt(match[1] ?? '0', 10) : undefined;
   } catch {
-    hasHostPgDump = false;
+    return undefined;
   }
-  if (hasHostPgDump) return undefined;
+}
 
-  let hasDockerPgDump = false;
+function findPostgresContainer(): string | undefined {
   try {
-    const dockerProbe = Bun.spawnSync(['docker', 'exec', 'orbit-postgres', 'pg_dump', '--version']);
-    hasDockerPgDump = dockerProbe.exitCode === 0;
+    const res = Bun.spawnSync(['docker', 'ps', '--format', '{{.ID}} {{.Image}} {{.Names}}']);
+    if (res.exitCode !== 0) return undefined;
+    for (const line of res.stdout.toString().split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      const parts = trimmed.split(/\s+/);
+      const id = parts[0];
+      const image = parts[1] ?? '';
+      const name = parts[2] ?? '';
+      if (id !== undefined && (image.includes('postgres') || name.includes('postgres'))) {
+        const probe = Bun.spawnSync(['docker', 'exec', id, 'pg_dump', '--version']);
+        if (probe.exitCode === 0) {
+          return id;
+        }
+      }
+    }
   } catch {
-    hasDockerPgDump = false;
+    return undefined;
+  }
+  return undefined;
+}
+
+async function setupPgDump(databaseUrl: string): Promise<string | undefined> {
+  const serverMajor = await getServerMajorVersion(databaseUrl);
+  const hostMajor = getHostPgDumpMajor();
+  if (hostMajor !== undefined && (serverMajor === undefined || hostMajor >= serverMajor)) {
+    return undefined;
   }
 
-  if (hasDockerPgDump) {
+  const containerId = findPostgresContainer();
+  if (containerId !== undefined) {
+    discoveredContainerId = containerId;
     const shimDir = await mkdtemp(join(tmpdir(), 'orbit-pg-dump-shim-'));
     temporaryShimDir = shimDir;
+    const isWindows = process.platform === 'win32';
+    const shimExe = join(shimDir, isWindows ? 'pg_dump.exe' : 'pg_dump');
     const shimSource = join(shimDir, 'shim.ts');
-    const shimExe = join(shimDir, 'pg_dump.exe');
     await writeFile(
       shimSource,
       `import { spawn } from 'node:child_process';
-const args = process.argv.slice(2).map((a) => a.replace(':5434', ':5432'));
-const child = spawn('docker', ['exec', '-i', '-e', \`PGPASSWORD=\${process.env['PGPASSWORD'] ?? ''}\`, 'orbit-postgres', 'pg_dump', ...args], {
+const args = process.argv.slice(2).map((a) => a.replace(/:543[34]\\b/g, ':5432'));
+const child = spawn('docker', ['exec', '-i', '-e', \`PGPASSWORD=\${process.env['PGPASSWORD'] ?? ''}\`, '${containerId}', 'pg_dump', ...args], {
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 child.stdout.pipe(process.stdout);
@@ -78,11 +122,12 @@ async function inspectArchive(dumpPath: string): Promise<string> {
     return hostOutput;
   }
 
+  const containerTarget = discoveredContainerId ?? 'orbit-postgres';
   let dockerRestoreSuccess = false;
   let dockerOutput = '';
   try {
     const dockerRestore = Bun.spawnSync(
-      ['docker', 'exec', '-i', 'orbit-postgres', 'pg_restore', '-l'],
+      ['docker', 'exec', '-i', containerTarget, 'pg_restore', '-l'],
       { stdin: fileBytes },
     );
     if (dockerRestore.exitCode === 0) {
@@ -152,7 +197,8 @@ function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
 
 describe('createBackup', () => {
   beforeAll(async () => {
-    resolvedPgDump = await setupPgDump();
+    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    resolvedPgDump = await setupPgDump(databaseUrl);
   });
 
   afterAll(async () => {
