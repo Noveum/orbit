@@ -49,7 +49,7 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 | Variable | Notes |
 | --- | --- |
-| `CRON_SECRET` | Protects the scheduled sprint snapshot, operational pruning, and notification worker routes. Use a long random value in every deployed environment |
+| `CRON_SECRET` | Protects the scheduled sprint rollover, sprint snapshot, operational pruning, and notification worker routes. Use a long random value in every deployed environment |
 | `NOTIFICATION_PROVIDERS_PAUSED` | Set `true` to stop Slack and notification-email claims during migration or incident response. Defaults to false |
 | `NOTIFICATION_CONVERSATIONS_ENABLED` | Set `true` after conversation backfill and verification to select the grouped inbox. False or unset retains the legacy view |
 
@@ -59,6 +59,14 @@ worker runs every minute. Slack delivery additionally requires
 `SLACK_ENABLED=true`; notification email requires Resend configuration.
 Pausing providers preserves queued work and still allows GitHub reconciliation
 and snooze wakes. See [Inbox conversations](features/inbox.md) for rollout order.
+The sprint rollover route runs every minute. It closes expired sprints and moves
+unfinished committed tasks into the next scheduled sprint, creating a successor
+with the same duration if needed. Completed and canceled tasks retain their sprint;
+triage and backlog tasks return to the backlog, matching manual completion.
+Missed boundaries are processed oldest first, up to 100 completions per invocation.
+Repeated or overlapping invocations do not close a sprint twice. Task assignment
+menus and filters show current and future sprints, with the active one labeled
+Current sprint. Sprint history remains available from the Sprints page.
 The analytics route runs every six hours so every sprint-local
 calendar day is observed across timezone and daylight-saving changes. It records
 one row per active sprint and local day, then publishes the returned realtime
