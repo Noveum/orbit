@@ -25,6 +25,7 @@ import { messageOf } from '@/lib/query/fetcher.ts';
 import type { Cycle, Issue, Project } from '@/lib/query/schemas.ts';
 import { useDuplicateIssues } from '@/lib/query/use-duplicate-issues.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { sprintOptions } from '@/lib/sprint-options.ts';
 import { DuplicateSuggestions } from './duplicate-suggestions.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
 import {
@@ -141,9 +142,9 @@ function ScopePickers({
             label: cycles.length === 0 ? 'No sprints yet' : 'No sprint',
             icon: <RefreshCw className="size-3.5 text-muted" aria-hidden="true" />,
           },
-          ...cycles.map((cycle) => ({
+          ...sprintOptions(cycles).map((cycle) => ({
             id: cycle.id,
-            label: sprintLabel(cycle),
+            label: cycle.label,
             icon: <RefreshCw className="size-3.5 text-muted" aria-hidden="true" />,
           })),
         ]}

@@ -609,13 +609,17 @@ describe('listAnalyticsDrilldown', () => {
       name: 'Sprint 2',
       timezone: 'UTC',
       startsAt: new Date('2026-08-01T00:00:00.000Z'),
-      endsAt: new Date('2026-08-08T00:00:00.000Z'),
+      endsAt: new Date(Date.now() + 86_400_000),
     });
     const inSprint = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
       title: 'In sprint',
       cycleId,
     });
+    await db
+      .update(schema.cycle)
+      .set({ endsAt: new Date('2026-08-08T00:00:00.000Z') })
+      .where(eq(schema.cycle.id, cycleId));
     await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'No sprint' });
 
     const sprintPage = await listAnalyticsDrilldown(

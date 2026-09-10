@@ -11,7 +11,6 @@ import {
   RELATION_FILTER_VALUES,
   UNSET_FILTER_VALUE,
 } from '@orbit/shared/filters';
-import { sprintLabel } from '@orbit/shared/utils';
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarCheck,
@@ -43,6 +42,7 @@ import {
   type WorkspaceData,
 } from '@/features/issues/workspace-provider.tsx';
 import type { FacetProperty, IssueFacets } from '@/lib/query/schemas.ts';
+import { sprintOptions } from '@/lib/sprint-options.ts';
 import { PRIORITY_ORDER } from './grouping.ts';
 
 export interface FilterOption {
@@ -247,9 +247,9 @@ export function buildFilterFields(
       property: 'cycle',
       input: 'values',
       options: [
-        ...cycles.map((cycle) => ({
+        ...sprintOptions(cycles).map((cycle) => ({
           value: cycle.id,
-          label: sprintLabel(cycle),
+          label: cycle.label,
           icon: glyph(RefreshCcw),
         })),
         unsetOption('No sprint'),
