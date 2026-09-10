@@ -17,6 +17,7 @@ import { useHotkey } from '@/lib/keyboard/index.ts';
 import type { Cycle, Issue, Milestone, Project } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useMilestones } from '@/lib/query/use-milestones.ts';
+import { sprintOptions } from '@/lib/sprint-options.ts';
 import { DueDateField } from './due-date-field.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
 import { useIssueDeletion } from './issue-deletion.tsx';
@@ -453,10 +454,7 @@ function SprintProperty({
           title="Sprint"
           open={open}
           onOpenChange={onOpenChange}
-          options={[
-            { id: 'none', label: 'No sprint' },
-            ...cycles.map((entry) => ({ id: entry.id, label: sprintLabel(entry) })),
-          ]}
+          options={[{ id: 'none', label: 'No sprint' }, ...sprintOptions(cycles)]}
           selected={cycle === undefined ? ['none'] : [cycle.id]}
           onSelect={(value) => onSelect(value === 'none' ? null : value)}
         >
