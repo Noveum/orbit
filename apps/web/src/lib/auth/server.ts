@@ -19,6 +19,7 @@ import { emailOTP, mcp, organization } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
+import { deploymentAuthOptions } from './deployment.ts';
 import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 
@@ -179,9 +180,11 @@ function signInCodeIdempotencyKey(email: string, otp: string): string {
   return `sign-in-code:${digest}`;
 }
 
+const deployment = deploymentAuthOptions();
+
 export const auth = betterAuth({
   appName: 'Orbit',
-  baseURL: serverEnv().BETTER_AUTH_URL,
+  baseURL: deployment.baseURL,
   secret: serverEnv().BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: emailAndPassword(),
@@ -247,6 +250,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    ...deployment.plugins,
     mcpTokenRateLimitProbe(),
     passkey({ rpName: 'Orbit' }),
     emailOTP({
