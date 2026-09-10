@@ -6,6 +6,7 @@ import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 const requestPasswordReset = mock();
 const sendVerificationOtp = mock();
 const signInEmailOtp = mock();
+const signInSocial = mock();
 const toast = mock();
 const originalLocation = window.location;
 const assign = mock();
@@ -14,7 +15,7 @@ await restoreModulesAfterThisFile(['@/components/ui/toast.tsx']);
 
 Object.defineProperty(window, 'location', {
   configurable: true,
-  value: { ...window.location, assign },
+  value: { ...window.location, origin: 'https://orbit-abc123-magicapi.vercel.app', assign },
 });
 
 mock.module('@/lib/auth/client.ts', () => ({
@@ -24,6 +25,7 @@ mock.module('@/lib/auth/client.ts', () => ({
       sendVerificationOtp: (...args: unknown[]) => sendVerificationOtp(...args),
     },
     signIn: {
+      social: (...args: unknown[]) => signInSocial(...args),
       emailOtp: (...args: unknown[]) => signInEmailOtp(...args),
     },
   },
@@ -39,6 +41,7 @@ beforeEach(() => {
   requestPasswordReset.mockReset();
   sendVerificationOtp.mockReset();
   signInEmailOtp.mockReset();
+  signInSocial.mockReset();
   toast.mockReset();
   assign.mockReset();
 });
@@ -54,6 +57,18 @@ function renderForm(passwordEnabled: boolean, openSignUp = false) {
 const SIGN_UP_NOTE = 'New here? Signing in creates your account, then you set up a workspace.';
 
 describe('LoginForm', () => {
+  it('returns social login failures to the current preview', async () => {
+    signInSocial.mockResolvedValue({ error: null });
+    render(<LoginForm providers={['google']} passwordEnabled={false} />);
+    await userEvent.setup().click(screen.getByText('Continue with Google'));
+    expect(signInSocial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'google',
+        errorCallbackURL: 'https://orbit-abc123-magicapi.vercel.app/login',
+      }),
+    );
+  });
+
   it('renders no password field while password auth is off', () => {
     renderForm(false);
     expect(screen.queryByLabelText('Password')).toBeNull();
