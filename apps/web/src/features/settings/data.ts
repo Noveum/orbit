@@ -24,6 +24,7 @@ export interface MemberView {
   readonly email: string;
   readonly image: string | null;
   readonly role: OrgRole;
+  readonly isAgent?: boolean;
   readonly joinedAt: string;
   readonly teams: TeamBadge[];
 }
@@ -78,6 +79,7 @@ export async function listMemberViews(principal: Principal): Promise<MemberView[
     email: user.email,
     image: user.image,
     role: toOrgRole(member.role),
+    isAgent: member.isAgent,
     joinedAt: member.createdAt.toISOString(),
     teams: byUser.get(user.id) ?? [],
   }));

@@ -2,9 +2,17 @@
 
 import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
-import { SearchX } from 'lucide-react';
+import { Bot, ChevronDown, SearchX } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button.tsx';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { FilterBar } from '@/features/filters/filter-bar.tsx';
@@ -25,14 +33,19 @@ import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { summarySearch } from '@/lib/query/issue-search.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useAllIssues, useIssueSummary } from '@/lib/query/use-issues.ts';
-import { PersonTiles, UNASSIGNED } from './person-tiles.tsx';
+import { MemberPicker } from './member-picker.tsx';
+import { UNASSIGNED } from './person-tiles.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
-const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
+const WORK_TYPES = { all: 'All work', reviewing: 'To review', assigned: 'Assigned' } as const;
+type WorkType = keyof typeof WORK_TYPES;
+function workTypeOf(value: string | null): WorkType {
+  return value === 'reviewing' || value === 'assigned' ? value : 'all';
+}
 
 export const PERSON_PARAM = 'person';
 
-const CARRIED_PARAMS: readonly string[] = [PERSON_PARAM];
+const CARRIED_PARAMS: readonly string[] = [PERSON_PARAM, 'workType', 'aiOnly'];
 
 export function standupBoardOptions(role: OrgRole, groupBy: GroupByField, orderBy: IssueOrdering) {
   return {
@@ -50,6 +63,20 @@ export function StandupBoard() {
   const controls = useProvideViewControls('standup', 'board', config);
 
   const [chosen, setChosen] = useState<string | null>(() => searchParams.get(PERSON_PARAM));
+
+  const [workType, setWorkType] = useState<WorkType>(() =>
+    workTypeOf(searchParams.get('workType')),
+  );
+  const [aiOnly, setAiOnly] = useState(() => searchParams.get('aiOnly') === 'true');
+
+  const urlPerson = searchParams.get(PERSON_PARAM);
+  const urlWorkType = searchParams.get('workType');
+  const urlAiOnly = searchParams.get('aiOnly');
+  useEffect(() => {
+    setChosen(urlPerson);
+    setWorkType(workTypeOf(urlWorkType));
+    setAiOnly(urlAiOnly === 'true');
+  }, [urlPerson, urlWorkType, urlAiOnly]);
 
   const known =
     chosen === null ||
@@ -73,19 +100,32 @@ export function StandupBoard() {
     [pathname],
   );
 
+  function selectFilter(key: 'workType' | 'aiOnly', value: string) {
+    if (key === 'workType') setWorkType(workTypeOf(value));
+    else setAiOnly(value === 'true');
+    const params = new URLSearchParams(window.location.search);
+    if (value === 'all' || value === 'false') params.delete(key);
+    else params.set(key, value);
+    window.history.replaceState(null, '', `${pathname}${params.size ? `?${params}` : ''}`);
+  }
+
   const query = useMemo(
     () => ({ filter: config.filter, orderBy: config.orderBy }),
     [config.filter, config.orderBy],
   );
 
-  const scope = useMemo(
-    () => (selectedId === null ? WHOLE_WORKSPACE : { participantId: selectedId }),
-    [selectedId],
+  const rosterScope = useMemo<Readonly<Record<string, string>>>(
+    () => ({ workType, aiOnly: String(aiOnly) }),
+    [workType, aiOnly],
+  );
+  const scope = useMemo<Readonly<Record<string, string>>>(
+    () => ({ ...rosterScope, ...(selectedId === null ? {} : { participantId: selectedId }) }),
+    [selectedId, rosterScope],
   );
 
   const active = useAllIssues(query, scope, workspace.ready);
   const roster = useIssueSummary(
-    summarySearch(null, query, 'participant', WHOLE_WORKSPACE),
+    summarySearch(null, query, 'participant', rosterScope),
     workspace.ready,
   );
 
@@ -101,7 +141,7 @@ export function StandupBoard() {
     scope,
   });
   const boardVisibility = useBoardVisibilityHold(
-    JSON.stringify([selectedId, boardVisibilityConfig(config), workspace.role]),
+    JSON.stringify([selectedId, workType, aiOnly, boardVisibilityConfig(config), workspace.role]),
     model.shownCount === 0,
   );
 
@@ -132,9 +172,44 @@ export function StandupBoard() {
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
           {model.total}
         </span>
-        <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
-          <PersonTiles
+        <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant={aiOnly ? 'primary' : 'secondary'}
+            aria-pressed={aiOnly}
+            onClick={() => selectFilter('aiOnly', String(!aiOnly))}
+            title="Tasks with AI agent involvement, including creation, assignment, reviews, comments, reactions, and activity"
+          >
+            <Bot className="size-3.5" aria-hidden="true" />
+            AI only
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={`Work type: ${WORK_TYPES[workType]}`}
+              >
+                {WORK_TYPES[workType]}
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuRadioGroup
+                value={workType}
+                onValueChange={(value) => selectFilter('workType', value)}
+              >
+                {Object.entries(WORK_TYPES).map(([value, label]) => (
+                  <DropdownMenuRadioItem key={value} value={value}>
+                    {label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <MemberPicker
             members={members}
+            currentUserId={workspace.userId}
             selectedId={selectedId}
             counts={counts}
             onSelect={selectPerson}

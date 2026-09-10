@@ -78,6 +78,9 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
               Role
             </th>
             <th scope="col" className="px-3 py-2 text-left font-medium">
+              Member type
+            </th>
+            <th scope="col" className="px-3 py-2 text-left font-medium">
               Teams
             </th>
             <th scope="col" className="px-3 py-2 text-left font-medium">
@@ -140,6 +143,31 @@ export function MembersTable({ members, canManage }: MembersTableProps) {
                     {errors[member.memberId]}
                   </p>
                 )}
+              </td>
+              <td data-label="Member type" className="px-3 py-2 align-top">
+                <Select
+                  value={member.isAgent ? 'agent' : 'human'}
+                  disabled={!canManage || busyId === member.memberId}
+                  onValueChange={(value) =>
+                    run(member.memberId, () =>
+                      apiRequest(`/api/members/${member.memberId}`, {
+                        method: 'PATCH',
+                        body: { isAgent: value === 'agent' },
+                      }),
+                    )
+                  }
+                >
+                  <SelectTrigger
+                    className="h-7 w-36 text-xs"
+                    aria-label={`Member type for ${member.name}`}
+                  >
+                    <SelectValue>{member.isAgent ? 'AI agent' : 'Human'}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="human">Human</SelectItem>
+                    <SelectItem value="agent">AI agent</SelectItem>
+                  </SelectContent>
+                </Select>
               </td>
               <td data-label="Teams" className="px-3 py-2 align-top">
                 <span className="flex flex-wrap gap-1">

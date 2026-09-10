@@ -139,6 +139,15 @@ Shortcuts do not fire while you are typing in a text field, unless they were
 explicitly registered to. <kbd>Esc</kbd> and <kbd>Cmd</kbd> <kbd>K</kbd> still
 work in an input, because you always need a way out.
 
+## Standup member switching
+
+| Shortcut | Action |
+| --- | --- |
+| Option + Tab | Next member |
+| Option + Shift + Tab | Previous member |
+
+Hold Option to keep the member dropdown open while switching. Release Option to close it and keep the current selection. On keyboards that label the modifier Alt, use Alt. The operating system may reserve Alt+Tab; the member dropdown remains available by mouse and ordinary keyboard navigation.
+
 ## Adding one
 
 Shortcuts are registered with the `useHotkey` hook, and being in the registry is

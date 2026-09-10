@@ -75,6 +75,7 @@ export const teamSchema = z.object({
 export type Team = z.infer<typeof teamSchema>;
 
 export const memberSchema = z.object({
+  isAgent: z.boolean().optional(),
   id: z.string(),
   name: z.string(),
   email: z.string(),

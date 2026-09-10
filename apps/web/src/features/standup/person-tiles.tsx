@@ -11,13 +11,14 @@ export const UNASSIGNED = UNSET_FILTER_VALUE;
 
 export interface PersonTilesProps {
   readonly members: readonly Member[];
+  readonly currentUserId?: string | null;
   readonly selectedId: string | null;
   readonly counts: Readonly<Record<string, number>> | null;
   readonly onSelect: (userId: string | null) => void;
 }
 
 const tile =
-  'flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
+  'flex h-7 w-full shrink-0 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
 
 const UNKNOWN_COUNT = '?';
 
@@ -30,15 +31,18 @@ function tileTone(selected: boolean, count: number | null): string {
   return count === 0 ? emptyTile : idleTile;
 }
 
-export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTilesProps) {
+export function PersonTiles({
+  members,
+  selectedId,
+  counts,
+  onSelect,
+  currentUserId,
+}: PersonTilesProps) {
   const countOf = (key: string): number | null => (counts === null ? null : (counts[key] ?? 0));
   const unassigned = countOf(UNASSIGNED);
 
   return (
-    <div
-      data-testid="standup-tiles"
-      className="flex min-w-0 flex-wrap items-center justify-end gap-1.5"
-    >
+    <div data-testid="standup-tiles" className="flex min-w-0 flex-col gap-0.5">
       <button
         type="button"
         data-testid="standup-tile-everyone"
@@ -47,7 +51,7 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
         className={cn(tile, selectedId === null ? selectedTile : idleTile)}
       >
         <Users className="size-3.5" aria-hidden="true" />
-        Everyone
+        All Members
       </button>
       {members.map((member) => {
         const selected = member.id === selectedId;
@@ -63,12 +67,16 @@ export function PersonTiles({ members, selectedId, counts, onSelect }: PersonTil
             className={cn(tile, tileTone(selected, count))}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
-            <span className="max-w-28 truncate">{member.name}</span>
+            <span className="max-w-48 truncate">
+              {member.name}
+              {member.id === currentUserId ? ' (You)' : ''}
+            </span>
+            {member.isAgent ? <span className="text-faint">AI</span> : null}
             <TileCount tileId={member.id} count={count} />
           </button>
         );
       })}
-      {unassigned === null || unassigned > 0 ? (
+      {selectedId === UNASSIGNED || unassigned === null || unassigned > 0 ? (
         <button
           type="button"
           data-testid={`standup-tile-${UNASSIGNED}`}
@@ -97,7 +105,7 @@ function TileCount({ tileId, count }: TileCountProps) {
       data-numeric
       data-testid={`standup-tile-count-${tileId}`}
       title={count === null ? 'Workload counts are unavailable' : undefined}
-      className="text-faint"
+      className="ml-auto text-faint"
     >
       {count ?? UNKNOWN_COUNT}
     </span>

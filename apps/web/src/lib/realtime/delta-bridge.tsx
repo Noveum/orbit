@@ -101,6 +101,7 @@ function noop(): undefined {
 
 interface RootInvalidations {
   analytics: boolean;
+  agentWork: boolean;
   counts: boolean;
   boards: boolean;
   issueCaches: boolean;
@@ -648,6 +649,15 @@ function routeAction(
 }
 
 function flushRoots(client: QueryClient, roots: RootInvalidations): void {
+  if (roots.agentWork)
+    client
+      .invalidateQueries({
+        predicate: (query) => {
+          const search = query.queryKey.at(-1);
+          return typeof search === 'string' && new URLSearchParams(search).get('aiOnly') === 'true';
+        },
+      })
+      .catch(noop);
   if (roots.analytics) client.invalidateQueries({ queryKey: [ANALYTICS_ROOT] }).catch(noop);
   if (roots.counts) {
     client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
@@ -847,6 +857,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       const finalIssueActions = finalSurvivingIssueActions(actions, tabClientId);
       const roots: RootInvalidations = {
         analytics: false,
+        agentWork: false,
         counts: false,
         boards: false,
         issueCaches: false,
@@ -859,6 +870,8 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       };
 
       for (const action of actions) {
+        if (['issue', 'member', 'comment', 'reaction'].includes(action.model))
+          roots.agentWork = true;
         if (ANALYTICS_MODELS.has(action.model)) roots.analytics = true;
         if (action.model === 'issue') {
           roots.counts = true;
