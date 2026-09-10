@@ -55,9 +55,10 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
       });
 
       const driver =
-        options.env === undefined
+        options.storageDriver ??
+        (options.env === undefined
           ? storageDriver()
-          : createStorageDriver(options.env as NodeJS.ProcessEnv);
+          : createStorageDriver(options.env as NodeJS.ProcessEnv));
       storageResult = await captureStorageObjects({
         records: snapshot.records,
         outputObjectsDir: join(workingDir, 'objects'),

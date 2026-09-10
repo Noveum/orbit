@@ -1,4 +1,5 @@
 import type { BackupManifest } from '@orbit/shared';
+import type { StorageDriver } from '../storage/types.ts';
 
 export interface BackupCreateOptions {
   readonly destinationDir: string;
@@ -10,6 +11,7 @@ export interface BackupCreateOptions {
   readonly pgDumpPath?: string | undefined;
   readonly customMetadata?: Record<string, string> | undefined;
   readonly env?: Record<string, string | undefined> | undefined;
+  readonly storageDriver?: StorageDriver | undefined;
 }
 
 export interface BackupCreateResult {

@@ -102,11 +102,14 @@ export async function openCoordinatedSnapshot(url: string): Promise<DatabaseSnap
     throw internal('Failed to export PostgreSQL snapshot for backup coordination.');
   }
 
+  let released = false;
   return {
     snapshotId,
     records,
     counts,
     async release() {
+      if (released) return;
+      released = true;
       if (closeTransaction !== undefined) {
         closeTransaction();
       }

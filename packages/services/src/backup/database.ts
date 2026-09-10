@@ -95,37 +95,60 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
       hash.update(chunk);
     });
 
+    let settled = false;
+    let exitCode: number | null = null;
+    let streamFinished = false;
+
+    const settleReject = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
+    const settleResolve = (val: DatabaseDumpResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+
+    const checkComplete = () => {
+      if (settled || exitCode === null || !streamFinished) return;
+      if (exitCode === 0) {
+        settleResolve({
+          file: 'database.dump',
+          sha256: hash.digest('hex'),
+          bytes: byteCount,
+          databaseVersion,
+          migrationLedger: ledger,
+          counts,
+        });
+      } else {
+        settleReject(
+          internal(`pg_dump exited with nonzero status code ${exitCode}: ${stderrText.trim()}`),
+        );
+      }
+    };
+
+    fileStream.on('finish', () => {
+      streamFinished = true;
+      checkComplete();
+    });
+
     fileStream.on('error', (err) => {
       child.stdout?.unpipe(fileStream);
       child.stdout?.destroy();
       child.kill('SIGTERM');
-      reject(err);
+      settleReject(err);
     });
 
     child.on('error', (err) => {
       fileStream.destroy();
-      reject(internal(`Failed to spawn "${binary}": ${err.message}`, err));
+      settleReject(internal(`Failed to spawn "${binary}": ${err.message}`, err));
     });
 
     child.on('close', (code) => {
-      fileStream.end(() => {
-        if (code === 0) {
-          resolve({
-            file: 'database.dump',
-            sha256: hash.digest('hex'),
-            bytes: byteCount,
-            databaseVersion,
-            migrationLedger: ledger,
-            counts,
-          });
-        } else {
-          reject(
-            internal(
-              `pg_dump exited with nonzero status code ${code ?? 'unknown'}: ${stderrText.trim()}`,
-            ),
-          );
-        }
-      });
+      exitCode = code ?? -1;
+      checkComplete();
     });
 
     child.stdout.pipe(fileStream);

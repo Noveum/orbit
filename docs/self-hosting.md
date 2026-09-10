@@ -271,12 +271,76 @@ labelled `breaking change` and follow the upgrade notes in the associated releas
 
 ### Backups
 
-Back up Postgres. That is where everything lives except uploaded files, which
-are in the bucket. Redis holds no durable state, so losing it costs you nothing
-except a reconnect.
+Back up Postgres and object storage together. Orbit ships a coordinated backup
+CLI (`bun run backup:create`) that exports a single repeatable-read PostgreSQL
+snapshot, runs `pg_dump` against it, and downloads all referenced attachment
+objects into an atomic backup archive.
 
-Supabase and Neon both take automatic backups. If you run your own Postgres,
-`pg_dump` on a schedule, and restore it somewhere once so you know it works.
+```bash
+# Capture a backup into ./backups
+bun run backup:create --destination ./backups
+
+# Pass a direct database connection explicitly
+DIRECT_URL="postgres://user:pass@host:5432/orbit" bun run backup:create -d ./backups
+
+# Machine-readable output for cron or orchestrators
+bun run backup:create --json --destination /var/backups/orbit
+```
+
+#### CLI flags and environment variables
+
+| Flag | Env variable | Default | Description |
+| --- | --- | --- | --- |
+| `--destination`, `-d` | `ORBIT_BACKUP_DESTINATION` | `./backups` | Target directory where the backup folder is published |
+| `--database-url` | `DIRECT_URL`, `DATABASE_URL` | none | Direct connection string to PostgreSQL |
+| `--pg-dump-path` | `PG_DUMP_PATH` | `pg_dump` | Path to the local `pg_dump` binary |
+| `--orbit-version` | `ORBIT_VERSION` | `0.1.0` | Orbit version string stamped into `manifest.json` |
+| `--source-revision` | `SOURCE_REVISION`, `VERCEL_GIT_COMMIT_SHA` | `unknown` | Git commit SHA stamped into `manifest.json` |
+| `--json` | none | `false` | Emit JSON status on stdout and stderr |
+
+#### Prerequisites
+
+1. **`pg_dump` installed locally:** The backup runner invokes `pg_dump` directly.
+   Its version must match or exceed the version of the PostgreSQL server being
+   backed up. Configure `PG_DUMP_PATH` or `--pg-dump-path` if `pg_dump` is not in
+   `PATH`.
+2. **Direct database connection:** `DIRECT_URL` must point directly to PostgreSQL,
+   not through a transaction-mode connection pooler such as PgBouncer or Supabase's
+   transaction pooler (port 6543). The coordinated snapshot requires
+   `pg_export_snapshot()`, which requires an open transaction session.
+3. **Object storage credentials:** Storage environment variables (`S3_BUCKET`,
+   `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, etc.) must be
+   accessible to the command so it can download attachment files.
+
+#### Output structure and atomicity
+
+Each backup creates an isolated directory named `orbit-backup-<timestamp>-<hash>/`:
+
+```
+orbit-backup-2026-09-10T19-36-31-839Z-68a1dddb/
+├── manifest.json      # Schema ledger, checksums, counts, safe config allowlist
+├── database.dump      # pg_dump custom format (-Fc) archive
+└── objects/           # Captured attachments keyed by storage key
+    └── org_xxx/issue/att_yyy/file.png
+```
+
+Backups write to a temporary `.tmp` directory first. If `pg_dump`, preflight
+validation, or object capture fails, the working directory is renamed to
+`.incomplete` and the command exits with code 1. Only a fully verified backup
+is published to its final path.
+
+#### Backup limitations
+
+- **Unencrypted at rest:** Archive files and dumps are written with restricted
+  file modes (`0o600`), but payloads are unencrypted. Encrypt the backup
+  directory at the filesystem or bucket level if storing backups in cloud cold
+  storage.
+- **Online object capture:** The database snapshot guarantees consistent relational
+  state, and object storage capture fetches all attachments present when the
+  snapshot began. If external tooling deletes an object from storage while Orbit
+  is running, the backup fails rather than publishing a partial archive.
+- **Local scratch disk space:** The destination directory must have enough disk
+  capacity to hold the uncompressed PostgreSQL dump and all attachment objects.
 
 ### Scaling
 
