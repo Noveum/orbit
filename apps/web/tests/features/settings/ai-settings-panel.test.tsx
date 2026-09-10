@@ -14,13 +14,28 @@ const INITIAL_SETTINGS: AiSettingsData = {
   enabled: true,
   kind: 'anthropic',
   baseUrl: 'https://api.anthropic.com',
-  model: 'claude-3-5-sonnet-20241022',
+  model: 'claude-sonnet-5',
   hasApiKey: true,
   usage: {
     totalCalls: 42,
     promptTokens: 1000,
     completionTokens: 500,
     totalTokens: 1500,
+  },
+};
+
+const UNCONFIGURED_SETTINGS: AiSettingsData = {
+  configured: false,
+  enabled: false,
+  kind: null,
+  baseUrl: null,
+  model: null,
+  hasApiKey: false,
+  usage: {
+    totalCalls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
   },
 };
 
@@ -49,6 +64,31 @@ afterEach(() => {
 });
 
 describe('AiSettingsPanel', () => {
+  it('updates base URL and model defaults when switching provider shape', async () => {
+    const user = userEvent.setup();
+    render(<AiSettingsPanel settings={UNCONFIGURED_SETTINGS} canManage={true} />);
+
+    expect((screen.getByLabelText('Provider shape') as HTMLSelectElement).value).toBe(
+      'openai-compatible',
+    );
+    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe(
+      'https://api.openai.com/v1',
+    );
+    expect((screen.getByLabelText('Model identifier') as HTMLInputElement).value).toBe(
+      'gpt-4o-mini',
+    );
+
+    await user.selectOptions(screen.getByLabelText('Provider shape'), 'anthropic');
+
+    expect((screen.getByLabelText('Provider shape') as HTMLSelectElement).value).toBe('anthropic');
+    expect((screen.getByLabelText('Base URL') as HTMLInputElement).value).toBe(
+      'https://api.anthropic.com',
+    );
+    expect((screen.getByLabelText('Model identifier') as HTMLInputElement).value).toBe(
+      'claude-sonnet-5',
+    );
+  });
+
   it('handles malformed test connection response schema by showing error fallback', async () => {
     const user = userEvent.setup();
     fetchResponder = () =>
@@ -91,7 +131,7 @@ describe('AiSettingsPanel', () => {
       'https://api.anthropic.com',
     );
     expect((screen.getByLabelText('Model identifier') as HTMLInputElement).value).toBe(
-      'claude-3-5-sonnet-20241022',
+      'claude-sonnet-5',
     );
     expect((screen.getByLabelText(/Enable AI capabilities/) as HTMLInputElement).checked).toBe(
       true,
