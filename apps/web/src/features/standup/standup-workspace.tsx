@@ -1,20 +1,14 @@
 'use client';
 
+import { standupMetadataSchema } from '@orbit/shared/validators';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { z } from 'zod';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import { useWorkspace, WorkspaceDataProvider } from '@/features/issues/workspace-provider.tsx';
 import { apiFetch } from '@/lib/query/fetcher.ts';
-import { projectSchema, workflowStateSchema } from '@/lib/query/schemas.ts';
 import { useBootstrap } from '@/lib/query/use-issues.ts';
 import { StandupBoard } from './standup-board.tsx';
-
-const metadataSchema = z.object({
-  states: z.array(workflowStateSchema),
-  projects: z.array(projectSchema),
-});
 
 export function StandupWorkspace() {
   const workspace = useWorkspace();
@@ -23,7 +17,7 @@ export function StandupWorkspace() {
     queryKey: ['standup-metadata', bootstrap.data?.organizationId, workspace.userId],
     enabled: workspace.ready,
     queryFn: async ({ signal }) =>
-      await apiFetch('/api/standup/metadata', metadataSchema, { signal }),
+      await apiFetch('/api/standup/metadata', standupMetadataSchema, { signal }),
     refetchInterval: 30_000,
   });
   const value = useMemo(
