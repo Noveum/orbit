@@ -42,12 +42,23 @@ function socialSignIn(origin: string, provider: string, callbackURL = '/inbox') 
     new nativeFetchGlobals.Request(`${origin}/api/auth/sign-in/social`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin, cookie: 'existing=1' },
-      body: JSON.stringify({ provider, callbackURL }),
+      body: JSON.stringify({ provider, callbackURL, errorCallbackURL: `${origin}/login` }),
     }),
   );
 }
 
 describe('deployment authentication', () => {
+  it('returns provider cancellation to the preview login page', async () => {
+    const response = await socialSignIn(preview, 'google');
+    const authorization = new URL((await response.json()).url);
+    const callback = new URL(`${canonical}/api/auth/callback/google`);
+    callback.searchParams.set('state', authorization.searchParams.get('state') ?? '');
+    callback.searchParams.set('error', 'access_denied');
+    const cancelled = await createAuth().handler(new nativeFetchGlobals.Request(callback));
+    expect(cancelled.status).toBe(302);
+    expect(cancelled.headers.get('location')).toBe(`${preview}/login?error=access_denied`);
+  });
+
   it('creates a session on the preview after the production callback and rejects replay', async () => {
     const previewAuth = createAuth();
     const productionAuth = createAuth('production-session-secret-different-from-preview');
