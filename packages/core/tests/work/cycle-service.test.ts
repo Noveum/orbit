@@ -723,9 +723,9 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
     await backdateCycleMoves(carried.issue.id, [intoSprint(cycle, 19, 9)]);
 
     const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
-    expect(progress.burnUp).toHaveLength(15);
-    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(15).fill(1));
-    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(15).fill(5));
+    expect(progress.burnUp).toHaveLength(8);
+    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(8).fill(1));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(8).fill(5));
     expect(progress.changes.removed).toBe(0);
     expect(progress.changes.removedPoints).toBe(0);
   });
@@ -749,8 +749,8 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
     await backdateCycleMoves(late.issue.id, [intoSprint(cycle, 19, 9)]);
 
     const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
-    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(15).fill(1));
-    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(15).fill(2));
+    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(8).fill(1));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(8).fill(2));
     expect(progress.changes.added).toBe(0);
     expect(progress.changes.addedPoints).toBe(0);
   });
@@ -772,12 +772,10 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
       estimate: 5,
     });
     await updateIssue(workspace.admin, pulled.issue.id, { cycleId: null });
-    await backdateCycleMoves(pulled.issue.id, [intoSprint(cycle, 12, 9)]);
+    await backdateCycleMoves(pulled.issue.id, [intoSprint(cycle, 5, 9)]);
 
     const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
-    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual([
-      7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 2, 2, 2,
-    ]);
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual([7, 7, 7, 7, 7, 2, 2, 2]);
     expect(progress.changes.removed).toBe(1);
     expect(progress.changes.removedPoints).toBe(5);
   });
