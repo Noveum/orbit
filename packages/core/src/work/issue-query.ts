@@ -43,8 +43,28 @@ function visibilityFilters(principal: Principal, visibility: IssueVisibility): S
   return visibleTeamFilters(principal);
 }
 
-function participantFilters(participantId: string | undefined): SQL[] {
-  if (participantId === undefined) return [];
+function participantFilters(
+  participantId: string | undefined,
+  workType: IssueFilterInput['workType'],
+): SQL[] {
+  if (participantId === undefined) {
+    if (workType === 'assigned') return [sql`${schema.issue.assigneeId} is not null`];
+    if (workType === 'reviewing')
+      return [
+        sql`exists (select 1 from ${schema.issueReviewer} where ${schema.issueReviewer.issueId} = ${schema.issue.id})`,
+      ];
+    return [];
+  }
+  if (workType === 'reviewing')
+    return [
+      sql`exists (select 1 from ${schema.issueReviewer} where ${schema.issueReviewer.issueId} = ${schema.issue.id} and ${schema.issueReviewer.userId} = ${participantId})`,
+    ];
+  if (workType === 'assigned')
+    return [
+      participantId === UNSET_FILTER_VALUE
+        ? isNull(schema.issue.assigneeId)
+        : eq(schema.issue.assigneeId, participantId),
+    ];
   if (participantId === UNSET_FILTER_VALUE) return [isNull(schema.issue.assigneeId)];
   return [
     or(
@@ -55,6 +75,25 @@ function participantFilters(participantId: string | undefined): SQL[] {
           and ${schema.issueReviewer.userId} = ${participantId}
       )`,
     ) ?? sql`false`,
+  ];
+}
+
+function agentFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
+  if (!filter.aiOnly) return [];
+  return [
+    sql`exists (
+    select 1 from ${schema.member}
+    where ${schema.member.organizationId} = ${principal.organizationId}
+      and ${schema.member.isAgent} = true
+      and (
+        ${schema.member.userId} = ${schema.issue.creatorId}
+        or ${schema.member.userId} = ${schema.issue.assigneeId}
+        or exists (select 1 from ${schema.issueReviewer} where ${schema.issueReviewer.issueId} = ${schema.issue.id} and ${schema.issueReviewer.userId} = ${schema.member.userId})
+        or exists (select 1 from ${schema.comment} where ${schema.comment.issueId} = ${schema.issue.id} and ${schema.comment.authorId} = ${schema.member.userId} and ${schema.comment.deletedAt} is null)
+        or exists (select 1 from ${schema.issueActivity} where ${schema.issueActivity.issueId} = ${schema.issue.id} and ${schema.issueActivity.actorId} = ${schema.member.userId} and ${schema.issueActivity.actorType} = 'user')
+        or exists (select 1 from ${schema.reaction} where ${schema.reaction.userId} = ${schema.member.userId} and (${schema.reaction.issueId} = ${schema.issue.id} or ${schema.reaction.commentId} in (select ${schema.comment.id} from ${schema.comment} where ${schema.comment.issueId} = ${schema.issue.id} and ${schema.comment.deletedAt} is null)))
+      )
+  )`,
   ];
 }
 
@@ -73,7 +112,8 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
         : eq(schema.issue.assigneeId, filter.assigneeId),
     );
   }
-  filters.push(...participantFilters(filter.participantId));
+  filters.push(...participantFilters(filter.participantId, filter.workType));
+  filters.push(...agentFilters(principal, filter));
   if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
   if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));
   if (filter.stateCategory !== undefined) {

@@ -329,3 +329,27 @@ describe('removeMember kills the session', () => {
     expect(sessions).toHaveLength(1);
   });
 });
+
+describe('member agent classification', () => {
+  it('changes agent classification without demoting the last admin and publishes it', async () => {
+    const memberId = await memberIdFor(workspace.admin.userId);
+    const result = await updateMemberRole(workspace.admin, memberId, { isAgent: true });
+    expect(result.member.isAgent).toBe(true);
+    expect(result.member.role).toBe('admin');
+    expect(result.actions.find((action) => action.model === 'member')?.data['isAgent']).toBe(true);
+    const reverted = await updateMemberRole(workspace.admin, memberId, { isAgent: false });
+    expect(reverted.member.isAgent).toBe(false);
+  });
+
+  it('refuses classification by non-admins and across workspaces', async () => {
+    const member = await addMember(workspace, 'member');
+    const memberId = await memberIdFor(member.user.id);
+    await expect(
+      updateMemberRole(member.principal, memberId, { isAgent: true }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    const other = await createWorkspace('Other');
+    await expect(updateMemberRole(other.admin, memberId, { isAgent: true })).rejects.toMatchObject({
+      code: 'not_found',
+    });
+  });
+});

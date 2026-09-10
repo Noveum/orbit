@@ -89,6 +89,8 @@ export const issueFilterSchema = z.object({
   milestoneId: idSchema.optional(),
   assigneeId: idSchema.optional(),
   participantId: idSchema.optional(),
+  workType: z.enum(['all', 'reviewing', 'assigned']).default('all'),
+  aiOnly: booleanFlag(false),
   stateId: idSchema.optional(),
   stateCategory: z.enum(STATE_CATEGORIES).optional(),
   labelId: idSchema.optional(),

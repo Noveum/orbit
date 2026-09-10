@@ -23,6 +23,7 @@ import {
 } from '@orbit/shared/utils';
 import {
   duplicateIssueQuerySchema,
+  type IssueFilterInput,
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
@@ -1945,20 +1946,23 @@ async function milestoneFacet(where: SQL | undefined): Promise<Record<string, nu
   return tally(rows);
 }
 
-async function participantFacet(where: SQL | undefined): Promise<Record<string, number>> {
+async function participantFacet(
+  where: SQL | undefined,
+  workType: IssueFilterInput['workType'],
+): Promise<Record<string, number>> {
   const rows = await db.execute<{ key: string; total: number }>(sql`
     select participant.key, count(distinct participant.issue_id)::int as total
     from (
       select ${schema.issue.id} as issue_id,
              coalesce(${schema.issue.assigneeId}, ${UNSET_FACET_VALUE}) as key
       from ${schema.issue}
-      ${where === undefined ? sql`` : sql`where ${where}`}
+      where ${where ?? sql`true`} and ${workType !== 'reviewing'}
       union all
       select ${schema.issue.id} as issue_id, ${schema.issueReviewer.userId} as key
       from ${schema.issue}
       inner join ${schema.issueReviewer}
         on ${schema.issueReviewer.issueId} = ${schema.issue.id}
-      ${where === undefined ? sql`` : sql`where ${where}`}
+      where ${where ?? sql`true`} and ${workType !== 'assigned'}
     ) participant
     group by participant.key
   `);
@@ -2046,8 +2050,9 @@ type SummaryGroupProperty = ReturnType<typeof issueSummaryQuerySchema.parse>['gr
 function facetFor(
   property: SummaryGroupProperty,
   where: SQL | undefined,
+  workType: IssueFilterInput['workType'],
 ): Promise<Record<string, number>> {
-  if (property === 'participant') return participantFacet(where);
+  if (property === 'participant') return participantFacet(where, workType);
   if (property === 'label') return labelFacet(where);
   if (property === 'milestone') return milestoneFacet(where);
   return facetOf(FACET_COLUMNS[property](), where);
@@ -2194,7 +2199,7 @@ export async function getIssueSummary(
       .from(schema.issue)
       .where(matching)
       .groupBy(schema.issue.stateId),
-    filter.groupBy === 'state' ? null : facetFor(filter.groupBy, matching),
+    filter.groupBy === 'state' ? null : facetFor(filter.groupBy, matching, filter.workType),
   ]);
 
   const byState: Record<string, number> = {};

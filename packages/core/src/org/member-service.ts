@@ -134,7 +134,7 @@ export async function updateMemberRole(
 ): Promise<{ member: MemberRow; actions: SyncAction[] }> {
   assertCan(principal, 'member:manage');
   const parsed = memberUpdateSchema.parse(input);
-  if (!canAssignRole(principal.role, parsed.role)) {
+  if (parsed.role !== undefined && !canAssignRole(principal.role, parsed.role)) {
     throw forbidden('Only admins can change roles.');
   }
 
@@ -153,7 +153,7 @@ export async function updateMemberRole(
       .for('update');
     const current = requireRow(existing, 'That member does not exist.');
 
-    if (current.role === 'admin' && parsed.role !== 'admin') {
+    if (current.role === 'admin' && parsed.role !== undefined && parsed.role !== 'admin') {
       const others = await countOtherAdmins(tx, principal.organizationId, memberId);
       if (others === 0) throw conflict('A workspace needs at least one admin.');
       const [inaccessibleReview] = await tx
@@ -187,7 +187,7 @@ export async function updateMemberRole(
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
       .update(schema.member)
-      .set({ role: parsed.role, syncId })
+      .set({ ...parsed, syncId })
       .where(eq(schema.member.id, memberId))
       .returning();
     const member = requireRow(updated, 'That member does not exist.');

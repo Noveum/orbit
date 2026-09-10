@@ -91,9 +91,15 @@ export const inviteBulkSchema = z.object({
   invites: z.array(inviteCreateSchema).min(1).max(100),
 });
 
-export const memberUpdateSchema = z.object({
-  role: z.enum(ORG_ROLES),
-});
+export const memberUpdateSchema = z
+  .object({
+    role: z.enum(ORG_ROLES).optional(),
+    isAgent: z.boolean().optional(),
+  })
+  .refine(
+    (value) => value.role !== undefined || value.isAgent !== undefined,
+    'Choose a member property to update.',
+  );
 
 export type OrganizationCreateInput = z.infer<typeof organizationCreateSchema>;
 export type OrganizationDeleteInput = z.infer<typeof organizationDeleteSchema>;

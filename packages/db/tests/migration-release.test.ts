@@ -116,10 +116,20 @@ describe('database release', () => {
 
   it('does not silently baseline a missing webhook ownership constraint', async () => {
     await resetScratch();
-    await migrateScratch();
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const constraintIndex = migrations.findIndex((migration) =>
+      migration.sql.some((statement) =>
+        statement.includes('ADD CONSTRAINT "webhook_delivery_processing_claim_check"'),
+      ),
+    );
+    expect(constraintIndex).toBeGreaterThan(0);
     await run(urlFor(SCRATCH), async (sql) => {
-      await sql`alter table webhook_delivery drop constraint webhook_delivery_processing_claim_check`;
-      await sql`delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`;
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of migrations.slice(0, constraintIndex)) {
+        for (const statement of migration.sql) await sql.unsafe(statement);
+        await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+      }
     });
     await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
     const rows = await run(
