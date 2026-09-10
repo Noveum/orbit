@@ -45,7 +45,11 @@ export function createOrbitMcpServer(
   principal: Principal,
   scopes = EVERY_ORBIT_SCOPE,
   workspaceInstructions = '',
+  grantId?: string,
 ): McpServer {
+  if (grantsWrites(scopes) && (grantId === undefined || grantId.length === 0)) {
+    throw forbidden('Write access requires a valid OAuth grant.');
+  }
   const instructions = [INSTRUCTIONS, workspaceInstructions]
     .filter((entry) => entry.length > 0)
     .join('\n\n');
@@ -53,7 +57,7 @@ export function createOrbitMcpServer(
     { name: 'orbit', version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions },
   );
-  allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes) });
+  allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes), grantId });
   registerTools(server, principal);
   return server;
 }
@@ -107,7 +111,12 @@ async function dispatch(
     grantsReads(identity.scopes) && (await requestInitializesConnection(request))
       ? await instructionsLoader(identity.organizationId)
       : '';
-  const server = createOrbitMcpServer(identity.principal, identity.scopes, workspaceInstructions);
+  const server = createOrbitMcpServer(
+    identity.principal,
+    identity.scopes,
+    workspaceInstructions,
+    identity.grantId,
+  );
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);
 

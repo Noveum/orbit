@@ -67,6 +67,7 @@ export interface McpAccessContext {
   readonly clientId: string;
   readonly organizationId: string;
   readonly scopes: string;
+  readonly grantId: string;
 }
 
 export async function verifyMcpAccessToken(
@@ -117,6 +118,7 @@ export async function verifyMcpAccessToken(
     clientId: tokenRow.clientId,
     organizationId: grant.organizationId,
     scopes: tokenRow.scopes,
+    grantId: grant.id,
   };
 }
 

@@ -190,6 +190,13 @@
       "when": 1788825688228,
       "tag": "0026_breezy_johnny_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788898197021,
+      "tag": "0028_mcp_idempotency_keys",
+      "breakpoints": true
     }
   ]
 }

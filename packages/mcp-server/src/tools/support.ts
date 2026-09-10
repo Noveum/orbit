@@ -1,6 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { publishDeltas } from '@orbit/core';
+import {
+  claimIdempotencySlot,
+  hashParams,
+  publishDeltas,
+  resolveIdempotencySlot,
+} from '@orbit/core';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -54,6 +59,7 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
 export interface ToolAccess {
   readonly reads: boolean;
   readonly writes: boolean;
+  readonly grantId?: string | undefined;
 }
 
 const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
@@ -69,18 +75,104 @@ function mayRegister(server: McpServer, readOnly: boolean): boolean {
   return readOnly ? access.reads : access.writes;
 }
 
+const idempotencyKeySchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .optional()
+  .describe('Optional idempotency key to prevent duplicate execution on retries.');
+
+function formatDoneSlot(response: Record<string, unknown>): CallToolResult {
+  if (response['ok'] === false) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(response['error'] ?? response),
+        },
+      ],
+    };
+  }
+  const payload = (response['payload'] ?? response) as ToolPayload;
+  return ok(payload);
+}
+
+async function runAndResolveSlot(
+  slotId: string,
+  toolName: string,
+  execute: () => Promise<ToolPayload>,
+): Promise<CallToolResult> {
+  let result: ToolPayload;
+  try {
+    result = await execute();
+  } catch (error) {
+    const domain = asDomainError(error);
+    const body =
+      domain.status >= 500
+        ? { error: { code: domain.code, message: 'Something went wrong on our side.' } }
+        : domain.toJSON();
+
+    try {
+      await resolveIdempotencySlot(slotId, { ok: false, error: body });
+    } catch (persistenceError) {
+      logger.error('failed to persist tool error in idempotency slot', {
+        tool: toolName,
+        slotId,
+        ...errorFields(persistenceError),
+      });
+    }
+
+    return failed(toolName, error);
+  }
+
+  try {
+    await resolveIdempotencySlot(slotId, { ok: true, payload: result });
+  } catch (error) {
+    logger.error('failed to persist successful response in idempotency slot', {
+      tool: toolName,
+      slotId,
+      ...errorFields(error),
+    });
+
+    const uncertainBody = {
+      error: {
+        code: 'uncertain',
+        message: 'Operation executed successfully, but response caching failed.',
+      },
+    };
+    try {
+      await resolveIdempotencySlot(slotId, { ok: false, error: uncertainBody });
+    } catch (secondaryError) {
+      logger.error('failed to persist uncertain state in idempotency slot', {
+        tool: toolName,
+        slotId,
+        ...errorFields(secondaryError),
+      });
+    }
+  }
+
+  return ok(result);
+}
+
 export function defineTool<Shape extends z.ZodRawShape>(
   server: McpServer,
   config: ToolConfig<Shape>,
   run: (args: z.infer<z.ZodObject<Shape>>) => Promise<ToolPayload>,
 ): void {
   if (!mayRegister(server, config.readOnly)) return;
-  const inputSchema = z.strictObject(config.inputSchema) as unknown as z.ZodObject<Shape>;
+  const rawSchema = config.readOnly
+    ? config.inputSchema
+    : { ...config.inputSchema, idempotencyKey: idempotencyKeySchema };
+  const inputSchema = z.strictObject(rawSchema) as unknown as z.ZodObject<Shape>;
+  const description = config.readOnly
+    ? config.description
+    : `${config.description} Accepts an optional idempotencyKey to prevent duplicate execution on retries.`;
   server.registerTool<z.ZodRawShape, z.ZodObject<Shape>>(
     config.name,
     {
       title: config.title,
-      description: config.description,
+      description,
       inputSchema,
       annotations: {
         title: config.title,
@@ -92,6 +184,40 @@ export function defineTool<Shape extends z.ZodRawShape>(
     },
     async (args) => {
       try {
+        const access = GRANTED.get(server);
+        const grantId = access?.grantId;
+        const rawArgs = args as Record<string, unknown>;
+        const idempotencyKey =
+          typeof rawArgs['idempotencyKey'] === 'string' ? rawArgs['idempotencyKey'] : undefined;
+
+        if (
+          !config.readOnly &&
+          idempotencyKey !== undefined &&
+          idempotencyKey.length > 0 &&
+          grantId !== undefined
+        ) {
+          const { idempotencyKey: _, ...restArgs } = rawArgs;
+          const paramsHash = hashParams(restArgs);
+          const slot = await claimIdempotencySlot(grantId, idempotencyKey, config.name, paramsHash);
+          if (slot.status === 'done') {
+            logger.info('idempotent tool response returned', {
+              tool: config.name,
+              idempotencyKey,
+              grantId,
+            });
+            return formatDoneSlot(slot.response);
+          }
+          if (slot.status === 'processing') {
+            return ok({
+              retryAfterMs: 500,
+              message: 'Request is still processing. Retry shortly.',
+            });
+          }
+          return await runAndResolveSlot(slot.slotId, config.name, () =>
+            run(args as z.infer<z.ZodObject<Shape>>),
+          );
+        }
+
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {
         return failed(config.name, error);

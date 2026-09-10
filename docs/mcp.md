@@ -54,6 +54,16 @@ is registered.
 Give an agent `orbit.read` alone unless you specifically want it changing
 things.
 
+## Idempotency keys
+
+Every write tool accepts an optional `idempotencyKey` string argument. When an MCP client retries a request (for instance after a network timeout), passing the same `idempotencyKey` with the same arguments guarantees the server performs the write operation only once and returns the cached response.
+
+Key details:
+
+- Idempotency keys are scoped to your OAuth grant. A key used under one grant does not conflict with another grant.
+- Cached responses are stored for 23 hours.
+- Reusing an idempotency key with different arguments or a different tool will return a validation error.
+
 ## Workspace instructions
 
 Workspace administrators can maintain up to 4,000 characters of guidance for
