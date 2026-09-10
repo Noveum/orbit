@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import { encodeFilter, inCondition } from '@orbit/shared/filters';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
-import { bootstrapQueryOptions } from '@/lib/query/use-issues.ts';
+import { bootstrapQueryOptions, currentSprintRefetchInterval } from '@/lib/query/use-issues.ts';
 
 async function fetchesAfterInvalidate(staleTime: unknown): Promise<number> {
   let calls = 0;
@@ -61,5 +62,24 @@ describe('bootstrap staleness', () => {
 
   it("rejects 'static', which silently swallows invalidation", async () => {
     expect(await fetchesAfterInvalidate('static')).toBe(1);
+  });
+});
+
+describe('current sprint refresh', () => {
+  it('refreshes nested current sprint searches while leaving fixed sprint searches event driven', () => {
+    const search = (value: string) =>
+      new URLSearchParams({
+        filter: encodeFilter({
+          kind: 'group',
+          combinator: 'and',
+          children: [
+            { kind: 'group', combinator: 'or', children: [inCondition('cycle', [value])] },
+          ],
+        }),
+      }).toString();
+    expect(currentSprintRefetchInterval(search('current'))).toBe(60_000);
+    expect(currentSprintRefetchInterval(search('sprint-id'))).toBe(false);
+    expect(currentSprintRefetchInterval('')).toBe(false);
+    expect(bootstrapQueryOptions(null).refetchInterval).toBe(60_000);
   });
 });
