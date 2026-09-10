@@ -2671,12 +2671,13 @@ async function removeExistingDuplicates(
   source: IssueRow,
   actor: Actor,
   syncId: number,
-): Promise<SyncAction[]> {
+): Promise<{ actions: SyncAction[]; previousSurvivorIds: string[] }> {
   const existingDuplicates = await tx
     .select({
       id: schema.issueRelation.id,
       issueId: schema.issueRelation.issueId,
       relatedIssueId: schema.issueRelation.relatedIssueId,
+      type: schema.issueRelation.type,
       teamId: schema.issue.teamId,
     })
     .from(schema.issueRelation)
@@ -2697,7 +2698,11 @@ async function removeExistingDuplicates(
       ),
     );
 
-  if (existingDuplicates.length === 0) return [];
+  if (existingDuplicates.length === 0) return { actions: [], previousSurvivorIds: [] };
+
+  const previousSurvivorIds = existingDuplicates
+    .filter((row) => row.issueId === source.id && row.type === 'duplicate_of')
+    .map((row) => row.relatedIssueId);
 
   await tx.delete(schema.issueRelation).where(
     and(
@@ -2709,7 +2714,7 @@ async function removeExistingDuplicates(
     ),
   );
 
-  return existingDuplicates.map((row) =>
+  const actions = existingDuplicates.map((row) =>
     buildSyncAction({
       syncId,
       organizationId,
@@ -2721,6 +2726,8 @@ async function removeExistingDuplicates(
       actor,
     }),
   );
+
+  return { actions, previousSurvivorIds };
 }
 
 async function transferSubscriptions(
@@ -2728,6 +2735,7 @@ async function transferSubscriptions(
   organizationId: string,
   source: IssueRow,
   target: IssueRow,
+  previousSurvivorIds: string[],
   actor: Actor,
   syncId: number,
 ): Promise<SyncAction[]> {
@@ -2740,19 +2748,8 @@ async function transferSubscriptions(
   if (subUserIds.length === 0) return [];
 
   await subscribeUsers(tx, target.id, subUserIds, syncId);
-  await tx.delete(schema.issueSubscription).where(eq(schema.issueSubscription.issueId, source.id));
 
-  return subUserIds.flatMap((userId) => [
-    buildSyncAction({
-      syncId,
-      organizationId,
-      scopes: [scopes.user(userId)],
-      action: 'delete',
-      model: 'issue_subscription',
-      modelId: `${source.id}:${userId}`,
-      data: { issueId: source.id, userId, syncId },
-      actor,
-    }),
+  const syncActions: SyncAction[] = subUserIds.map((userId) =>
     buildSyncAction({
       syncId,
       organizationId,
@@ -2763,7 +2760,37 @@ async function transferSubscriptions(
       data: { issueId: target.id, userId, identifier: target.identifier, syncId },
       actor,
     }),
-  ]);
+  );
+
+  for (const prevSurvivorId of previousSurvivorIds) {
+    if (prevSurvivorId === target.id) continue;
+
+    await tx
+      .delete(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, subUserIds),
+        ),
+      );
+
+    for (const userId of subUserIds) {
+      syncActions.push(
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(userId)],
+          action: 'delete',
+          model: 'issue_subscription',
+          modelId: `${prevSurvivorId}:${userId}`,
+          data: { issueId: prevSurvivorId, userId, syncId },
+          actor,
+        }),
+      );
+    }
+  }
+
+  return syncActions;
 }
 
 async function assertSurvivorAllowed(
@@ -2912,13 +2939,8 @@ export async function markAsDuplicate(
     const actor = await principalActor(tx, principal);
     const now = new Date();
 
-    const oldRelationDeleteActions = await removeExistingDuplicates(
-      tx,
-      principal.organizationId,
-      source,
-      actor,
-      syncId,
-    );
+    const { actions: oldRelationDeleteActions, previousSurvivorIds } =
+      await removeExistingDuplicates(tx, principal.organizationId, source, actor, syncId);
 
     const relations = await tx
       .insert(schema.issueRelation)
@@ -2990,6 +3012,7 @@ export async function markAsDuplicate(
       principal.organizationId,
       source,
       target,
+      previousSurvivorIds,
       actor,
       syncId,
     );
