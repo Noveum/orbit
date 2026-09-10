@@ -56,6 +56,7 @@ export interface NavSection {
 const TEAM_SECTION_PREFIX = 'team-';
 
 const WORKSPACE_LINKS: readonly NavLink[] = [
+  { href: '/all-tasks', label: 'All tasks', icon: CircleDot },
   { href: '/projects', label: 'Projects', icon: FolderKanban, binding: 'g p' },
   { href: '/sprints', label: 'Sprints', icon: RefreshCcw, binding: 'g t' },
   { href: '/standup', label: 'Standup', icon: Users, binding: 'g s' },
