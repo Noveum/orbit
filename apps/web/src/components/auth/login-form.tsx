@@ -285,7 +285,7 @@ export function LoginForm({
       const result = await authClient.signIn.social({
         provider,
         callbackURL: callbackUrl,
-        errorCallbackURL: '/login',
+        errorCallbackURL: new URL('/login', window.location.origin).toString(),
       });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
