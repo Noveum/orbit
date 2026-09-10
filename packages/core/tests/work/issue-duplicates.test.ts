@@ -154,7 +154,7 @@ describe('markAsDuplicate', () => {
     expect(survivorSubIds).toContain(member.user.id);
 
     const dupSubs = await listSubscribers(workspace.admin, duplicate.id);
-    expect(dupSubs).toHaveLength(0);
+    expect(dupSubs.map((s) => s.userId)).toContain(member.user.id);
 
     const survivorActivities = await listActivity(db, workspace.admin, survivor.id);
     const linkActivity = survivorActivities.find((a) => a.field === 'relation');
@@ -194,7 +194,18 @@ describe('markAsDuplicate', () => {
       title: 'Survivor Issue B',
     });
 
+    const dupSubscriber = await addMember(workspace, 'member');
+    const survivorASubscriber = await addMember(workspace, 'member');
+    await subscribe(dupSubscriber.principal, duplicate.id);
+    await subscribe(survivorASubscriber.principal, survivorA.id);
+
     await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorA.id });
+
+    const survivorASubsAfterFirst = await listSubscribers(workspace.admin, survivorA.id);
+    const survivorASubIdsAfterFirst = survivorASubsAfterFirst.map((s) => s.userId);
+    expect(survivorASubIdsAfterFirst).toContain(dupSubscriber.user.id);
+    expect(survivorASubIdsAfterFirst).toContain(survivorASubscriber.user.id);
+
     await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorB.id });
 
     const dupRelations = await listRelatedIssues(workspace.admin, duplicate.id);
@@ -209,6 +220,15 @@ describe('markAsDuplicate', () => {
     expect(survivorBRelations).toHaveLength(1);
     expect(survivorBRelations[0]?.type).toBe('duplicated_by');
     expect(survivorBRelations[0]?.issue.id).toBe(duplicate.id);
+
+    const survivorASubsAfterSecond = await listSubscribers(workspace.admin, survivorA.id);
+    const survivorASubIdsAfterSecond = survivorASubsAfterSecond.map((s) => s.userId);
+    expect(survivorASubIdsAfterSecond).not.toContain(dupSubscriber.user.id);
+    expect(survivorASubIdsAfterSecond).toContain(survivorASubscriber.user.id);
+
+    const survivorBSubsAfterSecond = await listSubscribers(workspace.admin, survivorB.id);
+    const survivorBSubIdsAfterSecond = survivorBSubsAfterSecond.map((s) => s.userId);
+    expect(survivorBSubIdsAfterSecond).toContain(dupSubscriber.user.id);
   });
 
   it('rejects creating duplicate cycles (A to B then B to A)', async () => {
