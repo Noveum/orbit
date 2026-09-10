@@ -28,6 +28,8 @@ describe('GET /api/cron/sprint-rollover', () => {
   it('requires the configured bearer secret', async () => {
     expect((await GET(request())).status).toBe(401);
     expect((await GET(request('Bearer x'))).status).toBe(401);
+    expect((await GET(request('Basic sprint-rollover-secret'))).status).toBe(401);
+    expect((await GET(request('Bearer '))).status).toBe(401);
     delete process.env['CRON_SECRET'];
     expect((await GET(request(`Bearer ${secret}`))).status).toBe(503);
   });

@@ -1,10 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { rolloverExpiredCycles } from '@orbit/core';
+import { cronAuthorizationSchema } from '@orbit/shared/validators';
 import { publish } from '@/lib/api/handler.ts';
 
-function presented(request: Request): string {
-  const header = request.headers.get('authorization') ?? '';
-  return header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+function presented(request: Request): string | null {
+  const parsed = cronAuthorizationSchema.safeParse(request.headers.get('authorization'));
+  return parsed.success ? parsed.data.slice('Bearer '.length) : null;
 }
 
 function matches(offered: string, expected: string): boolean {
@@ -18,7 +19,8 @@ export async function GET(request: Request): Promise<Response> {
   if (secret.length === 0) {
     return Response.json({ error: 'sprint rollover are not configured' }, { status: 503 });
   }
-  if (!matches(presented(request), secret)) {
+  const token = presented(request);
+  if (token === null || !matches(token, secret)) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
