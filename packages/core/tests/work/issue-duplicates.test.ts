@@ -154,7 +154,7 @@ describe('markAsDuplicate', () => {
     expect(survivorSubIds).toContain(member.user.id);
 
     const dupSubs = await listSubscribers(workspace.admin, duplicate.id);
-    expect(dupSubs.map((s) => s.userId)).toContain(member.user.id);
+    expect(dupSubs).toHaveLength(0);
 
     const survivorActivities = await listActivity(db, workspace.admin, survivor.id);
     const linkActivity = survivorActivities.find((a) => a.field === 'relation');
