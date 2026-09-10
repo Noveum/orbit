@@ -1,4 +1,5 @@
 export * from './actor.ts';
+export * from './cycle.ts';
 export * from './doc.ts';
 export * from './estimate.ts';
 export * from './issue.ts';

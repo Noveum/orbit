@@ -297,7 +297,7 @@ export function NewSprintButton() {
           open={open}
           onOpenChange={setOpen}
           title="New sprint"
-          description="Leave the dates empty and Orbit adds a two week sprint straight after the last one."
+          description="Leave the dates empty and Orbit adds a one week sprint straight after the last one."
           submitLabel="Create sprint"
           initial={EMPTY_FORM}
           pending={create.isPending}

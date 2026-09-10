@@ -1,5 +1,6 @@
 'use client';
 
+import { decodeFilter, hasCurrentSprintFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import {
@@ -102,7 +103,8 @@ export function bootstrapQueryOptions(teamKey: string | null) {
         bootstrapSchema,
         { signal },
       ),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   };
 }
 
@@ -122,9 +124,16 @@ async function fetchIssuePage(
   return await apiFetch(url, issueListSchema, { signal });
 }
 
+export function currentSprintRefetchInterval(search: string): number | false {
+  return hasCurrentSprintFilter(decodeFilter(new URLSearchParams(search).get('filter') ?? ''))
+    ? 60_000
+    : false;
+}
+
 function pagedIssueOptions(queryKey: QueryKey, search: string) {
   return {
     queryKey,
+    refetchInterval: currentSprintRefetchInterval(search),
     queryFn: async ({
       pageParam,
       signal,
@@ -148,6 +157,7 @@ export function issuesQueryOptions(teamId: string, query: IssueQuery = DEFAULT_I
 export function issueSummaryQueryOptions(search: string, enabled = true) {
   return {
     queryKey: queryKeys.issueSummary(search),
+    refetchInterval: currentSprintRefetchInterval(search),
     enabled,
     placeholderData: keepPreviousData,
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueSummary> =>
@@ -162,6 +172,7 @@ export function useIssueSummary(search: string, enabled = true) {
 export function issueFacetsQueryOptions(search: string, enabled = true) {
   return {
     queryKey: queryKeys.issueFacets(search),
+    refetchInterval: FACETS_STALE_MS,
     enabled,
     placeholderData: keepPreviousData,
     staleTime: FACETS_STALE_MS,
@@ -243,6 +254,7 @@ export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
 
   return useQuery({
     queryKey: queryKeys.boardPage(search),
+    refetchInterval: currentSprintRefetchInterval(search),
     enabled: enabled && columnParamFor(column.groupBy) !== null,
     staleTime: BOARD_SEED_STALE_MS,
     queryFn: async ({ signal }): Promise<BoardPage> => {

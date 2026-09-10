@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Cycle } from '../../src/lib/query/schemas.ts';
-import { sprintOptions } from '../../src/lib/sprint-options.ts';
+import { sprintFilterOptions, sprintOptions } from '../../src/lib/sprint-options.ts';
 
 const now = Date.parse('2026-09-10T00:00:00Z');
 function cycle(
@@ -30,6 +30,24 @@ describe('sprintOptions', () => {
   it('advances the current option at the next boundary', () => {
     expect(sprintOptions([previous, current, future], Date.parse(current.endsAt))).toEqual([
       { id: '3', label: 'Current sprint (Sprint 3)' },
+    ]);
+  });
+});
+
+describe('sprintFilterOptions', () => {
+  it('keeps a stable current value as sprint two becomes sprint three', () => {
+    expect(sprintFilterOptions([previous, current, future], now)).toEqual([
+      { id: 'current', label: 'Current sprint (Sprint 2)', facetValues: ['2'] },
+      { id: '3', label: 'Sprint 3' },
+    ]);
+    expect(sprintFilterOptions([previous, current, future], Date.parse(current.endsAt))).toEqual([
+      { id: 'current', label: 'Current sprint (Sprint 3)', facetValues: ['3'] },
+    ]);
+  });
+  it('keeps the current filter available during a gap without naming an expired sprint', () => {
+    expect(sprintFilterOptions([previous, future], now)).toEqual([
+      { id: 'current', label: 'Current sprint', facetValues: [] },
+      { id: '3', label: 'Sprint 3' },
     ]);
   });
 });

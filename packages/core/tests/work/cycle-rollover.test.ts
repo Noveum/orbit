@@ -50,7 +50,9 @@ async function assignedSprint(id: string) {
 
 describe('rolloverExpiredCycles', () => {
   it('moves open tasks at the boundary, retains completed tasks, and publishes a weekly successor', async () => {
-    const first = await weeklySprint();
+    const [first] = await listCycles(workspace.admin);
+    if (first === undefined) throw new Error('missing sprint');
+    expect(first.endsAt.getTime() - first.startsAt.getTime()).toBe(week);
     const open = await task(first.id);
     const done = await task(first.id, 'Done');
     await updateIssue(workspace.admin, done.id, { stateId: stateNamed(workspace, 'Done').id });
