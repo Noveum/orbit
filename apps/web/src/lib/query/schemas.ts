@@ -12,6 +12,7 @@ const timestamp = z.string();
 const nullableTimestamp = z.string().nullable();
 
 export const issueSchema = z.object({
+  canOpen: z.boolean().optional(),
   id: z.string(),
   organizationId: z.string().default(''),
   teamId: z.string(),

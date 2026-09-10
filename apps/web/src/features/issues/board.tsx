@@ -2020,7 +2020,7 @@ function BoardColumn({
   );
 
   const cards = visibleIssues.map((issue) =>
-    draggable ? (
+    draggable && issue.canOpen !== false ? (
       <SortableCard
         key={issue.id}
         issue={issue}

@@ -137,6 +137,10 @@ function pagedIssueOptions(queryKey: QueryKey, search: string) {
   };
 }
 
+function standupRefreshInterval(search: string): number | false {
+  return new URLSearchParams(search).get('view') === 'standup' ? 30_000 : false;
+}
+
 const PREFETCH_STALE_MS = 30_000;
 const FACETS_STALE_MS = 60_000;
 
@@ -148,6 +152,7 @@ export function issuesQueryOptions(teamId: string, query: IssueQuery = DEFAULT_I
 export function issueSummaryQueryOptions(search: string, enabled = true) {
   return {
     queryKey: queryKeys.issueSummary(search),
+    refetchInterval: standupRefreshInterval(search),
     enabled,
     placeholderData: keepPreviousData,
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<IssueSummary> =>
@@ -162,6 +167,7 @@ export function useIssueSummary(search: string, enabled = true) {
 export function issueFacetsQueryOptions(search: string, enabled = true) {
   return {
     queryKey: queryKeys.issueFacets(search),
+    refetchInterval: standupRefreshInterval(search),
     enabled,
     placeholderData: keepPreviousData,
     staleTime: FACETS_STALE_MS,
@@ -299,6 +305,7 @@ export function useAllIssues(
   const search = allIssuesSearch(query, scope);
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.allIssues(search), search),
+    refetchInterval: standupRefreshInterval(search),
     enabled,
     select: flattenIssuePages,
     placeholderData: keepPreviousData,
