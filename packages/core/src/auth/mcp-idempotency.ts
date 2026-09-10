@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, db, eq, lte, schema } from '@orbit/db';
+import { and, db, eq, isNull, lte, schema } from '@orbit/db';
 import { validationFailed } from '@orbit/shared/errors';
 import { newId } from '../internal.ts';
 
@@ -112,7 +112,7 @@ export async function claimIdempotencySlot(
         .where(
           and(
             eq(schema.mcpIdempotencyKey.id, existing.id),
-            eq(schema.mcpIdempotencyKey.response, null),
+            isNull(schema.mcpIdempotencyKey.response),
           ),
         )
         .returning({ id: schema.mcpIdempotencyKey.id });
