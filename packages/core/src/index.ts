@@ -32,3 +32,4 @@ export * from './work/reviewer-service.ts';
 export * from './work/view-preference-service.ts';
 export * from './work/view-service.ts';
 export * from './work/workflow-state-service.ts';
+export * from './work/workspace-tasks-service.ts';

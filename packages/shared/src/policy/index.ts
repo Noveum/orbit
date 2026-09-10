@@ -4,6 +4,7 @@ import { forbidden, notFound } from '../errors/index.ts';
 export const PERMISSIONS = [
   'analytics:read',
   'issue:read',
+  'issue:read:workspace',
   'issue:create',
   'issue:update',
   'issue:delete',
@@ -35,6 +36,7 @@ export type Permission = (typeof PERMISSIONS)[number];
 const GUEST_PERMISSIONS: readonly Permission[] = [
   'analytics:read',
   'issue:read',
+  'issue:read:workspace',
   'comment:create',
   'comment:update:own',
   'reaction:toggle',

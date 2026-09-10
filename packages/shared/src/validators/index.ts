@@ -25,3 +25,4 @@ export * from './view.ts';
 export * from './view-preference.ts';
 export * from './vitals.ts';
 export * from './workflow-state.ts';
+export * from './workspace-tasks.ts';

@@ -7,7 +7,7 @@ import type { SQL } from 'drizzle-orm';
 import type { FilterContext } from './issue-predicates.ts';
 import { buildFilterFilters } from './issue-predicates.ts';
 
-export type IssueVisibility = 'team' | 'workspace-analytics';
+export type IssueVisibility = 'team' | 'workspace-analytics' | 'workspace-tasks';
 
 export interface IssueWhereInput {
   readonly visibility: IssueVisibility;
@@ -35,6 +35,10 @@ export function visibleTeamFilters(principal: Principal): SQL[] {
 }
 
 function visibilityFilters(principal: Principal, visibility: IssueVisibility): SQL[] {
+  if (visibility === 'workspace-tasks') {
+    assertCan(principal, 'issue:read:workspace');
+    return [];
+  }
   if (visibility === 'workspace-analytics') {
     assertCan(principal, 'analytics:read');
     return [];
