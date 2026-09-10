@@ -2744,37 +2744,113 @@ async function transferSubscriptions(
     .from(schema.issueSubscription)
     .where(eq(schema.issueSubscription.issueId, source.id));
 
-  const subUserIds = existingSubs.map((sub) => sub.userId);
+  let subUserIds = existingSubs.map((sub) => sub.userId);
+
+  if (subUserIds.length === 0 && previousSurvivorIds.length > 0) {
+    const pastActivities = await tx
+      .select({ actorId: schema.issueActivity.actorId })
+      .from(schema.issueActivity)
+      .where(
+        and(
+          eq(schema.issueActivity.organizationId, organizationId),
+          eq(schema.issueActivity.issueId, source.id),
+          eq(schema.issueActivity.field, 'subscription_transfer'),
+        ),
+      );
+    subUserIds = Array.from(new Set(pastActivities.map((a) => a.actorId)));
+  }
+
   if (subUserIds.length === 0) return [];
 
-  await subscribeUsers(tx, target.id, subUserIds, syncId);
+  const targetReaders = await teamReaderIds(tx, organizationId, target.teamId, subUserIds);
+  const allowedUserIds = subUserIds.filter((id) => targetReaders.has(id));
 
-  const syncActions: SyncAction[] = subUserIds.map((userId) =>
-    buildSyncAction({
-      syncId,
-      organizationId,
-      scopes: [scopes.user(userId)],
-      action: 'insert',
-      model: 'issue_subscription',
-      modelId: `${target.id}:${userId}`,
-      data: { issueId: target.id, userId, identifier: target.identifier, syncId },
-      actor,
-    }),
-  );
+  const syncActions: SyncAction[] = [];
+
+  if (allowedUserIds.length > 0) {
+    await subscribeUsers(tx, target.id, allowedUserIds, syncId);
+
+    syncActions.push(
+      ...allowedUserIds.map((userId) =>
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(userId)],
+          action: 'insert',
+          model: 'issue_subscription',
+          modelId: `${target.id}:${userId}`,
+          data: { issueId: target.id, userId, identifier: target.identifier, syncId },
+          actor,
+        }),
+      ),
+    );
+
+    await appendActivities(
+      tx,
+      allowedUserIds.map((userId) => ({
+        organizationId,
+        issueId: source.id,
+        actor: { type: 'user', id: userId, name: actor.name },
+        field: 'subscription_transfer',
+        from: source.id,
+        to: target.id,
+        syncId,
+      })),
+    );
+  }
+
+  if (existingSubs.length > 0) {
+    await tx
+      .delete(schema.issueSubscription)
+      .where(eq(schema.issueSubscription.issueId, source.id));
+
+    syncActions.push(
+      ...existingSubs.map((sub) =>
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(sub.userId)],
+          action: 'delete',
+          model: 'issue_subscription',
+          modelId: `${source.id}:${sub.userId}`,
+          data: { issueId: source.id, userId: sub.userId, syncId },
+          actor,
+        }),
+      ),
+    );
+  }
 
   for (const prevSurvivorId of previousSurvivorIds) {
     if (prevSurvivorId === target.id) continue;
+
+    const prevTransferActivities = await tx
+      .select({ actorId: schema.issueActivity.actorId })
+      .from(schema.issueActivity)
+      .where(
+        and(
+          eq(schema.issueActivity.organizationId, organizationId),
+          eq(schema.issueActivity.issueId, source.id),
+          eq(schema.issueActivity.field, 'subscription_transfer'),
+          eq(schema.issueActivity.toValue, prevSurvivorId),
+        ),
+      );
+
+    const transferredToPrevUserIds = Array.from(
+      new Set(prevTransferActivities.map((a) => a.actorId)),
+    );
+
+    if (transferredToPrevUserIds.length === 0) continue;
 
     await tx
       .delete(schema.issueSubscription)
       .where(
         and(
           eq(schema.issueSubscription.issueId, prevSurvivorId),
-          inArray(schema.issueSubscription.userId, subUserIds),
+          inArray(schema.issueSubscription.userId, transferredToPrevUserIds),
         ),
       );
 
-    for (const userId of subUserIds) {
+    for (const userId of transferredToPrevUserIds) {
       syncActions.push(
         buildSyncAction({
           syncId,
