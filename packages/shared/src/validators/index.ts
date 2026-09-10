@@ -4,6 +4,7 @@ export * from './avatar.ts';
 export * from './bootstrap.ts';
 export * from './comment.ts';
 export * from './common.ts';
+export * from './cron.ts';
 export * from './cycle.ts';
 export * from './doc.ts';
 export * from './github-release.ts';
