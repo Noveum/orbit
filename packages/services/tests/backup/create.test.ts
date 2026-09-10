@@ -14,7 +14,7 @@ import { storageDriver } from '../../src/storage/index.ts';
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
 
 let resolvedPgDump: string | undefined;
-let temporaryShim: string | undefined;
+let temporaryShimDir: string | undefined;
 
 async function setupPgDump(): Promise<string | undefined> {
   let hasHostPgDump = false;
@@ -35,9 +35,10 @@ async function setupPgDump(): Promise<string | undefined> {
   }
 
   if (hasDockerPgDump) {
-    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const shimSource = join(tmpdir(), `orbit-pg-dump-shim-${stamp}.ts`);
-    const shimExe = join(tmpdir(), `orbit-pg-dump-shim-${stamp}.exe`);
+    const shimDir = await mkdtemp(join(tmpdir(), 'orbit-pg-dump-shim-'));
+    temporaryShimDir = shimDir;
+    const shimSource = join(shimDir, 'shim.ts');
+    const shimExe = join(shimDir, 'pg_dump.exe');
     await writeFile(
       shimSource,
       `import { spawn } from 'node:child_process';
@@ -51,7 +52,6 @@ child.on('close', (code) => process.exit(code ?? 0));
     );
     Bun.spawnSync(['bun', 'build', '--compile', shimSource, '--outfile', shimExe]);
     await rm(shimSource, { force: true }).catch(() => undefined);
-    temporaryShim = shimExe;
     return shimExe;
   }
 
@@ -96,8 +96,8 @@ describe('createBackup', () => {
   });
 
   afterAll(async () => {
-    if (temporaryShim !== undefined) {
-      await rm(temporaryShim, { force: true }).catch(() => undefined);
+    if (temporaryShimDir !== undefined) {
+      await rm(temporaryShimDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 
