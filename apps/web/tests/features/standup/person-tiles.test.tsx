@@ -75,6 +75,20 @@ describe('PersonTiles', () => {
     expect(screen.getByText('Lin', { exact: true })).toBeVisible();
   });
 
+  it('shows full names in the dropdown to distinguish duplicate first names', () => {
+    render(
+      <PersonTiles
+        layout="dropdown"
+        members={[member('user_ada', 'Ada Lovelace'), member('user_other_ada', 'Ada Byron')]}
+        selectedId={null}
+        counts={counts}
+        onSelect={() => undefined}
+      />,
+    );
+    expect(screen.getByText('Ada Lovelace', { exact: true })).toBeVisible();
+    expect(screen.getByText('Ada Byron', { exact: true })).toBeVisible();
+  });
+
   it('starts on Everyone when nobody is picked', () => {
     mount(null);
 

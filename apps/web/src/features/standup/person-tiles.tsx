@@ -86,8 +86,8 @@ export function PersonTiles({
             )}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
-            <span className="max-w-28 truncate">
-              {member.name.trim().split(/\s+/)[0]}
+            <span className={layout === 'cards' ? 'max-w-28 truncate' : 'max-w-48 truncate'}>
+              {layout === 'cards' ? member.name.trim().split(/\s+/)[0] : member.name.trim()}
               {member.id === currentUserId ? ' (You)' : ''}
             </span>
             {member.isAgent ? <span className="text-faint">AI</span> : null}

@@ -95,8 +95,7 @@ export function MemberPicker(props: PersonTilesProps) {
     : 'Next member: Alt+J. Previous member: Alt+K';
   const selected = props.members.find((member) => member.id === props.selectedId);
   const label =
-    selected?.name.trim().split(/\s+/)[0] ??
-    (props.selectedId === UNASSIGNED ? 'Unassigned' : 'All Members');
+    selected?.name.trim() ?? (props.selectedId === UNASSIGNED ? 'Unassigned' : 'All Members');
 
   if (!dropdown)
     return (
