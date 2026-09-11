@@ -26,7 +26,6 @@ export const issueResponseSchema = z.object({
 });
 export type IssueResponse = z.infer<typeof issueResponseSchema>;
 
-
 export type WorkflowState = z.infer<typeof workflowStateSchema>;
 
 export const labelSchema = z.object({
