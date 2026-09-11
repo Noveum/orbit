@@ -89,3 +89,51 @@ test('Standup shows a member tasks from other teams and filters by participant',
     true,
   );
 });
+
+test('Standup remembers member layouts and supports shortcuts in both', async ({ page }) => {
+  await page.goto(`${BASE}/login`);
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
+  await page.waitForURL(`${BASE}/my-issues`);
+  await page.goto(`${BASE}/standup`);
+  const cards = page.getByTestId('standup-tiles');
+  await expect(cards).toBeVisible();
+  await expect(cards.getByText('Alex (You)', { exact: true })).toBeVisible();
+  const isMac = await page.evaluate(() => /Mac/i.test(navigator.platform));
+  const next = isMac ? 'Tab' : 'j';
+  const previous = isMac ? 'Shift+Tab' : 'k';
+  for (const layout of ['cards', 'dropdown']) {
+    if (layout === 'dropdown') {
+      await page.getByRole('button', { name: 'Display options' }).click();
+      await page.getByRole('menuitemradio', { name: 'Dropdown', exact: true }).click();
+      await expect(cards).toBeHidden();
+    }
+    const before = new URL(page.url()).searchParams.get('person');
+    await page.keyboard.down('Alt');
+    await page.keyboard.press(next);
+    await expect.poll(() => new URL(page.url()).searchParams.get('person')).not.toBe(before);
+    await expect(cards.getByRole('button', { pressed: true })).toHaveAttribute('aria-label', /.+/);
+    const first = await cards.getByRole('button', { pressed: true }).getAttribute('aria-label');
+    await page.keyboard.press(next);
+    await expect(cards.getByRole('button', { pressed: true })).not.toHaveAttribute(
+      'aria-label',
+      first ?? '',
+    );
+    await page.keyboard.press(previous);
+    await expect(cards.getByRole('button', { pressed: true })).toHaveAttribute(
+      'aria-label',
+      first ?? '',
+    );
+    await page.keyboard.up('Alt');
+    if (layout === 'cards') await expect(cards).toBeVisible();
+    else await expect(cards).toBeHidden();
+  }
+  const selectedUrl = page.url();
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Members:/ })).toBeVisible();
+  await expect(cards).toBeHidden();
+  await page.getByRole('button', { name: 'Display options' }).click();
+  await expect(page.getByRole('menuitemradio', { name: 'Dropdown', exact: true })).toBeChecked();
+  await page.getByRole('menuitemradio', { name: 'Cards', exact: true }).click();
+  await expect(cards).toBeVisible();
+  await expect(page).toHaveURL(selectedUrl);
+});

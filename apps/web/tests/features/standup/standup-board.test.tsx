@@ -228,9 +228,9 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
   return { listUrls, facetUrls, rosterUrls };
 }
 
-function mountBoard(): void {
+function mountBoard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <HotkeyProvider>
@@ -265,6 +265,7 @@ afterEach(() => {
   else Reflect.deleteProperty(navigator, 'platform');
   globalThis.fetch = originalFetch;
   search = '';
+  window.localStorage.removeItem('orbit.standup.member-layout.user_ada');
   window.history.replaceState(null, '', '/standup');
 });
 
@@ -552,6 +553,71 @@ describe('standup member cards', () => {
       input.remove();
     });
   }
+  for (const platform of ['MacIntel', 'Win32', 'Linux x86_64']) {
+    it(`uses the same shortcuts in the dropdown on ${platform}`, async () => {
+      setPlatform(platform);
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Display options' }));
+      expect(screen.getByRole('menuitemradio', { name: 'Cards' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
+      const button = screen.getByRole('button', { name: 'Members: All Members' });
+      button.focus();
+      expect(screen.queryByTestId('standup-tiles')).toBeNull();
+      const key = platform === 'MacIntel' ? 'Tab' : 'j';
+      fireEvent.keyDown(window, { key, altKey: true });
+      expect(screen.getByTestId('standup-tile-user_ada')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyDown(window, { key, altKey: true });
+      expect(screen.getByTestId('standup-tile-user_bo')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyDown(window, {
+        key: platform === 'MacIntel' ? 'Tab' : 'k',
+        altKey: true,
+        shiftKey: platform === 'MacIntel',
+      });
+      expect(screen.getByTestId('standup-tile-user_ada')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyUp(window, { key: 'Alt' });
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      expect(document.activeElement).toBe(button);
+      expect(window.location.search).toContain('person=user_ada');
+      await user.click(button);
+      await user.click(screen.getByTestId('standup-tile-user_bo'));
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      expect(window.location.search).toContain('person=user_bo');
+    });
+  }
+
+  it('remembers the member layout and preserves the selection when changing it', async () => {
+    workspace = buildWorkspace();
+    serve();
+    const mounted = mountBoard();
+    await screen.findByTestId('standup-kanban');
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('standup-tile-user_bo'));
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
+    expect(screen.getByRole('button', { name: 'Members: Bo Chen' })).toBeVisible();
+    expect(window.location.search).toContain('person=user_bo');
+    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('dropdown');
+    mounted.unmount();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    expect(screen.queryByTestId('standup-tiles')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Dropdown' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await user.click(screen.getByRole('menuitemradio', { name: 'Cards' }));
+    expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('cards');
+  });
+
   it('wraps backwards and keeps the cards visible on loss of focus', async () => {
     setPlatform('MacIntel');
     workspace = buildWorkspace();

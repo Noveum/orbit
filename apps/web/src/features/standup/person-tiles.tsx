@@ -6,10 +6,12 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { Member } from '@/lib/query/schemas.ts';
+import type { MemberLayout } from './member-layout.tsx';
 
 export const UNASSIGNED = UNSET_FILTER_VALUE;
 
 export interface PersonTilesProps {
+  readonly layout?: MemberLayout;
   readonly members: readonly Member[];
   readonly currentUserId?: string | null;
   readonly selectedId: string | null;
@@ -32,6 +34,7 @@ function tileTone(selected: boolean, count: number | null): string {
 }
 
 export function PersonTiles({
+  layout = 'cards',
   members,
   selectedId,
   counts,
@@ -44,14 +47,22 @@ export function PersonTiles({
   return (
     <div
       data-testid="standup-tiles"
-      className="flex min-w-0 flex-wrap items-center justify-end gap-1.5"
+      className={
+        layout === 'cards'
+          ? 'flex min-w-0 flex-wrap items-center justify-end gap-1.5'
+          : 'flex min-w-0 flex-col gap-0.5'
+      }
     >
       <button
         type="button"
         data-testid="standup-tile-everyone"
         aria-pressed={selectedId === null}
         onClick={() => onSelect(null)}
-        className={cn(tile, selectedId === null ? selectedTile : idleTile)}
+        className={cn(
+          tile,
+          layout === 'dropdown' && 'w-full border-transparent',
+          selectedId === null ? selectedTile : idleTile,
+        )}
       >
         <Users className="size-3.5" aria-hidden="true" />
         All Members
@@ -68,7 +79,11 @@ export function PersonTiles({
             title={member.name}
             aria-label={member.id === currentUserId ? `${member.name} (You)` : member.name}
             onClick={() => onSelect(selected ? null : member.id)}
-            className={cn(tile, tileTone(selected, count))}
+            className={cn(
+              tile,
+              layout === 'dropdown' && 'w-full border-transparent',
+              tileTone(selected, count),
+            )}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
             <span className="max-w-28 truncate">
@@ -87,7 +102,11 @@ export function PersonTiles({
           aria-pressed={selectedId === UNASSIGNED}
           title="Issues nobody owns"
           onClick={() => onSelect(selectedId === UNASSIGNED ? null : UNASSIGNED)}
-          className={cn(tile, tileTone(selectedId === UNASSIGNED, unassigned))}
+          className={cn(
+            tile,
+            layout === 'dropdown' && 'w-full border-transparent',
+            tileTone(selectedId === UNASSIGNED, unassigned),
+          )}
         >
           <UserMinus className="size-3.5" aria-hidden="true" />
           Unassigned

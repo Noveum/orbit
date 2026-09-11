@@ -51,7 +51,7 @@ describe('PersonTiles', () => {
 
   it('shows first names while keeping full names accessible and available on hover', () => {
     mount(null);
-    const ada = screen.getByRole('button', { name: 'Ada Lovelace', exact: true });
+    const ada = screen.getByRole('button', { name: 'Ada Lovelace' });
     expect(within(ada).getByText('Ada', { exact: true })).toBeVisible();
     expect(within(ada).queryByText('Ada Lovelace', { exact: true })).toBeNull();
     expect(ada).toHaveAttribute('title', 'Ada Lovelace');
@@ -69,9 +69,9 @@ describe('PersonTiles', () => {
         onSelect={() => undefined}
       />,
     );
-    expect(screen.getByRole('button', { name: 'Ada Lovelace (You)', exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Ada Lovelace (You)' })).toBeVisible();
     expect(screen.getByText('Ada (You)', { exact: true })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Ada Byron', exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Ada Byron' })).toBeVisible();
     expect(screen.getByText('Lin', { exact: true })).toBeVisible();
   });
 
