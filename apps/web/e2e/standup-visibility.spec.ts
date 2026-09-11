@@ -45,6 +45,7 @@ test('Standup shows a member tasks from other teams and filters by participant',
   );
   const person = external.assigneeId;
   if (person === null) throw new Error('Expected an assignee.');
+  await page.getByTestId('standup-members').click();
   await expect(page.getByTestId(`standup-tile-count-${person}`)).toHaveText(
     String(summary.groupTotals[person]),
   );
@@ -71,6 +72,7 @@ test('Standup shows a member tasks from other teams and filters by participant',
       return rendered.length > 0 && rendered.every((id) => id !== null && selectedCards.has(id));
     })
     .toBe(true);
+  await page.getByTestId('standup-members').click();
   await page.getByTestId('standup-tile-everyone').click();
   for (const theme of ['light', 'dark']) {
     await page.evaluate((theme) => {
