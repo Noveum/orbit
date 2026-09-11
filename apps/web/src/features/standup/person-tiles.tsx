@@ -20,7 +20,7 @@ export interface PersonTilesProps {
 }
 
 const tile =
-  'flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
+  'flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
 
 const UNKNOWN_COUNT = '?';
 
@@ -60,7 +60,7 @@ export function PersonTiles({
         onClick={() => onSelect(null)}
         className={cn(
           tile,
-          layout === 'dropdown' && 'w-full border-transparent',
+          layout === 'cards' ? 'border' : 'w-full',
           selectedId === null ? selectedTile : idleTile,
         )}
       >
@@ -81,7 +81,7 @@ export function PersonTiles({
             onClick={() => onSelect(selected ? null : member.id)}
             className={cn(
               tile,
-              layout === 'dropdown' && 'w-full border-transparent',
+              layout === 'cards' ? 'border' : 'w-full',
               tileTone(selected, count),
             )}
           >
@@ -104,7 +104,7 @@ export function PersonTiles({
           onClick={() => onSelect(selectedId === UNASSIGNED ? null : UNASSIGNED)}
           className={cn(
             tile,
-            layout === 'dropdown' && 'w-full border-transparent',
+            layout === 'cards' ? 'border' : 'w-full',
             tileTone(selectedId === UNASSIGNED, unassigned),
           )}
         >
