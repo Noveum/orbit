@@ -39,6 +39,7 @@ export function addDays(day: string, count: number): string {
 }
 
 export interface FilterContext {
+  readonly searchDescriptions?: boolean;
   readonly now: Date;
   readonly calendar?: {
     readonly today: string;
@@ -266,11 +267,11 @@ function relationPredicate(values: readonly string[], negate: boolean): SQL | nu
   return negate ? not(positive) : positive;
 }
 
-function contentPredicate(value: string, negate: boolean): SQL | null {
+function contentPredicate(value: string, negate: boolean, context: FilterContext): SQL | null {
   const term = `%${value.trim()}%`;
   const positive = or(
     ilike(schema.issue.title, term),
-    ilike(schema.issue.description, term),
+    context.searchDescriptions === false ? undefined : ilike(schema.issue.description, term),
     ilike(schema.issue.identifier, term),
   );
   if (positive === undefined) return null;
@@ -427,7 +428,7 @@ function setSql(condition: FilterCondition, context: FilterContext): SQL | null 
 function conditionSql(condition: FilterCondition, context: FilterContext): SQL | null {
   if (condition.operator === 'exact') {
     return condition.property === 'content'
-      ? contentPredicate(condition.value, condition.negate)
+      ? contentPredicate(condition.value, condition.negate, context)
       : null;
   }
   if (condition.operator === 'relative') {

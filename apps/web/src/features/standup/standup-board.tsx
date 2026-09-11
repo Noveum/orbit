@@ -28,7 +28,7 @@ import { useAllIssues, useIssueSummary } from '@/lib/query/use-issues.ts';
 import { PersonTiles, UNASSIGNED } from './person-tiles.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
-const WHOLE_WORKSPACE: Readonly<Record<string, string>> = {};
+const WHOLE_WORKSPACE: Readonly<Record<string, string>> = { view: 'standup' };
 
 export const PERSON_PARAM = 'person';
 
@@ -79,7 +79,8 @@ export function StandupBoard() {
   );
 
   const scope = useMemo(
-    () => (selectedId === null ? WHOLE_WORKSPACE : { participantId: selectedId }),
+    () =>
+      selectedId === null ? WHOLE_WORKSPACE : { ...WHOLE_WORKSPACE, participantId: selectedId },
     [selectedId],
   );
 
