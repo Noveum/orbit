@@ -67,6 +67,16 @@ const WorkspaceContext = createContext<WorkspaceData>({
   openQuickCreate: () => undefined,
 });
 
+export function WorkspaceDataProvider({
+  value,
+  children,
+}: {
+  value: WorkspaceData;
+  children: ReactNode;
+}) {
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+}
+
 export function useWorkspace(): WorkspaceData {
   return useContext(WorkspaceContext);
 }

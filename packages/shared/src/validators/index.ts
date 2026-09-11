@@ -11,6 +11,7 @@ export * from './github-release.ts';
 export * from './inbox.ts';
 export * from './integration.ts';
 export * from './issue.ts';
+export * from './issue-response.ts';
 export * from './label.ts';
 export * from './milestone.ts';
 export * from './notification.ts';

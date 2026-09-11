@@ -103,6 +103,7 @@ const BO_ISSUE = issue({
   identifier: 'ENG-2',
   number: 2,
   title: 'Fix the socket',
+  canOpen: false,
   stateId: doing.id,
   assigneeId: bo.id,
   creatorId: bo.id,
@@ -269,6 +270,9 @@ describe('StandupBoard', () => {
     await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(served.listUrls.length).toBe(1);
+    for (const url of [...served.listUrls, ...served.facetUrls, ...served.rosterUrls]) {
+      expect(new URL(url, 'http://localhost').searchParams.get('view')).toBe('standup');
+    }
     expect(participantIdIn(served.listUrls[0] ?? '')).toBeNull();
     expect(served.facetUrls.every((url) => participantIdIn(url) === null)).toBe(true);
   });
@@ -283,9 +287,12 @@ describe('StandupBoard', () => {
 
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
+    const restricted = screen.getByTestId('issue-card-ENG-2');
+    expect(restricted.querySelector('a')).toBeNull();
+    expect(restricted.querySelector('button:not([disabled])')).toBeNull();
   });
 
-  it('gives every card a real link to its own issue page', async () => {
+  it('links accessible cards and keeps other teams read-only', async () => {
     workspace = buildWorkspace();
     serve();
     mountBoard();
@@ -294,7 +301,7 @@ describe('StandupBoard', () => {
     await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(cardHref('ENG-1')).toBe('/issue/ENG-1');
-    expect(cardHref('ENG-2')).toBe('/issue/ENG-2');
+    expect(cardHref('ENG-2')).toBeNull();
   });
 
   it('narrows on the server when a person is picked, never in the browser', async () => {
@@ -313,6 +320,9 @@ describe('StandupBoard', () => {
     });
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
+    const restricted = screen.getByTestId('issue-card-ENG-2');
+    expect(restricted.querySelector('a')).toBeNull();
+    expect(restricted.querySelector('button:not([disabled])')).toBeNull();
   });
 
   it('keeps the tile counts on the whole workspace once a person is picked', async () => {
@@ -430,6 +440,9 @@ describe('StandupBoard', () => {
     expect(screen.getByTestId(`standup-tile-${bo.id}`).getAttribute('aria-pressed')).toBe('true');
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
+    const restricted = screen.getByTestId('issue-card-ENG-2');
+    expect(restricted.querySelector('a')).toBeNull();
+    expect(restricted.querySelector('button:not([disabled])')).toBeNull();
   });
 
   it('falls back to everyone when the url names somebody who is not a member', async () => {
@@ -515,6 +528,7 @@ describe('standup compact controls', () => {
     await screen.findByTestId('standup-kanban');
     for (const url of [...served.listUrls, ...served.facetUrls, ...served.rosterUrls]) {
       const params = new URL(url, 'http://localhost').searchParams;
+      expect(params.get('view')).toBe('standup');
       expect(params.get('aiOnly')).toBe('true');
       expect(params.get('workType')).toBe('reviewing');
     }

@@ -7,7 +7,7 @@ import type { SQL } from 'drizzle-orm';
 import type { FilterContext } from './issue-predicates.ts';
 import { buildFilterFilters } from './issue-predicates.ts';
 
-export type IssueVisibility = 'team' | 'workspace-analytics';
+export type IssueVisibility = 'team' | 'workspace-analytics' | 'standup';
 
 export interface IssueWhereInput {
   readonly visibility: IssueVisibility;
@@ -35,6 +35,10 @@ export function visibleTeamFilters(principal: Principal): SQL[] {
 }
 
 function visibilityFilters(principal: Principal, visibility: IssueVisibility): SQL[] {
+  if (visibility === 'standup') {
+    assertCan(principal, 'standup:read');
+    return [];
+  }
   if (visibility === 'workspace-analytics') {
     assertCan(principal, 'analytics:read');
     return [];
@@ -97,6 +101,20 @@ function agentFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   ];
 }
 
+function searchFilters(filter: IssueFilterInput): SQL[] {
+  const filters: SQL[] = [];
+  if (filter.query !== undefined && filter.query.trim().length > 0) {
+    const term = `%${filter.query.trim()}%`;
+    const matches = or(
+      ilike(schema.issue.title, term),
+      filter.view === 'standup' ? undefined : ilike(schema.issue.description, term),
+      ilike(schema.issue.identifier, term),
+    );
+    if (matches !== undefined) filters.push(matches);
+  }
+  return filters;
+}
+
 function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   const filters: SQL[] = [];
   if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
@@ -143,15 +161,7 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
       ),
     );
   }
-  if (filter.query !== undefined && filter.query.trim().length > 0) {
-    const term = `%${filter.query.trim()}%`;
-    const matches = or(
-      ilike(schema.issue.title, term),
-      ilike(schema.issue.description, term),
-      ilike(schema.issue.identifier, term),
-    );
-    if (matches !== undefined) filters.push(matches);
-  }
+  filters.push(...searchFilters(filter));
   if (!filter.includeArchived) filters.push(isNull(schema.issue.archivedAt));
   if (!filter.includeSubIssues && filter.parentId === undefined) {
     filters.push(isNull(schema.issue.parentId));
@@ -168,6 +178,7 @@ export function buildIssueWhere(principal: Principal, input: IssueWhereInput): S
       ? []
       : buildFilterFilters(input.filter.filter, {
           now: input.now,
+          searchDescriptions: input.visibility !== 'standup',
           ...(input.calendar === undefined ? {} : { calendar: input.calendar }),
         })),
   ];

@@ -115,7 +115,7 @@ export function StandupBoard() {
   );
 
   const rosterScope = useMemo<Readonly<Record<string, string>>>(
-    () => ({ workType, aiOnly: String(aiOnly) }),
+    () => ({ view: 'standup', workType, aiOnly: String(aiOnly) }),
     [workType, aiOnly],
   );
   const scope = useMemo<Readonly<Record<string, string>>>(

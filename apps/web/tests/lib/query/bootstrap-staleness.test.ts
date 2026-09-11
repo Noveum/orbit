@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { encodeFilter, inCondition } from '@orbit/shared/filters';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
-import { bootstrapQueryOptions, currentSprintRefetchInterval } from '@/lib/query/use-issues.ts';
+import {
+  bootstrapQueryOptions,
+  currentSprintRefetchInterval,
+  issueFacetsQueryOptions,
+  issueSummaryQueryOptions,
+} from '@/lib/query/use-issues.ts';
 
 async function fetchesAfterInvalidate(staleTime: unknown): Promise<number> {
   let calls = 0;
@@ -81,5 +86,24 @@ describe('current sprint refresh', () => {
     expect(currentSprintRefetchInterval(search('sprint-id'))).toBe(false);
     expect(currentSprintRefetchInterval('')).toBe(false);
     expect(bootstrapQueryOptions(null).refetchInterval).toBe(60_000);
+  });
+});
+
+describe('combined standup and sprint refresh', () => {
+  it('keeps standup refresh faster while refreshing current sprint summaries and all facets', () => {
+    const current = new URLSearchParams({
+      filter: encodeFilter({
+        kind: 'group',
+        combinator: 'and',
+        children: [inCondition('cycle', ['current'])],
+      }),
+    }).toString();
+    expect(issueSummaryQueryOptions('view=standup').refetchInterval).toBe(30_000);
+    expect(issueSummaryQueryOptions(`view=standup&${current}`).refetchInterval).toBe(30_000);
+    expect(issueSummaryQueryOptions(current).refetchInterval).toBe(60_000);
+    expect(issueSummaryQueryOptions('').refetchInterval).toBe(false);
+    expect(issueFacetsQueryOptions('view=standup').refetchInterval).toBe(30_000);
+    expect(issueFacetsQueryOptions(current).refetchInterval).toBe(60_000);
+    expect(issueFacetsQueryOptions('').refetchInterval).toBe(60_000);
   });
 });

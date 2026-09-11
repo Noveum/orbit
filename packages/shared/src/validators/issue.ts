@@ -83,6 +83,7 @@ export const issueBulkUpdateSchema = z.object({
 });
 
 export const issueFilterSchema = z.object({
+  view: z.literal('standup').optional(),
   teamId: idSchema.optional(),
   projectId: idSchema.optional(),
   cycleId: idSchema.optional(),
