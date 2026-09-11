@@ -12,6 +12,12 @@ import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
+const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+
+function setPlatform(value: string) {
+  Object.defineProperty(navigator, 'platform', { configurable: true, value });
+}
+
 let search = '';
 
 mock.module('next/navigation', () => ({
@@ -255,6 +261,8 @@ const PRIORITY_FILTER = JSON.stringify({
 });
 
 afterEach(() => {
+  if (originalPlatform) Object.defineProperty(navigator, 'platform', originalPlatform);
+  else Reflect.deleteProperty(navigator, 'platform');
   globalThis.fetch = originalFetch;
   search = '';
   window.history.replaceState(null, '', '/standup');
@@ -492,11 +500,15 @@ describe('StandupBoard', () => {
 
 describe('standup compact controls', () => {
   it('opens only the member button until clicked and switches immediately while Option is held', async () => {
+    setPlatform('MacIntel');
     workspace = buildWorkspace();
     serve();
     mountBoard();
     await screen.findByTestId('standup-kanban');
     expect(screen.queryByTestId('standup-tile-user_ada')).toBeNull();
+    expect(screen.getByTestId('standup-members').title).toBe(
+      'Next member: Option+Tab. Previous member: Option+Shift+Tab',
+    );
     fireEvent.keyDown(window, { key: 'Tab', altKey: true });
     await screen.findByTestId('standup-tile-user_ada');
     expect(window.location.search).toContain('person=user_ada');
@@ -509,7 +521,53 @@ describe('standup compact controls', () => {
     fireEvent.keyUp(window, { key: 'Alt' });
     await waitFor(() => expect(screen.queryByTestId('standup-tile-user_ada')).toBeNull());
   });
+  for (const platform of ['Win32', 'Linux x86_64']) {
+    it(`switches members with Alt+J/K on ${platform} and leaves Alt+Tab alone`, async () => {
+      setPlatform(platform);
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      expect(screen.getByTestId('standup-members').title).toBe(
+        'Next member: Alt+J. Previous member: Alt+K',
+      );
+      expect(fireEvent.keyDown(window, { key: 'Tab', altKey: true })).toBe(true);
+      expect(fireEvent.keyDown(window, { key: 'Tab', altKey: true, shiftKey: true })).toBe(true);
+      expect(screen.queryByTestId('standup-tiles')).toBeNull();
+      for (const modifiers of [
+        {},
+        { altKey: true, ctrlKey: true },
+        { altKey: true, metaKey: true },
+        { altKey: true, shiftKey: true },
+        { altKey: true, isComposing: true },
+      ]) {
+        expect(fireEvent.keyDown(window, { key: 'j', ...modifiers })).toBe(true);
+        expect(screen.queryByTestId('standup-tiles')).toBeNull();
+      }
+      fireEvent.keyDown(window, { key: 'j', altKey: true });
+      await screen.findByTestId('standup-tile-user_ada');
+      expect(window.location.search).toContain('person=user_ada');
+      fireEvent.keyDown(window, { key: 'j', altKey: true });
+      expect(window.location.search).toContain('person=user_bo');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).toContain('person=user_ada');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).not.toContain('person=');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).toContain('person=none');
+      fireEvent.keyUp(window, { key: 'k', altKey: true });
+      expect(screen.queryByTestId('standup-tiles')).not.toBeNull();
+      fireEvent.keyUp(window, { key: 'Alt' });
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      const input = document.createElement('input');
+      document.body.append(input);
+      fireEvent.keyDown(input, { key: 'j', altKey: true });
+      expect(screen.queryByTestId('standup-tiles')).toBeNull();
+      input.remove();
+    });
+  }
   it('wraps backwards and closes on loss of focus', async () => {
+    setPlatform('MacIntel');
     workspace = buildWorkspace();
     serve();
     mountBoard();
@@ -567,6 +625,7 @@ describe('standup filter interactions', () => {
   });
 
   it('leaves ordinary Tab and editable fields alone and preserves focus during switching', async () => {
+    setPlatform('MacIntel');
     workspace = buildWorkspace();
     serve();
     mountBoard();

@@ -141,12 +141,12 @@ work in an input, because you always need a way out.
 
 ## Standup member switching
 
-| Shortcut | Action |
-| --- | --- |
-| Option + Tab | Next member |
-| Option + Shift + Tab | Previous member |
+| macOS | Windows / Linux | Action |
+| --- | --- | --- |
+| Option + Tab | Alt + J | Next member |
+| Option + Shift + Tab | Alt + K | Previous member |
 
-Hold Option to keep the member dropdown open while switching. Release Option to close it and keep the current selection. On keyboards that label the modifier Alt, use Alt. The operating system may reserve Alt+Tab; the member dropdown remains available by mouse and ordinary keyboard navigation.
+Hold Option on macOS or Alt on Windows/Linux to keep the member dropdown open while switching. Release the modifier to close it and keep the current selection. Switching wraps through All Members, the team members, and Unassigned when available. The member button's tooltip shows the shortcuts for your platform. Alt+Tab is left to the window switcher on Windows/Linux.
 
 ## Adding one
 
