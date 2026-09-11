@@ -146,7 +146,7 @@ work in an input, because you always need a way out.
 | Option + Tab | Alt + J | Next member |
 | Option + Shift + Tab | Alt + K | Previous member |
 
-Member cards are shown by default with first names; hover a card for the full name. Choose **Display > Members > Cards** or **Dropdown** to change the layout. Your choice is remembered for your account in this browser. Changing layouts keeps the selected member and board filters.
+Member cards are shown by default with first names; hover a card for the full name. Open **Display options** and choose **Cards** or **Dropdown** under the **Members** section to change the layout. Your choice is remembered for your account in this browser. Changing layouts keeps the selected member and board filters.
 
 The shortcuts work in both layouts and immediately filter the board. Switching wraps through All Members, the team members, and Unassigned when available. In dropdown mode, hold Option or Alt to keep the picker open and release it to close; cards remain visible in card mode. Hover the member group or dropdown button for your platform's shortcuts. Alt+Tab is left to the window switcher on Windows/Linux.
 
