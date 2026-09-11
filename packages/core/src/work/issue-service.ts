@@ -2746,7 +2746,7 @@ async function transferSubscriptions(
 
   let subUserIds = existingSubs.map((sub) => sub.userId);
 
-  if (subUserIds.length === 0 && previousSurvivorIds.length > 0) {
+  if (previousSurvivorIds.length > 0) {
     const pastActivities = await tx
       .select({ actorId: schema.issueActivity.actorId })
       .from(schema.issueActivity)
@@ -2757,7 +2757,8 @@ async function transferSubscriptions(
           eq(schema.issueActivity.field, 'subscription_transfer'),
         ),
       );
-    subUserIds = Array.from(new Set(pastActivities.map((a) => a.actorId)));
+    const pastUserIds = pastActivities.map((a) => a.actorId);
+    subUserIds = Array.from(new Set([...subUserIds, ...pastUserIds]));
   }
 
   if (subUserIds.length === 0) return [];
