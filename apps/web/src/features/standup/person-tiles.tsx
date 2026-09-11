@@ -18,7 +18,7 @@ export interface PersonTilesProps {
 }
 
 const tile =
-  'flex h-7 w-full shrink-0 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
+  'flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
 
 const UNKNOWN_COUNT = '?';
 
@@ -42,7 +42,10 @@ export function PersonTiles({
   const unassigned = countOf(UNASSIGNED);
 
   return (
-    <div data-testid="standup-tiles" className="flex min-w-0 flex-col gap-0.5">
+    <div
+      data-testid="standup-tiles"
+      className="flex min-w-0 flex-wrap items-center justify-end gap-1.5"
+    >
       <button
         type="button"
         data-testid="standup-tile-everyone"
@@ -63,12 +66,13 @@ export function PersonTiles({
             data-testid={`standup-tile-${member.id}`}
             aria-pressed={selected}
             title={member.name}
+            aria-label={member.id === currentUserId ? `${member.name} (You)` : member.name}
             onClick={() => onSelect(selected ? null : member.id)}
             className={cn(tile, tileTone(selected, count))}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
-            <span className="max-w-48 truncate">
-              {member.name}
+            <span className="max-w-28 truncate">
+              {member.name.trim().split(/\s+/)[0]}
               {member.id === currentUserId ? ' (You)' : ''}
             </span>
             {member.isAgent ? <span className="text-faint">AI</span> : null}
@@ -105,7 +109,7 @@ function TileCount({ tileId, count }: TileCountProps) {
       data-numeric
       data-testid={`standup-tile-count-${tileId}`}
       title={count === null ? 'Workload counts are unavailable' : undefined}
-      className="ml-auto text-faint"
+      className="text-faint"
     >
       {count ?? UNKNOWN_COUNT}
     </span>

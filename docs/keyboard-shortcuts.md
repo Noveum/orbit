@@ -146,7 +146,7 @@ work in an input, because you always need a way out.
 | Option + Tab | Alt + J | Next member |
 | Option + Shift + Tab | Alt + K | Previous member |
 
-Hold Option on macOS or Alt on Windows/Linux to keep the member dropdown open while switching. Release the modifier to close it and keep the current selection. Switching wraps through All Members, the team members, and Unassigned when available. The member button's tooltip shows the shortcuts for your platform. Alt+Tab is left to the window switcher on Windows/Linux.
+All member cards remain visible and show first names; hover a card for the full name. Each shortcut immediately selects the next or previous card and filters the board. Switching wraps through All Members, the team members, and Unassigned when available. Releasing Option or Alt keeps the current selection. Hover the member group for your platform's shortcuts. Alt+Tab is left to the window switcher on Windows/Linux.
 
 ## Adding one
 
