@@ -7,6 +7,8 @@ Set `ORBIT_AUTH_ALLOWED_HOSTS=orbit-*-magicapi.vercel.app` in both Vercel
 environments. The auth server also accepts the canonical hostname and the exact
 `VERCEL_URL` and `VERCEL_BRANCH_URL` provided by Vercel. Browser authentication
 uses the current origin, so password and email OTP sessions stay on the preview.
+A request whose host is missing or not allowed uses `BETTER_AUTH_URL` as the
+origin. It never uses an unrecognised host.
 
 Set a dedicated random `OAUTH_PROXY_SECRET` of at least 32 characters to the same
 value in production and previews. Do not put its value in source control. This

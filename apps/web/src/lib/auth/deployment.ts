@@ -38,6 +38,7 @@ export function deploymentAuthOptions(
         ? canonical.origin
         : {
             allowedHosts: [...new Set(allowedHosts)],
+            fallback: canonical.origin,
           },
     plugins,
   };
