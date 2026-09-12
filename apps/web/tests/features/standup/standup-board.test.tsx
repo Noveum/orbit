@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
@@ -11,6 +11,12 @@ import * as workspaceProvider from '../../../src/features/issues/workspace-provi
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
+
+const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+
+function setPlatform(value: string) {
+  Object.defineProperty(navigator, 'platform', { configurable: true, value });
+}
 
 let search = '';
 
@@ -103,6 +109,7 @@ const BO_ISSUE = issue({
   identifier: 'ENG-2',
   number: 2,
   title: 'Fix the socket',
+  canOpen: false,
   stateId: doing.id,
   assigneeId: bo.id,
   creatorId: bo.id,
@@ -221,9 +228,9 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
   return { listUrls, facetUrls, rosterUrls };
 }
 
-function mountBoard(): void {
+function mountBoard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <HotkeyProvider>
@@ -254,8 +261,11 @@ const PRIORITY_FILTER = JSON.stringify({
 });
 
 afterEach(() => {
+  if (originalPlatform) Object.defineProperty(navigator, 'platform', originalPlatform);
+  else Reflect.deleteProperty(navigator, 'platform');
   globalThis.fetch = originalFetch;
   search = '';
+  window.localStorage.removeItem('orbit.standup.member-layout.user_ada');
   window.history.replaceState(null, '', '/standup');
 });
 
@@ -268,6 +278,9 @@ describe('StandupBoard', () => {
     await screen.findByTestId('standup-kanban');
 
     expect(served.listUrls.length).toBe(1);
+    for (const url of [...served.listUrls, ...served.facetUrls, ...served.rosterUrls]) {
+      expect(new URL(url, 'http://localhost').searchParams.get('view')).toBe('standup');
+    }
     expect(participantIdIn(served.listUrls[0] ?? '')).toBeNull();
     expect(served.facetUrls.every((url) => participantIdIn(url) === null)).toBe(true);
   });
@@ -281,9 +294,12 @@ describe('StandupBoard', () => {
 
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
+    const restricted = screen.getByTestId('issue-card-ENG-2');
+    expect(restricted.querySelector('a')).toBeNull();
+    expect(restricted.querySelector('button:not([disabled])')).toBeNull();
   });
 
-  it('gives every card a real link to its own issue page', async () => {
+  it('links accessible cards and keeps other teams read-only', async () => {
     workspace = buildWorkspace();
     serve();
     mountBoard();
@@ -291,7 +307,7 @@ describe('StandupBoard', () => {
     await screen.findByTestId('standup-kanban');
 
     expect(cardHref('ENG-1')).toBe('/issue/ENG-1');
-    expect(cardHref('ENG-2')).toBe('/issue/ENG-2');
+    expect(cardHref('ENG-2')).toBeNull();
   });
 
   it('narrows on the server when a person is picked, never in the browser', async () => {
@@ -308,6 +324,9 @@ describe('StandupBoard', () => {
     });
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
+    const restricted = screen.getByTestId('issue-card-ENG-2');
+    expect(restricted.querySelector('a')).toBeNull();
+    expect(restricted.querySelector('button:not([disabled])')).toBeNull();
   });
 
   it('keeps the tile counts on the whole workspace once a person is picked', async () => {
@@ -416,6 +435,9 @@ describe('StandupBoard', () => {
     expect(screen.getByTestId(`standup-tile-${bo.id}`).getAttribute('aria-pressed')).toBe('true');
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
+    const restricted = screen.getByTestId('issue-card-ENG-2');
+    expect(restricted.querySelector('a')).toBeNull();
+    expect(restricted.querySelector('button:not([disabled])')).toBeNull();
   });
 
   it('falls back to everyone when the url names somebody who is not a member', async () => {
@@ -458,5 +480,222 @@ describe('StandupBoard', () => {
   it('removes drag affordances from guests and non-regroupable boards', () => {
     expect(standupBoardOptions('guest', 'state', 'manual').draggable).toBe(false);
     expect(standupBoardOptions('member', 'label', 'manual').draggable).toBe(false);
+  });
+});
+
+describe('standup member cards', () => {
+  it('shows all member cards and switches immediately while Option is held', async () => {
+    setPlatform('MacIntel');
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    expect(screen.getByTestId('standup-tile-user_ada')).toBeVisible();
+    expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Members:/ })).toBeNull();
+    expect(screen.getByTestId('standup-members').title).toBe(
+      'Next member: Option+Tab. Previous member: Option+Shift+Tab',
+    );
+    fireEvent.keyDown(window, { key: 'Tab', altKey: true });
+    await screen.findByTestId('standup-tile-user_ada');
+    expect(window.location.search).toContain('person=user_ada');
+    fireEvent.keyDown(window, { key: 'Tab', altKey: true });
+    expect(window.location.search).toContain('person=user_bo');
+    fireEvent.keyDown(window, { key: 'Tab', altKey: true, shiftKey: true });
+    expect(window.location.search).toContain('person=user_ada');
+    fireEvent.keyUp(window, { key: 'Tab', altKey: true });
+    expect(screen.queryByTestId('standup-tile-user_ada')).not.toBeNull();
+    fireEvent.keyUp(window, { key: 'Alt' });
+    expect(screen.getByTestId('standup-tile-user_ada')).toBeVisible();
+  });
+  for (const platform of ['Win32', 'Linux x86_64']) {
+    it(`switches members with Alt+J/K on ${platform} and leaves Alt+Tab alone`, async () => {
+      setPlatform(platform);
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      expect(screen.getByTestId('standup-members').title).toBe(
+        'Next member: Alt+J. Previous member: Alt+K',
+      );
+      expect(fireEvent.keyDown(window, { key: 'Tab', altKey: true })).toBe(true);
+      expect(fireEvent.keyDown(window, { key: 'Tab', altKey: true, shiftKey: true })).toBe(true);
+      expect(window.location.search).not.toContain('person=user_ada');
+      for (const modifiers of [
+        {},
+        { altKey: true, ctrlKey: true },
+        { altKey: true, metaKey: true },
+        { altKey: true, shiftKey: true },
+        { altKey: true, isComposing: true },
+      ]) {
+        expect(fireEvent.keyDown(window, { key: 'j', ...modifiers })).toBe(true);
+        expect(window.location.search).not.toContain('person=user_ada');
+      }
+      fireEvent.keyDown(window, { key: 'j', altKey: true });
+      await screen.findByTestId('standup-tile-user_ada');
+      expect(window.location.search).toContain('person=user_ada');
+      fireEvent.keyDown(window, { key: 'j', altKey: true });
+      expect(window.location.search).toContain('person=user_bo');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).toContain('person=user_ada');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).not.toContain('person=');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).toContain('person=none');
+      fireEvent.keyUp(window, { key: 'k', altKey: true });
+      expect(screen.queryByTestId('standup-tiles')).not.toBeNull();
+      fireEvent.keyUp(window, { key: 'Alt' });
+      expect(screen.getByTestId('standup-tiles')).toBeVisible();
+      const input = document.createElement('input');
+      document.body.append(input);
+      fireEvent.keyDown(input, { key: 'j', altKey: true });
+      expect(window.location.search).toContain('person=none');
+      input.remove();
+    });
+  }
+  for (const platform of ['MacIntel', 'Win32', 'Linux x86_64']) {
+    it(`uses the same shortcuts in the dropdown on ${platform}`, async () => {
+      setPlatform(platform);
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Display options' }));
+      expect(screen.getByRole('menuitemradio', { name: 'Cards' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
+      const button = screen.getByRole('button', { name: 'Members: All Members' });
+      button.focus();
+      expect(screen.queryByTestId('standup-tiles')).toBeNull();
+      const key = platform === 'MacIntel' ? 'Tab' : 'j';
+      fireEvent.keyDown(window, { key, altKey: true });
+      expect(screen.getByTestId('standup-tile-user_ada')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyDown(window, { key, altKey: true });
+      expect(screen.getByTestId('standup-tile-user_bo')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyDown(window, {
+        key: platform === 'MacIntel' ? 'Tab' : 'k',
+        altKey: true,
+        shiftKey: platform === 'MacIntel',
+      });
+      expect(screen.getByTestId('standup-tile-user_ada')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyUp(window, { key: 'Alt' });
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      expect(document.activeElement).toBe(button);
+      expect(window.location.search).toContain('person=user_ada');
+      await user.click(button);
+      await user.click(screen.getByTestId('standup-tile-user_bo'));
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      expect(window.location.search).toContain('person=user_bo');
+    });
+  }
+
+  it('remembers the member layout and preserves the selection when changing it', async () => {
+    workspace = buildWorkspace();
+    serve();
+    const mounted = mountBoard();
+    await screen.findByTestId('standup-kanban');
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('standup-tile-user_bo'));
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
+    expect(screen.getByRole('button', { name: 'Members: Bo Chen' })).toBeVisible();
+    expect(window.location.search).toContain('person=user_bo');
+    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('dropdown');
+    mounted.unmount();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    expect(screen.queryByTestId('standup-tiles')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Dropdown' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await user.click(screen.getByRole('menuitemradio', { name: 'Cards' }));
+    expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('cards');
+  });
+
+  it('wraps backwards and keeps the cards visible on loss of focus', async () => {
+    setPlatform('MacIntel');
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    fireEvent.keyDown(window, { key: 'Tab', altKey: true, shiftKey: true });
+    expect(window.location.search).toContain('person=none');
+    await screen.findByTestId('standup-tile-none');
+    fireEvent.blur(window);
+    expect(screen.getByTestId('standup-tile-none')).toHaveAttribute('aria-pressed', 'true');
+  });
+  it('sends combined AI and work type scopes to lists, facets and roster counts', async () => {
+    workspace = buildWorkspace();
+    search = 'aiOnly=true&workType=reviewing&person=user_ada';
+    const served = serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    for (const url of [...served.listUrls, ...served.facetUrls, ...served.rosterUrls]) {
+      const params = new URL(url, 'http://localhost').searchParams;
+      expect(params.get('view')).toBe('standup');
+      expect(params.get('aiOnly')).toBe('true');
+      expect(params.get('workType')).toBe('reviewing');
+    }
+    expect(served.rosterUrls.every((url) => participantIdIn(url) === null)).toBe(true);
+  });
+});
+
+describe('standup filter interactions', () => {
+  it('combines the AI toggle and work type dropdown without clearing the member', async () => {
+    workspace = buildWorkspace();
+    search = `person=${bo.id}`;
+    window.history.replaceState(null, '', `/standup?${search}`);
+    const served = serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'AI only' }));
+    await user.click(screen.getByRole('button', { name: 'Work type: All work' }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'To review' }));
+    await waitFor(() =>
+      expect(
+        served.listUrls.some((url) => {
+          const params = new URL(url, 'http://localhost').searchParams;
+          return (
+            params.get('aiOnly') === 'true' &&
+            params.get('workType') === 'reviewing' &&
+            params.get('participantId') === bo.id
+          );
+        }),
+      ).toBe(true),
+    );
+    expect(window.location.search).toContain('workType=reviewing');
+    expect(window.location.search).toContain(`person=${bo.id}`);
+    await user.click(screen.getByRole('button', { name: 'AI only' }));
+    expect(window.location.search).not.toContain('aiOnly=');
+  });
+
+  it('leaves ordinary Tab and editable fields alone and preserves focus during switching', async () => {
+    setPlatform('MacIntel');
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    const button = screen.getByRole('button', { name: 'AI only' });
+    button.focus();
+    fireEvent.keyDown(window, { key: 'Tab' });
+    expect(window.location.search).not.toContain('person=user_ada');
+    fireEvent.keyDown(window, { key: 'Tab', altKey: true });
+    await screen.findByTestId('standup-tiles');
+    fireEvent.keyUp(window, { key: 'Alt' });
+    expect(screen.getByTestId('standup-tiles')).toBeVisible();
+    expect(document.activeElement).toBe(button);
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: 'Tab', altKey: true });
+    expect(window.location.search).toContain('person=user_ada');
+    input.remove();
   });
 });

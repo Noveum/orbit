@@ -808,14 +808,14 @@ describe('sprints over mcp', () => {
     expect((created['cycle'] as { name: string }).name).toBe('Sprint 100');
   });
 
-  it('closes a sprint two weeks out when no end date is given', async () => {
+  it('closes a sprint one week out when no end date is given', async () => {
     const created = await admin.result('create_cycle', {
       team: workspace.teamKey,
       name: 'Sprint 101',
       startsAt: '2033-01-05',
     });
     const sprint = created['cycle'] as { startsAt: string; endsAt: string };
-    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(7 * 86_400_000);
   });
 
   it('appends a sprint after the last one when it is given no dates', async () => {
@@ -829,7 +829,7 @@ describe('sprints over mcp', () => {
     const sprint = created['cycle'] as { startsAt: string; endsAt: string };
 
     expect(sprint.startsAt).toBe(last.endsAt);
-    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(7 * 86_400_000);
   });
 
   it('starts the sprint that follows the one it just closed, and refuses to start it twice', async () => {

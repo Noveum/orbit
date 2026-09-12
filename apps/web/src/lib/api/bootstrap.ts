@@ -132,6 +132,7 @@ export async function bootstrapPayloadFor(principal: Principal, resolved: Bootst
       image: row.user.image,
       handle: row.user.handle,
       role: row.member.role,
+      isAgent: row.member.isAgent,
     })),
   };
 }

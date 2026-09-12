@@ -28,6 +28,17 @@ function facetsWith(label: Record<string, number>): IssueFacets['facets'] {
 }
 
 describe('countValues', () => {
+  it('counts the current sprint through its actual sprint ids', () => {
+    const definition: FilterFieldDefinition = {
+      ...labelDef,
+      property: 'cycle',
+      facet: 'cycle',
+      options: [{ value: 'current', label: 'Current sprint', icon: null, facetValues: ['second'] }],
+    };
+    const counts = countValues(definition, { ...emptyFacets(), cycle: { first: 8, second: 3 } });
+    expect(counts.get('current')).toBe(3);
+  });
+
   it('reads the counts the server measured over the whole scope', () => {
     const counts = countValues(labelDef, facetsWith({ bug: 412, perf: 97 }));
     expect(counts.get('bug')).toBe(412);

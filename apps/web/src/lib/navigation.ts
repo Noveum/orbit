@@ -202,7 +202,8 @@ export function buildCommands(context: CommandContext): AppCommand[] {
       label: 'Go to Settings',
       section: 'Navigation',
       icon: Settings,
-      run: () => context.navigate('/settings'),
+      binding: 'g e',
+      run: () => context.navigate('/settings/general'),
     },
     {
       id: 'navigate:/settings/mcp',

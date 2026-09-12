@@ -1,11 +1,21 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  setSystemTime,
+} from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Bootstrap } from '@/lib/query/schemas.ts';
+import { sprintOptions } from '@/lib/sprint-options.ts';
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), prefetch: mock() }),
@@ -22,7 +32,7 @@ afterAll(() => {
   mock.module('@/features/issues/quick-create.tsx', () => realQuickCreate);
 });
 
-const { IssueWorkspaceProvider, toOrgRole, workspaceFrom } = await import(
+const { IssueWorkspaceProvider, toOrgRole, useWorkspace, workspaceFrom } = await import(
   '@/features/issues/workspace-provider.tsx'
 );
 const { canDeleteIssues, useIssueDeletion } = await import('@/features/issues/issue-deletion.tsx');
@@ -78,9 +88,73 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  setSystemTime();
 });
 
+function SprintProbe() {
+  const workspace = useWorkspace();
+  return (
+    <span data-testid="sprint-probe">
+      {sprintOptions(workspace.cycles)
+        .map((cycle) => cycle.label)
+        .join(', ')}
+    </span>
+  );
+}
+
 describe('the issue workspace shell', () => {
+  it('updates sprint choices on focus after a week changes without changing cached dates', async () => {
+    const start = Date.parse('2026-09-10T00:00:00Z');
+    setSystemTime(start);
+    const data: Bootstrap = {
+      ...bootstrap('member'),
+      cycles: [
+        {
+          id: 'second',
+          number: 2,
+          name: '',
+          teamId: null,
+          startsAt: '2026-09-10T00:00:00Z',
+          endsAt: '2026-09-17T00:00:00Z',
+          completedAt: null,
+        },
+        {
+          id: 'third',
+          number: 3,
+          name: '',
+          teamId: null,
+          startsAt: '2026-09-17T00:00:00Z',
+          endsAt: '2026-09-24T00:00:00Z',
+          completedAt: null,
+        },
+      ],
+    };
+    globalThis.fetch = mock(() => Promise.resolve(Response.json(data))) as unknown as typeof fetch;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.bootstrap(null), data);
+    render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <HotkeyProvider>
+            <IssueWorkspaceProvider>
+              <SprintProbe />
+            </IssueWorkspaceProvider>
+          </HotkeyProvider>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('sprint-probe')).toHaveTextContent(
+      'Current sprint (Sprint 2), Sprint 3',
+    );
+    await act(() => {
+      setSystemTime(start + 7 * 86_400_000);
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(screen.getByTestId('sprint-probe')).toHaveTextContent('Current sprint (Sprint 3)');
+    expect(screen.getByTestId('sprint-probe')).not.toHaveTextContent('Sprint 2');
+    client.clear();
+  });
+
   it('puts issue deletion in reach of every issue surface below it', async () => {
     mountShell();
 

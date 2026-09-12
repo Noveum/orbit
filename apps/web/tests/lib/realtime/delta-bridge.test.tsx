@@ -1962,3 +1962,24 @@ describe('DeltaBridge deletions', () => {
     expect(rows[0]?.parentId).toBeNull();
   });
 });
+
+describe('DeltaBridge agent involvement', () => {
+  it.each(['member', 'comment', 'reaction', 'issue_relation'] as const)(
+    'refreshes agent task lists and aggregates after a %s change',
+    (model) => {
+      const client = mount();
+      const keys = [
+        queryKeys.allIssues('aiOnly=true'),
+        queryKeys.issueSummary('aiOnly=true'),
+        queryKeys.issueFacets('aiOnly=true'),
+        queryKeys.boardPage('aiOnly=true'),
+      ];
+      for (const key of keys) client.setQueryData(key, {});
+      const ordinary = queryKeys.allIssues('aiOnly=false');
+      client.setQueryData(ordinary, {});
+      act(() => capturedHandler?.([action({ model })]));
+      for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(ordinary)?.isInvalidated).toBe(false);
+    },
+  );
+});

@@ -588,3 +588,19 @@ describe('a remote edit that changes where a row belongs in the order', () => {
     expect(renamed[0]?.title).toBe('Renamed');
   });
 });
+
+describe('standup realtime scopes', () => {
+  it('keeps reviewer work and assignments distinct when applying deltas', () => {
+    const row = issue({ assigneeId: 'user_1', reviewerIds: ['user_2'] });
+    expect(belongsInList('participantId=user_1&workType=reviewing', row)).toBe(false);
+    expect(belongsInList('participantId=user_2&workType=reviewing', row)).toBe(true);
+    expect(belongsInList('participantId=user_2&workType=assigned', row)).toBe(false);
+    expect(belongsInList('participantId=user_1&workType=assigned', row)).toBe(true);
+    expect(belongsInList('workType=reviewing', issue({ reviewerIds: [] }))).toBe(false);
+    expect(belongsInList('workType=assigned', issue({ assigneeId: null }))).toBe(false);
+  });
+  it('requires server confirmation before inserting a task into an AI filtered list', () => {
+    expect(admitsNewRows('aiOnly=true')).toBe(false);
+    expect(admitsNewRows('aiOnly=false')).toBe(true);
+  });
+});

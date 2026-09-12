@@ -2,19 +2,26 @@ import { describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import * as navigation from 'next/navigation';
+import type { ReactNode } from 'react';
 import { SettingsShell } from '@/features/settings/settings-shell.tsx';
+import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 
 const pathname = mock(() => '/settings/general');
 
 mock.module('next/navigation', () => ({
   ...navigation,
   usePathname: pathname,
+  useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), back: mock() }),
 }));
+
+function renderShell(children: ReactNode) {
+  return render(<HotkeyProvider>{children}</HotkeyProvider>);
+}
 
 describe('SettingsShell', () => {
   it('renders page content beside the settings sidebar', () => {
     pathname.mockReturnValue('/settings/general');
-    render(
+    renderShell(
       <SettingsShell passwordEnabled={false}>
         <p>General content</p>
       </SettingsShell>,
@@ -27,7 +34,7 @@ describe('SettingsShell', () => {
 
   it('marks the active workspace section in the sidebar', () => {
     pathname.mockReturnValue('/settings/general');
-    render(
+    renderShell(
       <SettingsShell passwordEnabled={false}>
         <p>General content</p>
       </SettingsShell>,
@@ -39,7 +46,7 @@ describe('SettingsShell', () => {
 
   it('marks the active account section in the sidebar', () => {
     pathname.mockReturnValue('/settings/account/sessions');
-    render(
+    renderShell(
       <SettingsShell passwordEnabled={false}>
         <p>Sessions content</p>
       </SettingsShell>,
@@ -52,7 +59,7 @@ describe('SettingsShell', () => {
   it('opens and closes the mobile drawer from the toolbar toggle', async () => {
     pathname.mockReturnValue('/settings/general');
     const user = userEvent.setup();
-    render(
+    renderShell(
       <SettingsShell passwordEnabled={false}>
         <p>General content</p>
       </SettingsShell>,

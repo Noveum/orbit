@@ -157,20 +157,21 @@ describe('cycle window invariant', () => {
     expect(cycle.startsAt.getTime()).toBe(bootstrap.startsAt.getTime());
   });
 
-  it('derives a two week window when no end date is given', async () => {
+  it('derives a one week window when no end date is given', async () => {
     const startsAt = daysFromNow(30);
     const { cycle } = await createCycle(workspace.admin, {
       startsAt,
     });
-    expect(cycle.endsAt.getTime()).toBe(startsAt.getTime() + 14 * 86_400_000);
+    expect(cycle.endsAt.getTime()).toBe(startsAt.getTime() + 7 * 86_400_000);
   });
 
   it('appends a sprint after the last one when no dates are given at all', async () => {
     const bootstrap = await firstCycle();
     const { cycle } = await createCycle(workspace.admin, {});
 
+    expect(bootstrap.endsAt.getTime() - bootstrap.startsAt.getTime()).toBe(7 * 86_400_000);
     expect(cycle.startsAt.getTime()).toBe(bootstrap.endsAt.getTime());
-    expect(cycle.endsAt.getTime()).toBe(bootstrap.endsAt.getTime() + 14 * 86_400_000);
+    expect(cycle.endsAt.getTime()).toBe(bootstrap.endsAt.getTime() + 7 * 86_400_000);
 
     const { cycle: third } = await createCycle(workspace.admin, {});
     expect(third.startsAt.getTime()).toBe(cycle.endsAt.getTime());
@@ -722,9 +723,9 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
     await backdateCycleMoves(carried.issue.id, [intoSprint(cycle, 19, 9)]);
 
     const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
-    expect(progress.burnUp).toHaveLength(15);
-    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(15).fill(1));
-    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(15).fill(5));
+    expect(progress.burnUp).toHaveLength(8);
+    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(8).fill(1));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(8).fill(5));
     expect(progress.changes.removed).toBe(0);
     expect(progress.changes.removedPoints).toBe(0);
   });
@@ -748,8 +749,8 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
     await backdateCycleMoves(late.issue.id, [intoSprint(cycle, 19, 9)]);
 
     const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
-    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(15).fill(1));
-    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(15).fill(2));
+    expect(progress.burnUp.map((point) => point.scope)).toEqual(new Array(8).fill(1));
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual(new Array(8).fill(2));
     expect(progress.changes.added).toBe(0);
     expect(progress.changes.addedPoints).toBe(0);
   });
@@ -771,12 +772,10 @@ describe('cycleProgress reconstructs the scope of the sprint', () => {
       estimate: 5,
     });
     await updateIssue(workspace.admin, pulled.issue.id, { cycleId: null });
-    await backdateCycleMoves(pulled.issue.id, [intoSprint(cycle, 12, 9)]);
+    await backdateCycleMoves(pulled.issue.id, [intoSprint(cycle, 5, 9)]);
 
     const progress = await cycleProgress(workspace.admin, cycle.id, intoSprint(cycle, 21));
-    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual([
-      7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 2, 2, 2,
-    ]);
+    expect(progress.burnUp.map((point) => point.scopePoints)).toEqual([7, 7, 7, 7, 7, 2, 2, 2]);
     expect(progress.changes.removed).toBe(1);
     expect(progress.changes.removedPoints).toBe(5);
   });

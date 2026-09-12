@@ -57,3 +57,7 @@ export function settingsGroupsFor(passwordEnabled: boolean): readonly SettingsGr
     };
   });
 }
+
+export function settingsSectionsFlat(passwordEnabled: boolean): readonly SettingsSection[] {
+  return settingsGroupsFor(passwordEnabled).flatMap((group) => group.sections);
+}

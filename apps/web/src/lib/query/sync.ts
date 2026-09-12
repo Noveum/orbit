@@ -84,6 +84,15 @@ export function belongsInList(search: string, issue: Issue): boolean {
   });
   if (!scoped) return false;
   const participantId = params.get('participantId');
+  const workType = params.get('workType');
+  if (workType === 'reviewing')
+    return participantId === null
+      ? (issue.reviewerIds ?? []).length > 0
+      : (issue.reviewerIds ?? []).includes(participantId);
+  if (workType === 'assigned')
+    return participantId === null
+      ? issue.assigneeId !== null
+      : issue.assigneeId === (participantId === 'none' ? null : participantId);
   if (participantId === null) return true;
   if (participantId === 'none') return issue.assigneeId === null;
   return participatesIn(issue, participantId);
@@ -106,7 +115,8 @@ export function searchOf(key: readonly unknown[]): string {
 }
 
 export function admitsNewRows(search: string): boolean {
-  return (new URLSearchParams(search).get('filter') ?? '') === '';
+  const params = new URLSearchParams(search);
+  return (params.get('filter') ?? '') === '' && params.get('aiOnly') !== 'true';
 }
 
 export function awaitsServerRefresh(

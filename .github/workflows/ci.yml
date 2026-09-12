@@ -308,11 +308,11 @@ jobs:
           docker run -d --name orbit-minio -p 9010:9000 \
             -e MINIO_ROOT_USER=orbitminio \
             -e MINIO_ROOT_PASSWORD=orbitminio \
-            minio/minio:latest server /data
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
           for attempt in $(seq 1 60); do
             if curl -fsS http://localhost:9010/minio/health/live >/dev/null; then
               echo "minio is up after ${attempt} attempts"
-              docker run --rm --network host --entrypoint sh minio/mc:latest -c \
+              docker run --rm --network host --entrypoint sh quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727 -c \
                 "mc alias set orbit http://localhost:9010 orbitminio orbitminio && mc mb --ignore-existing orbit/orbit-uploads"
               exit 0
             fi

@@ -1,6 +1,7 @@
 export * from './analytics.ts';
 export * from './auth.ts';
 export * from './avatar.ts';
+export * from './backup.ts';
 export * from './bootstrap.ts';
 export * from './comment.ts';
 export * from './common.ts';
@@ -11,6 +12,7 @@ export * from './github-release.ts';
 export * from './inbox.ts';
 export * from './integration.ts';
 export * from './issue.ts';
+export * from './issue-response.ts';
 export * from './label.ts';
 export * from './milestone.ts';
 export * from './notification.ts';

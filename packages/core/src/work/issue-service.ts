@@ -23,6 +23,7 @@ import {
 } from '@orbit/shared/utils';
 import {
   duplicateIssueQuerySchema,
+  type IssueFilterInput,
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
@@ -1827,7 +1828,13 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const ordering = ORDERINGS[filter.orderBy];
-  const filters = [buildIssueWhere(principal, { visibility: 'team', filter, now: new Date() })];
+  const filters = [
+    buildIssueWhere(principal, {
+      visibility: filter.view === 'standup' ? 'standup' : 'team',
+      filter,
+      now: new Date(),
+    }),
+  ];
 
   if (filter.cursor !== undefined) {
     const { value, id } = decodeCursor(filter.cursor);
@@ -1839,7 +1846,9 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
 
   const direction = ordering.descending ? desc : asc;
   const rows = await db
-    .select(filter.select === 'full' ? ISSUE_COLUMNS : ISSUE_LIST_COLUMNS)
+    .select(
+      filter.view !== 'standup' && filter.select === 'full' ? ISSUE_COLUMNS : ISSUE_LIST_COLUMNS,
+    )
     .from(schema.issue)
     .where(and(...filters))
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
@@ -1851,7 +1860,19 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
     rows.length > filter.limit && last !== undefined
       ? encodeCursor(ordering.read(last), last.id)
       : null;
-  return { issues: page, nextCursor };
+  return {
+    issues:
+      filter.view === 'standup'
+        ? page.map((issue) => ({
+            ...issue,
+            canOpen: isInTeam(principal, {
+              id: issue.teamId,
+              organizationId: principal.organizationId,
+            }),
+          }))
+        : page,
+    nextCursor,
+  };
 }
 
 export async function getIssueCounts(
@@ -1950,20 +1971,23 @@ async function milestoneFacet(where: SQL | undefined): Promise<Record<string, nu
   return tally(rows);
 }
 
-async function participantFacet(where: SQL | undefined): Promise<Record<string, number>> {
+async function participantFacet(
+  where: SQL | undefined,
+  workType: IssueFilterInput['workType'],
+): Promise<Record<string, number>> {
   const rows = await db.execute<{ key: string; total: number }>(sql`
     select participant.key, count(distinct participant.issue_id)::int as total
     from (
       select ${schema.issue.id} as issue_id,
              coalesce(${schema.issue.assigneeId}, ${UNSET_FACET_VALUE}) as key
       from ${schema.issue}
-      ${where === undefined ? sql`` : sql`where ${where}`}
+      where ${where ?? sql`true`} and ${workType !== 'reviewing'}
       union all
       select ${schema.issue.id} as issue_id, ${schema.issueReviewer.userId} as key
       from ${schema.issue}
       inner join ${schema.issueReviewer}
         on ${schema.issueReviewer.issueId} = ${schema.issue.id}
-      ${where === undefined ? sql`` : sql`where ${where}`}
+      where ${where ?? sql`true`} and ${workType !== 'assigned'}
     ) participant
     group by participant.key
   `);
@@ -2051,8 +2075,9 @@ type SummaryGroupProperty = ReturnType<typeof issueSummaryQuerySchema.parse>['gr
 function facetFor(
   property: SummaryGroupProperty,
   where: SQL | undefined,
+  workType: IssueFilterInput['workType'],
 ): Promise<Record<string, number>> {
-  if (property === 'participant') return participantFacet(where);
+  if (property === 'participant') return participantFacet(where, workType);
   if (property === 'label') return labelFacet(where);
   if (property === 'milestone') return milestoneFacet(where);
   return facetOf(FACET_COLUMNS[property](), where);
@@ -2188,7 +2213,7 @@ export async function getIssueSummary(
   assertCan(principal, 'issue:read');
   const filter = issueSummaryQuerySchema.parse(input);
   const matching = buildIssueWhere(principal, {
-    visibility: 'team',
+    visibility: filter.view === 'standup' ? 'standup' : 'team',
     filter,
     now: new Date(),
   });
@@ -2199,7 +2224,7 @@ export async function getIssueSummary(
       .from(schema.issue)
       .where(matching)
       .groupBy(schema.issue.stateId),
-    filter.groupBy === 'state' ? null : facetFor(filter.groupBy, matching),
+    filter.groupBy === 'state' ? null : facetFor(filter.groupBy, matching, filter.workType),
   ]);
 
   const byState: Record<string, number> = {};
@@ -2219,7 +2244,7 @@ export async function getIssueFacets(
   assertCan(principal, 'issue:read');
   const filter = issueListSchema.parse(input);
   const scope = buildIssueWhere(principal, {
-    visibility: 'team',
+    visibility: filter.view === 'standup' ? 'standup' : 'team',
     filter,
     now: new Date(),
     advancedFilter: 'omit',
