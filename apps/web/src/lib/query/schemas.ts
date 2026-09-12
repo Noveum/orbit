@@ -21,6 +21,11 @@ const nullableTimestamp = z.string().nullable();
 
 export type Issue = z.infer<typeof issueSchema>;
 
+export const issueResponseSchema = z.object({
+  issue: issueSchema,
+});
+export type IssueResponse = z.infer<typeof issueResponseSchema>;
+
 export type WorkflowState = z.infer<typeof workflowStateSchema>;
 
 export const labelSchema = z.object({

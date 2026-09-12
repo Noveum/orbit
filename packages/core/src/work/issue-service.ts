@@ -27,6 +27,7 @@ import {
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
+  issueMarkDuplicateSchema,
   issueMoveSchema,
   issueRelationSchema,
   issueSummaryQuerySchema,
@@ -2278,7 +2279,7 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
     direct !== undefined || identifier === null
       ? []
       : await db
-          .select(getTableColumns(schema.issue))
+          .select({ issue: schema.issue })
           .from(schema.issueIdentifierAlias)
           .innerJoin(schema.issue, eq(schema.issue.id, schema.issueIdentifierAlias.issueId))
           .where(
@@ -2289,7 +2290,7 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
             ),
           )
           .limit(1);
-  const row = direct ?? aliased;
+  const row = direct ?? aliased?.issue;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
   return issue;
@@ -2662,4 +2663,585 @@ export async function findDuplicateIssues(
     },
     similarity: Number(row.similarity),
   }));
+}
+
+async function removeExistingDuplicates(
+  tx: Executor,
+  organizationId: string,
+  source: IssueRow,
+  actor: Actor,
+  syncId: number,
+): Promise<{ actions: SyncAction[]; previousSurvivorIds: string[] }> {
+  const existingDuplicates = await tx
+    .select({
+      id: schema.issueRelation.id,
+      issueId: schema.issueRelation.issueId,
+      relatedIssueId: schema.issueRelation.relatedIssueId,
+      type: schema.issueRelation.type,
+      teamId: schema.issue.teamId,
+    })
+    .from(schema.issueRelation)
+    .innerJoin(schema.issue, eq(schema.issueRelation.issueId, schema.issue.id))
+    .where(
+      and(
+        eq(schema.issueRelation.organizationId, organizationId),
+        or(
+          and(
+            eq(schema.issueRelation.issueId, source.id),
+            eq(schema.issueRelation.type, 'duplicate_of'),
+          ),
+          and(
+            eq(schema.issueRelation.relatedIssueId, source.id),
+            eq(schema.issueRelation.type, 'duplicated_by'),
+          ),
+        ),
+      ),
+    );
+
+  if (existingDuplicates.length === 0) return { actions: [], previousSurvivorIds: [] };
+
+  const previousSurvivorIds = existingDuplicates
+    .filter((row) => row.issueId === source.id && row.type === 'duplicate_of')
+    .map((row) => row.relatedIssueId);
+
+  await tx.delete(schema.issueRelation).where(
+    and(
+      eq(schema.issueRelation.organizationId, organizationId),
+      inArray(
+        schema.issueRelation.id,
+        existingDuplicates.map((row) => row.id),
+      ),
+    ),
+  );
+
+  const actions = existingDuplicates.map((row) =>
+    buildSyncAction({
+      syncId,
+      organizationId,
+      scopes: [scopes.team(row.teamId), scopes.issue(row.issueId)],
+      action: 'delete',
+      model: 'issue_relation',
+      modelId: row.id,
+      data: { id: row.id, issueId: row.issueId, relatedIssueId: row.relatedIssueId },
+      actor,
+    }),
+  );
+
+  return { actions, previousSurvivorIds };
+}
+
+async function getPreviousSurvivorSubscribers(
+  tx: Executor,
+  organizationId: string,
+  sourceId: string,
+  targetId: string,
+  previousSurvivorIds: string[],
+): Promise<string[]> {
+  const activeUserIds: string[] = [];
+
+  for (const prevSurvivorId of previousSurvivorIds) {
+    if (prevSurvivorId === targetId) continue;
+
+    const pastActivities = await tx
+      .select({ actorId: schema.issueActivity.actorId })
+      .from(schema.issueActivity)
+      .where(
+        and(
+          eq(schema.issueActivity.organizationId, organizationId),
+          eq(schema.issueActivity.issueId, sourceId),
+          eq(schema.issueActivity.field, 'subscription_transfer'),
+          eq(schema.issueActivity.toValue, prevSurvivorId),
+        ),
+      );
+    const pastUserIds = pastActivities.map((a) => a.actorId);
+
+    if (pastUserIds.length === 0) continue;
+
+    const prevActiveSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, pastUserIds),
+        ),
+      );
+    activeUserIds.push(...prevActiveSubs.map((s) => s.userId));
+  }
+
+  return activeUserIds;
+}
+
+async function cleanupPreviousSurvivorSubscriptions(
+  tx: Executor,
+  organizationId: string,
+  sourceId: string,
+  targetId: string,
+  previousSurvivorIds: string[],
+  actor: Actor,
+  syncId: number,
+): Promise<SyncAction[]> {
+  const syncActions: SyncAction[] = [];
+
+  for (const prevSurvivorId of previousSurvivorIds) {
+    if (prevSurvivorId === targetId) continue;
+
+    const prevTransferActivities = await tx
+      .select({ actorId: schema.issueActivity.actorId })
+      .from(schema.issueActivity)
+      .where(
+        and(
+          eq(schema.issueActivity.organizationId, organizationId),
+          eq(schema.issueActivity.issueId, sourceId),
+          eq(schema.issueActivity.field, 'subscription_transfer'),
+          eq(schema.issueActivity.fromValue, sourceId),
+          eq(schema.issueActivity.toValue, prevSurvivorId),
+        ),
+      );
+
+    const transferredToPrevUserIds = Array.from(
+      new Set(prevTransferActivities.map((a) => a.actorId)),
+    );
+
+    if (transferredToPrevUserIds.length === 0) continue;
+
+    const activeTransferredSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, transferredToPrevUserIds),
+        ),
+      );
+
+    const activeTransferredUserIds = activeTransferredSubs.map((s) => s.userId);
+
+    if (activeTransferredUserIds.length === 0) continue;
+
+    await tx
+      .delete(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, activeTransferredUserIds),
+        ),
+      );
+
+    for (const userId of activeTransferredUserIds) {
+      syncActions.push(
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(userId)],
+          action: 'delete',
+          model: 'issue_subscription',
+          modelId: `${prevSurvivorId}:${userId}`,
+          data: { issueId: prevSurvivorId, userId, syncId },
+          actor,
+        }),
+      );
+    }
+  }
+
+  return syncActions;
+}
+
+async function transferSubscriptions(
+  tx: Executor,
+  organizationId: string,
+  source: IssueRow,
+  target: IssueRow,
+  previousSurvivorIds: string[],
+  actor: Actor,
+  syncId: number,
+): Promise<SyncAction[]> {
+  const existingSubs = await tx
+    .select({ userId: schema.issueSubscription.userId })
+    .from(schema.issueSubscription)
+    .where(eq(schema.issueSubscription.issueId, source.id));
+
+  let subUserIds = existingSubs.map((sub) => sub.userId);
+
+  if (previousSurvivorIds.length > 0) {
+    const prevSubUserIds = await getPreviousSurvivorSubscribers(
+      tx,
+      organizationId,
+      source.id,
+      target.id,
+      previousSurvivorIds,
+    );
+    subUserIds = Array.from(new Set([...subUserIds, ...prevSubUserIds]));
+  }
+
+  if (subUserIds.length === 0) return [];
+
+  const targetReaders = await teamReaderIds(tx, organizationId, target.teamId, subUserIds);
+  const allowedUserIds = subUserIds.filter((id) => targetReaders.has(id));
+
+  const syncActions: SyncAction[] = [];
+
+  if (allowedUserIds.length > 0) {
+    const existingTargetSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(eq(schema.issueSubscription.issueId, target.id));
+    const existingTargetUserIds = new Set(existingTargetSubs.map((s) => s.userId));
+
+    await subscribeUsers(tx, target.id, allowedUserIds, syncId);
+
+    syncActions.push(
+      ...allowedUserIds.map((userId) =>
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(userId)],
+          action: 'insert',
+          model: 'issue_subscription',
+          modelId: `${target.id}:${userId}`,
+          data: { issueId: target.id, userId, identifier: target.identifier, syncId },
+          actor,
+        }),
+      ),
+    );
+
+    await appendActivities(
+      tx,
+      allowedUserIds.map((userId) => ({
+        organizationId,
+        issueId: source.id,
+        actor: { type: 'user', id: userId, name: actor.name },
+        field: 'subscription_transfer',
+        from: existingTargetUserIds.has(userId) ? `${source.id}:independent` : source.id,
+        to: target.id,
+        syncId,
+      })),
+    );
+  }
+
+  if (existingSubs.length > 0) {
+    await tx
+      .delete(schema.issueSubscription)
+      .where(eq(schema.issueSubscription.issueId, source.id));
+
+    syncActions.push(
+      ...existingSubs.map((sub) =>
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(sub.userId)],
+          action: 'delete',
+          model: 'issue_subscription',
+          modelId: `${source.id}:${sub.userId}`,
+          data: { issueId: source.id, userId: sub.userId, syncId },
+          actor,
+        }),
+      ),
+    );
+  }
+
+  const cleanupActions = await cleanupPreviousSurvivorSubscriptions(
+    tx,
+    organizationId,
+    source.id,
+    target.id,
+    previousSurvivorIds,
+    actor,
+    syncId,
+  );
+  syncActions.push(...cleanupActions);
+
+  return syncActions;
+}
+
+async function assertSurvivorAllowed(
+  executor: Executor,
+  organizationId: string,
+  sourceId: string,
+  target: IssueRow,
+): Promise<void> {
+  if (target.archivedAt !== null) {
+    throw validationFailed('An archived issue cannot be a survivor.');
+  }
+
+  let cursor: string | null = target.id;
+  const visited = new Set<string>();
+  while (cursor !== null) {
+    if (cursor === sourceId) {
+      throw validationFailed(
+        'An issue cannot be marked as a duplicate of an issue that duplicates it.',
+      );
+    }
+    if (visited.has(cursor)) break;
+    visited.add(cursor);
+
+    const [row] = await executor
+      .select({ relatedIssueId: schema.issueRelation.relatedIssueId })
+      .from(schema.issueRelation)
+      .where(
+        and(
+          eq(schema.issueRelation.organizationId, organizationId),
+          eq(schema.issueRelation.issueId, cursor),
+          eq(schema.issueRelation.type, 'duplicate_of'),
+        ),
+      )
+      .limit(1);
+
+    if (row === undefined) {
+      cursor = null;
+    } else {
+      if (row.relatedIssueId === sourceId) {
+        throw validationFailed(
+          'An issue cannot be marked as a duplicate of an issue that duplicates it.',
+        );
+      }
+      if (cursor === target.id) {
+        throw validationFailed('A duplicate issue cannot be a survivor.');
+      }
+      cursor = row.relatedIssueId;
+    }
+  }
+}
+
+async function loadIssuesForUpdate(
+  tx: Executor,
+  principal: Principal,
+  sourceId: string,
+  targetId: string,
+): Promise<{ source: IssueRow; target: IssueRow }> {
+  const [firstId, secondId] = sourceId < targetId ? [sourceId, targetId] : [targetId, sourceId];
+  const firstIssue = await loadIssueForUpdate(tx, principal, firstId);
+  const secondIssue = await loadIssueForUpdate(tx, principal, secondId);
+  return {
+    source: sourceId === firstId ? firstIssue : secondIssue,
+    target: targetId === firstId ? firstIssue : secondIssue,
+  };
+}
+
+async function assertSourceAllowed(
+  tx: Executor,
+  organizationId: string,
+  sourceId: string,
+): Promise<void> {
+  const [sourceHasDuplicates] = await tx
+    .select()
+    .from(schema.issueRelation)
+    .where(
+      and(
+        eq(schema.issueRelation.organizationId, organizationId),
+        eq(schema.issueRelation.issueId, sourceId),
+        eq(schema.issueRelation.type, 'duplicated_by'),
+      ),
+    )
+    .limit(1);
+
+  if (sourceHasDuplicates !== undefined) {
+    throw validationFailed('An issue with duplicates cannot be marked as a duplicate.');
+  }
+}
+
+export async function markAsDuplicate(
+  principal: Principal,
+  issueId: string,
+  input: unknown,
+): Promise<{ issue: IssueRow; relations: IssueRelationRow[]; actions: SyncAction[] }> {
+  assertCan(principal, 'issue:update');
+  const parsed = issueMarkDuplicateSchema.parse(input);
+  if (parsed.survivorIssueId === issueId) {
+    throw validationFailed('An issue cannot be marked as a duplicate of itself.');
+  }
+
+  return await db.transaction(async (tx) => {
+    const { source, target } = await loadIssuesForUpdate(
+      tx,
+      principal,
+      issueId,
+      parsed.survivorIssueId,
+    );
+
+    const [existingDuplicateOf] = await tx
+      .select()
+      .from(schema.issueRelation)
+      .where(
+        and(
+          eq(schema.issueRelation.organizationId, principal.organizationId),
+          eq(schema.issueRelation.issueId, source.id),
+          eq(schema.issueRelation.type, 'duplicate_of'),
+        ),
+      )
+      .limit(1);
+
+    if (existingDuplicateOf !== undefined && existingDuplicateOf.relatedIssueId === target.id) {
+      return { issue: source, relations: [existingDuplicateOf], actions: [] };
+    }
+
+    await assertSurvivorAllowed(tx, principal.organizationId, source.id, target);
+    await assertSourceAllowed(tx, principal.organizationId, source.id);
+
+    const canceledStates = await tx
+      .select()
+      .from(schema.workflowState)
+      .where(
+        and(
+          eq(schema.workflowState.teamId, source.teamId),
+          eq(schema.workflowState.category, 'canceled'),
+        ),
+      )
+      .orderBy(asc(schema.workflowState.position));
+
+    const canceledState =
+      canceledStates.find((state) => state.name.toLowerCase() === 'duplicate') ?? canceledStates[0];
+
+    if (canceledState === undefined) {
+      throw validationFailed('The team has no canceled status.');
+    }
+
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const now = new Date();
+
+    const { actions: oldRelationDeleteActions, previousSurvivorIds } =
+      await removeExistingDuplicates(tx, principal.organizationId, source, actor, syncId);
+
+    const relations = await tx
+      .insert(schema.issueRelation)
+      .values([
+        {
+          id: newId(),
+          organizationId: principal.organizationId,
+          issueId: source.id,
+          relatedIssueId: target.id,
+          type: 'duplicate_of',
+          syncId,
+        },
+        {
+          id: newId(),
+          organizationId: principal.organizationId,
+          issueId: target.id,
+          relatedIssueId: source.id,
+          type: 'duplicated_by',
+          syncId,
+        },
+      ])
+      .onConflictDoNothing()
+      .returning();
+
+    const stateChanged = source.stateId !== canceledState.id;
+    let updatedIssue = source;
+    let sourceState: { id: string; name: string } | undefined;
+    if (stateChanged) {
+      const [sourceStateRow] = await tx
+        .select({ id: schema.workflowState.id, name: schema.workflowState.name })
+        .from(schema.workflowState)
+        .where(eq(schema.workflowState.id, source.stateId))
+        .limit(1);
+      sourceState = sourceStateRow;
+
+      const [updatedRow] = await tx
+        .update(schema.issue)
+        .set({
+          stateId: canceledState.id,
+          ...stateTimestamps('canceled', now),
+          updatedAt: now,
+          syncId,
+        })
+        .where(
+          and(
+            eq(schema.issue.id, source.id),
+            eq(schema.issue.organizationId, principal.organizationId),
+          ),
+        )
+        .returning();
+      if (updatedRow !== undefined) {
+        updatedIssue = updatedRow;
+      }
+    }
+
+    const statusNotifications = stateChanged
+      ? await issueNotifications(tx, principal, actor, [
+          {
+            issue: updatedIssue,
+            mentionHandles: [],
+            assigneeId: null,
+            statusName: canceledState.name,
+          },
+        ])
+      : [];
+
+    const subActions = await transferSubscriptions(
+      tx,
+      principal.organizationId,
+      source,
+      target,
+      previousSurvivorIds,
+      actor,
+      syncId,
+    );
+
+    const activitiesToAppend: Parameters<typeof appendActivities>[1][number][] = [
+      {
+        organizationId: principal.organizationId,
+        issueId: source.id,
+        actor,
+        field: 'relation',
+        from: null,
+        to: `duplicate_of ${target.identifier}`,
+        syncId,
+      },
+      {
+        organizationId: principal.organizationId,
+        issueId: target.id,
+        actor,
+        field: 'relation',
+        from: null,
+        to: `duplicated_by ${source.identifier}`,
+        syncId,
+      },
+    ];
+
+    if (stateChanged) {
+      activitiesToAppend.push({
+        organizationId: principal.organizationId,
+        issueId: source.id,
+        actor,
+        field: 'stateId',
+        from: sourceState ?? source.stateId,
+        to: { id: canceledState.id, name: canceledState.name },
+        syncId,
+      });
+    }
+
+    await appendActivities(tx, activitiesToAppend);
+
+    const relationActions = relations.map((row) =>
+      buildSyncAction({
+        syncId,
+        organizationId: principal.organizationId,
+        scopes: relationScopes(row, source, target),
+        action: 'insert',
+        model: 'issue_relation',
+        modelId: row.id,
+        data: row,
+        actor,
+      }),
+    );
+
+    const decorations = await issueDecorationsByIssue(tx, [updatedIssue.id]);
+    const updatedIssueAction = issueAction(updatedIssue, syncId, actor, 'update', {
+      labelIds: decorations.labels.get(updatedIssue.id) ?? [],
+      reviewerIds: decorations.reviewers.get(updatedIssue.id) ?? [],
+    });
+
+    return {
+      issue: updatedIssue,
+      relations,
+      actions: [
+        updatedIssueAction,
+        ...relationActions,
+        ...subActions,
+        ...oldRelationDeleteActions,
+        ...statusNotifications,
+      ],
+    };
+  });
 }
