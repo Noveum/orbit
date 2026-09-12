@@ -16,6 +16,7 @@ const MIN_PASSWORD_LENGTH = 12;
 export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
+  readonly errorCallbackUrl?: string;
   readonly passwordEnabled?: boolean;
   readonly openSignUp?: boolean;
 }
@@ -246,6 +247,7 @@ function LoginFooter({
 export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
+  errorCallbackUrl = '/login',
   passwordEnabled = false,
   openSignUp = false,
 }: LoginFormProps) {
@@ -285,7 +287,7 @@ export function LoginForm({
       const result = await authClient.signIn.social({
         provider,
         callbackURL: callbackUrl,
-        errorCallbackURL: new URL('/login', window.location.origin).toString(),
+        errorCallbackURL: new URL(errorCallbackUrl, window.location.origin).toString(),
       });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });

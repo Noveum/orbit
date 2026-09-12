@@ -57,6 +57,25 @@ function renderForm(passwordEnabled: boolean, openSignUp = false) {
 const SIGN_UP_NOTE = 'New here? Signing in creates your account, then you set up a workspace.';
 
 describe('LoginForm', () => {
+  it('keeps successful and failed reauthentication on the requesting page', async () => {
+    signInSocial.mockResolvedValue({ error: null });
+    render(
+      <LoginForm
+        providers={['google']}
+        callbackUrl="/settings/account/sessions"
+        errorCallbackUrl="/settings/account/sessions"
+      />,
+    );
+
+    await userEvent.setup().click(screen.getByText('Continue with Google'));
+
+    expect(signInSocial).toHaveBeenCalledWith({
+      provider: 'google',
+      callbackURL: '/settings/account/sessions',
+      errorCallbackURL: 'https://orbit-abc123-magicapi.vercel.app/settings/account/sessions',
+    });
+  });
+
   it('returns social login failures to the current preview', async () => {
     signInSocial.mockResolvedValue({ error: null });
     render(<LoginForm providers={['google']} passwordEnabled={false} />);
