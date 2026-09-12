@@ -31,6 +31,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { href: '/settings/workflow', label: 'Workflow' },
       { href: '/settings/notifications', label: 'Notifications' },
       { href: '/settings/integrations', label: 'Integrations' },
+      { href: '/settings/ai', label: 'AI provider' },
       { href: '/settings/mcp', label: 'MCP server' },
     ],
   },
@@ -41,23 +42,43 @@ const PASSWORD_SECTION: SettingsSection = {
   label: 'Password',
 };
 
-export function settingsGroupsFor(passwordEnabled: boolean): readonly SettingsGroup[] {
-  if (!passwordEnabled) return SETTINGS_GROUPS;
-  return SETTINGS_GROUPS.map((group) => {
-    if (group.id !== 'account') return group;
-    const at = group.sections.findIndex((section) => section.href === '/settings/account/passkeys');
-    const insertAt = at === -1 ? group.sections.length : at + 1;
-    return {
-      ...group,
-      sections: [
-        ...group.sections.slice(0, insertAt),
-        PASSWORD_SECTION,
-        ...group.sections.slice(insertAt),
-      ],
-    };
-  });
+export function settingsGroupsFor(
+  passwordEnabled: boolean,
+  canManageAi = true,
+): readonly SettingsGroup[] {
+  let groups = SETTINGS_GROUPS;
+  if (passwordEnabled) {
+    groups = groups.map((group) => {
+      if (group.id !== 'account') return group;
+      const at = group.sections.findIndex(
+        (section) => section.href === '/settings/account/passkeys',
+      );
+      const insertAt = at === -1 ? group.sections.length : at + 1;
+      return {
+        ...group,
+        sections: [
+          ...group.sections.slice(0, insertAt),
+          PASSWORD_SECTION,
+          ...group.sections.slice(insertAt),
+        ],
+      };
+    });
+  }
+  if (!canManageAi) {
+    groups = groups.map((group) => {
+      if (group.id !== 'workspace') return group;
+      return {
+        ...group,
+        sections: group.sections.filter((section) => section.href !== '/settings/ai'),
+      };
+    });
+  }
+  return groups;
 }
 
-export function settingsSectionsFlat(passwordEnabled: boolean): readonly SettingsSection[] {
-  return settingsGroupsFor(passwordEnabled).flatMap((group) => group.sections);
+export function settingsSectionsFlat(
+  passwordEnabled: boolean,
+  canManageAi = true,
+): readonly SettingsSection[] {
+  return settingsGroupsFor(passwordEnabled, canManageAi).flatMap((group) => group.sections);
 }

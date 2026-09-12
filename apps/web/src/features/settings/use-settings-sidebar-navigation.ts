@@ -14,22 +14,27 @@ function sectionIndex(sections: readonly SettingsSection[], pathname: string): n
 function focusedLinkIndex(linkRefs: readonly (HTMLAnchorElement | null)[]): number {
   const active = document.activeElement;
   if (active === null) return -1;
-  return linkRefs.findIndex((ref) => ref === active);
+  return linkRefs.indexOf(active as HTMLAnchorElement);
 }
 
 export interface UseSettingsSidebarNavigationOptions {
   readonly passwordEnabled: boolean;
+  readonly canManageAi?: boolean;
   readonly pathname: string;
 }
 
 export function useSettingsSidebarNavigation({
   passwordEnabled,
+  canManageAi = true,
   pathname,
 }: UseSettingsSidebarNavigationOptions) {
   const { open } = useSettingsNav();
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const sidebarInteractive = open || isDesktop;
-  const sections = useMemo(() => settingsSectionsFlat(passwordEnabled), [passwordEnabled]);
+  const sections = useMemo(
+    () => settingsSectionsFlat(passwordEnabled, canManageAi),
+    [passwordEnabled, canManageAi],
+  );
   const linkRefs = useRef<(HTMLAnchorElement | null)[]>([]);
   const shouldFocusRef = useRef(false);
   const routeIndex = sectionIndex(sections, pathname);

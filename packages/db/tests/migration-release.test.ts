@@ -81,7 +81,7 @@ async function migrationsFolderWithTrailer(): Promise<string> {
 describe('database release', () => {
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
-  }, 30_000);
+  });
 
   it('upgrades the released main ledger before applying notification migrations', async () => {
     await resetScratch();
