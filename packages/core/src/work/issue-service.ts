@@ -2730,6 +2730,123 @@ async function removeExistingDuplicates(
   return { actions, previousSurvivorIds };
 }
 
+async function getPreviousSurvivorSubscribers(
+  tx: Executor,
+  organizationId: string,
+  sourceId: string,
+  targetId: string,
+  previousSurvivorIds: string[],
+): Promise<string[]> {
+  const activeUserIds: string[] = [];
+
+  for (const prevSurvivorId of previousSurvivorIds) {
+    if (prevSurvivorId === targetId) continue;
+
+    const pastActivities = await tx
+      .select({ actorId: schema.issueActivity.actorId })
+      .from(schema.issueActivity)
+      .where(
+        and(
+          eq(schema.issueActivity.organizationId, organizationId),
+          eq(schema.issueActivity.issueId, sourceId),
+          eq(schema.issueActivity.field, 'subscription_transfer'),
+          eq(schema.issueActivity.toValue, prevSurvivorId),
+        ),
+      );
+    const pastUserIds = pastActivities.map((a) => a.actorId);
+
+    if (pastUserIds.length === 0) continue;
+
+    const prevActiveSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, pastUserIds),
+        ),
+      );
+    activeUserIds.push(...prevActiveSubs.map((s) => s.userId));
+  }
+
+  return activeUserIds;
+}
+
+async function cleanupPreviousSurvivorSubscriptions(
+  tx: Executor,
+  organizationId: string,
+  sourceId: string,
+  targetId: string,
+  previousSurvivorIds: string[],
+  actor: Actor,
+  syncId: number,
+): Promise<SyncAction[]> {
+  const syncActions: SyncAction[] = [];
+
+  for (const prevSurvivorId of previousSurvivorIds) {
+    if (prevSurvivorId === targetId) continue;
+
+    const prevTransferActivities = await tx
+      .select({ actorId: schema.issueActivity.actorId })
+      .from(schema.issueActivity)
+      .where(
+        and(
+          eq(schema.issueActivity.organizationId, organizationId),
+          eq(schema.issueActivity.issueId, sourceId),
+          eq(schema.issueActivity.field, 'subscription_transfer'),
+          eq(schema.issueActivity.fromValue, sourceId),
+          eq(schema.issueActivity.toValue, prevSurvivorId),
+        ),
+      );
+
+    const transferredToPrevUserIds = Array.from(
+      new Set(prevTransferActivities.map((a) => a.actorId)),
+    );
+
+    if (transferredToPrevUserIds.length === 0) continue;
+
+    const activeTransferredSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, transferredToPrevUserIds),
+        ),
+      );
+
+    const activeTransferredUserIds = activeTransferredSubs.map((s) => s.userId);
+
+    if (activeTransferredUserIds.length === 0) continue;
+
+    await tx
+      .delete(schema.issueSubscription)
+      .where(
+        and(
+          eq(schema.issueSubscription.issueId, prevSurvivorId),
+          inArray(schema.issueSubscription.userId, activeTransferredUserIds),
+        ),
+      );
+
+    for (const userId of activeTransferredUserIds) {
+      syncActions.push(
+        buildSyncAction({
+          syncId,
+          organizationId,
+          scopes: [scopes.user(userId)],
+          action: 'delete',
+          model: 'issue_subscription',
+          modelId: `${prevSurvivorId}:${userId}`,
+          data: { issueId: prevSurvivorId, userId, syncId },
+          actor,
+        }),
+      );
+    }
+  }
+
+  return syncActions;
+}
+
 async function transferSubscriptions(
   tx: Executor,
   organizationId: string,
@@ -2747,18 +2864,14 @@ async function transferSubscriptions(
   let subUserIds = existingSubs.map((sub) => sub.userId);
 
   if (previousSurvivorIds.length > 0) {
-    const pastActivities = await tx
-      .select({ actorId: schema.issueActivity.actorId })
-      .from(schema.issueActivity)
-      .where(
-        and(
-          eq(schema.issueActivity.organizationId, organizationId),
-          eq(schema.issueActivity.issueId, source.id),
-          eq(schema.issueActivity.field, 'subscription_transfer'),
-        ),
-      );
-    const pastUserIds = pastActivities.map((a) => a.actorId);
-    subUserIds = Array.from(new Set([...subUserIds, ...pastUserIds]));
+    const prevSubUserIds = await getPreviousSurvivorSubscribers(
+      tx,
+      organizationId,
+      source.id,
+      target.id,
+      previousSurvivorIds,
+    );
+    subUserIds = Array.from(new Set([...subUserIds, ...prevSubUserIds]));
   }
 
   if (subUserIds.length === 0) return [];
@@ -2769,6 +2882,12 @@ async function transferSubscriptions(
   const syncActions: SyncAction[] = [];
 
   if (allowedUserIds.length > 0) {
+    const existingTargetSubs = await tx
+      .select({ userId: schema.issueSubscription.userId })
+      .from(schema.issueSubscription)
+      .where(eq(schema.issueSubscription.issueId, target.id));
+    const existingTargetUserIds = new Set(existingTargetSubs.map((s) => s.userId));
+
     await subscribeUsers(tx, target.id, allowedUserIds, syncId);
 
     syncActions.push(
@@ -2793,7 +2912,7 @@ async function transferSubscriptions(
         issueId: source.id,
         actor: { type: 'user', id: userId, name: actor.name },
         field: 'subscription_transfer',
-        from: source.id,
+        from: existingTargetUserIds.has(userId) ? `${source.id}:independent` : source.id,
         to: target.id,
         syncId,
       })),
@@ -2821,51 +2940,16 @@ async function transferSubscriptions(
     );
   }
 
-  for (const prevSurvivorId of previousSurvivorIds) {
-    if (prevSurvivorId === target.id) continue;
-
-    const prevTransferActivities = await tx
-      .select({ actorId: schema.issueActivity.actorId })
-      .from(schema.issueActivity)
-      .where(
-        and(
-          eq(schema.issueActivity.organizationId, organizationId),
-          eq(schema.issueActivity.issueId, source.id),
-          eq(schema.issueActivity.field, 'subscription_transfer'),
-          eq(schema.issueActivity.toValue, prevSurvivorId),
-        ),
-      );
-
-    const transferredToPrevUserIds = Array.from(
-      new Set(prevTransferActivities.map((a) => a.actorId)),
-    );
-
-    if (transferredToPrevUserIds.length === 0) continue;
-
-    await tx
-      .delete(schema.issueSubscription)
-      .where(
-        and(
-          eq(schema.issueSubscription.issueId, prevSurvivorId),
-          inArray(schema.issueSubscription.userId, transferredToPrevUserIds),
-        ),
-      );
-
-    for (const userId of transferredToPrevUserIds) {
-      syncActions.push(
-        buildSyncAction({
-          syncId,
-          organizationId,
-          scopes: [scopes.user(userId)],
-          action: 'delete',
-          model: 'issue_subscription',
-          modelId: `${prevSurvivorId}:${userId}`,
-          data: { issueId: prevSurvivorId, userId, syncId },
-          actor,
-        }),
-      );
-    }
-  }
+  const cleanupActions = await cleanupPreviousSurvivorSubscriptions(
+    tx,
+    organizationId,
+    source.id,
+    target.id,
+    previousSurvivorIds,
+    actor,
+    syncId,
+  );
+  syncActions.push(...cleanupActions);
 
   return syncActions;
 }

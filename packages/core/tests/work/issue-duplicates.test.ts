@@ -16,6 +16,7 @@ import {
   listSubscribers,
   markAsDuplicate,
   subscribe,
+  unsubscribe,
 } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
@@ -229,6 +230,71 @@ describe('markAsDuplicate', () => {
     const survivorBSubsAfterSecond = await listSubscribers(workspace.admin, survivorB.id);
     const survivorBSubIdsAfterSecond = survivorBSubsAfterSecond.map((s) => s.userId);
     expect(survivorBSubIdsAfterSecond).toContain(dupSubscriber.user.id);
+  });
+
+  it('preserves independent subscriptions when repointing a duplicate to a new survivor', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivorA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue A',
+    });
+    const { issue: survivorB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue B',
+    });
+
+    const user = await addMember(workspace, 'member');
+    await subscribe(user.principal, duplicate.id);
+    await subscribe(user.principal, survivorA.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorA.id });
+
+    const survivorASubs = await listSubscribers(workspace.admin, survivorA.id);
+    expect(survivorASubs.map((s) => s.userId)).toContain(user.user.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorB.id });
+
+    const survivorASubsAfterRepoint = await listSubscribers(workspace.admin, survivorA.id);
+    expect(survivorASubsAfterRepoint.map((s) => s.userId)).toContain(user.user.id);
+
+    const survivorBSubsAfterRepoint = await listSubscribers(workspace.admin, survivorB.id);
+    expect(survivorBSubsAfterRepoint.map((s) => s.userId)).toContain(user.user.id);
+  });
+
+  it('preserves explicit unsubscribe when repointing a duplicate to a new survivor', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivorA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue A',
+    });
+    const { issue: survivorB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue B',
+    });
+
+    const user = await addMember(workspace, 'member');
+    await subscribe(user.principal, duplicate.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorA.id });
+
+    const survivorASubs = await listSubscribers(workspace.admin, survivorA.id);
+    expect(survivorASubs.map((s) => s.userId)).toContain(user.user.id);
+
+    await unsubscribe(user.principal, survivorA.id);
+
+    const survivorASubsAfterUnsub = await listSubscribers(workspace.admin, survivorA.id);
+    expect(survivorASubsAfterUnsub.map((s) => s.userId)).not.toContain(user.user.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorB.id });
+
+    const survivorBSubs = await listSubscribers(workspace.admin, survivorB.id);
+    expect(survivorBSubs.map((s) => s.userId)).not.toContain(user.user.id);
   });
 
   it('rejects creating duplicate cycles (A to B then B to A)', async () => {
