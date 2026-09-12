@@ -14,7 +14,7 @@ function sectionIndex(sections: readonly SettingsSection[], pathname: string): n
 function focusedLinkIndex(linkRefs: readonly (HTMLAnchorElement | null)[]): number {
   const active = document.activeElement;
   if (active === null) return -1;
-  return linkRefs.findIndex((ref) => ref === active);
+  return linkRefs.indexOf(active as HTMLAnchorElement);
 }
 
 export interface UseSettingsSidebarNavigationOptions {
