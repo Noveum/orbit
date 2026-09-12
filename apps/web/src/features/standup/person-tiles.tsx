@@ -6,10 +6,12 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { Member } from '@/lib/query/schemas.ts';
+import type { MemberLayout } from './member-layout.tsx';
 
 export const UNASSIGNED = UNSET_FILTER_VALUE;
 
 export interface PersonTilesProps {
+  readonly layout?: MemberLayout;
   readonly members: readonly Member[];
   readonly currentUserId?: string | null;
   readonly selectedId: string | null;
@@ -18,7 +20,7 @@ export interface PersonTilesProps {
 }
 
 const tile =
-  'flex h-7 w-full shrink-0 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
+  'flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-2xs transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]';
 
 const UNKNOWN_COUNT = '?';
 
@@ -32,6 +34,7 @@ function tileTone(selected: boolean, count: number | null): string {
 }
 
 export function PersonTiles({
+  layout = 'cards',
   members,
   selectedId,
   counts,
@@ -42,13 +45,24 @@ export function PersonTiles({
   const unassigned = countOf(UNASSIGNED);
 
   return (
-    <div data-testid="standup-tiles" className="flex min-w-0 flex-col gap-0.5">
+    <div
+      data-testid="standup-tiles"
+      className={
+        layout === 'cards'
+          ? 'flex min-w-0 flex-wrap items-center justify-end gap-1.5'
+          : 'flex min-w-0 flex-col gap-0.5'
+      }
+    >
       <button
         type="button"
         data-testid="standup-tile-everyone"
         aria-pressed={selectedId === null}
         onClick={() => onSelect(null)}
-        className={cn(tile, selectedId === null ? selectedTile : idleTile)}
+        className={cn(
+          tile,
+          layout === 'cards' ? 'border' : 'w-full',
+          selectedId === null ? selectedTile : idleTile,
+        )}
       >
         <Users className="size-3.5" aria-hidden="true" />
         All Members
@@ -63,12 +77,17 @@ export function PersonTiles({
             data-testid={`standup-tile-${member.id}`}
             aria-pressed={selected}
             title={member.name}
+            aria-label={member.id === currentUserId ? `${member.name} (You)` : member.name}
             onClick={() => onSelect(selected ? null : member.id)}
-            className={cn(tile, tileTone(selected, count))}
+            className={cn(
+              tile,
+              layout === 'cards' ? 'border' : 'w-full',
+              tileTone(selected, count),
+            )}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
-            <span className="max-w-48 truncate">
-              {member.name}
+            <span className={layout === 'cards' ? 'max-w-28 truncate' : 'max-w-48 truncate'}>
+              {layout === 'cards' ? member.name.trim().split(/\s+/)[0] : member.name.trim()}
               {member.id === currentUserId ? ' (You)' : ''}
             </span>
             {member.isAgent ? <span className="text-faint">AI</span> : null}
@@ -83,7 +102,11 @@ export function PersonTiles({
           aria-pressed={selectedId === UNASSIGNED}
           title="Issues nobody owns"
           onClick={() => onSelect(selectedId === UNASSIGNED ? null : UNASSIGNED)}
-          className={cn(tile, tileTone(selectedId === UNASSIGNED, unassigned))}
+          className={cn(
+            tile,
+            layout === 'cards' ? 'border' : 'w-full',
+            tileTone(selectedId === UNASSIGNED, unassigned),
+          )}
         >
           <UserMinus className="size-3.5" aria-hidden="true" />
           Unassigned
@@ -105,7 +128,7 @@ function TileCount({ tileId, count }: TileCountProps) {
       data-numeric
       data-testid={`standup-tile-count-${tileId}`}
       title={count === null ? 'Workload counts are unavailable' : undefined}
-      className="ml-auto text-faint"
+      className="text-faint"
     >
       {count ?? UNKNOWN_COUNT}
     </span>

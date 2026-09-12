@@ -33,6 +33,7 @@ import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { summarySearch } from '@/lib/query/issue-search.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useAllIssues, useIssueSummary } from '@/lib/query/use-issues.ts';
+import { MemberLayoutOptions, useMemberLayout } from './member-layout.tsx';
 import { MemberPicker } from './member-picker.tsx';
 import { UNASSIGNED } from './person-tiles.tsx';
 
@@ -57,6 +58,7 @@ export function standupBoardOptions(role: OrgRole, groupBy: GroupByField, orderB
 
 export function StandupBoard() {
   const workspace = useWorkspace();
+  const [memberLayout, setMemberLayout] = useMemberLayout(workspace.userId);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { config, setConfig } = useViewConfig(null, 'board', 'standup', CARRIED_PARAMS);
@@ -207,14 +209,16 @@ export function StandupBoard() {
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <MemberPicker
-            members={members}
-            currentUserId={workspace.userId}
-            selectedId={selectedId}
-            counts={counts}
-            onSelect={selectPerson}
-          />
         </div>
+        <MemberPicker
+          key={memberLayout}
+          layout={memberLayout}
+          members={members}
+          currentUserId={workspace.userId}
+          selectedId={selectedId}
+          counts={counts}
+          onSelect={selectPerson}
+        />
       </div>
 
       <FilterBar
@@ -226,6 +230,8 @@ export function StandupBoard() {
         controls={controls}
         facets={model.facets}
         showSaveView={false}
+        displayModified={memberLayout !== 'cards'}
+        displayOptions={<MemberLayoutOptions layout={memberLayout} onChange={setMemberLayout} />}
       />
 
       <StandupBody

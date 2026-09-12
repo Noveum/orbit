@@ -16,6 +16,7 @@ import {
   ISSUE_ORDERING_LABELS,
 } from '@orbit/shared/filters';
 import { SlidersHorizontal } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
   DropdownMenu,
@@ -35,6 +36,7 @@ export interface DisplayMenuProps {
   readonly modified: boolean;
   readonly onChange: (next: ViewConfig) => void;
   readonly compact?: boolean;
+  readonly extraOptions?: ReactNode;
 }
 
 function toggleProperty(
@@ -52,6 +54,7 @@ export function DisplayMenu({
   modified,
   onChange,
   compact = false,
+  extraOptions,
 }: DisplayMenuProps) {
   const setDisplay = (patch: Partial<ViewConfig['display']>) => {
     onChange({ ...config, display: { ...config.display, ...patch } });
@@ -84,6 +87,7 @@ export function DisplayMenu({
         className="max-h-[var(--radix-dropdown-menu-content-available-height)] w-64 overflow-y-auto"
         data-testid="display-menu"
       >
+        {extraOptions}
         <DropdownMenuLabel>Grouping</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           value={config.groupBy}

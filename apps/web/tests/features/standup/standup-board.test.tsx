@@ -12,6 +12,12 @@ import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
+const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+
+function setPlatform(value: string) {
+  Object.defineProperty(navigator, 'platform', { configurable: true, value });
+}
+
 let search = '';
 
 mock.module('next/navigation', () => ({
@@ -222,9 +228,9 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
   return { listUrls, facetUrls, rosterUrls };
 }
 
-function mountBoard(): void {
+function mountBoard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <HotkeyProvider>
@@ -255,8 +261,11 @@ const PRIORITY_FILTER = JSON.stringify({
 });
 
 afterEach(() => {
+  if (originalPlatform) Object.defineProperty(navigator, 'platform', originalPlatform);
+  else Reflect.deleteProperty(navigator, 'platform');
   globalThis.fetch = originalFetch;
   search = '';
+  window.localStorage.removeItem('orbit.standup.member-layout.user_ada');
   window.history.replaceState(null, '', '/standup');
 });
 
@@ -267,7 +276,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(served.listUrls.length).toBe(1);
     for (const url of [...served.listUrls, ...served.facetUrls, ...served.rosterUrls]) {
@@ -283,7 +291,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(cardShown('ENG-1')).toBe(true);
     expect(cardShown('ENG-2')).toBe(true);
@@ -298,7 +305,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(cardHref('ENG-1')).toBe('/issue/ENG-1');
     expect(cardHref('ENG-2')).toBeNull();
@@ -311,9 +317,7 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
     await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
-    await user.click(screen.getByTestId('standup-members'));
 
     await waitFor(() => {
       expect(served.listUrls.some((url) => participantIdIn(url) === bo.id)).toBe(true);
@@ -332,11 +336,9 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
     expect(tileCount(ada.id)).toBe('5');
 
     await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
-    await user.click(screen.getByTestId('standup-members'));
 
     await waitFor(() => {
       expect(screen.getByTestId(`standup-tile-${bo.id}`)).toHaveAttribute('aria-pressed', 'true');
@@ -351,7 +353,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     await waitFor(() => {
       expect(tileCount(ada.id)).toBe('?');
@@ -376,7 +377,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(served.rosterUrls.length).toBeGreaterThan(0);
     expect(served.rosterUrls.every((url) => url.includes('filter='))).toBe(true);
@@ -390,7 +390,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
     expect(tileCount('none')).toBe('1');
 
     await user.click(screen.getByTestId('standup-tile-none'));
@@ -411,16 +410,13 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
     await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
-    await user.click(screen.getByTestId('standup-members'));
 
     await waitFor(() => {
       expect(window.location.search).toContain(`person=${bo.id}`);
     });
 
     await user.click(screen.getByTestId(`standup-tile-${bo.id}`));
-    await user.click(screen.getByTestId('standup-members'));
 
     await waitFor(() => {
       expect(window.location.search).not.toContain('person=');
@@ -434,7 +430,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(served.listUrls.every((url) => participantIdIn(url) === bo.id)).toBe(true);
     expect(screen.getByTestId(`standup-tile-${bo.id}`).getAttribute('aria-pressed')).toBe('true');
@@ -452,7 +447,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(served.listUrls.every((url) => participantIdIn(url) === null)).toBe(true);
     expect(screen.getByTestId('standup-tile-everyone').getAttribute('aria-pressed')).toBe('true');
@@ -464,7 +458,6 @@ describe('StandupBoard', () => {
     mountBoard();
 
     await screen.findByTestId('standup-kanban');
-    await userEvent.setup().click(screen.getByTestId('standup-members'));
 
     expect(screen.getByTestId('filter-bar')).toBeTruthy();
     expect(screen.getByTestId('add-filter')).toBeTruthy();
@@ -490,13 +483,19 @@ describe('StandupBoard', () => {
   });
 });
 
-describe('standup compact controls', () => {
-  it('opens only the member button until clicked and switches immediately while Option is held', async () => {
+describe('standup member cards', () => {
+  it('shows all member cards and switches immediately while Option is held', async () => {
+    setPlatform('MacIntel');
     workspace = buildWorkspace();
     serve();
     mountBoard();
     await screen.findByTestId('standup-kanban');
-    expect(screen.queryByTestId('standup-tile-user_ada')).toBeNull();
+    expect(screen.getByTestId('standup-tile-user_ada')).toBeVisible();
+    expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Members:/ })).toBeNull();
+    expect(screen.getByTestId('standup-members').title).toBe(
+      'Next member: Option+Tab. Previous member: Option+Shift+Tab',
+    );
     fireEvent.keyDown(window, { key: 'Tab', altKey: true });
     await screen.findByTestId('standup-tile-user_ada');
     expect(window.location.search).toContain('person=user_ada');
@@ -507,9 +506,120 @@ describe('standup compact controls', () => {
     fireEvent.keyUp(window, { key: 'Tab', altKey: true });
     expect(screen.queryByTestId('standup-tile-user_ada')).not.toBeNull();
     fireEvent.keyUp(window, { key: 'Alt' });
-    await waitFor(() => expect(screen.queryByTestId('standup-tile-user_ada')).toBeNull());
+    expect(screen.getByTestId('standup-tile-user_ada')).toBeVisible();
   });
-  it('wraps backwards and closes on loss of focus', async () => {
+  for (const platform of ['Win32', 'Linux x86_64']) {
+    it(`switches members with Alt+J/K on ${platform} and leaves Alt+Tab alone`, async () => {
+      setPlatform(platform);
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      expect(screen.getByTestId('standup-members').title).toBe(
+        'Next member: Alt+J. Previous member: Alt+K',
+      );
+      expect(fireEvent.keyDown(window, { key: 'Tab', altKey: true })).toBe(true);
+      expect(fireEvent.keyDown(window, { key: 'Tab', altKey: true, shiftKey: true })).toBe(true);
+      expect(window.location.search).not.toContain('person=user_ada');
+      for (const modifiers of [
+        {},
+        { altKey: true, ctrlKey: true },
+        { altKey: true, metaKey: true },
+        { altKey: true, shiftKey: true },
+        { altKey: true, isComposing: true },
+      ]) {
+        expect(fireEvent.keyDown(window, { key: 'j', ...modifiers })).toBe(true);
+        expect(window.location.search).not.toContain('person=user_ada');
+      }
+      fireEvent.keyDown(window, { key: 'j', altKey: true });
+      await screen.findByTestId('standup-tile-user_ada');
+      expect(window.location.search).toContain('person=user_ada');
+      fireEvent.keyDown(window, { key: 'j', altKey: true });
+      expect(window.location.search).toContain('person=user_bo');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).toContain('person=user_ada');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).not.toContain('person=');
+      fireEvent.keyDown(window, { key: 'k', altKey: true });
+      expect(window.location.search).toContain('person=none');
+      fireEvent.keyUp(window, { key: 'k', altKey: true });
+      expect(screen.queryByTestId('standup-tiles')).not.toBeNull();
+      fireEvent.keyUp(window, { key: 'Alt' });
+      expect(screen.getByTestId('standup-tiles')).toBeVisible();
+      const input = document.createElement('input');
+      document.body.append(input);
+      fireEvent.keyDown(input, { key: 'j', altKey: true });
+      expect(window.location.search).toContain('person=none');
+      input.remove();
+    });
+  }
+  for (const platform of ['MacIntel', 'Win32', 'Linux x86_64']) {
+    it(`uses the same shortcuts in the dropdown on ${platform}`, async () => {
+      setPlatform(platform);
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Display options' }));
+      expect(screen.getByRole('menuitemradio', { name: 'Cards' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
+      const button = screen.getByRole('button', { name: 'Members: All Members' });
+      button.focus();
+      expect(screen.queryByTestId('standup-tiles')).toBeNull();
+      const key = platform === 'MacIntel' ? 'Tab' : 'j';
+      fireEvent.keyDown(window, { key, altKey: true });
+      expect(screen.getByTestId('standup-tile-user_ada')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyDown(window, { key, altKey: true });
+      expect(screen.getByTestId('standup-tile-user_bo')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyDown(window, {
+        key: platform === 'MacIntel' ? 'Tab' : 'k',
+        altKey: true,
+        shiftKey: platform === 'MacIntel',
+      });
+      expect(screen.getByTestId('standup-tile-user_ada')).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.keyUp(window, { key: 'Alt' });
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      expect(document.activeElement).toBe(button);
+      expect(window.location.search).toContain('person=user_ada');
+      await user.click(button);
+      await user.click(screen.getByTestId('standup-tile-user_bo'));
+      await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+      expect(window.location.search).toContain('person=user_bo');
+    });
+  }
+
+  it('remembers the member layout and preserves the selection when changing it', async () => {
+    workspace = buildWorkspace();
+    serve();
+    const mounted = mountBoard();
+    await screen.findByTestId('standup-kanban');
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('standup-tile-user_bo'));
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
+    expect(screen.getByRole('button', { name: 'Members: Bo Chen' })).toBeVisible();
+    expect(window.location.search).toContain('person=user_bo');
+    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('dropdown');
+    mounted.unmount();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    expect(screen.queryByTestId('standup-tiles')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Dropdown' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await user.click(screen.getByRole('menuitemradio', { name: 'Cards' }));
+    expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('cards');
+  });
+
+  it('wraps backwards and keeps the cards visible on loss of focus', async () => {
+    setPlatform('MacIntel');
     workspace = buildWorkspace();
     serve();
     mountBoard();
@@ -518,7 +628,7 @@ describe('standup compact controls', () => {
     expect(window.location.search).toContain('person=none');
     await screen.findByTestId('standup-tile-none');
     fireEvent.blur(window);
-    await waitFor(() => expect(screen.queryByTestId('standup-tile-none')).toBeNull());
+    expect(screen.getByTestId('standup-tile-none')).toHaveAttribute('aria-pressed', 'true');
   });
   it('sends combined AI and work type scopes to lists, facets and roster counts', async () => {
     workspace = buildWorkspace();
@@ -567,6 +677,7 @@ describe('standup filter interactions', () => {
   });
 
   it('leaves ordinary Tab and editable fields alone and preserves focus during switching', async () => {
+    setPlatform('MacIntel');
     workspace = buildWorkspace();
     serve();
     mountBoard();
@@ -574,17 +685,17 @@ describe('standup filter interactions', () => {
     const button = screen.getByRole('button', { name: 'AI only' });
     button.focus();
     fireEvent.keyDown(window, { key: 'Tab' });
-    expect(screen.queryByTestId('standup-tiles')).toBeNull();
+    expect(window.location.search).not.toContain('person=user_ada');
     fireEvent.keyDown(window, { key: 'Tab', altKey: true });
     await screen.findByTestId('standup-tiles');
     fireEvent.keyUp(window, { key: 'Alt' });
-    await waitFor(() => expect(screen.queryByTestId('standup-tiles')).toBeNull());
+    expect(screen.getByTestId('standup-tiles')).toBeVisible();
     expect(document.activeElement).toBe(button);
     const input = document.createElement('input');
     document.body.append(input);
     input.focus();
     fireEvent.keyDown(input, { key: 'Tab', altKey: true });
-    expect(screen.queryByTestId('standup-tiles')).toBeNull();
+    expect(window.location.search).toContain('person=user_ada');
     input.remove();
   });
 });
