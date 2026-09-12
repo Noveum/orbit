@@ -1,12 +1,19 @@
 import { APIError } from 'better-auth/api';
+import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
 import { listActiveSessions } from '@/features/account/data.ts';
 import { SessionsPanel } from '@/features/account/sessions-panel.tsx';
+import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 
-export default async function SessionsPage() {
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await requireSession();
+  const errorCode = authErrorCode((await searchParams)['error']);
   const sessions = await listActiveSessions(session.session.token).catch((error: unknown) => {
     if (
       error instanceof APIError &&
@@ -35,11 +42,13 @@ export default async function SessionsPage() {
             providers={enabledSocialProviders}
             passwordEnabled={passwordAuthEnabled}
             callbackUrl="/settings/account/sessions"
+            errorCallbackUrl="/settings/account/sessions"
           />
         </div>
       ) : (
         <SessionsPanel sessions={sessions} />
       )}
+      {errorCode === undefined ? null : <AuthErrorNotice code={errorCode} />}
     </section>
   );
 }
