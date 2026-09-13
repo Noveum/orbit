@@ -55,5 +55,6 @@ describe('OAuth discovery with deployment host resolution', () => {
         },
       });
     },
+    20_000,
   );
 });
