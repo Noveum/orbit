@@ -32,6 +32,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       description:
         'Archive an issue so it leaves the board and the default lists. Use delete_issue to remove it for good.',
       readOnly: false,
+      destructive: true,
       inputSchema: { issue: issueRef },
     },
     async (args) => {
@@ -67,6 +68,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       description:
         'Permanently delete an issue and everything attached to it. This cannot be undone; prefer archive_issue.',
       readOnly: false,
+      destructive: true,
       inputSchema: { issue: issueRef },
     },
     async (args) => {
@@ -81,7 +83,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
     server,
     {
       name: 'edit_comment',
-      title: 'Edit a comment',
+      title: 'Edit an issue comment',
       description: 'Rewrite the body of a comment this user wrote on an issue.',
       readOnly: false,
       inputSchema: {
@@ -103,6 +105,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       title: 'Delete a comment',
       description: 'Remove a comment from an issue.',
       readOnly: false,
+      destructive: true,
       inputSchema: { commentId: z.string().min(1).describe('The comment id.') },
     },
     async (args) => {
@@ -154,6 +157,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       title: 'Archive a project',
       description: 'Archive a project so it leaves the active lists. Its issues are kept.',
       readOnly: false,
+      destructive: true,
       inputSchema: { project: projectRef },
     },
     async (args) => {
@@ -172,6 +176,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       description:
         'Permanently delete a project. Its issues survive but lose their project link. Prefer archive_project.',
       readOnly: false,
+      destructive: true,
       inputSchema: { project: projectRef },
     },
     async (args) => {
@@ -214,6 +219,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       title: 'Delete a milestone',
       description: 'Remove a milestone. Its issues survive but lose the milestone link.',
       readOnly: false,
+      destructive: true,
       inputSchema: { milestoneId: z.string().min(1).describe('The milestone id.') },
     },
     async (args) => {
@@ -231,6 +237,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       description:
         'Remove a sprint. Its issues survive and fall back to no sprint, which is what descoping a cancelled sprint needs.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         sprint: z.string().min(1).describe('Sprint name, number or id.'),
       },

@@ -48,6 +48,9 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
   readonly title: string;
   readonly description: string;
   readonly readOnly: boolean;
+  readonly destructive?: boolean;
+  readonly idempotent?: boolean;
+  readonly openWorld?: boolean;
   readonly inputSchema: Shape;
 }
 
@@ -85,9 +88,9 @@ export function defineTool<Shape extends z.ZodRawShape>(
       annotations: {
         title: config.title,
         readOnlyHint: config.readOnly,
-        destructiveHint: false,
-        idempotentHint: config.readOnly,
-        openWorldHint: false,
+        destructiveHint: config.destructive ?? false,
+        idempotentHint: config.readOnly || (config.idempotent ?? false),
+        openWorldHint: config.openWorld ?? false,
       },
     },
     async (args) => {

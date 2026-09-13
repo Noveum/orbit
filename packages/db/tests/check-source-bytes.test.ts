@@ -16,7 +16,9 @@ const VERTICAL_TAB = '\u000b';
 
 describe('controlBytes', () => {
   it('passes ordinary source through', () => {
-    expect(controlBytes(bytes('const key = `${a} ${b}`;\n\tindented\r\n'))).toEqual([]);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: test fixture requires literal template placeholder
+    const rawCode = 'const key = `${a} ${b}`;\n\tindented\r\n';
+    expect(controlBytes(bytes(rawCode))).toEqual([]);
   });
 
   it('catches the NUL that a template literal will happily carry', () => {

@@ -921,5 +921,40 @@ describe('what a token is allowed to do', () => {
   it('still gives a token carrying orbit.write the whole set', async () => {
     const { tools } = await admin.client.listTools();
     expect(tools.map((tool) => tool.name)).toContain('create_issue');
+
+    const expectedDestructive = [
+      'archive_doc',
+      'archive_issue',
+      'archive_project',
+      'delete_comment',
+      'delete_doc',
+      'delete_doc_collection',
+      'delete_doc_comment',
+      'delete_issue',
+      'delete_label',
+      'delete_milestone',
+      'delete_project',
+      'delete_sprint',
+      'delete_state',
+      'delete_view',
+      'remove_member',
+      'remove_relation',
+      'remove_team_member',
+      'unlink_github_repository',
+    ];
+
+    const actualDestructive = tools
+      .filter((tool) => tool.annotations?.destructiveHint === true)
+      .map((tool) => tool.name)
+      .sort();
+    expect(actualDestructive).toEqual(expectedDestructive);
+
+    const nonDestructive = ['create_issue', 'create_cycle', 'add_comment'];
+    for (const name of nonDestructive) {
+      const tool = tools.find((t) => t.name === name);
+      expect(tool).toBeDefined();
+      expect(tool?.annotations?.destructiveHint).toBe(false);
+      expect(tool?.annotations?.idempotentHint).toBe(false);
+    }
   });
 });

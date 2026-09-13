@@ -50,6 +50,7 @@ function registerLabelTools(server: McpServer, principal: Principal): void {
       description:
         'Create a label that can be applied to issues. Pass a team to keep the label on that team only, otherwise it is available across the workspace.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         name: z.string().trim().min(1).max(48).describe('Label name.'),
         color: hexColor.optional().describe('Hex colour such as "#7c3aed".'),
@@ -115,6 +116,7 @@ function registerLabelTools(server: McpServer, principal: Principal): void {
       title: 'Delete a label',
       description: 'Remove a label from the workspace and from every issue carrying it.',
       readOnly: false,
+      destructive: true,
       inputSchema: { label: labelRef },
     },
     async (args) => {
@@ -135,6 +137,7 @@ function registerStateTools(server: McpServer, principal: Principal): void {
       description:
         'Add a status to a team board. The category drives what the product infers from it, so pick the one that matches the meaning. The new status lands at the end; use reorder_states to place it.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         team: teamRef,
         name: z.string().trim().min(1).max(48).describe('Status name such as "Blocked".'),
@@ -206,6 +209,7 @@ function registerStateTools(server: McpServer, principal: Principal): void {
       description:
         'Remove a status from a team board. A status that still holds issues is refused unless moveTo names another status on the same team to carry them.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         team: teamRef,
         state: stateRef,
