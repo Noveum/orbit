@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "rm -rf ../../node_modules node_modules && bun install --frozen-lockfile",
+  "installCommand": "bun ../../scripts/vercel-install.ts",
   "git": {
     "deploymentEnabled": {
       "**": false,
