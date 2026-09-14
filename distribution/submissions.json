@@ -88,11 +88,12 @@
       "id": "smithery",
       "name": "Smithery",
       "kind": "mcp-directory",
-      "status": "blocked",
+      "status": "live",
       "account": "shashank@noveum.ai",
-      "evidence": "User moved server into noveum-ai namespace. Saved Orbit by Noveum branding, homepage and source. New connection preview explicitly confirms https://orbit.noveum.ai/mcp. Authorization error states authorization-server metadata HTTP 500; repair PR 471 pending review waiver/deployment. Latest scan reached AUTH TIMED OUT after its five-minute authorization window expired automatically. No scan was cancelled during this review.",
+      "evidence": "Orbit OAuth fix PR 471 merged and deployed. Smithery authorization and authenticated scan completed SUCCESS in 4m 20s. Public Orbit by Noveum listing verified; namespace noveum-ai/orbit, upstream https://orbit.noveum.ai/mcp.",
       "submissionUrl": "https://smithery.ai/servers/noveum-ai/orbit/releases",
-      "blocker": "User moved server into noveum-ai namespace. Saved Orbit by Noveum branding, homepage and source. New connection preview explicitly confirms https://orbit.noveum.ai/mcp. Authorization error states authorization-server metadata HTTP 500; repair PR 471 pending review waiver/deployment."
+      "submittedAt": "2026-09-14",
+      "publicUrl": "https://smithery.ai/servers/noveum-ai/orbit"
     },
     {
       "id": "mcpservers-org",
