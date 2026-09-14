@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportStandalone } from '../scripts/export-docker-preview';
@@ -51,7 +51,12 @@ test('preview initialization creates private distinct secrets and refuses to rot
   expect(values).toHaveLength(3);
   expect(new Set(values.map((value) => value.split('=')[1])).size).toBe(3);
   for (const value of values) expect(value).toMatch(/^[A-Z_]+=[a-f0-9]{64}$/);
-  expect((await stat(file)).mode & 0o777).toBe(0o600);
+  const handle = await open(file, 'r');
+  try {
+    expect((await handle.stat()).mode & 0o777).toBe(0o600);
+  } finally {
+    await handle.close();
+  }
   await expect(initializeDockerPreview(root)).rejects.toThrow('EEXIST');
   expect(await readFile(file, 'utf8')).toBe(original);
 });
