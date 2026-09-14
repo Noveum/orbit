@@ -1,26 +1,28 @@
 {
   "schemaVersion": 1,
-  "lastVerified": "2026-09-04",
+  "lastVerified": "2026-09-14",
   "channels": [
     {
       "id": "official-mcp-registry",
       "name": "Official MCP Registry",
       "kind": "mcp-registry",
       "status": "live",
+      "account": "shashank@noveum.ai",
+      "evidence": "API returned active io.github.Noveum/orbit version 0.1.0, published September 3, with Streamable HTTP remote URL.",
+      "submissionUrl": "https://registry.modelcontextprotocol.io",
       "submittedAt": "2026-09-03",
-      "account": "GitHub OIDC for Noveum/orbit",
-      "evidence": "io.github.Noveum/orbit@0.1.0 published successfully",
       "publicUrl": "https://registry.modelcontextprotocol.io"
     },
     {
       "id": "glama",
       "name": "Glama",
       "kind": "mcp-directory",
-      "status": "pending",
-      "submittedAt": "2026-09-03",
+      "status": "live",
       "account": "shashank@noveum.ai",
-      "evidence": "Support tickets 130233388 and 130255189",
-      "nextAction": "Wait for indexing or ownership challenge"
+      "evidence": "Public Orbit connector has correct remote URL, OAuth and repository. Status Unhealthy at September 14 03:24; needs OAuth discovery repair and health recheck.",
+      "submissionUrl": "https://glama.ai/mcp/connectors/io.github.Noveum/orbit",
+      "submittedAt": "2026-09-03",
+      "publicUrl": "https://glama.ai/mcp/connectors/io.github.Noveum/orbit"
     },
     {
       "id": "mcp-so",
@@ -76,29 +78,31 @@
       "id": "allmcps",
       "name": "AllMCPs",
       "kind": "mcp-directory",
-      "status": "planned",
+      "status": "submitted",
       "account": "shashank@noveum.ai",
-      "evidence": "Maintainer confirmed the official submit route",
-      "nextAction": "Complete the public form or submit_mcp_server tool and retain the returned claim URL"
+      "evidence": "You're in the review queue. Hosted endpoint provided, OAuth, Free, Apache-2.0 and Product Management selected. Newsletter unchecked.",
+      "submissionUrl": "https://allmcps.com/submit",
+      "submittedAt": "2026-09-14"
     },
     {
       "id": "smithery",
       "name": "Smithery",
       "kind": "mcp-directory",
       "status": "blocked",
-      "account": "GitHub account required",
-      "evidence": "Orbit server card is live; guessed contact email bounced",
-      "blocker": "Use the authenticated publish or claim flow",
-      "nextAction": "Connect Noveum GitHub and publish the remote endpoint"
+      "account": "shashank@noveum.ai",
+      "evidence": "User moved server into noveum-ai namespace. Saved Orbit by Noveum branding, homepage and source. New connection preview explicitly confirms https://orbit.noveum.ai/mcp. Authorization error states authorization-server metadata HTTP 500; repair PR 471 pending review waiver/deployment. Latest scan reached AUTH TIMED OUT after its five-minute authorization window expired automatically. No scan was cancelled during this review.",
+      "submissionUrl": "https://smithery.ai/servers/noveum-ai/orbit/releases",
+      "blocker": "User moved server into noveum-ai namespace. Saved Orbit by Noveum branding, homepage and source. New connection preview explicitly confirms https://orbit.noveum.ai/mcp. Authorization error states authorization-server metadata HTTP 500; repair PR 471 pending review waiver/deployment."
     },
     {
       "id": "mcpservers-org",
       "name": "MCPServers.org",
       "kind": "mcp-directory",
-      "status": "planned",
+      "status": "submitted",
       "account": "shashank@noveum.ai",
-      "blocker": "Public form confirmation has not been captured",
-      "nextAction": "Submit once and record the review URL"
+      "evidence": "WebMCP submit_mcp_server confirmed Server Orbit submitted successfully. Free review pending. Source repository submitted before remote-first clarification; supplement with remoteUrl and OAuth details when possible.",
+      "submissionUrl": "https://mcpservers.org/submit",
+      "submittedAt": "2026-09-14"
     },
     {
       "id": "cline-marketplace",
@@ -113,29 +117,34 @@
       "id": "awesome-remote-mcp",
       "name": "Awesome Remote MCP Servers",
       "kind": "mcp-list",
-      "status": "planned",
-      "account": "GitHub maintainer account",
-      "blocker": "External repository write is not permitted through the connected integration",
-      "nextAction": "Submit the prepared Project Management row through an issue or pull request"
+      "status": "pending",
+      "account": "shashank@noveum.ai",
+      "evidence": "Draft PR submitted with alphabetical Project Management entry, hosted URL, OAuth marker and existing Glama connector badge. Public initialize probe returned 401 Bearer resource_metadata as expected. OAuth metadata repair and authenticated validation explicitly disclosed as pending.",
+      "submissionUrl": "https://github.com/punkpeye/awesome-remote-mcp-servers/pull/305",
+      "submittedAt": "2026-09-14"
     },
     {
       "id": "vibe-index",
       "name": "Vibe Index",
       "kind": "developer-directory",
       "status": "blocked",
-      "account": "GitHub account required",
-      "evidence": "Guessed email address bounced and must not be retried",
-      "blocker": "Use the GitHub-authenticated site submission flow"
+      "account": "shashank@noveum.ai",
+      "evidence": "User completed GitHub login. Filled source-required MCP form with primary hosted endpoint in description and setup guide, public board screenshot and Preview disclosure. Backend returned Failed to submit resource.",
+      "submissionUrl": "https://vibeindex.ai/submit",
+      "blocker": "User completed GitHub login. Filled source-required MCP form with primary hosted endpoint in description and setup guide, public board screenshot and Preview disclosure. Backend returned Failed to submit resource."
     },
     {
       "id": "mcp-market",
       "name": "MCP Market",
       "kind": "mcp-directory",
-      "status": "deferred",
+      "status": "live",
       "account": "shashank@noveum.ai",
-      "evidence": "Support confirmed free open-source listings and a separate paid Remote MCP option",
-      "blocker": "No paid Remote MCP purchase is authorized",
-      "nextAction": "Use the free repository listing after support confirms publisher association"
+      "evidence": "Source submission returned already listed with this public URL. Remote MCP form requires a paid listing; no purchase made.",
+      "submissionUrl": "https://mcpmarket.com/server/orbit-6",
+      "submittedAt": "2026-09-14",
+      "publicUrl": "https://mcpmarket.com/server/orbit-6",
+      "firstObservedAt": "2026-09-14",
+      "submissionDateKnown": false
     },
     {
       "id": "selfh-st",
@@ -161,72 +170,79 @@
       "id": "product-hunt",
       "name": "Product Hunt",
       "kind": "product-launch",
-      "status": "planned",
-      "account": "Personal maker account required",
-      "evidence": "Complete draft copy and gallery plan are tracked in issue 390",
-      "blocker": "Maker account and final gallery assets need interactive review",
-      "nextAction": "Create a draft only; do not schedule or launch without approval"
+      "status": "skipped",
+      "evidence": "User explicitly requested no Product Hunt submission."
     },
     {
       "id": "alternativeto",
       "name": "AlternativeTo",
       "kind": "software-directory",
-      "status": "planned",
-      "account": "Personal verified account required",
-      "evidence": "Complete form packet is tracked in issue 387",
-      "nextAction": "Submit to the free review queue and add alternatives only after approval"
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "GitHub OAuth authorized, but account creation failed with AT-SU-22: account may already exist for email. Existing provider or account recovery required.",
+      "submissionUrl": "https://alternativeto.net",
+      "blocker": "GitHub OAuth authorized, but account creation failed with AT-SU-22: account may already exist for email. Existing provider or account recovery required."
     },
     {
       "id": "saashub",
       "name": "SaaSHub",
       "kind": "software-directory",
-      "status": "planned",
-      "account": "Verified account required",
-      "evidence": "Complete categories, competitors, and copy packet is tracked in issue 387",
-      "nextAction": "Use the official form and verify with the Noveum domain"
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Account email corrected to shashank@noveum.ai but separate verification remained incomplete. User explicitly asked to leave SaaSHub aside after repeated failures.",
+      "submissionUrl": "https://www.saashub.com/services/submit",
+      "nextAction": "Resolve the stated prerequisite or verify the existing attempt before resubmitting."
     },
     {
       "id": "tilobox",
       "name": "TiloBox",
       "kind": "open-source-directory",
-      "status": "planned",
-      "account": "No account expected",
-      "evidence": "Complete reviewer packet is tracked in issue 387",
-      "nextAction": "Submit through the official human-reviewed form"
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Submission received; human review. Source, hosted app, remote MCP, documentation and Preview disclosure included.",
+      "submissionUrl": "https://www.tilobox.com/submit",
+      "submittedAt": "2026-09-14"
     },
     {
       "id": "opensourcealternative",
       "name": "OpenSourceAlternative.to",
       "kind": "open-source-directory",
-      "status": "planned",
+      "status": "submitted",
       "account": "shashank@noveum.ai",
-      "evidence": "Free-waitlist packet for Linear is tracked in issue 387",
-      "blocker": "Do not purchase the expedited review without explicit approval"
+      "evidence": "Orbit is under review. Free waitlist selected. Submitted as an open-source alternative to Linear.",
+      "submissionUrl": "https://opensourcealternative.to/project/orbit",
+      "submittedAt": "2026-09-14"
     },
     {
       "id": "libhunt",
       "name": "LibHunt",
       "kind": "open-source-directory",
-      "status": "planned",
-      "account": "Login required",
-      "evidence": "Authenticated contribution packet is tracked in issue 387"
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Official route requires suggesting Orbit as an alternative to an existing relevant project. Built-in browser remained at Cloudflare security verification; web fetch also returned 403. No submission performed.",
+      "submissionUrl": "https://www.libhunt.com/site/project_submit",
+      "blocker": "Official route requires suggesting Orbit as an alternative to an existing relevant project. Built-in browser remained at Cloudflare security verification; web fetch also returned 403. No submission performed."
     },
     {
       "id": "open-hub",
       "name": "Black Duck Open Hub",
       "kind": "open-source-index",
-      "status": "planned",
-      "account": "GitHub login required",
-      "evidence": "Project metadata packet is tracked in issue 387"
+      "status": "live",
+      "account": "shashank@noveum.ai",
+      "evidence": "Created under existing imshashank account. Project page displays full source repository, main branch, Apache License 2.0, hosted application, remote MCP, Preview disclosure and manager. Code analysis pending.",
+      "submissionUrl": "https://openhub.net/p/noveum-orbit",
+      "submittedAt": "2026-09-14",
+      "publicUrl": "https://openhub.net/p/noveum-orbit"
     },
     {
       "id": "vercel-community-templates",
       "name": "Vercel Community Templates",
       "kind": "deployment-template",
       "status": "blocked",
-      "evidence": "Former public submission route returned 404",
-      "blocker": "New community-template intake is currently closed",
-      "nextAction": "Monitor for a reopened official submission route"
+      "account": "shashank@noveum.ai",
+      "evidence": "Filled repository, apps/web path, main, thumbnail, use cases, framework, CSS, database, 12 environment variables, install/build commands and setup docs. Custom domain failed demo validation; verified orbit-magicapi.vercel.app alias accepted. Backend returned Template submission failed. No confirmed submission.",
+      "submissionUrl": "https://vercel.com/templates/submit",
+      "blocker": "Filled repository, apps/web path, main, thumbnail, use cases, framework, CSS, database, 12 environment variables, install/build commands and setup docs. Custom domain failed demo validation; verified orbit-magicapi.vercel.app alias accepted. Backend returned Template submission failed. No confirmed submission."
     },
     {
       "id": "coolify-official",
@@ -243,6 +259,357 @@
       "status": "blocked",
       "blocker": "Release-age and provider-neutral production-deployment requirements are not yet satisfied",
       "nextAction": "Re-check eligibility after the production deployment release and four-month release-age gate"
+    },
+    {
+      "id": "repocloud",
+      "name": "RepoCloud",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Submission Successful; inquiry received, email reply promised. Submitted via existing Chrome account with self-hosting Preview and standalone realtime limitation disclosed.",
+      "submissionUrl": "https://repocloud.io/submitapp",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "freealternatives-to",
+      "name": "FreeAlternatives.to",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Thanks. Your message is in. Used the official Suggest a tool contact route, with source, hosted service, remote MCP, no paid tiers and Preview disclosure.",
+      "submissionUrl": "https://freealternatives.to/contact",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "agenticskills",
+      "name": "AgenticSkills",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "MCP Server Submitted! Review issue created. Primary submitted URL is hosted MCP; Productivity & PM, OAuth and Apache-2.0 source described.",
+      "submissionUrl": "https://github.com/Korona7x17/agenticskills/issues/225",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "mcp-server-space",
+      "name": "MCPServerSpace",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Submission Received! User completed Google login; submitted Remote Server with website primary, hosted Streamable HTTP endpoint, OAuth and full-app source distinction.",
+      "submissionUrl": "https://mcpserver.space/submit/",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "mcpserverhub-com",
+      "name": "MCPServerHub.com",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Official embedded Tally form confirmed Form submitted, Done, Thanks for your submission. Primary URL https://orbit.noveum.ai/mcp; remote OAuth, source and Preview details included.",
+      "submissionUrl": "https://mcpserverhub.com/submit",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "mcprepository",
+      "name": "MCPRepository",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Your repository is now queued for validation and processing. Expected URL https://mcprepository.com/noveum/orbit. Required source URL submitted after no Noveum search results.",
+      "submissionUrl": "https://mcprepository.com/submit",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "clawtools",
+      "name": "ClawTools",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Free Listing selected, MCP Servers category. Dashboard lists Orbit by Noveum as waiting approval, listing ID 11187805. Source, remote OAuth endpoint, logo and OG image included.",
+      "submissionUrl": "https://clawtools.com/submitter/projects",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "mcp-marketplace-io",
+      "name": "MCPMarketplace.io",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Authenticated with business Google account, enabled free Creator Mode and submitted. Dashboard confirms Orbit by Noveum, v1.0.0, Pending Review, Remote, Free. Hosted endpoint, full source distinction, OAuth setup and Preview disclosure included.",
+      "submissionUrl": "https://mcp-marketplace.io",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "cursor-directory",
+      "name": "Cursor Directory",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Hosted MCP plugin submitted. Final status: Scan failed. An admin will re-run it shortly. Plugin remains unpublished and hidden from directory.",
+      "submissionUrl": "https://cursor.directory/plugins/orbit-by-noveum",
+      "blocker": "Hosted MCP plugin submitted. Final status: Scan failed. An admin will re-run it shortly. Plugin remains unpublished and hidden from directory."
+    },
+    {
+      "id": "aevrin",
+      "name": "Aevrin MCP Marketplace",
+      "kind": "directory",
+      "status": "submitted",
+      "account": "shashank@noveum.ai",
+      "evidence": "Submission received. Dashboard shows https://orbit.noveum.ai/mcp, In review. Hosted remote URL submitted; OAuth and current discovery repair disclosed for reviewer scan.",
+      "submissionUrl": "https://app.mcp.aevrin.net/marketplace/submit",
+      "submittedAt": "2026-09-14"
+    },
+    {
+      "id": "mcphq",
+      "name": "MCPHQ",
+      "kind": "directory",
+      "status": "live",
+      "account": "shashank@noveum.ai",
+      "evidence": "Public active listing includes correct hosted MCP URL, OAuth-required probe, Apache-2.0 source, registry namespace and client configuration.",
+      "submissionUrl": "https://mcphq.ai/mcp/noveum-orbit",
+      "submittedAt": "2026-09-14",
+      "publicUrl": "https://mcphq.ai/mcp/noveum-orbit",
+      "firstObservedAt": "2026-09-14",
+      "submissionDateKnown": false
+    },
+    {
+      "id": "kiprio",
+      "name": "Kiprio",
+      "kind": "directory",
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Submitted source URL in required repository field and hosted MCP in contact note. Form reset with no visible receipt; outcome unconfirmed.",
+      "submissionUrl": "https://kiprio.com/mcp-registry/",
+      "nextAction": "Resolve the stated prerequisite or verify the existing attempt before resubmitting."
+    },
+    {
+      "id": "alltoolsdirectory",
+      "name": "AllToolsDirectory",
+      "kind": "directory",
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Completed MCP Server free form with remote endpoint, product/source/docs/logo/screenshots/contact and submitted. Browser reports no invalid fields but no visible receipt. Outcome unconfirmed.",
+      "submissionUrl": "https://www.alltoolsdirectory.com/submit",
+      "nextAction": "Resolve the stated prerequisite or verify the existing attempt before resubmitting."
+    },
+    {
+      "id": "vettd",
+      "name": "Vettd",
+      "kind": "directory",
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Authenticated with GitHub read-only profile/email. Submitted public Noveum/orbit for scan. Extraction completed, repository snapshot created and source MCP assets detected. Public listing not verified; scan result is not independent certification.",
+      "submissionUrl": "https://vettd.agentichighway.ai",
+      "nextAction": "Resolve the stated prerequisite or verify the existing attempt before resubmitting."
+    },
+    {
+      "id": "openai-plugins",
+      "name": "OpenAI shared ChatGPT/Codex directory",
+      "kind": "directory",
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Authenticated Noveum AI organization. Created and saved Orbit universal With MCP draft for shared ChatGPT/Codex directory. Listing copy, icons, Productivity and business identity selection entered; remote URL and OAuth selected. Awaiting OAuth scan, domain verification, reviewer account, demo video and Orbit-specific policy coverage. Confirmed Business Noveum AI identity, five positive and three negative test cases, three prompts and release notes saved. Submit disabled: Privacy policy URL and MCP tools scan required. Closed saved draft.",
+      "submissionUrl": "https://platform.openai.com/plugins",
+      "nextAction": "Resolve the stated prerequisite or verify the existing attempt before resubmitting."
+    },
+    {
+      "id": "mcpserverhub-net",
+      "name": "MCPServerHub.net",
+      "kind": "directory",
+      "status": "deferred",
+      "account": "shashank@noveum.ai",
+      "evidence": "Submitted remote HTTPS MCP URL with HTTP configuration and Developer Tools category. Form reset after processing; no durable success receipt captured. Outcome unconfirmed; do not submit a duplicate.",
+      "submissionUrl": "https://mcpserverhub.net/submit",
+      "nextAction": "Resolve the stated prerequisite or verify the existing attempt before resubmitting."
+    },
+    {
+      "id": "claude-connectors",
+      "name": "Claude Connector Directory",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "User signed in successfully. Portal explicitly rejects access: Organization settings are available on Claude Team and Enterprise plans. Current account lacks the required plan.",
+      "submissionUrl": "https://claude.ai/admin-settings/directory/submissions/new",
+      "blocker": "User signed in successfully. Portal explicitly rejects access: Organization settings are available on Claude Team and Enterprise plans. Current account lacks the required plan."
+    },
+    {
+      "id": "indexmcp",
+      "name": "IndexMCP",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Completed free form with hosted OAuth details. Submit failed: Could not find the category column of submissions in the schema cache.",
+      "submissionUrl": "https://indexmcp.co/submit",
+      "blocker": "Completed free form with hosted OAuth details. Submit failed: Could not find the category column of submissions in the schema cache."
+    },
+    {
+      "id": "mcpfind",
+      "name": "MCPFind",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Requires a published npm, PyPI or Docker package name. Orbit MCP is embedded private workspace source and remote hosted, so no truthful package identifier available.",
+      "submissionUrl": "https://mcpfind.org/submit",
+      "blocker": "Requires a published npm, PyPI or Docker package name. Orbit MCP is embedded private workspace source and remote hosted, so no truthful package identifier available."
+    },
+    {
+      "id": "mcptrove",
+      "name": "MCPTrove",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Completed hosted HTTP/OAuth submission. Platform returned: Submissions are disabled in this read-only demo. Connect a database (DATABASE_URL) to enable them.",
+      "submissionUrl": "https://mcptrove.com/submit",
+      "blocker": "Completed hosted HTTP/OAuth submission. Platform returned: Submissions are disabled in this read-only demo. Connect a database (DATABASE_URL) to enable them."
+    },
+    {
+      "id": "allmcpservers",
+      "name": "AllMCPservers.com",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Filled required name, business email, source URL and Remote category. No receipt; embedded reCAPTCHA reports Invalid site key. Site configuration blocks submission.",
+      "submissionUrl": "https://www.allmcpservers.com",
+      "blocker": "Filled required name, business email, source URL and Remote category. No receipt; embedded reCAPTCHA reports Invalid site key. Site configuration blocks submission."
+    },
+    {
+      "id": "gateturbo",
+      "name": "GateTurbo",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Official form excludes authenticated servers. OAuth servers are imported from official registry, where Orbit is already active; direct listing not independently verified.",
+      "submissionUrl": "https://gateturbo.com/submit",
+      "blocker": "Official form excludes authenticated servers. OAuth servers are imported from official registry, where Orbit is already active; direct listing not independently verified."
+    },
+    {
+      "id": "mcpub",
+      "name": "MCPub",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Requires /.well-known/mcp.json domain marker before submission; Orbit currently publishes server-card.json under /.well-known/mcp/. Marker and authenticated-endpoint compatibility must be verified.",
+      "submissionUrl": "https://mcpub.dev",
+      "blocker": "Requires /.well-known/mcp.json domain marker before submission; Orbit currently publishes server-card.json under /.well-known/mcp/. Marker and authenticated-endpoint compatibility must be verified."
+    },
+    {
+      "id": "mcpserve",
+      "name": "MCPServe",
+      "kind": "directory",
+      "status": "blocked",
+      "account": "shashank@noveum.ai",
+      "evidence": "Official domain redirects to GoDaddy domain-for-sale page. No active directory intake remains.",
+      "submissionUrl": "https://mcpserve.com/submit",
+      "blocker": "Official domain redirects to GoDaddy domain-for-sale page. No active directory intake remains."
+    },
+    {
+      "id": "devtool-io",
+      "name": "DevTool.io",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://devtool.io",
+      "blocker": "Free review requires a visible homepage badge; no badge added or paid plan purchased.",
+      "nextAction": "Free review requires a visible homepage badge; no badge added or paid plan purchased."
+    },
+    {
+      "id": "mcp-central",
+      "name": "MCP Central",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://mcpcentral.io/docs/submit-a-server",
+      "blocker": "Official Registry mirror imports daily. Orbit is already in the upstream registry. No Noveum Orbit listing verified in catalog search; Show More repeatedly retained the initial 25 of 47 results.",
+      "nextAction": "Official Registry mirror imports daily. Orbit is already in the upstream registry. No Noveum Orbit listing verified in catalog search; Show More repeatedly retained the initial 25 of 47 results."
+    },
+    {
+      "id": "docker-mcp-catalog",
+      "name": "Docker MCP Catalog",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://github.com/docker/mcp-registry",
+      "blocker": "Remote OAuth submission pack prepared; complete provider form and real authenticated client test required.",
+      "nextAction": "Remote OAuth submission pack prepared; complete provider form and real authenticated client test required."
+    },
+    {
+      "id": "gemini-cli-extensions",
+      "name": "Gemini CLI Extensions",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://github.com/google-gemini/gemini-cli",
+      "blocker": "Extension manifest prepared locally. Publish a dedicated public extension repository with the required discovery topic before claiming a listing.",
+      "nextAction": "Extension manifest prepared locally. Publish a dedicated public extension repository with the required discovery topic before claiming a listing."
+    },
+    {
+      "id": "cursor-official",
+      "name": "Cursor official marketplace",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://cursor.com/marketplace",
+      "blocker": "Distinct from the submitted community directory. Requires a public plugin repository and manifest; local packet not published.",
+      "nextAction": "Distinct from the submitted community directory. Requires a public plugin repository and manifest; local packet not published."
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf client configuration",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://docs.windsurf.com",
+      "blocker": "Remote MCP client configuration prepared; no verified public directory intake found.",
+      "nextAction": "Remote MCP client configuration prepared; no verified public directory intake found."
+    },
+    {
+      "id": "railway-templates",
+      "name": "Railway Templates",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://railway.com/templates",
+      "blocker": "Docker evaluation template passed sign-up, onboarding, docs/file and restart persistence API checks in draft PR 472. Full provider hosting still requires portable realtime, scheduled jobs, public HTTPS storage and production operations.",
+      "nextAction": "Complete production portability prerequisites before offering a provider template."
+    },
+    {
+      "id": "render-templates",
+      "name": "Render Templates",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://render.com",
+      "blocker": "Docker evaluation template passed sign-up, onboarding, docs/file and restart persistence API checks in draft PR 472. Full provider hosting still requires portable realtime, scheduled jobs, public HTTPS storage and production operations.",
+      "nextAction": "Complete production portability prerequisites before offering a provider template."
+    },
+    {
+      "id": "openalternative-co",
+      "name": "OpenAlternative.co",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://openalternative.co",
+      "blocker": "Submission requires payment; free-only campaign.",
+      "nextAction": "Submission requires payment; free-only campaign."
+    },
+    {
+      "id": "stork",
+      "name": "Stork",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://www.stork.ai",
+      "blocker": "Intake requires payment or a backlink; neither completed.",
+      "nextAction": "Intake requires payment or a backlink; neither completed."
+    },
+    {
+      "id": "mcpbridge",
+      "name": "MCPBridge",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://mcpbridge.com",
+      "blocker": "Observed intake supports stdio packages, not this hosted OAuth endpoint.",
+      "nextAction": "Observed intake supports stdio packages, not this hosted OAuth endpoint."
+    },
+    {
+      "id": "mcpdirectory-dev",
+      "name": "MCPDirectory.dev",
+      "kind": "distribution",
+      "status": "deferred",
+      "submissionUrl": "https://mcpdirectory.dev",
+      "blocker": "Official Registry ingestion route; no additional independent listing verified.",
+      "nextAction": "Official Registry ingestion route; no additional independent listing verified."
     }
   ]
 }
