@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { symmetricDecrypt } from 'better-auth/crypto';
+import { mcp } from 'better-auth/plugins';
 import { deploymentAuthOptions } from '@/lib/auth/deployment';
 import { nativeFetchGlobals } from '../../../tests-preload';
 
@@ -123,6 +124,7 @@ describe('deployment authentication', () => {
         'orbit-abc123-magicapi.vercel.app',
         'orbit-git-feature-magicapi.vercel.app',
       ],
+      fallback: canonical,
     });
     expect(options.plugins).toEqual([]);
   });
@@ -132,6 +134,33 @@ describe('deployment authentication', () => {
       deploymentAuthOptions({ ORBIT_AUTH_ALLOWED_HOSTS: 'https://example.com/path' }),
     ).toThrow();
     expect(() => deploymentAuthOptions({ OAUTH_PROXY_SECRET: 'short' })).toThrow();
+  });
+
+  it('resolves MCP OAuth metadata on the canonical origin without a request', async () => {
+    const deployment = deploymentAuthOptions({
+      BETTER_AUTH_URL: canonical,
+      VERCEL_URL: 'orbit-abc123-magicapi.vercel.app',
+      ORBIT_AUTH_ALLOWED_HOSTS: 'orbit-*-magicapi.vercel.app',
+    });
+    const auth = betterAuth({
+      ...deployment,
+      database: memoryAdapter({ user: [], account: [], session: [], verification: [] }),
+      secret: 'preview-session-secret-at-least-32-characters',
+      plugins: [...deployment.plugins, mcp({ loginPage: '/login', resource: `${canonical}/mcp` })],
+    });
+
+    const withoutRequest = await auth.api.getMcpOAuthConfig();
+    expect(withoutRequest?.issuer).toBe(canonical);
+
+    const previewHost = await auth.api.getMcpOAuthConfig({
+      headers: new Headers({ host: new URL(preview).host }),
+    });
+    expect(previewHost?.issuer).toBe(preview);
+
+    const unknownHost = await auth.api.getMcpOAuthConfig({
+      headers: new Headers({ host: 'attacker.example' }),
+    });
+    expect(unknownHost?.issuer).toBe(canonical);
   });
 
   it('ignores empty optional deployment values in local configuration', () => {
@@ -181,7 +210,9 @@ describe('deployment authentication', () => {
   });
 
   it('rejects another Vercel project', async () => {
-    await expect(socialSignIn('https://other-magicapi.vercel.app', 'google')).rejects.toThrow();
+    const response = await socialSignIn('https://other-magicapi.vercel.app', 'google');
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: 'INVALID_ORIGIN' });
   });
 
   it('rejects an external post-login redirect', async () => {
