@@ -6,8 +6,8 @@
 > [readiness tracker](open-source-readiness.md) before deploying important data.
 
 Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
-and that is the whole architecture. There is nothing to containerise and nothing
-to orchestrate.
+plus a usable sign-in method. A Docker Compose preview packages the standalone
+application and those dependencies for local evaluation.
 
 Everything below has a free tier, so a small team can run Orbit for nothing.
 
@@ -17,8 +17,9 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
 | [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
+| [Docker Compose (Preview)](docker-preview.md) | Local image build and setup | Evaluation with bundled Postgres, Redis and MinIO, without realtime |
 
-Both need the same infrastructure plus one complete first-login method.
+All routes need the same infrastructure plus one complete first-login method.
 
 ## What Orbit needs
 
