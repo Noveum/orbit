@@ -1,0 +1,412 @@
+import { and, db, eq, schema } from '@orbit/db';
+import { DomainError } from '@orbit/shared/errors';
+import { randomUUIDv7 } from '@orbit/shared/utils';
+import {
+  aiProviderConfigSchema,
+  anthropicMessagesResponseSchema,
+  openAiCompletionResponseSchema,
+} from '@orbit/shared/validators';
+import { decryptAiApiKey } from './credentials.ts';
+import type {
+  AiCompletionOptions,
+  AiCompletionResult,
+  AiProviderConfig,
+  AiTokenUsage,
+} from './types.ts';
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+const MAX_TIMEOUT_MS = 60_000;
+const MIN_TIMEOUT_MS = 1_000;
+
+export class AiDisabledError extends DomainError {
+  constructor(message = 'AI is not enabled for this workspace.') {
+    super('not_found', message);
+    this.name = 'AiDisabledError';
+  }
+}
+
+export class AiClientError extends DomainError {
+  constructor(message: string, cause?: unknown, apiKey?: string) {
+    super(
+      'internal',
+      stripApiKey(message, apiKey),
+      cause === undefined ? {} : { cause: sanitizeErrorCause(cause, apiKey) },
+    );
+    this.name = 'AiClientError';
+  }
+}
+
+function stripApiKey(text: string, apiKey?: string): string {
+  if (apiKey === undefined || apiKey.length === 0) return text;
+  return text.replaceAll(apiKey, '[REDACTED]');
+}
+
+function sanitizeErrorCause(cause: unknown, apiKey?: string): string {
+  let message = 'Unknown error';
+  if (cause instanceof Error) message = cause.message;
+  else if (typeof cause === 'string') message = cause;
+  return stripApiKey(message, apiKey);
+}
+
+function boundedSignal(
+  timeoutMs: number | undefined,
+  externalSignal: AbortSignal | undefined,
+): AbortSignal {
+  const boundedMs = Math.min(
+    Math.max(timeoutMs ?? DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS),
+    MAX_TIMEOUT_MS,
+  );
+  const timeoutSignal = AbortSignal.timeout(boundedMs);
+  if (externalSignal === undefined) return timeoutSignal;
+  return AbortSignal.any([externalSignal, timeoutSignal]);
+}
+
+interface ResolvedClientTarget {
+  readonly config: AiProviderConfig;
+  readonly apiKey: string;
+  readonly organizationId: string | null;
+}
+
+async function resolveTarget(options: AiCompletionOptions): Promise<ResolvedClientTarget> {
+  if (options.config !== undefined && options.apiKey !== undefined) {
+    if (!options.config.enabled) {
+      throw new AiDisabledError();
+    }
+    return {
+      config: options.config,
+      apiKey: options.apiKey,
+      organizationId: options.organizationId ?? null,
+    };
+  }
+
+  if (options.organizationId === undefined) {
+    throw new AiDisabledError('Workspace context is required when config is not provided.');
+  }
+
+  const [row] = await db
+    .select({
+      config: schema.integration.config,
+      credentials: schema.integration.credentials,
+    })
+    .from(schema.integration)
+    .where(
+      and(
+        eq(schema.integration.organizationId, options.organizationId),
+        eq(schema.integration.provider, 'ai'),
+        eq(schema.integration.externalId, 'default'),
+      ),
+    )
+    .limit(1);
+
+  if (row === undefined) {
+    throw new AiDisabledError();
+  }
+
+  const parsedConfig = aiProviderConfigSchema.safeParse(row.config);
+  if (!(parsedConfig.success && parsedConfig.data.enabled)) {
+    throw new AiDisabledError();
+  }
+
+  const apiKey = decryptAiApiKey(row.credentials, {
+    organizationId: options.organizationId,
+  });
+
+  if (apiKey === null || apiKey.length === 0) {
+    throw new AiDisabledError();
+  }
+
+  return {
+    config: parsedConfig.data,
+    apiKey,
+    organizationId: options.organizationId,
+  };
+}
+
+interface RawCompletionPayload {
+  readonly text: string;
+  readonly usage?: AiTokenUsage | undefined;
+}
+
+function trimTrailingSlashes(text: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '/') {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
+function resolveOpenAiUrl(baseUrl: string): string {
+  const trimmed = trimTrailingSlashes(baseUrl.trim());
+  if (trimmed.endsWith('/chat/completions')) return trimmed;
+  return `${trimmed}/chat/completions`;
+}
+
+function resolveAnthropicUrl(baseUrl: string): string {
+  const trimmed = trimTrailingSlashes(baseUrl.trim());
+  if (trimmed.endsWith('/messages')) return trimmed;
+  if (trimmed.endsWith('/v1')) return `${trimmed}/messages`;
+  return `${trimmed}/v1/messages`;
+}
+
+const MAX_SUCCESS_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+
+async function readBoundedText(
+  response: Response,
+  maxBytes: number,
+  apiKey?: string,
+): Promise<string> {
+  const body = response.body;
+  if (body === null) return '';
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let receivedBytes = 0;
+  let result = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new AiClientError(
+          'Response payload exceeded maximum allowed size.',
+          undefined,
+          apiKey,
+        );
+      }
+      result += decoder.decode(value, { stream: true });
+    }
+    result += decoder.decode();
+    return result;
+  } catch (error) {
+    if (error instanceof AiClientError) throw error;
+    await reader.cancel().catch(() => undefined);
+    throw new AiClientError('Failed to read response body from provider.', error, apiKey);
+  }
+}
+
+async function readBoundedJson(
+  response: Response,
+  maxBytes: number,
+  apiKey?: string,
+): Promise<unknown> {
+  const text = await readBoundedText(response, maxBytes, apiKey);
+  if (text.trim() === '') return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new AiClientError('Response payload is not valid JSON.', error, apiKey);
+  }
+}
+
+async function callOpenAiCompatible(
+  prompt: string,
+  target: ResolvedClientTarget,
+  options: AiCompletionOptions,
+  signal: AbortSignal,
+): Promise<RawCompletionPayload> {
+  const url = resolveOpenAiUrl(target.config.baseUrl);
+  const model = options.model ?? target.config.model;
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: prompt }],
+  };
+  if (options.maxTokens !== undefined) body['max_tokens'] = options.maxTokens;
+  if (options.temperature !== undefined) body['temperature'] = options.temperature;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${target.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+      redirect: 'manual',
+    });
+  } catch (error) {
+    throw new AiClientError(
+      'Failed to connect to OpenAI-compatible endpoint.',
+      error,
+      target.apiKey,
+    );
+  }
+
+  if (!response.ok) {
+    const errorText = await readBoundedText(response, MAX_ERROR_BODY_BYTES, target.apiKey).catch(
+      (error) => {
+        if (error instanceof AiClientError) throw error;
+        return '';
+      },
+    );
+    throw new AiClientError(
+      `OpenAI-compatible endpoint returned HTTP ${response.status}: ${errorText.slice(0, 256)}`,
+      undefined,
+      target.apiKey,
+    );
+  }
+
+  const rawJson = await readBoundedJson(response, MAX_SUCCESS_BODY_BYTES, target.apiKey);
+  const parsed = openAiCompletionResponseSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    throw new AiClientError(
+      'Invalid response payload from OpenAI-compatible endpoint.',
+      undefined,
+      target.apiKey,
+    );
+  }
+
+  const text = parsed.data.choices?.[0]?.message?.content ?? '';
+  const usage: AiTokenUsage | undefined =
+    parsed.data.usage === undefined
+      ? undefined
+      : {
+          promptTokens: parsed.data.usage.prompt_tokens,
+          completionTokens: parsed.data.usage.completion_tokens,
+          totalTokens: parsed.data.usage.total_tokens,
+        };
+
+  return { text, usage };
+}
+
+async function callAnthropic(
+  prompt: string,
+  target: ResolvedClientTarget,
+  options: AiCompletionOptions,
+  signal: AbortSignal,
+): Promise<RawCompletionPayload> {
+  const url = resolveAnthropicUrl(target.config.baseUrl);
+  const model = options.model ?? target.config.model;
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: options.maxTokens ?? 1024,
+    messages: [{ role: 'user', content: prompt }],
+  };
+  if (options.temperature !== undefined) body['temperature'] = options.temperature;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': target.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+      signal,
+      redirect: 'manual',
+    });
+  } catch (error) {
+    throw new AiClientError('Failed to connect to Anthropic endpoint.', error, target.apiKey);
+  }
+
+  if (!response.ok) {
+    const errorText = await readBoundedText(response, MAX_ERROR_BODY_BYTES, target.apiKey).catch(
+      (error) => {
+        if (error instanceof AiClientError) throw error;
+        return '';
+      },
+    );
+    throw new AiClientError(
+      `Anthropic endpoint returned HTTP ${response.status}: ${errorText.slice(0, 256)}`,
+      undefined,
+      target.apiKey,
+    );
+  }
+
+  const rawJson = await readBoundedJson(response, MAX_SUCCESS_BODY_BYTES, target.apiKey);
+  const parsed = anthropicMessagesResponseSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    throw new AiClientError(
+      'Invalid response payload from Anthropic endpoint.',
+      undefined,
+      target.apiKey,
+    );
+  }
+
+  const textBlocks = (parsed.data.content ?? [])
+    .filter((block) => block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text as string);
+  const text = textBlocks.join('');
+
+  const inputTokens = parsed.data.usage?.input_tokens;
+  const outputTokens = parsed.data.usage?.output_tokens;
+  const totalTokens =
+    inputTokens === undefined && outputTokens === undefined
+      ? undefined
+      : (inputTokens ?? 0) + (outputTokens ?? 0);
+
+  const usage: AiTokenUsage | undefined =
+    inputTokens === undefined && outputTokens === undefined
+      ? undefined
+      : {
+          promptTokens: inputTokens,
+          completionTokens: outputTokens,
+          totalTokens,
+        };
+
+  return { text, usage };
+}
+
+async function recordUsageIfApplicable(
+  organizationId: string | null,
+  provider: string,
+  model: string,
+  usage: AiTokenUsage | undefined,
+  recordUsage: boolean | undefined,
+): Promise<void> {
+  if (organizationId === null || recordUsage === false) return;
+  try {
+    await db.insert(schema.aiUsage).values({
+      id: randomUUIDv7(),
+      organizationId,
+      provider,
+      model,
+      promptTokens: usage?.promptTokens ?? null,
+      completionTokens: usage?.completionTokens ?? null,
+      totalTokens: usage?.totalTokens ?? null,
+    });
+  } catch (error) {
+    console.error('Failed to log AI token usage telemetry:', error);
+    return;
+  }
+}
+
+export async function complete(
+  prompt: string,
+  options: AiCompletionOptions = {},
+): Promise<AiCompletionResult> {
+  const target = await resolveTarget(options);
+  const signal = boundedSignal(options.timeoutMs, options.signal);
+  const startTime = Date.now();
+
+  const raw =
+    target.config.kind === 'anthropic'
+      ? await callAnthropic(prompt, target, options, signal)
+      : await callOpenAiCompatible(prompt, target, options, signal);
+
+  const latencyMs = Date.now() - startTime;
+  const model = options.model ?? target.config.model;
+
+  await recordUsageIfApplicable(
+    target.organizationId,
+    target.config.kind,
+    model,
+    raw.usage,
+    options.recordUsage,
+  );
+
+  return {
+    text: raw.text,
+    model,
+    usage: raw.usage,
+    latencyMs,
+  };
+}

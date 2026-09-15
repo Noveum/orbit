@@ -8,10 +8,15 @@ import { type SettingsNavControl, SettingsNavProvider } from './use-settings-nav
 
 export interface SettingsShellProps {
   readonly passwordEnabled: boolean;
+  readonly canManageAi?: boolean;
   readonly children: ReactNode;
 }
 
-export function SettingsShell({ passwordEnabled, children }: SettingsShellProps) {
+export function SettingsShell({
+  passwordEnabled,
+  canManageAi = true,
+  children,
+}: SettingsShellProps) {
   const [open, setOpen] = useState(false);
 
   const control = useMemo<SettingsNavControl>(
@@ -46,7 +51,7 @@ export function SettingsShell({ passwordEnabled, children }: SettingsShellProps)
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          <SettingsSidebar passwordEnabled={passwordEnabled} />
+          <SettingsSidebar passwordEnabled={passwordEnabled} canManageAi={canManageAi} />
           <div className="min-w-0 flex-1 overflow-y-auto">
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8 3xl:max-w-4xl">
               {children}
