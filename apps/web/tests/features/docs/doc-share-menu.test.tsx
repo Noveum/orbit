@@ -28,7 +28,11 @@ const { DocShareMenu, shareTrigger, visibleChoices } = await import(
   '../../../src/features/docs/doc-share-menu.tsx'
 );
 
-function doc(visibility: string, publishToken: string | null = null): Doc {
+function doc(
+  visibility: string,
+  publishToken: string | null = null,
+  kind: 'markdown' | 'html' = 'markdown',
+): Doc {
   return {
     id: 'doc_1',
     organizationId: 'org_1',
@@ -37,7 +41,7 @@ function doc(visibility: string, publishToken: string | null = null): Doc {
     parentId: null,
     title: 'Delta protocol',
     slug: 'delta-protocol',
-    kind: 'markdown',
+    kind,
     content: '',
     sortOrder: 0,
     visibility,
@@ -198,6 +202,39 @@ describe('copying a link to a doc', () => {
     expect(screen.queryByTestId('doc-rotate-link')).toBeNull();
     await user.click(screen.getByTestId('doc-copy-link'));
     expect(clipboard.value).toContain('/docs/doc_1');
+  });
+
+  it('offers the artifact link for an html page shared with the workspace', async () => {
+    const user = await openShare(doc('workspace', null, 'html'));
+    const clipboard = stubClipboard();
+
+    expect(screen.getByTestId('doc-copy-artifact-link-url')).toHaveTextContent(
+      '/docs/doc_1/artifact',
+    );
+    await user.click(screen.getByTestId('doc-copy-artifact-link'));
+
+    expect(clipboard.value).toContain('/docs/doc_1/artifact');
+  });
+
+  it('offers the artifact link for an html page shared with named people too', async () => {
+    await openShare(doc('private', null, 'html'));
+
+    expect(screen.getByTestId('doc-copy-artifact-link-url')).toHaveTextContent(
+      '/docs/doc_1/artifact',
+    );
+  });
+
+  it('leaves a markdown doc without an artifact link, because there is no page to open', async () => {
+    await openShare(doc('workspace', null, 'markdown'));
+
+    expect(screen.queryByTestId('doc-copy-artifact-link')).toBeNull();
+  });
+
+  it('shows one link for an html page already published to the outside world', async () => {
+    await openShare(doc('link', 'token_1', 'html'));
+
+    expect(screen.getByTestId('doc-copy-link-url')).toHaveTextContent('/h/delta-protocol-token_1');
+    expect(screen.queryByTestId('doc-copy-artifact-link')).toBeNull();
   });
 
   it('keeps the public link and its reset out of sight while the doc has none', async () => {
