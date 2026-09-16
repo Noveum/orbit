@@ -92,7 +92,7 @@ function CopyRow({
         <span className="block text-2xs text-faint">{label}</span>
         <span
           data-testid={`${testId}-url`}
-          className="block truncate font-mono text-2xs text-muted"
+          className="line-clamp-2 block break-all font-mono text-2xs text-muted"
         >
           {url}
         </span>
