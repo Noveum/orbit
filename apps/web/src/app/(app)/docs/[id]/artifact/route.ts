@@ -9,8 +9,6 @@ interface RouteContext {
   readonly params: Promise<{ id: string }>;
 }
 
-export const dynamic = 'force-dynamic';
-
 export async function GET(_request: Request, context: RouteContext): Promise<Response> {
   const { id } = await context.params;
   const session = await getSession();
