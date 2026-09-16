@@ -89,6 +89,11 @@ describe('GET /docs/[id]/artifact', () => {
     expect(response.status).toBe(404);
   });
 
+  it('turns away an id that is not shaped like one', async () => {
+    expect((await route.GET(request(), contextFor(''))).status).toBe(404);
+    expect((await route.GET(request(), contextFor('x'.repeat(65)))).status).toBe(404);
+  });
+
   it('refuses a reader from another workspace', async () => {
     const doc = await page();
     const other = await createWorkspace('Elsewhere');
