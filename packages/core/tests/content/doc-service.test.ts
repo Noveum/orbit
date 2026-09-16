@@ -18,6 +18,7 @@ import {
   listDocVersions,
   listPublicDocs,
   publishedDocToken,
+  resolveDocArtifact,
   resolvePublishedDoc,
   restoreDocVersion,
   setDocAccess,
@@ -478,6 +479,68 @@ describe('visibility modes', () => {
     const other = await createWorkspace('Elsewhere');
     expect(await resolvePublishedDoc(token, other.adminUser.id)).toEqual({ status: 'missing' });
     expect((await listPublicDocs()).some((row) => row.id === doc.id)).toBe(false);
+  });
+});
+
+describe('resolveDocArtifact', () => {
+  async function htmlDoc(visibility = 'workspace') {
+    const { doc } = await createDoc(workspace.admin, {
+      visibility,
+      title: 'Build record',
+      kind: 'html',
+      content: '<!doctype html><title>Build record</title><p>Green</p>',
+    });
+    return doc;
+  }
+
+  it('sends an anonymous visitor to sign in without revealing whether the doc exists', async () => {
+    const doc = await htmlDoc();
+    expect(await resolveDocArtifact(doc.id, null)).toEqual({ status: 'sign-in' });
+    expect(await resolveDocArtifact('doc_missing', null)).toEqual({ status: 'sign-in' });
+  });
+
+  it('opens a workspace page for any member of that workspace', async () => {
+    const doc = await htmlDoc();
+    const member = await addMember(workspace, 'guest', { name: 'Gia Guest' });
+
+    const opened = await resolveDocArtifact(doc.id, member.user.id);
+    expect(opened.status).toBe('ok');
+    if (opened.status !== 'ok') return;
+    expect(opened.doc.id).toBe(doc.id);
+    expect(opened.doc.content).toContain('Green');
+  });
+
+  it('hides the page from another workspace and from an unknown id', async () => {
+    const doc = await htmlDoc();
+    const other = await createWorkspace('Elsewhere');
+
+    expect(await resolveDocArtifact(doc.id, other.adminUser.id)).toEqual({ status: 'missing' });
+    expect(await resolveDocArtifact('doc_missing', workspace.adminUser.id)).toEqual({
+      status: 'missing',
+    });
+  });
+
+  it('follows the grants on a private page rather than workspace membership', async () => {
+    const doc = await htmlDoc('private');
+    const invited = await addMember(workspace, 'member', { name: 'Ida Invited' });
+    const stranger = await addMember(workspace, 'member', { name: 'Sam Stranger' });
+
+    expect(await resolveDocArtifact(doc.id, invited.user.id)).toEqual({ status: 'missing' });
+
+    await setDocAccess(workspace.admin, doc.id, {
+      grants: [{ subjectType: 'user', subjectId: invited.user.id, level: 'read' }],
+    });
+
+    const opened = await resolveDocArtifact(doc.id, invited.user.id);
+    expect(opened.status).toBe('ok');
+    expect(await resolveDocArtifact(doc.id, stranger.user.id)).toEqual({ status: 'missing' });
+  });
+
+  it('stops serving a page once the doc is archived', async () => {
+    const doc = await htmlDoc();
+    await archiveDoc(workspace.admin, doc.id);
+
+    expect(await resolveDocArtifact(doc.id, workspace.adminUser.id)).toEqual({ status: 'missing' });
   });
 });
 
