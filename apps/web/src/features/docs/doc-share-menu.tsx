@@ -1,14 +1,14 @@
 'use client';
 
 import type { DocVisibility } from '@orbit/shared/constants';
-import { isExternallyShared } from '@orbit/shared/constants';
+import { isExternallyShared, isHtmlDoc } from '@orbit/shared/constants';
 import { Building2, Check, Copy, Link2, Lock, type LucideIcon, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { cn } from '@/lib/cn.ts';
-import { appDocUrl, publicDocUrl } from '@/lib/docs/paths.ts';
+import { appDocUrl, docArtifactUrl, publicDocUrl } from '@/lib/docs/paths.ts';
 import { publicAppUrl } from '@/lib/env.ts';
 import type { Doc } from '@/lib/query/schemas.ts';
 import { useShareDoc } from '@/lib/query/use-docs.ts';
@@ -66,10 +66,12 @@ function CopyRow({
   label,
   url,
   testId,
+  hint,
 }: {
   readonly label: string;
   readonly url: string;
   readonly testId: string;
+  readonly hint?: string;
 }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -94,6 +96,7 @@ function CopyRow({
         >
           {url}
         </span>
+        {hint === undefined ? null : <span className="block text-2xs text-faint">{hint}</span>}
       </span>
       <Button
         variant="secondary"
@@ -132,6 +135,7 @@ export function DocShareMenu({
   const workspaceUrl = appDocUrl(doc.id, origin);
   const external = isExternallyShared(doc.visibility);
   const publishedUrl = external ? publicDocUrl(doc, origin) : null;
+  const artifactUrl = !external && isHtmlDoc(doc.kind) ? docArtifactUrl(doc.id, origin) : null;
   const disabled = !canManageAccess || share.isPending;
 
   return (
@@ -239,6 +243,15 @@ export function DocShareMenu({
             url={publishedUrl ?? workspaceUrl}
             testId="doc-copy-link"
           />
+
+          {artifactUrl === null ? null : (
+            <CopyRow
+              label="Artifact link"
+              url={artifactUrl}
+              testId="doc-copy-artifact-link"
+              hint="Opens the page on its own, for people who can already open this doc."
+            />
+          )}
 
           {publishedUrl === null ? null : (
             <Button
