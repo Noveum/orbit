@@ -1053,6 +1053,41 @@ export async function resolvePublishedDoc(
   return { status: 'ok', detail: await detailFor(doc, principal) };
 }
 
+export type DocArtifactResolution =
+  | { readonly status: 'missing' }
+  | { readonly status: 'sign-in' }
+  | { readonly status: 'ok'; readonly doc: DocRow };
+
+async function liveDocById(docId: string): Promise<DocRow | null> {
+  const [doc] = await db
+    .select(DOC_COLUMNS)
+    .from(schema.doc)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.doc.organizationId))
+    .where(
+      and(
+        eq(schema.doc.id, docId),
+        isNull(schema.doc.archivedAt),
+        isNull(schema.organization.deletionRequestedAt),
+      ),
+    )
+    .limit(1);
+  return doc ?? null;
+}
+
+export async function resolveDocArtifact(
+  docId: string,
+  viewerUserId: string | null,
+): Promise<DocArtifactResolution> {
+  if (viewerUserId === null) return { status: 'sign-in' };
+  const doc = await liveDocById(docId);
+  if (doc === null) return { status: 'missing' };
+  const principal = await findPrincipal(viewerUserId, doc.organizationId);
+  if (principal === null) return { status: 'missing' };
+  const grants = await grantedDocIds(db, principal, [doc.id]);
+  if (!canReadDoc(principal, doc, grants)) return { status: 'missing' };
+  return { status: 'ok', doc };
+}
+
 export async function getPublishedDoc(pathSegment: string): Promise<DocDetail | null> {
   const result = await resolvePublishedDoc(pathSegment, null);
   return result.status === 'ok' ? result.detail : null;

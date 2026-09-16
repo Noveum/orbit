@@ -51,3 +51,11 @@ export function newDocPath(
 export function appDocUrl(docId: string, origin: string | URL): string {
   return new URL(appDocPath(docId), origin).toString();
 }
+
+export function docArtifactPath(docId: string): string {
+  return `${appDocPath(docId)}/artifact`;
+}
+
+export function docArtifactUrl(docId: string, origin: string | URL): string {
+  return new URL(docArtifactPath(docId), origin).toString();
+}
