@@ -21,6 +21,7 @@ import {
   isExternallyShared,
   isPublished,
   isRestricted,
+  isWorkspaceShared,
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
 } from '@orbit/shared/constants';
@@ -197,8 +198,9 @@ function docAnnouncement(row: DocRow): Record<string, unknown> {
   return { ...rest, publishToken: publishToken === null ? null : 'redacted' };
 }
 
-function tokenFor(visibility: string, current: string | null): string | null {
+function tokenFor(visibility: string, current: string | null, previous: string): string | null {
   if (!isPublished(visibility)) return null;
+  if (isExternallyShared(previous) && !isExternallyShared(visibility)) return newToken();
   return current ?? newToken();
 }
 
@@ -1046,7 +1048,7 @@ export async function resolvePublishedDoc(
   if (isExternallyShared(doc.visibility)) {
     return { status: 'ok', detail: await detailFor(doc, null) };
   }
-  if (doc.visibility !== 'members') return { status: 'missing' };
+  if (!isWorkspaceShared(doc.visibility)) return { status: 'missing' };
   if (viewerUserId === null) return { status: 'sign-in' };
   const principal = await findPrincipal(viewerUserId, doc.organizationId);
   if (principal === null) return { status: 'missing' };
@@ -1191,7 +1193,7 @@ export async function createDoc(principal: Principal, input: unknown): Promise<S
         content: parsed.content,
         sortOrder: await nextSiblingOrder(tx, principal.organizationId, placement),
         visibility: parsed.visibility,
-        publishToken: tokenFor(parsed.visibility, null),
+        publishToken: tokenFor(parsed.visibility, null, parsed.visibility),
         authorId: principal.userId,
         syncId,
       })
@@ -1388,7 +1390,9 @@ export async function updateDoc(
         ...(current.slug.length === 0 ? { slug: docSlug(parsed.title ?? current.title) } : {}),
         ...(parsed.visibility === undefined
           ? {}
-          : { publishToken: tokenFor(parsed.visibility, current.publishToken) }),
+          : {
+              publishToken: tokenFor(parsed.visibility, current.publishToken, current.visibility),
+            }),
         updatedAt: new Date(),
         syncId,
       })
@@ -1627,7 +1631,11 @@ export async function shareDoc(
     assertMayShare(principal, current);
 
     const previousAudience = await docAudience(tx, current);
-    const publishToken = tokenFor(visibility, rotateToken ? null : current.publishToken);
+    const publishToken = tokenFor(
+      visibility,
+      rotateToken ? null : current.publishToken,
+      current.visibility,
+    );
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const [saved] = await tx

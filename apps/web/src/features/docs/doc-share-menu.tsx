@@ -1,7 +1,7 @@
 'use client';
 
 import type { DocVisibility } from '@orbit/shared/constants';
-import { isExternallyShared } from '@orbit/shared/constants';
+import { isExternallyShared, isWorkspaceShared } from '@orbit/shared/constants';
 import { Building2, Check, Copy, Link2, Lock, type LucideIcon, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
@@ -66,10 +66,12 @@ function CopyRow({
   label,
   url,
   testId,
+  hint,
 }: {
   readonly label: string;
   readonly url: string;
   readonly testId: string;
+  readonly hint?: string;
 }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -90,10 +92,11 @@ function CopyRow({
         <span className="block text-2xs text-faint">{label}</span>
         <span
           data-testid={`${testId}-url`}
-          className="block truncate font-mono text-2xs text-muted"
+          className="line-clamp-2 block break-all font-mono text-2xs text-muted"
         >
           {url}
         </span>
+        {hint === undefined ? null : <span className="block text-2xs text-faint">{hint}</span>}
       </span>
       <Button
         variant="secondary"
@@ -132,6 +135,7 @@ export function DocShareMenu({
   const workspaceUrl = appDocUrl(doc.id, origin);
   const external = isExternallyShared(doc.visibility);
   const publishedUrl = external ? publicDocUrl(doc, origin) : null;
+  const workspaceLink = isWorkspaceShared(doc.visibility) ? publicDocUrl(doc, origin) : null;
   const disabled = !canManageAccess || share.isPending;
 
   return (
@@ -239,6 +243,15 @@ export function DocShareMenu({
             url={publishedUrl ?? workspaceUrl}
             testId="doc-copy-link"
           />
+
+          {workspaceLink === null ? null : (
+            <CopyRow
+              label="Workspace link"
+              url={workspaceLink}
+              testId="doc-copy-workspace-link"
+              hint="The page on its own, read only. Everyone in this workspace can open it, nobody outside can."
+            />
+          )}
 
           {publishedUrl === null ? null : (
             <Button

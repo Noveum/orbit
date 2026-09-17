@@ -19,7 +19,7 @@ export interface ReleaseResult {
 
 const LOCK_KEY = 4_611_358_438_132_153;
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
-  1786217938315, 1786623194883, 1788083189965, 1788724695589, 1788724695585,
+  1786217938315, 1786623194883, 1788083189965, 1788724695589, 1788724695585, 1789603762953,
 ]);
 const NOTIFICATION_AUDIT_MIGRATION = 1788724695590;
 const NOTIFICATION_AUDIT_ARTIFACTS = [
@@ -314,6 +314,15 @@ async function baselineLedger(
             alter table project_update add constraint project_update_health_check check (health in ('on_track', 'at_risk', 'off_track', 'no_update'));
           end if;
         end $$;
+      `;
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1789603762953)) {
+      await tx`
+        update doc
+        set publish_token =
+          replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+        where visibility in ('workspace', 'members')
+          and (publish_token is null or publish_token = '')
       `;
     }
     await tx`create schema if not exists drizzle`;
