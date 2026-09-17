@@ -197,9 +197,11 @@ describe('updateDoc', () => {
     expect(kept.doc.publishToken).toBe(token);
 
     const withdrawn = await updateDoc(workspace.admin, doc.id, { visibility: 'workspace' });
-    expect(withdrawn.doc.publishToken).not.toBeNull();
-    expect(withdrawn.doc.publishToken).not.toBe(token);
+    const replacement = withdrawn.doc.publishToken;
+    if (replacement === null) throw new Error('expected a workspace token to replace it');
+    expect(replacement).not.toBe(token);
     expect(await getPublishedDoc(token)).toBeNull();
+    expect((await resolvePublishedDoc(replacement, workspace.adminUser.id)).status).toBe('ok');
 
     const closed = await updateDoc(workspace.admin, doc.id, { visibility: 'private' });
     expect(closed.doc.publishToken).toBeNull();
@@ -239,9 +241,12 @@ describe('shareDoc', () => {
     expect(await getPublishedDoc(token)).not.toBeNull();
 
     const revoked = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
-    expect(revoked.publishToken).not.toBe(token);
+    const replacement = revoked.publishToken;
+    if (replacement === null) throw new Error('expected a workspace token to replace it');
+    expect(replacement).not.toBe(token);
     expect(await getPublishedDoc(token)).toBeNull();
     expect(await resolvePublishedDoc(token, workspace.adminUser.id)).toEqual({ status: 'missing' });
+    expect((await resolvePublishedDoc(replacement, workspace.adminUser.id)).status).toBe('ok');
   });
 
   it('hides an archived doc from its published url', async () => {
@@ -546,7 +551,10 @@ describe('the workspace link', () => {
     if (external === null) throw new Error('expected a public token');
 
     const withdrawn = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
-    expect(withdrawn.publishToken).not.toBe(external);
+    const replacement = withdrawn.publishToken;
+    if (replacement === null) throw new Error('expected a workspace token to replace it');
+    expect(replacement).not.toBe(external);
+    expect((await resolvePublishedDoc(replacement, workspace.adminUser.id)).status).toBe('ok');
     expect(await resolvePublishedDoc(external, workspace.adminUser.id)).toEqual({
       status: 'missing',
     });
