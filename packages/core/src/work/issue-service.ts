@@ -2327,6 +2327,9 @@ export async function setRelation(
   if (parsed.relatedIssueId === issueId) {
     throw validationFailed('An issue cannot relate to itself.');
   }
+  if (parsed.type === 'duplicate_of' || parsed.type === 'duplicated_by') {
+    throw validationFailed('Use markAsDuplicate to set duplicate issue relations.');
+  }
 
   return await db.transaction(async (tx) => {
     const source = await loadIssue(tx, principal, issueId);
@@ -2671,7 +2674,7 @@ async function removeExistingDuplicates(
   source: IssueRow,
   actor: Actor,
   syncId: number,
-): Promise<{ actions: SyncAction[]; previousSurvivorIds: string[] }> {
+): Promise<{ actions: SyncAction[] }> {
   const existingDuplicates = await tx
     .select({
       id: schema.issueRelation.id,
@@ -2698,11 +2701,7 @@ async function removeExistingDuplicates(
       ),
     );
 
-  if (existingDuplicates.length === 0) return { actions: [], previousSurvivorIds: [] };
-
-  const previousSurvivorIds = existingDuplicates
-    .filter((row) => row.issueId === source.id && row.type === 'duplicate_of')
-    .map((row) => row.relatedIssueId);
+  if (existingDuplicates.length === 0) return { actions: [] };
 
   await tx.delete(schema.issueRelation).where(
     and(
@@ -2727,124 +2726,7 @@ async function removeExistingDuplicates(
     }),
   );
 
-  return { actions, previousSurvivorIds };
-}
-
-async function getPreviousSurvivorSubscribers(
-  tx: Executor,
-  organizationId: string,
-  sourceId: string,
-  targetId: string,
-  previousSurvivorIds: string[],
-): Promise<string[]> {
-  const activeUserIds: string[] = [];
-
-  for (const prevSurvivorId of previousSurvivorIds) {
-    if (prevSurvivorId === targetId) continue;
-
-    const pastActivities = await tx
-      .select({ actorId: schema.issueActivity.actorId })
-      .from(schema.issueActivity)
-      .where(
-        and(
-          eq(schema.issueActivity.organizationId, organizationId),
-          eq(schema.issueActivity.issueId, sourceId),
-          eq(schema.issueActivity.field, 'subscription_transfer'),
-          eq(schema.issueActivity.toValue, prevSurvivorId),
-        ),
-      );
-    const pastUserIds = pastActivities.map((a) => a.actorId);
-
-    if (pastUserIds.length === 0) continue;
-
-    const prevActiveSubs = await tx
-      .select({ userId: schema.issueSubscription.userId })
-      .from(schema.issueSubscription)
-      .where(
-        and(
-          eq(schema.issueSubscription.issueId, prevSurvivorId),
-          inArray(schema.issueSubscription.userId, pastUserIds),
-        ),
-      );
-    activeUserIds.push(...prevActiveSubs.map((s) => s.userId));
-  }
-
-  return activeUserIds;
-}
-
-async function cleanupPreviousSurvivorSubscriptions(
-  tx: Executor,
-  organizationId: string,
-  sourceId: string,
-  targetId: string,
-  previousSurvivorIds: string[],
-  actor: Actor,
-  syncId: number,
-): Promise<SyncAction[]> {
-  const syncActions: SyncAction[] = [];
-
-  for (const prevSurvivorId of previousSurvivorIds) {
-    if (prevSurvivorId === targetId) continue;
-
-    const prevTransferActivities = await tx
-      .select({ actorId: schema.issueActivity.actorId })
-      .from(schema.issueActivity)
-      .where(
-        and(
-          eq(schema.issueActivity.organizationId, organizationId),
-          eq(schema.issueActivity.issueId, sourceId),
-          eq(schema.issueActivity.field, 'subscription_transfer'),
-          eq(schema.issueActivity.fromValue, sourceId),
-          eq(schema.issueActivity.toValue, prevSurvivorId),
-        ),
-      );
-
-    const transferredToPrevUserIds = Array.from(
-      new Set(prevTransferActivities.map((a) => a.actorId)),
-    );
-
-    if (transferredToPrevUserIds.length === 0) continue;
-
-    const activeTransferredSubs = await tx
-      .select({ userId: schema.issueSubscription.userId })
-      .from(schema.issueSubscription)
-      .where(
-        and(
-          eq(schema.issueSubscription.issueId, prevSurvivorId),
-          inArray(schema.issueSubscription.userId, transferredToPrevUserIds),
-        ),
-      );
-
-    const activeTransferredUserIds = activeTransferredSubs.map((s) => s.userId);
-
-    if (activeTransferredUserIds.length === 0) continue;
-
-    await tx
-      .delete(schema.issueSubscription)
-      .where(
-        and(
-          eq(schema.issueSubscription.issueId, prevSurvivorId),
-          inArray(schema.issueSubscription.userId, activeTransferredUserIds),
-        ),
-      );
-
-    for (const userId of activeTransferredUserIds) {
-      syncActions.push(
-        buildSyncAction({
-          syncId,
-          organizationId,
-          scopes: [scopes.user(userId)],
-          action: 'delete',
-          model: 'issue_subscription',
-          modelId: `${prevSurvivorId}:${userId}`,
-          data: { issueId: prevSurvivorId, userId, syncId },
-          actor,
-        }),
-      );
-    }
-  }
-
-  return syncActions;
+  return { actions };
 }
 
 async function transferSubscriptions(
@@ -2852,7 +2734,6 @@ async function transferSubscriptions(
   organizationId: string,
   source: IssueRow,
   target: IssueRow,
-  previousSurvivorIds: string[],
   actor: Actor,
   syncId: number,
 ): Promise<SyncAction[]> {
@@ -2861,97 +2742,28 @@ async function transferSubscriptions(
     .from(schema.issueSubscription)
     .where(eq(schema.issueSubscription.issueId, source.id));
 
-  let subUserIds = existingSubs.map((sub) => sub.userId);
-
-  if (previousSurvivorIds.length > 0) {
-    const prevSubUserIds = await getPreviousSurvivorSubscribers(
-      tx,
-      organizationId,
-      source.id,
-      target.id,
-      previousSurvivorIds,
-    );
-    subUserIds = Array.from(new Set([...subUserIds, ...prevSubUserIds]));
-  }
-
+  const subUserIds = existingSubs.map((sub) => sub.userId);
   if (subUserIds.length === 0) return [];
 
   const targetReaders = await teamReaderIds(tx, organizationId, target.teamId, subUserIds);
   const allowedUserIds = subUserIds.filter((id) => targetReaders.has(id));
 
-  const syncActions: SyncAction[] = [];
+  if (allowedUserIds.length === 0) return [];
 
-  if (allowedUserIds.length > 0) {
-    const existingTargetSubs = await tx
-      .select({ userId: schema.issueSubscription.userId })
-      .from(schema.issueSubscription)
-      .where(eq(schema.issueSubscription.issueId, target.id));
-    const existingTargetUserIds = new Set(existingTargetSubs.map((s) => s.userId));
+  await subscribeUsers(tx, target.id, allowedUserIds, syncId);
 
-    await subscribeUsers(tx, target.id, allowedUserIds, syncId);
-
-    syncActions.push(
-      ...allowedUserIds.map((userId) =>
-        buildSyncAction({
-          syncId,
-          organizationId,
-          scopes: [scopes.user(userId)],
-          action: 'insert',
-          model: 'issue_subscription',
-          modelId: `${target.id}:${userId}`,
-          data: { issueId: target.id, userId, identifier: target.identifier, syncId },
-          actor,
-        }),
-      ),
-    );
-
-    await appendActivities(
-      tx,
-      allowedUserIds.map((userId) => ({
-        organizationId,
-        issueId: source.id,
-        actor: { type: 'user', id: userId, name: actor.name },
-        field: 'subscription_transfer',
-        from: existingTargetUserIds.has(userId) ? `${source.id}:independent` : source.id,
-        to: target.id,
-        syncId,
-      })),
-    );
-  }
-
-  if (existingSubs.length > 0) {
-    await tx
-      .delete(schema.issueSubscription)
-      .where(eq(schema.issueSubscription.issueId, source.id));
-
-    syncActions.push(
-      ...existingSubs.map((sub) =>
-        buildSyncAction({
-          syncId,
-          organizationId,
-          scopes: [scopes.user(sub.userId)],
-          action: 'delete',
-          model: 'issue_subscription',
-          modelId: `${source.id}:${sub.userId}`,
-          data: { issueId: source.id, userId: sub.userId, syncId },
-          actor,
-        }),
-      ),
-    );
-  }
-
-  const cleanupActions = await cleanupPreviousSurvivorSubscriptions(
-    tx,
-    organizationId,
-    source.id,
-    target.id,
-    previousSurvivorIds,
-    actor,
-    syncId,
+  return allowedUserIds.map((userId) =>
+    buildSyncAction({
+      syncId,
+      organizationId,
+      scopes: [scopes.user(userId)],
+      action: 'insert',
+      model: 'issue_subscription',
+      modelId: `${target.id}:${userId}`,
+      data: { issueId: target.id, userId, identifier: target.identifier, syncId },
+      actor,
+    }),
   );
-  syncActions.push(...cleanupActions);
-
-  return syncActions;
 }
 
 async function assertSurvivorAllowed(
@@ -3071,7 +2883,11 @@ export async function markAsDuplicate(
       )
       .limit(1);
 
-    if (existingDuplicateOf !== undefined && existingDuplicateOf.relatedIssueId === target.id) {
+    if (
+      source.canceledAt !== null &&
+      existingDuplicateOf !== undefined &&
+      existingDuplicateOf.relatedIssueId === target.id
+    ) {
       return { issue: source, relations: [existingDuplicateOf], actions: [] };
     }
 
@@ -3100,8 +2916,13 @@ export async function markAsDuplicate(
     const actor = await principalActor(tx, principal);
     const now = new Date();
 
-    const { actions: oldRelationDeleteActions, previousSurvivorIds } =
-      await removeExistingDuplicates(tx, principal.organizationId, source, actor, syncId);
+    const { actions: oldRelationDeleteActions } = await removeExistingDuplicates(
+      tx,
+      principal.organizationId,
+      source,
+      actor,
+      syncId,
+    );
 
     const relations = await tx
       .insert(schema.issueRelation)
@@ -3173,7 +2994,6 @@ export async function markAsDuplicate(
       principal.organizationId,
       source,
       target,
-      previousSurvivorIds,
       actor,
       syncId,
     );

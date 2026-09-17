@@ -15,6 +15,7 @@ import {
   listRelatedIssues,
   listSubscribers,
   markAsDuplicate,
+  setRelation,
   subscribe,
   unsubscribe,
 } from '../../src/work/issue-service.ts';
@@ -155,12 +156,138 @@ describe('markAsDuplicate', () => {
     expect(survivorSubIds).toContain(member.user.id);
 
     const dupSubs = await listSubscribers(workspace.admin, duplicate.id);
-    expect(dupSubs).toHaveLength(0);
+    expect(dupSubs.map((s) => s.userId)).toContain(member.user.id);
 
     const survivorActivities = await listActivity(db, workspace.admin, survivor.id);
     const linkActivity = survivorActivities.find((a) => a.field === 'relation');
     expect(linkActivity).toBeDefined();
     expect(linkActivity?.toValue).toBe(`duplicated_by ${duplicate.identifier}`);
+  });
+
+  it('refuses guest role from marking issue as duplicate', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivor } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue',
+    });
+
+    const guest = await addMember(workspace, 'guest');
+
+    let error: unknown;
+    try {
+      await markAsDuplicate(guest.principal, duplicate.id, { survivorIssueId: survivor.id });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({
+      code: 'forbidden',
+    });
+  });
+
+  it('disallows duplicate_of and duplicated_by relation types in setRelation', async () => {
+    const { issue: issueA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue A',
+    });
+    const { issue: issueB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Issue B',
+    });
+
+    let error: unknown;
+    try {
+      await setRelation(workspace.admin, issueA.id, {
+        relatedIssueId: issueB.id,
+        type: 'duplicate_of',
+      });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({
+      code: 'validation_failed',
+      message: 'Use markAsDuplicate to set duplicate issue relations.',
+    });
+  });
+
+  it('short-circuits on second identical markAsDuplicate call', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivor } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue',
+    });
+
+    const firstResult = await markAsDuplicate(workspace.admin, duplicate.id, {
+      survivorIssueId: survivor.id,
+    });
+    expect(firstResult.actions.length).toBeGreaterThan(0);
+
+    const secondResult = await markAsDuplicate(workspace.admin, duplicate.id, {
+      survivorIssueId: survivor.id,
+    });
+    expect(secondResult.actions).toHaveLength(0);
+  });
+
+  it('handles cross-team read access for subscribers when marking duplicate and repointing', async () => {
+    const otherTeam = await createTeam(workspace.admin, { name: 'Engineering', key: 'ENG' });
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue in General',
+    });
+    const { issue: survivorInEng } = await createIssue(workspace.admin, {
+      teamId: otherTeam.team.id,
+      title: 'Survivor Issue in Eng',
+    });
+    const { issue: survivorInGeneral } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue in General',
+    });
+
+    const memberGeneralOnly = await addMember(workspace, 'member');
+    await subscribe(memberGeneralOnly.principal, duplicate.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorInEng.id });
+
+    const engSubs = await listSubscribers(workspace.admin, survivorInEng.id);
+    expect(engSubs.map((s) => s.userId)).not.toContain(memberGeneralOnly.user.id);
+
+    const dupSubs = await listSubscribers(workspace.admin, duplicate.id);
+    expect(dupSubs.map((s) => s.userId)).toContain(memberGeneralOnly.user.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorInGeneral.id });
+
+    const generalSubs = await listSubscribers(workspace.admin, survivorInGeneral.id);
+    expect(generalSubs.map((s) => s.userId)).toContain(memberGeneralOnly.user.id);
+  });
+
+  it('handles history longer than one repoint (A to B to C and back to B)', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivorA } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue A',
+    });
+    const { issue: survivorB } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue B',
+    });
+
+    const member = await addMember(workspace, 'member');
+    await subscribe(member.principal, duplicate.id);
+
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorA.id });
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorB.id });
+    await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorA.id });
+
+    const survivorASubs = await listSubscribers(workspace.admin, survivorA.id);
+    expect(survivorASubs.map((s) => s.userId)).toContain(member.user.id);
   });
 
   it('rejects marking an issue as duplicate of itself', async () => {
@@ -224,7 +351,7 @@ describe('markAsDuplicate', () => {
 
     const survivorASubsAfterSecond = await listSubscribers(workspace.admin, survivorA.id);
     const survivorASubIdsAfterSecond = survivorASubsAfterSecond.map((s) => s.userId);
-    expect(survivorASubIdsAfterSecond).not.toContain(dupSubscriber.user.id);
+    expect(survivorASubIdsAfterSecond).toContain(dupSubscriber.user.id);
     expect(survivorASubIdsAfterSecond).toContain(survivorASubscriber.user.id);
 
     const survivorBSubsAfterSecond = await listSubscribers(workspace.admin, survivorB.id);
@@ -293,8 +420,8 @@ describe('markAsDuplicate', () => {
 
     await markAsDuplicate(workspace.admin, duplicate.id, { survivorIssueId: survivorB.id });
 
-    const survivorBSubs = await listSubscribers(workspace.admin, survivorB.id);
-    expect(survivorBSubs.map((s) => s.userId)).not.toContain(user.user.id);
+    const survivorASubsAfterRepoint = await listSubscribers(workspace.admin, survivorA.id);
+    expect(survivorASubsAfterRepoint.map((s) => s.userId)).not.toContain(user.user.id);
   });
 
   it('rejects creating duplicate cycles (A to B then B to A)', async () => {

@@ -37,6 +37,22 @@ describe('POST /api/issues/[id]/duplicate', () => {
     expect(body.issue.id).toBe(world.first.id);
   });
 
+  it('refuses guest user with 403 forbidden', async () => {
+    signInAs(world.guest);
+
+    const response = await duplicateRoute.POST(
+      new Request(`${ISSUES_BASE}/${world.first.id}/duplicate`, {
+        method: 'POST',
+        body: JSON.stringify({ survivorIssueId: world.second.id }),
+      }),
+      contextFor(world.first.id),
+    );
+
+    expect(response.status).toBe(403);
+    const error = errorSchema.parse(await response.json());
+    expect(error.error.code).toBe('forbidden');
+  });
+
   it('refuses marking an issue as duplicate of itself', async () => {
     const response = await duplicateRoute.POST(
       new Request(`${ISSUES_BASE}/${world.first.id}/duplicate`, {

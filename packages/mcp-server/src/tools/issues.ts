@@ -652,6 +652,8 @@ function registerMarkIssueDuplicate(server: McpServer, principal: Principal): vo
       description:
         'Mark an issue as a duplicate of another issue. Moves the duplicate issue to the team canceled state, records the duplicate_of relation, and transfers subscribers to the survivor issue.',
       readOnly: false,
+      destructive: true,
+      idempotent: true,
       inputSchema: {
         issue: issueRef.describe('The duplicate issue identifier or id.'),
         survivorIssue: issueRef.describe('The survivor issue identifier or id.'),
