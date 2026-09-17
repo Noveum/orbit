@@ -14,7 +14,7 @@ export interface SettingsShellProps {
 
 export function SettingsShell({
   passwordEnabled,
-  canManageAi = true,
+  canManageAi = false,
   children,
 }: SettingsShellProps) {
   const [open, setOpen] = useState(false);

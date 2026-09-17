@@ -44,7 +44,7 @@ const PASSWORD_SECTION: SettingsSection = {
 
 export function settingsGroupsFor(
   passwordEnabled: boolean,
-  canManageAi = true,
+  canManageAi = false,
 ): readonly SettingsGroup[] {
   let groups = SETTINGS_GROUPS;
   if (passwordEnabled) {
@@ -78,7 +78,7 @@ export function settingsGroupsFor(
 
 export function settingsSectionsFlat(
   passwordEnabled: boolean,
-  canManageAi = true,
+  canManageAi = false,
 ): readonly SettingsSection[] {
   return settingsGroupsFor(passwordEnabled, canManageAi).flatMap((group) => group.sections);
 }

@@ -25,7 +25,7 @@ export interface UseSettingsSidebarNavigationOptions {
 
 export function useSettingsSidebarNavigation({
   passwordEnabled,
-  canManageAi = true,
+  canManageAi = false,
   pathname,
 }: UseSettingsSidebarNavigationOptions) {
   const { open } = useSettingsNav();

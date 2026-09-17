@@ -143,8 +143,10 @@ describe('AI test connection API', () => {
     expect(capturedAuth).toBe('Bearer sk-saved-stored-key');
   });
 
-  it('handles connection failure without leaking the API key', async () => {
-    globalThis.fetch = (() => {
+  it('handles connection failure without leaking the API key and asserts ok is false', async () => {
+    let fetchOptions: RequestInit | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      fetchOptions = init;
       return Promise.resolve(
         new Response('Unauthorized: bad credentials sk-secret-must-not-leak', { status: 401 }),
       );
@@ -164,7 +166,35 @@ describe('AI test connection API', () => {
     );
 
     expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(text).not.toContain('sk-secret-must-not-leak');
+    const body = (await response.json()) as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('Failed to connect to the AI provider endpoint.');
+    expect(JSON.stringify(body)).not.toContain('sk-secret-must-not-leak');
+
+    expect(fetchOptions?.redirect).toBe('manual');
+    expect(fetchOptions?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('refuses test without a key when base URL or kind has changed and makes no outbound fetch call', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (() => {
+      fetchCalled = true;
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const response = await POST(
+      new Request('https://orbit.local/api/settings/ai/test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-5',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(fetchCalled).toBe(false);
   });
 });

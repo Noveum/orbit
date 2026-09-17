@@ -71,6 +71,40 @@ describe('AI provider settings API', () => {
       }),
     );
     expect(postResponse.status).toBe(403);
+
+    const deleteResponse = await DELETE();
+    expect(deleteResponse.status).toBe(403);
+  });
+
+  it('refuses access for guest user on all endpoints and leaves database untouched', async () => {
+    const addedGuest = await addMember(workspace, 'guest');
+    signIn(addedGuest.user);
+
+    const getResponse = await GET();
+    expect(getResponse.status).toBe(403);
+
+    const postResponse = await POST(
+      new Request('https://orbit.local/api/settings/ai', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o-mini',
+          apiKey: 'sk-secret-guest-attempt',
+          enabled: true,
+        }),
+      }),
+    );
+    expect(postResponse.status).toBe(403);
+
+    const deleteResponse = await DELETE();
+    expect(deleteResponse.status).toBe(403);
+
+    signIn(workspace.adminUser);
+    const getAdminResponse = await GET();
+    const status = (await getAdminResponse.json()) as { configured: boolean };
+    expect(status.configured).toBe(false);
   });
 
   it('saves provider configuration with encrypted key and without returning plaintext key', async () => {
@@ -106,15 +140,44 @@ describe('AI provider settings API', () => {
     expect(body.model).toBe('gpt-4o-mini');
   });
 
+  it('rotates API key and updates configuration on an existing row via onConflictDoUpdate', async () => {
+    const response = await POST(
+      new Request('https://orbit.local/api/settings/ai', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-5',
+          apiKey: 'sk-ant-rotated-new-key',
+          enabled: true,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      configured: boolean;
+      enabled: boolean;
+      kind: string;
+      model: string;
+      hasApiKey: boolean;
+    };
+    expect(body.configured).toBe(true);
+    expect(body.kind).toBe('anthropic');
+    expect(body.model).toBe('claude-sonnet-5');
+    expect(body.hasApiKey).toBe(true);
+  });
+
   it('allows updating model without re-supplying the key', async () => {
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          kind: 'openai-compatible',
-          baseUrl: 'https://api.openai.com/v1',
-          model: 'gpt-4o',
+          kind: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-3-5-haiku-20241022',
           enabled: false,
         }),
       }),
@@ -130,7 +193,7 @@ describe('AI provider settings API', () => {
     expect(body.configured).toBe(true);
     expect(body.enabled).toBe(false);
     expect(body.hasApiKey).toBe(true);
-    expect(body.model).toBe('gpt-4o');
+    expect(body.model).toBe('claude-3-5-haiku-20241022');
   });
 
   it('rejects changing endpoint without re-supplying the key', async () => {

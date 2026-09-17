@@ -115,6 +115,38 @@ describe('AI client complete()', () => {
     expect(json).not.toContain('sk-ant-secret-must-not-leak');
   });
 
+  it('redacts API keys before slicing long error response strings', async () => {
+    const secretKey = 'sk-long-secret-key-that-spans-char-240-to-290-boundary';
+    const padding = 'a'.repeat(240);
+    const responseBody = `${padding}${secretKey} extra text following secret key`;
+
+    globalThis.fetch = (() => {
+      return Promise.resolve(new Response(responseBody, { status: 400 }));
+    }) as unknown as typeof fetch;
+
+    let caughtError: unknown;
+    try {
+      await complete('Say hello', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: true,
+        },
+        apiKey: secretKey,
+        recordUsage: false,
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(AiClientError);
+    const message = (caughtError as AiClientError).message;
+    expect(message).not.toContain(secretKey);
+    expect(message).not.toContain('sk-long-secret');
+    expect(message).toContain('[REDACTED]');
+  });
+
   it('rejects when provider is not configured and no direct config provided', async () => {
     await expect(complete('Say hello', {})).rejects.toThrow(AiDisabledError);
   });

@@ -15,7 +15,7 @@ export interface SettingsSidebarProps {
 
 export function SettingsSidebar({
   passwordEnabled = false,
-  canManageAi = true,
+  canManageAi = false,
 }: SettingsSidebarProps) {
   const pathname = usePathname();
   const { open, close } = useSettingsNav();

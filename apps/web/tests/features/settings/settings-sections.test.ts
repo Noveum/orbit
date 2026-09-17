@@ -36,7 +36,7 @@ describe('settings sections', () => {
   });
 
   it('lists every section in sidebar order for keyboard navigation', () => {
-    expect(settingsSectionsFlat(false).map((section) => section.label)).toEqual([
+    expect(settingsSectionsFlat(false, true).map((section) => section.label)).toEqual([
       'Profile',
       'Connected accounts',
       'Passkeys',
@@ -54,7 +54,7 @@ describe('settings sections', () => {
   });
 
   it('inserts password in sidebar order when password auth is enabled', () => {
-    expect(settingsSectionsFlat(true).map((section) => section.label)).toEqual([
+    expect(settingsSectionsFlat(true, true).map((section) => section.label)).toEqual([
       'Profile',
       'Connected accounts',
       'Passkeys',

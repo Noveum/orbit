@@ -136,16 +136,27 @@ function trimTrailingSlashes(text: string): string {
 }
 
 function resolveOpenAiUrl(baseUrl: string): string {
-  const trimmed = trimTrailingSlashes(baseUrl.trim());
-  if (trimmed.endsWith('/chat/completions')) return trimmed;
-  return `${trimmed}/chat/completions`;
+  const url = new URL(baseUrl);
+  const trimmedPath = trimTrailingSlashes(url.pathname);
+  if (trimmedPath.endsWith('/chat/completions')) {
+    url.pathname = trimmedPath;
+  } else {
+    url.pathname = `${trimmedPath}/chat/completions`;
+  }
+  return url.toString();
 }
 
 function resolveAnthropicUrl(baseUrl: string): string {
-  const trimmed = trimTrailingSlashes(baseUrl.trim());
-  if (trimmed.endsWith('/messages')) return trimmed;
-  if (trimmed.endsWith('/v1')) return `${trimmed}/messages`;
-  return `${trimmed}/v1/messages`;
+  const url = new URL(baseUrl);
+  const trimmedPath = trimTrailingSlashes(url.pathname);
+  if (trimmedPath.endsWith('/messages')) {
+    url.pathname = trimmedPath;
+  } else if (trimmedPath.endsWith('/v1')) {
+    url.pathname = `${trimmedPath}/messages`;
+  } else {
+    url.pathname = `${trimmedPath}/v1/messages`;
+  }
+  return url.toString();
 }
 
 const MAX_SUCCESS_BODY_BYTES = 5 * 1024 * 1024;
@@ -245,8 +256,10 @@ async function callOpenAiCompatible(
         return '';
       },
     );
+    const sanitizedText = stripApiKey(errorText, target.apiKey);
+    const snippet = sanitizedText.slice(0, 256);
     throw new AiClientError(
-      `OpenAI-compatible endpoint returned HTTP ${response.status}: ${errorText.slice(0, 256)}`,
+      `OpenAI-compatible endpoint returned HTTP ${response.status}: ${snippet}`,
       undefined,
       target.apiKey,
     );
@@ -314,8 +327,10 @@ async function callAnthropic(
         return '';
       },
     );
+    const sanitizedText = stripApiKey(errorText, target.apiKey);
+    const snippet = sanitizedText.slice(0, 256);
     throw new AiClientError(
-      `Anthropic endpoint returned HTTP ${response.status}: ${errorText.slice(0, 256)}`,
+      `Anthropic endpoint returned HTTP ${response.status}: ${snippet}`,
       undefined,
       target.apiKey,
     );
