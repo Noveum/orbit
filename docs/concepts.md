@@ -214,12 +214,11 @@ beside the issues they describe rather than in a separate tool.
 
 - Organised into **collections**, and nestable.
 - **Visibility** is workspace-wide, private to named people, or a published URL.
-- **Shareable** through a members link that still requires sign-in, or a public
-  or unlisted link for people outside the workspace. An HTML page gets its own
-  URL and runs isolated from the app. That artifact link sits in the share
-  dialog beside the document link, and it opens for exactly the people who can
-  already open the doc, so a page never has to be published to be passed around
-  inside the workspace.
+- **Shareable** through a workspace link that still requires sign-in, or a public
+  or unlisted link for people outside the workspace. Both are the same kind of
+  link, a read only page outside the app, and the share dialog offers the
+  workspace one beside the document link as soon as a doc is shared with the
+  workspace. An HTML page gets its own URL and runs isolated from the app.
 - Commentable, and searchable alongside issues from the command palette.
 - Optionally bound to a path in a repository, so a doc can mirror a file.
 - A fenced `mermaid` block is drawn as a diagram, in the theme's own colours,

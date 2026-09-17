@@ -1,14 +1,14 @@
 'use client';
 
 import type { DocVisibility } from '@orbit/shared/constants';
-import { isExternallyShared, isHtmlDoc } from '@orbit/shared/constants';
+import { isExternallyShared, isWorkspaceShared } from '@orbit/shared/constants';
 import { Building2, Check, Copy, Link2, Lock, type LucideIcon, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { cn } from '@/lib/cn.ts';
-import { appDocUrl, docArtifactUrl, publicDocUrl } from '@/lib/docs/paths.ts';
+import { appDocUrl, publicDocUrl } from '@/lib/docs/paths.ts';
 import { publicAppUrl } from '@/lib/env.ts';
 import type { Doc } from '@/lib/query/schemas.ts';
 import { useShareDoc } from '@/lib/query/use-docs.ts';
@@ -135,7 +135,7 @@ export function DocShareMenu({
   const workspaceUrl = appDocUrl(doc.id, origin);
   const external = isExternallyShared(doc.visibility);
   const publishedUrl = external ? publicDocUrl(doc, origin) : null;
-  const artifactUrl = !external && isHtmlDoc(doc.kind) ? docArtifactUrl(doc.id, origin) : null;
+  const workspaceLink = isWorkspaceShared(doc.visibility) ? publicDocUrl(doc, origin) : null;
   const disabled = !canManageAccess || share.isPending;
 
   return (
@@ -244,12 +244,12 @@ export function DocShareMenu({
             testId="doc-copy-link"
           />
 
-          {artifactUrl === null ? null : (
+          {workspaceLink === null ? null : (
             <CopyRow
-              label="Artifact link"
-              url={artifactUrl}
-              testId="doc-copy-artifact-link"
-              hint="Opens the page on its own, for people who can already open this doc."
+              label="Workspace link"
+              url={workspaceLink}
+              testId="doc-copy-workspace-link"
+              hint="The page on its own, read only. Everyone in this workspace can open it, nobody outside can."
             />
           )}
 
