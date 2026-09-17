@@ -49,7 +49,7 @@ export interface SettingsSectionsOptions {
 
 export function settingsGroupsFor(
   passwordEnabled: boolean,
-  permissionsOrAi: boolean | SettingsSectionsOptions = true,
+  permissionsOrAi: boolean | SettingsSectionsOptions = false,
   canManageDeployment = false,
 ): readonly SettingsGroup[] {
   const canManageAi =
@@ -102,7 +102,7 @@ export function settingsGroupsFor(
 
 export function settingsSectionsFlat(
   passwordEnabled: boolean,
-  permissionsOrAi: boolean | SettingsSectionsOptions = true,
+  permissionsOrAi: boolean | SettingsSectionsOptions = false,
   canManageDeployment = false,
 ): readonly SettingsSection[] {
   return settingsGroupsFor(passwordEnabled, permissionsOrAi, canManageDeployment).flatMap(

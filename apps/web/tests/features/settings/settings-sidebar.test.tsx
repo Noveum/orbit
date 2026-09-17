@@ -237,4 +237,27 @@ describe('SettingsSidebar', () => {
 
     expect(screen.getByTestId('settings-sidebar').className).toContain('fixed');
   });
+
+  it('hides AI provider link and skips it in keyboard navigation when canManageAi is false', async () => {
+    pathname.mockReturnValue('/settings/integrations');
+    mockViewport(true);
+    const user = userEvent.setup();
+    render(
+      <HotkeyProvider>
+        <SettingsNavProvider value={{ open: false, toggle: mock(), close }}>
+          <SettingsSidebar passwordEnabled={false} canManageAi={false} />
+        </SettingsNavProvider>
+      </HotkeyProvider>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'AI provider' })).toBeNull();
+    const integrationsLink = screen.getByRole('link', { name: 'Integrations' });
+    const mcpLink = screen.getByRole('link', { name: 'MCP server' });
+
+    integrationsLink.focus();
+    expect(integrationsLink).toHaveFocus();
+
+    await user.keyboard('j');
+    expect(mcpLink).toHaveFocus();
+  });
 });

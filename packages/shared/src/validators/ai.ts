@@ -16,25 +16,66 @@ export type AiCredentialEnvelope = z.infer<typeof aiCredentialEnvelopeSchema>;
 export const aiProviderKindSchema = z.enum(['openai-compatible', 'anthropic']);
 export type AiProviderKind = z.infer<typeof aiProviderKindSchema>;
 
+function isPrivateIpv4(host: string): boolean {
+  const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (match === null) return false;
+  const p0 = Number.parseInt(match[1] ?? '0', 10);
+  const p1 = Number.parseInt(match[2] ?? '0', 10);
+  return (
+    p0 === 10 ||
+    p0 === 127 ||
+    p0 === 0 ||
+    (p0 === 169 && p1 === 254) ||
+    (p0 === 172 && p1 >= 16 && p1 <= 31) ||
+    (p0 === 192 && p1 === 168)
+  );
+}
+
+function isPrivateIpv6(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return (
+    normalized === '::1' ||
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd')
+  );
+}
+
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const cleanHost =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+
+  if (cleanHost === 'localhost' || cleanHost === '127.0.0.1' || cleanHost === '0.0.0.0') {
+    return true;
+  }
+
+  return isPrivateIpv4(cleanHost) || isPrivateIpv6(cleanHost);
+}
+
 function isValidProviderUrl(urlString: string): boolean {
   try {
     const url = new URL(urlString);
-    if (url.protocol === 'https:') return true;
-    if (url.protocol === 'http:') {
-      return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.search.length > 0 || url.hash.length > 0) return false;
+
+    const allowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] === 'true';
+    if (!allowPrivate && isPrivateOrLoopbackHost(url.hostname)) {
+      return false;
     }
-    return false;
+
+    if (url.protocol === 'http:') {
+      return isPrivateOrLoopbackHost(url.hostname);
+    }
+
+    return true;
   } catch {
     return false;
   }
 }
 
-export const aiBaseUrlSchema = z
-  .string()
-  .trim()
-  .url()
-  .max(2048)
-  .refine(isValidProviderUrl, { message: 'Provider Base URL must use HTTPS (unless localhost).' });
+export const aiBaseUrlSchema = z.string().trim().url().max(2048).refine(isValidProviderUrl, {
+  message: 'Provider Base URL must be a valid, non-private HTTPS endpoint (unless local dev).',
+});
 
 export const aiProviderConfigSchema = z.object({
   kind: aiProviderKindSchema,

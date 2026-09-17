@@ -78,7 +78,8 @@ export async function POST(request: Request): Promise<Response> {
       };
     } catch (error) {
       if (error instanceof AiClientError || error instanceof AiDisabledError) {
-        return { ok: false, error: error.message };
+        console.error('AI provider connection test failed:', error);
+        return { ok: false, error: 'Failed to connect to the AI provider endpoint.' };
       }
       throw error;
     }
