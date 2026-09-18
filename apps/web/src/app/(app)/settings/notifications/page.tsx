@@ -1,4 +1,4 @@
-import { NotificationMatrix } from '@/features/settings/notification-matrix.tsx';
+import { NotificationChannels } from '@/features/settings/notification-channels.tsx';
 import { loadNotificationPreferences } from '@/features/settings/notification-preferences.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 
@@ -11,11 +11,11 @@ export default async function NotificationSettingsPage() {
       <div className="flex flex-col gap-1">
         <h2 className="font-medium text-lg text-text">Notifications</h2>
         <p className="text-muted text-xs">
-          Pick which channels carry each kind of notification. Inbox always keeps a copy you can
-          read later.
+          Turn a channel on or off for everything, then open one to pick which notifications it
+          carries.
         </p>
       </div>
-      <NotificationMatrix
+      <NotificationChannels
         disabledKeys={state.disabledKeys}
         quietHoursEnabled={state.settings.quietHoursEnabled}
         quietHoursStart={state.settings.quietHoursStart}

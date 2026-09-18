@@ -267,42 +267,27 @@ export function MembersSettingsSkeleton() {
   );
 }
 
-const MATRIX_ROWS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-const MATRIX_CHANNELS = ['inbox', 'email', 'push'];
+const SKELETON_CHANNELS = ['inbox', 'email', 'slack_dm', 'push'];
 
 export function NotificationsSettingsSkeleton() {
   return (
     <section className="flex flex-col gap-5" data-testid="settings-notifications-skeleton">
       <SettingsHeading />
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[36rem] border-collapse">
-          <thead>
-            <tr className="border-border border-b">
-              <th className="px-3 py-2 text-left">
-                <Skeleton className="h-2 w-20" />
-              </th>
-              {MATRIX_CHANNELS.map((channel) => (
-                <th key={channel} className="px-3 py-2">
-                  <Skeleton className="mx-auto h-2 w-10" />
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {MATRIX_ROWS.map((row) => (
-              <tr key={row} className="border-border border-b last:border-b-0">
-                <th scope="row" className="px-3 py-1.5 text-left">
-                  <Skeleton className="h-3 w-32" />
-                </th>
-                {MATRIX_CHANNELS.map((channel) => (
-                  <td key={channel} className="px-3 py-1.5">
-                    <Skeleton className="mx-auto size-4 rounded-sm" />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex flex-col gap-2">
+        {SKELETON_CHANNELS.map((channel) => (
+          <div
+            key={channel}
+            className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5"
+          >
+            <Skeleton className="size-7 shrink-0 rounded-md" />
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-2 w-48 max-w-full" />
+            </div>
+            <Skeleton className="h-6 w-20 rounded-md" />
+            <Skeleton className="h-4 w-8 rounded-full" />
+          </div>
+        ))}
       </div>
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
         <div className="flex items-center justify-between gap-3">
