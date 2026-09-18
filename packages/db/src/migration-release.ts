@@ -3,7 +3,13 @@ import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from './check-drift.ts';
+import {
+  catalogDriftBetween,
+  expectedCatalog,
+  isBehind,
+  liveCatalog,
+  needsCatchup,
+} from './check-drift.ts';
 import * as schema from './schema/index.ts';
 
 interface LedgerRow {
@@ -362,7 +368,7 @@ export async function releaseDatabase(
     let applied = 0;
 
     if ((!hadLedger || existingRows.length === 0) && declaredTableCount(before) > 0) {
-      if (isBehind(beforeDrift)) {
+      if (needsCatchup(beforeDrift)) {
         throw new Error(
           'This legacy database is not compatible with the current schema. Apply the required catchup scripts, verify drift, and run db:release again.',
         );
@@ -374,7 +380,7 @@ export async function releaseDatabase(
     const rows = await ledgerRows(sql);
     const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
-      if (isBehind(beforeDrift)) {
+      if (needsCatchup(beforeDrift)) {
         await migrate(drizzle({ client: sql }), { migrationsFolder });
         applied = pending;
         mode = 'migrated';

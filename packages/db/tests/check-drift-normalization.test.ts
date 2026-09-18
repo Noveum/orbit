@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { Catalog, CatalogCheck, CatalogIndex, CatalogTable } from '../src/check-drift.ts';
-import { catalogDriftBetween, isBehind } from '../src/check-drift.ts';
+import { catalogDriftBetween, isBehind, needsCatchup } from '../src/check-drift.ts';
 
 function tableWithIndex(index: CatalogIndex): CatalogTable {
   return {
@@ -147,5 +147,95 @@ describe('catalog check constraint comparison', () => {
       { table: 'measurement', check: 'measurement_legacy_check' },
     ]);
     expect(isBehind(drift)).toBe(false);
+  });
+});
+
+describe('catalog check literal handling', () => {
+  it('keeps a literal that contains a qualifying dot', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('code_check', "detail = 'a.b'")]),
+      catalogWithChecks([checkWith('code_check', "detail = 'b'")]),
+    );
+
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toEqual(['code_check']);
+  });
+
+  it('keeps a cast-looking suffix inside a literal', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('note_check', "note = '::text'")]),
+      catalogWithChecks([checkWith('note_check', "CHECK ((note = '::text'::text))")]),
+    );
+
+    expect(drift.checkConstraintMismatches).toEqual([]);
+    expect(drift.missingCheckConstraints).toEqual([]);
+  });
+
+  it('keeps parentheses inside a literal in an in-list', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('status_check', "status in ('ready)', 'pending')")]),
+      catalogWithChecks([
+        checkWith(
+          'status_check',
+          "CHECK ((status = ANY (ARRAY['ready)'::text, 'pending'::text])))",
+        ),
+      ]),
+    );
+
+    expect(drift.checkConstraintMismatches).toEqual([]);
+  });
+});
+
+describe('catalog check grouping', () => {
+  it('does not unify differently grouped conjunctions', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('flag_check', "(kind = 'a' or kind = 'b') and active")]),
+      catalogWithChecks([
+        checkWith('flag_check', "CHECK (kind = 'a'::text OR kind = 'b'::text AND active)"),
+      ]),
+    );
+
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toEqual(['flag_check']);
+  });
+
+  it('accepts redundant parentheses around a conjunction', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([
+        checkWith('flag_check', 'owner is null or (active is not null and enabled is not null)'),
+      ]),
+      catalogWithChecks([
+        checkWith(
+          'flag_check',
+          'CHECK (owner IS NULL OR active IS NOT NULL AND enabled IS NOT NULL)',
+        ),
+      ]),
+    );
+
+    expect(drift.checkConstraintMismatches).toEqual([]);
+    expect(drift.missingCheckConstraints).toEqual([]);
+  });
+});
+
+describe('catalog check matching', () => {
+  it('does not reuse a named check consumed by an expression match', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([
+        checkWith('alpha_check', 'value >= 0'),
+        checkWith('beta_check', 'value >= 0'),
+      ]),
+      catalogWithChecks([checkWith('beta_check', 'value >= 0')]),
+    );
+
+    expect(drift.missingCheckConstraints).toEqual([{ table: 'measurement', check: 'beta_check' }]);
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('classifies a missing check constraint as reconciliation work, not a catchup', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('value_check', 'value >= 0')]),
+      catalogWithChecks([]),
+    );
+
+    expect(isBehind(drift)).toBe(true);
+    expect(needsCatchup(drift)).toBe(false);
   });
 });

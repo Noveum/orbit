@@ -171,53 +171,392 @@ export function normalizeCatalogExpression(value: string): string {
   return enclosedInOuterParentheses(normalized) ? normalized.slice(1, -1).trim() : normalized;
 }
 
-function canonicalizeInLists(value: string): string {
+function endOfLiteral(value: string, start: number): number {
+  let index = start + 1;
+  while (index < value.length) {
+    if (value[index] === "'") {
+      if (value[index + 1] === "'") {
+        index += 2;
+        continue;
+      }
+      return index + 1;
+    }
+    index += 1;
+  }
+  return value.length;
+}
+
+function transformOutsideLiterals(value: string, transform: (segment: string) => string): string {
   let result = '';
   let index = 0;
-  const pattern = /\bin\s*\(/g;
   while (index < value.length) {
-    pattern.lastIndex = index;
-    const match = pattern.exec(value);
-    if (match === null) {
-      result += value.slice(index);
-      break;
+    if (value[index] === "'") {
+      const end = endOfLiteral(value, index);
+      result += value.slice(index, end);
+      index = end;
+      continue;
     }
-    let depth = 0;
-    let cursor = match.index + match[0].length - 1;
-    for (; cursor < value.length; cursor += 1) {
-      if (value[cursor] === '(') depth += 1;
-      else if (value[cursor] === ')') {
-        depth -= 1;
-        if (depth === 0) break;
-      }
-    }
-    const list = value.slice(match.index + match[0].length, cursor);
-    result += value.slice(index, match.index);
-    if (/\bnot\s+$/.test(result)) {
-      result = result.replace(/\bnot\s+$/, '');
-      result += `<> all array[${list}]`;
-    } else {
-      result += `= any array[${list}]`;
-    }
-    index = cursor + 1;
+    const next = value.indexOf("'", index);
+    const stop = next === -1 ? value.length : next;
+    result += transform(value.slice(index, stop));
+    index = stop;
   }
   return result;
 }
 
+function isIdentifierStart(character: string | undefined): boolean {
+  if (character === undefined) return false;
+  return (character >= 'a' && character <= 'z') || character === '_';
+}
+
+function isIdentifierCharacter(character: string | undefined): boolean {
+  if (isIdentifierStart(character)) return true;
+  if (character === undefined) return false;
+  return character >= '0' && character <= '9';
+}
+
+const TYPE_CAST_SUFFIXES = ['without time zone', 'with time zone', 'precision', 'varying'];
+
+function skipTypeCast(value: string, start: number): number {
+  if (!isIdentifierStart(value[start])) return start;
+  let index = start + 1;
+  while (isIdentifierCharacter(value[index])) index += 1;
+  let modifier = index;
+  while (value[modifier] === ' ') modifier += 1;
+  if (value[modifier] === '(') {
+    const close = value.indexOf(')', modifier);
+    if (close !== -1) index = close + 1;
+  }
+  let suffix = index;
+  while (value[suffix] === ' ') suffix += 1;
+  if (suffix > index) {
+    for (const candidate of TYPE_CAST_SUFFIXES) {
+      if (!value.startsWith(candidate, suffix)) continue;
+      if (isIdentifierCharacter(value[suffix + candidate.length])) continue;
+      index = suffix + candidate.length;
+      break;
+    }
+  }
+  while (value.startsWith('[]', index)) index += 2;
+  return index;
+}
+
+function stripTypeCasts(segment: string): string {
+  let result = '';
+  let index = 0;
+  while (index < segment.length) {
+    if (segment[index] === ':' && segment[index + 1] === ':') {
+      const end = skipTypeCast(segment, index + 2);
+      if (end !== index + 2) {
+        index = end;
+        continue;
+      }
+    }
+    result += segment[index] ?? '';
+    index += 1;
+  }
+  return result;
+}
+
+function stripQualifiers(segment: string): string {
+  let result = '';
+  let index = 0;
+  while (index < segment.length) {
+    if (isIdentifierStart(segment[index])) {
+      let end = index + 1;
+      while (isIdentifierCharacter(segment[end])) end += 1;
+      if (segment[end] === '.') {
+        index = end + 1;
+        continue;
+      }
+      result += segment.slice(index, end);
+      index = end;
+      continue;
+    }
+    result += segment[index] ?? '';
+    index += 1;
+  }
+  return result;
+}
+
+function listOpenIndex(value: string, index: number): number {
+  if (value[index] !== 'i' || value[index + 1] !== 'n') return -1;
+  if (index > 0 && isIdentifierCharacter(value[index - 1])) return -1;
+  let cursor = index + 2;
+  while (value[cursor] === ' ') cursor += 1;
+  return value[cursor] === '(' ? cursor : -1;
+}
+
+function matchingCloseIndex(value: string, open: number): number {
+  let depth = 0;
+  let index = open;
+  while (index < value.length) {
+    const character = value[index];
+    if (character === "'") {
+      index = endOfLiteral(value, index);
+      continue;
+    }
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+
+function trailingNotIndex(value: string): number {
+  let cursor = value.length;
+  while (cursor > 0 && value[cursor - 1] === ' ') cursor -= 1;
+  const end = cursor;
+  while (cursor > 0 && isIdentifierCharacter(value[cursor - 1])) cursor -= 1;
+  return value.slice(cursor, end) === 'not' ? cursor : -1;
+}
+
+function canonicalizeInLists(value: string): string {
+  let result = '';
+  let index = 0;
+  while (index < value.length) {
+    const character = value[index];
+    if (character === "'") {
+      const end = endOfLiteral(value, index);
+      result += value.slice(index, end);
+      index = end;
+      continue;
+    }
+    const open = listOpenIndex(value, index);
+    if (open !== -1) {
+      const close = matchingCloseIndex(value, open);
+      if (close !== -1) {
+        const list = value.slice(open + 1, close);
+        const notIndex = trailingNotIndex(result);
+        if (notIndex === -1) {
+          result += `= any (array[${list}])`;
+        } else {
+          result = `${result.slice(0, notIndex)}<> all (array[${list}])`;
+        }
+        index = close + 1;
+        continue;
+      }
+    }
+    result += character ?? '';
+    index += 1;
+  }
+  return result;
+}
+
+function normalizeAnyAllSpacing(value: string): string {
+  return transformOutsideLiterals(value, (segment) => segment.replace(/\b(any|all)\s*\(/g, '$1 ('));
+}
+
+const BOOLEAN_OPERATOR_PRECEDENCE: Record<string, number> = { or: 1, and: 2, not: 3 };
+
+type ExpressionTokenKind = 'word' | 'literal' | 'open' | 'close' | 'operator' | 'symbol';
+
+interface ExpressionToken {
+  readonly kind: ExpressionTokenKind;
+  readonly text: string;
+}
+
+const OPERATOR_CHARACTERS = '=<>!+-*/%|&^~#?';
+
+interface LocatedToken {
+  readonly token: ExpressionToken;
+  readonly end: number;
+}
+
+function literalToken(value: string, index: number): LocatedToken | undefined {
+  if (value[index] !== "'") return undefined;
+  const end = endOfLiteral(value, index);
+  return { token: { kind: 'literal', text: value.slice(index, end) }, end };
+}
+
+function parenToken(value: string, index: number): LocatedToken | undefined {
+  const character = value[index];
+  if (character === '(') return { token: { kind: 'open', text: character }, end: index + 1 };
+  if (character === ')') return { token: { kind: 'close', text: character }, end: index + 1 };
+  return undefined;
+}
+
+function wordToken(value: string, index: number): LocatedToken | undefined {
+  if (!isIdentifierStart(value[index])) return undefined;
+  let end = index + 1;
+  while (isIdentifierCharacter(value[end])) end += 1;
+  return { token: { kind: 'word', text: value.slice(index, end) }, end };
+}
+
+function numberToken(value: string, index: number): LocatedToken | undefined {
+  const character = value[index] ?? '';
+  if (!(character >= '0' && character <= '9')) return undefined;
+  let end = index + 1;
+  while (isIdentifierCharacter(value[end])) end += 1;
+  while (value[end] === '.') {
+    end += 1;
+    while (isIdentifierCharacter(value[end])) end += 1;
+  }
+  return { token: { kind: 'symbol', text: value.slice(index, end) }, end };
+}
+
+function operatorToken(value: string, index: number): LocatedToken | undefined {
+  const character = value[index] ?? '';
+  if (!OPERATOR_CHARACTERS.includes(character)) return undefined;
+  let end = index;
+  while (end < value.length && OPERATOR_CHARACTERS.includes(value[end] ?? '')) end += 1;
+  return { token: { kind: 'operator', text: value.slice(index, end) }, end };
+}
+
+function nextExpressionToken(value: string, index: number): LocatedToken {
+  const located =
+    literalToken(value, index) ??
+    parenToken(value, index) ??
+    wordToken(value, index) ??
+    numberToken(value, index) ??
+    operatorToken(value, index);
+  if (located !== undefined) return located;
+  return { token: { kind: 'symbol', text: value[index] ?? '' }, end: index + 1 };
+}
+
+function tokenizeExpression(value: string): ExpressionToken[] {
+  const tokens: ExpressionToken[] = [];
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] === ' ') {
+      index += 1;
+      continue;
+    }
+    const located = nextExpressionToken(value, index);
+    tokens.push(located.token);
+    index = located.end;
+  }
+  return tokens;
+}
+
+interface ParenthesisPair {
+  readonly open: number;
+  readonly close: number;
+  readonly depth: number;
+}
+
+function parenthesisPairs(tokens: readonly ExpressionToken[]): ParenthesisPair[] {
+  const stack: number[] = [];
+  const pairs: ParenthesisPair[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    if (token.kind === 'open') {
+      stack.push(index);
+      continue;
+    }
+    if (token.kind !== 'close') continue;
+    const open = stack.pop();
+    if (open === undefined) continue;
+    pairs.push({ open, close: index, depth: stack.length + 1 });
+  }
+  return pairs;
+}
+
+function hasBlockingNeighbour(tokens: readonly ExpressionToken[], pair: ParenthesisPair): boolean {
+  for (const index of [pair.open - 1, pair.close + 1]) {
+    const neighbour = tokens[index];
+    if (neighbour === undefined) continue;
+    if (neighbour.kind === 'operator') return true;
+    if (neighbour.kind !== 'word') continue;
+    if (BOOLEAN_OPERATOR_PRECEDENCE[neighbour.text] === undefined) return true;
+  }
+  return false;
+}
+
+function parenDepthDelta(
+  token: ExpressionToken,
+  index: number,
+  removed: ReadonlySet<number>,
+): number {
+  if (token.kind === 'open' && !removed.has(index)) return 1;
+  if (token.kind === 'close' && !removed.has(index)) return -1;
+  return 0;
+}
+
+function innerBooleanPrecedence(
+  tokens: readonly ExpressionToken[],
+  pair: ParenthesisPair,
+  removed: ReadonlySet<number>,
+): number | undefined {
+  let inner: number | undefined;
+  let depth = 0;
+  for (let index = pair.open + 1; index < pair.close; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    depth += parenDepthDelta(token, index, removed);
+    if (depth !== 0 || token.kind !== 'word') continue;
+    const precedence = BOOLEAN_OPERATOR_PRECEDENCE[token.text];
+    if (precedence === undefined) continue;
+    if (inner === undefined || precedence < inner) inner = precedence;
+  }
+  return inner;
+}
+
+function blocksRemoval(neighbourPrecedence: number, inner: number | undefined): boolean {
+  if (inner === undefined) return neighbourPrecedence === BOOLEAN_OPERATOR_PRECEDENCE['not'];
+  return inner < neighbourPrecedence;
+}
+
+function canRemoveParentheses(
+  tokens: readonly ExpressionToken[],
+  pair: ParenthesisPair,
+  removed: ReadonlySet<number>,
+): boolean {
+  if (hasBlockingNeighbour(tokens, pair)) return false;
+  const inner = innerBooleanPrecedence(tokens, pair, removed);
+  for (const index of [pair.open - 1, pair.close + 1]) {
+    const neighbour = tokens[index];
+    if (neighbour === undefined || neighbour.kind !== 'word') continue;
+    const precedence = BOOLEAN_OPERATOR_PRECEDENCE[neighbour.text];
+    if (precedence !== undefined && blocksRemoval(precedence, inner)) return false;
+  }
+  return true;
+}
+
+function normalizeBooleanParentheses(value: string): string {
+  const tokens = tokenizeExpression(value);
+  const pairs = parenthesisPairs(tokens).sort((left, right) => right.depth - left.depth);
+  const removed = new Set<number>();
+  for (const pair of pairs) {
+    if (!canRemoveParentheses(tokens, pair, removed)) continue;
+    removed.add(pair.open);
+    removed.add(pair.close);
+  }
+  const kept: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined || removed.has(index)) continue;
+    kept.push(token.text);
+  }
+  return kept.join(' ');
+}
+
+function collapseCheckSpacing(value: string): string {
+  return transformOutsideLiterals(value, (segment) =>
+    segment
+      .replace(/\(\s+/g, '(')
+      .replace(/\[\s+/g, '[')
+      .replace(/\s+\)/g, ')')
+      .replace(/\s+\]/g, ']')
+      .replace(/\s*,\s*/g, ', ')
+      .replace(/\s+/g, ' '),
+  ).trim();
+}
+
 export function normalizeCheckExpression(value: string): string {
-  return canonicalizeInLists(
-    normalizeSqlCaseAndIdentifiers(value)
-      .trim()
-      .replace(/^check\s+/, '')
-      .replace(
-        /::[a-z_][a-z0-9_]*(?:\s*\([^)]*\))?(?:\s+(?:with(?:out)?\s+time\s+zone|precision|varying))?(?:\[\])?/g,
-        '',
-      )
-      .replace(/\b[a-z_][a-z0-9_]*\./g, ''),
-  )
-    .replace(/[()]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalized = normalizeSqlCaseAndIdentifiers(value)
+    .trim()
+    .replace(/^check\s+/, '');
+  const stripped = transformOutsideLiterals(normalized, (segment) =>
+    stripQualifiers(stripTypeCasts(segment)),
+  );
+  return collapseCheckSpacing(
+    normalizeBooleanParentheses(normalizeAnyAllSpacing(canonicalizeInLists(stripped))),
+  );
 }
 
 function quotedLiteral(value: string): string {
@@ -693,7 +1032,7 @@ function compareForeignKeys(expected: CatalogTable, live: CatalogTable, drift: D
     const equivalent = live.foreignKeys.find(
       (entry) => unmatched.has(entry) && stableForeignKey(entry) === stableForeignKey(foreignKey),
     );
-    const actual = equivalent ?? named;
+    const actual = equivalent ?? (named !== undefined && unmatched.has(named) ? named : undefined);
     if (actual === undefined) {
       drift.missingForeignKeys.push({ table: expected.name, foreignKey: foreignKey.name });
     } else if (stableForeignKey(foreignKey) !== stableForeignKey(actual)) {
@@ -722,7 +1061,7 @@ function compareChecks(expected: CatalogTable, live: CatalogTable, drift: Drift)
     const equivalent = live.checks.find(
       (entry) => unmatched.has(entry) && stableCheck(entry) === stableCheck(check),
     );
-    const actual = equivalent ?? named;
+    const actual = equivalent ?? (named !== undefined && unmatched.has(named) ? named : undefined);
     if (actual === undefined) {
       drift.missingCheckConstraints.push({ table: expected.name, check: check.name });
     } else if (stableCheck(check) !== stableCheck(actual)) {
@@ -807,6 +1146,21 @@ export function isBehind(drift: Drift): boolean {
     drift.foreignKeyMismatches.length > 0 ||
     drift.missingCheckConstraints.length > 0 ||
     drift.checkConstraintMismatches.length > 0 ||
+    drift.missingEnums.length > 0 ||
+    drift.enumMismatches.length > 0
+  );
+}
+
+export function needsCatchup(drift: Drift): boolean {
+  return (
+    drift.missingTables.length > 0 ||
+    drift.missingColumns.length > 0 ||
+    drift.columnMismatches.length > 0 ||
+    drift.primaryKeyMismatches.length > 0 ||
+    drift.missingIndexes.length > 0 ||
+    drift.indexMismatches.length > 0 ||
+    drift.missingForeignKeys.length > 0 ||
+    drift.foreignKeyMismatches.length > 0 ||
     drift.missingEnums.length > 0 ||
     drift.enumMismatches.length > 0
   );
