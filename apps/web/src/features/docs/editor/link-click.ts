@@ -19,7 +19,7 @@ export function openableHref(href: string | null, base: string): string | null {
   try {
     const url = new URL(href, base);
     if (!OPENABLE_PROTOCOLS.has(url.protocol)) return null;
-    if (url.hash.length > 0 && sameDocument(url, base)) return null;
+    if (href.includes('#') && sameDocument(url, base)) return null;
     return url.href;
   } catch {
     return null;

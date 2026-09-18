@@ -130,6 +130,12 @@ describe('deciding which hrefs may be opened', () => {
     expect(openableHref(`${base}#summary`, base)).toBeNull();
   });
 
+  it('leaves an empty fragment inside the same document to the page', () => {
+    expect(openableHref('#', base)).toBeNull();
+    expect(openableHref(`${base}#`, base)).toBeNull();
+    expect(openableHref('?tab=activity#', `${base}?tab=activity`)).toBeNull();
+  });
+
   it('still opens a fragment that points at another document', () => {
     expect(openableHref('https://example.com/a#summary', base)).toBe(
       'https://example.com/a#summary',
