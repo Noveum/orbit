@@ -3,7 +3,7 @@ import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import {
   NOTIFICATION_GROUPS,
   NOTIFICATION_TYPE_LABELS,
-} from '../../../src/features/settings/notification-groups.ts';
+} from '@/features/settings/notification-groups.ts';
 
 describe('notification groups', () => {
   it('places every notification type in exactly one group', () => {

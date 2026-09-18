@@ -6,8 +6,8 @@ import {
   channelTypeKey,
   NotificationChannels,
   type SlackDmAvailability,
-} from '../../../src/features/settings/notification-channels.tsx';
-import { NOTIFICATION_GROUPS } from '../../../src/features/settings/notification-groups.ts';
+} from '@/features/settings/notification-channels.tsx';
+import { NOTIFICATION_GROUPS } from '@/features/settings/notification-groups.ts';
 
 let sentBody: Record<string, unknown> | null = null;
 
@@ -421,6 +421,7 @@ describe('NotificationChannels', () => {
       preferences: { channel: string; type: string; enabled: boolean }[];
       quietHoursEnabled: boolean;
       quietHoursStart: string;
+      quietHoursEnd: string;
       urgentBypassEnabled: boolean;
     };
 
@@ -429,6 +430,7 @@ describe('NotificationChannels', () => {
     expect(disabledAfterSave()).toEqual([channelTypeKey('push', 'mention')]);
     expect(body.quietHoursEnabled).toBe(false);
     expect(body.quietHoursStart).toBe('18:00');
+    expect(body.quietHoursEnd).toBe('09:00');
     expect(body.urgentBypassEnabled).toBe(true);
 
     expect(await screen.findByRole('status')).toHaveTextContent('Notification preferences saved.');

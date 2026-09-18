@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { openableHref } from '../../../../src/features/docs/editor/link-click.ts';
-import { RichTextEditor } from '../../../../src/features/docs/editor/rich-text-editor.tsx';
+import { openableHref } from '@/features/docs/editor/link-click.ts';
+import { RichTextEditor } from '@/features/docs/editor/rich-text-editor.tsx';
 
 const realOpen = globalThis.window.open;
 let opened: ReturnType<typeof mock>;
