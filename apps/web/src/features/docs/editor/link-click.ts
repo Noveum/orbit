@@ -3,11 +3,24 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 
 const OPENABLE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
+function sameDocument(url: URL, base: string): boolean {
+  try {
+    const here = new URL(base);
+    return (
+      here.origin === url.origin && here.pathname === url.pathname && here.search === url.search
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function openableHref(href: string | null, base: string): string | null {
   if (href === null || href.trim().length === 0) return null;
   try {
     const url = new URL(href, base);
-    return OPENABLE_PROTOCOLS.has(url.protocol) ? url.href : null;
+    if (!OPENABLE_PROTOCOLS.has(url.protocol)) return null;
+    if (url.hash.length > 0 && sameDocument(url, base)) return null;
+    return url.href;
   } catch {
     return null;
   }

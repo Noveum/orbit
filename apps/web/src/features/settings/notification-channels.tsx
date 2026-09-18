@@ -7,7 +7,7 @@ import {
   type NotificationType,
 } from '@orbit/shared/constants';
 import { Bell, ChevronRight, Inbox, Mail, MessageSquare } from 'lucide-react';
-import { type ComponentType, useRef, useState } from 'react';
+import { type ComponentType, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Collapsible } from '@/components/ui/collapsible.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -108,6 +108,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const panelId = useId();
   const remembered = useRef(new Map<NotificationChannel, ReadonlySet<string>>());
   const editRevision = useRef(0);
   const slackDmNotice = slackDmNoticeFor(props.slackDm);
@@ -153,9 +154,9 @@ export function NotificationChannels(props: NotificationChannelsProps) {
         return;
       }
       const previous = remembered.current.get(channel);
-      const restorable = previous !== undefined && previous.size < keys.length;
+      remembered.current.delete(channel);
       for (const key of keys) {
-        if (restorable && previous.has(key)) continue;
+        if (previous?.has(key) === true) continue;
         next.delete(key);
       }
     });
@@ -275,7 +276,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
                           variant="ghost"
                           size="sm"
                           className="h-6 px-1.5 text-2xs"
-                          aria-label={`Turn on every ${group.title} notification for ${meta.label}`}
+                          aria-label={`All ${group.title} notifications for ${meta.label}`}
                           onClick={() => setGroupEnabled(channel, group, true)}
                         >
                           All
@@ -284,7 +285,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
                           variant="ghost"
                           size="sm"
                           className="h-6 px-1.5 text-2xs"
-                          aria-label={`Turn off every ${group.title} notification for ${meta.label}`}
+                          aria-label={`None of the ${group.title} notifications for ${meta.label}`}
                           onClick={() => setGroupEnabled(channel, group, false)}
                         >
                           None
@@ -293,23 +294,26 @@ export function NotificationChannels(props: NotificationChannelsProps) {
                       <div className="flex flex-col p-1.5">
                         {group.types.map((type) => {
                           const on = !disabled.has(channelTypeKey(channel, type));
+                          const switchId = `${panelId}-${channel}-${type}`;
                           return (
-                            <div
+                            <label
                               key={type}
+                              htmlFor={switchId}
                               className={cn(
-                                'flex items-center justify-between gap-3 rounded-sm px-1.5 py-1.5 text-xs',
+                                'flex cursor-pointer items-center justify-between gap-3 rounded-sm px-1.5 py-1.5 text-xs',
                                 on ? 'text-secondary' : 'text-muted',
                                 rowHover,
                               )}
                             >
                               {NOTIFICATION_TYPE_LABELS[type]}
                               <Switch
+                                id={switchId}
                                 checked={on}
                                 onCheckedChange={() => toggleType(channel, type)}
                                 disabled={locked}
                                 aria-label={`${meta.label} for ${NOTIFICATION_TYPE_LABELS[type]}`}
                               />
-                            </div>
+                            </label>
                           );
                         })}
                       </div>

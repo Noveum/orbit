@@ -7,6 +7,7 @@ import {
   NotificationChannels,
   type SlackDmAvailability,
 } from '../../../src/features/settings/notification-channels.tsx';
+import { NOTIFICATION_GROUPS } from '../../../src/features/settings/notification-groups.ts';
 
 let sentBody: Record<string, unknown> | null = null;
 
@@ -137,7 +138,7 @@ describe('NotificationChannels', () => {
     renderChannels();
 
     await user.click(screen.getByLabelText('Customize Email'));
-    await user.click(screen.getByLabelText('Turn off every Workspace notification for Email'));
+    await user.click(screen.getByLabelText('None of the Workspace notifications for Email'));
     await user.click(screen.getByRole('button', { name: 'Save preferences' }));
 
     await waitFor(() => {
@@ -161,27 +162,6 @@ describe('NotificationChannels', () => {
       expect(sentBody).not.toBeNull();
     });
     expect(savedPreferences().some((entry) => entry.channel.startsWith('slack'))).toBe(false);
-  });
-
-  it('explains when Slack DMs are unavailable and locks the channel', () => {
-    renderChannels([], 'unavailable');
-
-    expect(
-      screen.getByText('Slack DMs are unavailable until Slack is connected for this workspace.'),
-    ).toBeVisible();
-    expect(screen.getByLabelText('Slack DM notifications')).toBeDisabled();
-    expect(screen.getByLabelText('Customize Slack DM')).toBeDisabled();
-  });
-
-  it('does not overwrite Slack DM preferences while Slack is unavailable', async () => {
-    const user = userEvent.setup();
-    renderChannels([], 'unavailable');
-
-    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
-    await waitFor(() => {
-      expect(sentBody).not.toBeNull();
-    });
-    expect(savedPreferences().some((entry) => entry.channel === 'slack_dm')).toBe(false);
   });
 
   it('stops claiming preferences are saved once quiet hours change again', async () => {
@@ -248,9 +228,175 @@ describe('NotificationChannels', () => {
     expect(screen.queryByText('Notification preferences saved.')).toBeNull();
   });
 
-  it('round trips every channel and the quiet hours settings on save', async () => {
+  it('turns a group back on without touching the rest of the channel', async () => {
+    const user = userEvent.setup();
+    renderChannels(
+      NOTIFICATION_TYPES.map((type) => channelTypeKey('email', type)).concat(
+        channelTypeKey('push', 'mention'),
+      ),
+    );
+
+    await user.click(screen.getByLabelText('Customize Email'));
+    await user.click(screen.getByLabelText('All Workspace notifications for Email'));
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    const stillOff = new Set(disabledAfterSave());
+    expect(stillOff.has(channelTypeKey('email', 'invite_accepted'))).toBe(false);
+    expect(stillOff.has(channelTypeKey('email', 'member_joined'))).toBe(false);
+    expect(stillOff.has(channelTypeKey('email', 'mention'))).toBe(true);
+    expect(stillOff.has(channelTypeKey('push', 'mention'))).toBe(true);
+  });
+
+  it('turns one notification back on inside a channel', async () => {
+    const user = userEvent.setup();
+    renderChannels([channelTypeKey('email', 'mention'), channelTypeKey('email', 'reaction')]);
+
+    await user.click(screen.getByLabelText('Customize Email'));
+    await user.click(screen.getByLabelText('Email for Mention'));
+    expect(screen.getByLabelText('Email for Mention')).toHaveAttribute('data-state', 'checked');
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    expect(disabledAfterSave()).toEqual([channelTypeKey('email', 'reaction')]);
+  });
+
+  it('turns on a channel that was loaded with everything off', async () => {
+    const user = userEvent.setup();
+    renderChannels(NOTIFICATION_TYPES.map((type) => channelTypeKey('email', type)));
+
+    expect(screen.getByLabelText('Email notifications')).toHaveAttribute('data-state', 'unchecked');
+
+    await user.click(screen.getByLabelText('Email notifications'));
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    expect(disabledAfterSave()).toEqual([]);
+  });
+
+  it('forgets an earlier channel snapshot once it has been restored', async () => {
+    const user = userEvent.setup();
+    renderChannels([channelTypeKey('email', 'mention')]);
+
+    await user.click(screen.getByLabelText('Email notifications'));
+    await user.click(screen.getByLabelText('Email notifications'));
+
+    await user.click(screen.getByLabelText('Customize Email'));
+    await user.click(screen.getByLabelText('Email for Mention'));
+    for (const group of NOTIFICATION_GROUPS) {
+      await user.click(screen.getByLabelText(`None of the ${group.title} notifications for Email`));
+    }
+
+    expect(screen.getByLabelText('Email notifications')).toHaveAttribute('data-state', 'unchecked');
+    await user.click(screen.getByLabelText('Email notifications'));
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    expect(disabledAfterSave()).toEqual([]);
+  });
+
+  it('does not call a stale save current when a channel changes while the request is in flight', async () => {
+    const user = userEvent.setup();
+    const flight: { answer?: () => void } = {};
+    globalThis.fetch = mock((_url: string, init: { body?: string }) => {
+      sentBody = init.body === undefined ? null : JSON.parse(init.body);
+      return new Promise((resolve) => {
+        flight.answer = () => resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+      });
+    }) as unknown as typeof fetch;
+
+    renderChannels();
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+
+    await user.click(screen.getByLabelText('Push notifications'));
+    flight.answer?.();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Save preferences' })).not.toBeDisabled();
+    });
+    expect(screen.queryByText('Notification preferences saved.')).toBeNull();
+  });
+
+  it('reports a failed save and lets the save be tried again', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () =>
+          Promise.resolve({ error: { code: 'internal', message: 'Could not reach Orbit.' } }),
+      }),
+    ) as unknown as typeof fetch;
+
+    renderChannels();
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not reach Orbit.');
+    expect(screen.queryByText('Notification preferences saved.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save preferences' })).not.toBeDisabled();
+  });
+
+  it.each([
+    ['unmapped' as SlackDmAvailability, 'Connect your Orbit account to Slack to enable Slack DMs.'],
+    [
+      'reauthorize' as SlackDmAvailability,
+      'Slack DMs require permission to send direct messages. Reconnect Slack from Integrations.',
+    ],
+    [
+      'unavailable' as SlackDmAvailability,
+      'Slack DMs are unavailable until Slack is connected for this workspace.',
+    ],
+  ])('locks Slack DMs and explains why when Slack is %s', async (slackDm, notice) => {
+    const user = userEvent.setup();
+    renderChannels([], slackDm);
+
+    expect(screen.getByText(notice)).toBeVisible();
+    expect(screen.getByLabelText('Slack DM notifications')).toBeDisabled();
+    expect(screen.getByLabelText('Customize Slack DM')).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    expect(savedPreferences().some((entry) => entry.channel === 'slack_dm')).toBe(false);
+  });
+
+  it('gives every notification row a label that reaches its switch', async () => {
     const user = userEvent.setup();
     renderChannels();
+
+    await user.click(screen.getByLabelText('Customize Email'));
+
+    for (const group of NOTIFICATION_GROUPS) {
+      expect(screen.getByLabelText(`All ${group.title} notifications for Email`)).toHaveTextContent(
+        'All',
+      );
+      expect(
+        screen.getByLabelText(`None of the ${group.title} notifications for Email`),
+      ).toHaveTextContent('None');
+    }
+
+    const row = screen.getByText('Mention').closest('label');
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute('for')).toBe(
+      screen.getByLabelText('Email for Mention').getAttribute('id'),
+    );
+  });
+
+  it('round trips every channel and the quiet hours settings on save', async () => {
+    const user = userEvent.setup();
+    renderChannels([channelTypeKey('slack', 'reaction')]);
 
     await user.click(screen.getByLabelText('Customize Push'));
     await user.click(screen.getByLabelText('Push for Mention'));

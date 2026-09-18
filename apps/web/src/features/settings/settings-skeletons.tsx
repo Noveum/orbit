@@ -267,7 +267,7 @@ export function MembersSettingsSkeleton() {
   );
 }
 
-const SKELETON_CHANNELS = ['inbox', 'email', 'slack_dm', 'push'];
+const SKELETON_CHANNELS = ['inbox', 'email', 'push'];
 
 export function NotificationsSettingsSkeleton() {
   return (
