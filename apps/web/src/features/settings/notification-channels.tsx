@@ -109,6 +109,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const remembered = useRef(new Map<NotificationChannel, ReadonlySet<string>>());
+  const editRevision = useRef(0);
   const slackDmNotice = slackDmNoticeFor(props.slackDm);
 
   function isLocked(channel: NotificationChannel): boolean {
@@ -116,6 +117,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   }
 
   function apply(update: (next: Set<string>) => void): void {
+    editRevision.current += 1;
     setSaved(false);
     setDisabled((current) => {
       const next = new Set(current);
@@ -126,6 +128,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
 
   function edit<T>(set: (value: T) => void): (value: T) => void {
     return (value) => {
+      editRevision.current += 1;
       setSaved(false);
       set(value);
     };
@@ -174,6 +177,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   }
 
   async function save(): Promise<void> {
+    const revision = editRevision.current;
     setPending(true);
     setError(null);
     setSaved(false);
@@ -198,7 +202,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
           urgentBypassEnabled,
         },
       });
-      setSaved(true);
+      if (editRevision.current === revision) setSaved(true);
     } catch (caught) {
       setError(messageOf(caught));
     } finally {

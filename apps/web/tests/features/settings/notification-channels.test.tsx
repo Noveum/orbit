@@ -223,6 +223,31 @@ describe('NotificationChannels', () => {
     ).toBeVisible();
   });
 
+  it('does not call a stale save current when an edit lands while the request is in flight', async () => {
+    const user = userEvent.setup();
+    const flight: { answer?: () => void } = {};
+    globalThis.fetch = mock((_url: string, init: { body?: string }) => {
+      sentBody = init.body === undefined ? null : JSON.parse(init.body);
+      return new Promise((resolve) => {
+        flight.answer = () => resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+      });
+    }) as unknown as typeof fetch;
+
+    renderChannels();
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+
+    await user.click(screen.getByLabelText('Quiet hours'));
+    flight.answer?.();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Save preferences' })).not.toBeDisabled();
+    });
+    expect(screen.queryByText('Notification preferences saved.')).toBeNull();
+  });
+
   it('round trips every channel and the quiet hours settings on save', async () => {
     const user = userEvent.setup();
     renderChannels();
