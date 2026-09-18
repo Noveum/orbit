@@ -20,7 +20,7 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          'block size-3 rounded-full bg-surface shadow-sm',
+          'block size-3 rounded-full bg-muted shadow-sm data-[state=checked]:bg-surface',
           'transition-transform duration-[var(--duration-fast)] ease-[var(--ease-out-orbit)]',
           'data-[state=checked]:translate-x-3.5',
         )}
