@@ -314,6 +314,28 @@ describe('NotificationChannels', () => {
     expect(disabledAfterSave()).toEqual([]);
   });
 
+  it('forgets a channel snapshot once a type or group control has moved on from it', async () => {
+    const user = userEvent.setup();
+    renderChannels([channelTypeKey('email', 'reaction')]);
+
+    await user.click(screen.getByLabelText('Email notifications'));
+
+    await user.click(screen.getByLabelText('Customize Email'));
+    await user.click(screen.getByLabelText('Email for Mention'));
+    for (const group of NOTIFICATION_GROUPS) {
+      await user.click(screen.getByLabelText(`None of the ${group.title} notifications for Email`));
+    }
+
+    expect(screen.getByLabelText('Email notifications')).toHaveAttribute('data-state', 'unchecked');
+    await user.click(screen.getByLabelText('Email notifications'));
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => {
+      expect(sentBody).not.toBeNull();
+    });
+    expect(disabledAfterSave()).toEqual([]);
+  });
+
   it('does not call a stale save current when a channel changes while the request is in flight', async () => {
     const user = userEvent.setup();
     const flight: { answer?: () => void } = {};

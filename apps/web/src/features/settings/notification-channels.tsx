@@ -137,6 +137,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
 
   function toggleType(channel: NotificationChannel, type: NotificationType): void {
     if (isLocked(channel)) return;
+    remembered.current.delete(channel);
     apply((next) => {
       const key = channelTypeKey(channel, type);
       if (next.has(key)) next.delete(key);
@@ -168,6 +169,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
     enabled: boolean,
   ): void {
     if (isLocked(channel)) return;
+    remembered.current.delete(channel);
     apply((next) => {
       for (const type of group.types) {
         const key = channelTypeKey(channel, type);
