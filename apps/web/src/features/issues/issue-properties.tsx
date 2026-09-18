@@ -81,6 +81,11 @@ function buildUndoEntry(
     inversePatch['projectId'] = issue.projectId;
     expectedForUndo['projectId'] = values.projectId;
     expectedForRedo['projectId'] = issue.projectId;
+    if (issue.milestoneId !== null) {
+      inversePatch['milestoneId'] = issue.milestoneId;
+      expectedForUndo['milestoneId'] = null;
+      expectedForRedo['milestoneId'] = issue.milestoneId;
+    }
   }
   if (values.milestoneId !== undefined) {
     inversePatch['milestoneId'] = issue.milestoneId;
@@ -152,8 +157,15 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
     issue.parentId === null ? 'No parent' : (parent?.identifier ?? 'Parent issue');
 
   const patch = (values: Parameters<typeof update.mutate>[0]['patch'], label = 'Property') => {
-    recordPropertyChange(buildUndoEntry(issue, values, label));
-    update.mutate({ issue, patch: values });
+    const entry = buildUndoEntry(issue, values, label);
+    update.mutate(
+      { issue, patch: values },
+      {
+        onSuccess: () => {
+          recordPropertyChange(entry);
+        },
+      },
+    );
   };
 
   const toggle = (key: MenuKey) => (open: boolean) => setOpenMenu(open ? key : null);

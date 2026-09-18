@@ -49,32 +49,32 @@ export const issueCreateSchema = z.object({
 
 export const issueExpectedPropertiesSchema = z
   .object({
-    stateId: z.string().optional(),
-    assigneeId: z.string().nullable().optional(),
-    priority: z.number().int().min(0).max(4).optional(),
-    estimate: z.number().int().min(0).nullable().optional(),
-    projectId: z.string().nullable().optional(),
-    milestoneId: z.string().nullable().optional(),
-    cycleId: z.string().nullable().optional(),
+    stateId: idSchema.optional(),
+    assigneeId: idSchema.nullable().optional(),
+    priority: prioritySchema.optional(),
+    estimate: z.number().int().min(0).max(100).nullable().optional(),
+    projectId: idSchema.nullable().optional(),
+    milestoneId: idSchema.nullable().optional(),
+    cycleId: idSchema.nullable().optional(),
     dueDate: calendarDateSchema.nullable().optional(),
   })
   .strict();
 
 export const issueUpdateSchema = z
   .object({
-    title: z.string().trim().min(1).max(255).optional(),
+    title: titleSchema.optional(),
     description: z.string().max(ISSUE_DESCRIPTION_MAX_LENGTH).optional(),
-    stateId: z.string().optional(),
-    assigneeId: z.string().nullable().optional(),
-    priority: z.number().int().min(0).max(4).optional(),
-    estimate: z.number().int().min(0).nullable().optional(),
-    projectId: z.string().nullable().optional(),
-    milestoneId: z.string().nullable().optional(),
-    cycleId: z.string().nullable().optional(),
+    stateId: idSchema.optional(),
+    assigneeId: idSchema.nullable().optional(),
+    priority: prioritySchema.optional(),
+    estimate: z.number().int().min(0).max(100).nullable().optional(),
+    projectId: idSchema.nullable().optional(),
+    milestoneId: idSchema.nullable().optional(),
+    cycleId: idSchema.nullable().optional(),
     dueDate: calendarDateSchema.nullable().optional(),
-    labelIds: z.array(z.string()).optional(),
-    reviewerIds: z.array(z.string()).max(ISSUE_REVIEWER_MAX_COUNT).optional(),
-    parentId: z.string().nullable().optional(),
+    labelIds: z.array(idSchema).max(50).optional(),
+    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).optional(),
+    parentId: idSchema.nullable().optional(),
     sortOrder: z.number().optional(),
     expected: issueExpectedPropertiesSchema.optional(),
   })

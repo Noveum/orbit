@@ -21,6 +21,7 @@ export interface PropertyUndoEntry {
 export function useIssuePropertyUndo() {
   const undoStackRef = useRef<PropertyUndoEntry[]>([]);
   const redoStackRef = useRef<PropertyUndoEntry[]>([]);
+  const inFlightRef = useRef(false);
   const updateIssueMutation = useUpdateIssue();
   const { toast } = useToast();
 
@@ -34,9 +35,11 @@ export function useIssuePropertyUndo() {
   }, []);
 
   const undo = useCallback(async () => {
+    if (inFlightRef.current) return;
     const entry = undoStackRef.current.pop();
     if (entry === undefined) return;
 
+    inFlightRef.current = true;
     try {
       await updateIssueMutation.mutateAsync({
         issue: entry.issue,
@@ -57,13 +60,17 @@ export function useIssuePropertyUndo() {
         description: 'The issue was modified elsewhere.',
         tone: 'danger',
       });
+    } finally {
+      inFlightRef.current = false;
     }
   }, [updateIssueMutation, toast]);
 
   const redo = useCallback(async () => {
+    if (inFlightRef.current) return;
     const entry = redoStackRef.current.pop();
     if (entry === undefined) return;
 
+    inFlightRef.current = true;
     try {
       await updateIssueMutation.mutateAsync({
         issue: entry.issue,
@@ -84,6 +91,8 @@ export function useIssuePropertyUndo() {
         description: 'The issue was modified elsewhere.',
         tone: 'danger',
       });
+    } finally {
+      inFlightRef.current = false;
     }
   }, [updateIssueMutation, toast]);
 
