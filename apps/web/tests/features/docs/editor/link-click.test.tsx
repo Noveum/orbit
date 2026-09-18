@@ -56,15 +56,37 @@ describe('opening links from an editable description', () => {
     expect(opened).not.toHaveBeenCalled();
   });
 
-  it('leaves the text beside a link alone', async () => {
+  it('leaves text alone even when the document holds a link elsewhere', async () => {
     const user = userEvent.setup();
-    renderDescription('Read [the notes](https://example.com/notes) later');
+    renderDescription('Nothing to follow here.\n\nRead [the notes](https://example.com/notes)');
 
-    await user.click(await screen.findByRole('link', { name: 'the notes' }));
-    expect(opened).toHaveBeenCalledTimes(1);
+    await user.click(await screen.findByText('Nothing to follow here.'));
 
-    await user.click(await screen.findByText(/Read/));
-    expect(opened).toHaveBeenCalledTimes(1);
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it('opens the href the anchor resolves to, not the one it carries', async () => {
+    const user = userEvent.setup();
+    renderDescription('See [AM-1](/issues/AM-1)');
+
+    await user.click(await screen.findByRole('link', { name: 'AM-1' }));
+
+    expect(opened).toHaveBeenCalledWith(
+      new URL('/issues/AM-1', document.baseURI).href,
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
+  it('leaves a click that is not the primary button to the browser', async () => {
+    const user = userEvent.setup();
+    renderDescription('PR: [936](https://github.com/Noveum/orbit/pull/936)');
+    const link = await screen.findByRole('link', { name: '936' });
+
+    await user.pointer({ keys: '[MouseRight]', target: link });
+    await user.pointer({ keys: '[MouseMiddle]', target: link });
+
+    expect(opened).not.toHaveBeenCalled();
   });
 
   it('does not take over a link while the editor is read only', async () => {

@@ -175,6 +175,17 @@ describe('NotificationChannels', () => {
     expect(screen.queryByText('Notification preferences saved.')).toBeNull();
   });
 
+  it('stops claiming preferences are saved once a channel changes again', async () => {
+    const user = userEvent.setup();
+    renderChannels();
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    expect(await screen.findByText('Notification preferences saved.')).toBeVisible();
+
+    await user.click(screen.getByLabelText('Push notifications'));
+    expect(screen.queryByText('Notification preferences saved.')).toBeNull();
+  });
+
   it('stops claiming preferences are saved once urgent bypass changes again', async () => {
     const user = userEvent.setup();
     renderChannels();
