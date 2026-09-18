@@ -124,6 +124,13 @@ export function NotificationChannels(props: NotificationChannelsProps) {
     });
   }
 
+  function edit<T>(set: (value: T) => void): (value: T) => void {
+    return (value) => {
+      setSaved(false);
+      set(value);
+    };
+  }
+
   function toggleType(channel: NotificationChannel, type: NotificationType): void {
     if (isLocked(channel)) return;
     apply((next) => {
@@ -324,15 +331,15 @@ export function NotificationChannels(props: NotificationChannelsProps) {
           <span className="flex flex-col">
             <span className="font-medium text-dense text-text">Quiet hours</span>
             <span className="text-muted text-xs">
-              {props.slackDm === 'disabled'
-                ? 'Email is held until the window ends, in your local time.'
-                : 'Email and Slack DMs are held until the window ends, in your local time.'}
+              {props.slackDm === 'available'
+                ? 'Email and Slack DMs are held until the window ends, in your local time.'
+                : 'Email is held until the window ends, in your local time.'}
             </span>
           </span>
           <Switch
             id="quiet-hours"
             checked={quietHoursEnabled}
-            onCheckedChange={setQuietHoursEnabled}
+            onCheckedChange={edit(setQuietHoursEnabled)}
             aria-label="Quiet hours"
           />
         </label>
@@ -344,7 +351,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
               id="quiet-start"
               type="time"
               value={quietHoursStart}
-              onChange={(event) => setQuietHoursStart(event.target.value)}
+              onChange={(event) => edit(setQuietHoursStart)(event.target.value)}
               className="h-7 w-28 text-xs"
               disabled={!quietHoursEnabled}
               aria-label="Quiet hours start"
@@ -356,7 +363,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
               id="quiet-end"
               type="time"
               value={quietHoursEnd}
-              onChange={(event) => setQuietHoursEnd(event.target.value)}
+              onChange={(event) => edit(setQuietHoursEnd)(event.target.value)}
               className="h-7 w-28 text-xs"
               disabled={!quietHoursEnabled}
               aria-label="Quiet hours end"
@@ -377,7 +384,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
           <Switch
             id="urgent-bypass"
             checked={urgentBypassEnabled}
-            onCheckedChange={setUrgentBypassEnabled}
+            onCheckedChange={edit(setUrgentBypassEnabled)}
             aria-label="Urgent bypass"
           />
         </label>

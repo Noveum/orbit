@@ -184,6 +184,45 @@ describe('NotificationChannels', () => {
     expect(savedPreferences().some((entry) => entry.channel === 'slack_dm')).toBe(false);
   });
 
+  it('stops claiming preferences are saved once quiet hours change again', async () => {
+    const user = userEvent.setup();
+    renderChannels();
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    expect(await screen.findByText('Notification preferences saved.')).toBeVisible();
+
+    await user.click(screen.getByLabelText('Quiet hours'));
+    expect(screen.queryByText('Notification preferences saved.')).toBeNull();
+  });
+
+  it('stops claiming preferences are saved once urgent bypass changes again', async () => {
+    const user = userEvent.setup();
+    renderChannels();
+
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    expect(await screen.findByText('Notification preferences saved.')).toBeVisible();
+
+    await user.click(screen.getByLabelText('Urgent bypass'));
+    expect(screen.queryByText('Notification preferences saved.')).toBeNull();
+  });
+
+  it('does not promise to hold Slack DMs during quiet hours when Slack cannot deliver', () => {
+    renderChannels([], 'unavailable');
+
+    expect(
+      screen.getByText('Email is held until the window ends, in your local time.'),
+    ).toBeVisible();
+    expect(screen.queryByText(/Email and Slack DMs are held/)).toBeNull();
+  });
+
+  it('promises to hold Slack DMs during quiet hours only when Slack can deliver', () => {
+    renderChannels([], 'available');
+
+    expect(
+      screen.getByText('Email and Slack DMs are held until the window ends, in your local time.'),
+    ).toBeVisible();
+  });
+
   it('round trips every channel and the quiet hours settings on save', async () => {
     const user = userEvent.setup();
     renderChannels();
