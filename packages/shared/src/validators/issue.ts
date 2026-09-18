@@ -47,24 +47,38 @@ export const issueCreateSchema = z.object({
   labelIds: z.array(idSchema).max(50).default([]),
 });
 
+export const issueExpectedPropertiesSchema = z
+  .object({
+    stateId: z.string().optional(),
+    assigneeId: z.string().nullable().optional(),
+    priority: z.number().int().min(0).max(4).optional(),
+    estimate: z.number().int().min(0).nullable().optional(),
+    projectId: z.string().nullable().optional(),
+    milestoneId: z.string().nullable().optional(),
+    cycleId: z.string().nullable().optional(),
+    dueDate: calendarDateSchema.nullable().optional(),
+  })
+  .strict();
+
 export const issueUpdateSchema = z
   .object({
-    title: titleSchema,
-    description: issueDescriptionSchema,
-    stateId: idSchema,
-    priority: prioritySchema,
-    assigneeId: idSchema.nullable(),
-    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT),
-    projectId: idSchema.nullable(),
-    milestoneId: idSchema.nullable(),
-    cycleId: idSchema.nullable(),
-    parentId: idSchema.nullable(),
-    estimate: z.number().int().min(0).max(100).nullable(),
-    dueDate: calendarDateSchema.nullable(),
-    labelIds: z.array(idSchema).max(50),
-    sortOrder: z.number(),
+    title: z.string().trim().min(1).max(255).optional(),
+    description: z.string().max(ISSUE_DESCRIPTION_MAX_LENGTH).optional(),
+    stateId: z.string().optional(),
+    assigneeId: z.string().nullable().optional(),
+    priority: z.number().int().min(0).max(4).optional(),
+    estimate: z.number().int().min(0).nullable().optional(),
+    projectId: z.string().nullable().optional(),
+    milestoneId: z.string().nullable().optional(),
+    cycleId: z.string().nullable().optional(),
+    dueDate: calendarDateSchema.nullable().optional(),
+    labelIds: z.array(z.string()).optional(),
+    reviewerIds: z.array(z.string()).max(ISSUE_REVIEWER_MAX_COUNT).optional(),
+    parentId: z.string().nullable().optional(),
+    sortOrder: z.number().optional(),
+    expected: issueExpectedPropertiesSchema.optional(),
   })
-  .partial();
+  .strict();
 
 export const issueMoveSchema = z.object({
   stateId: idSchema.optional(),
@@ -154,3 +168,4 @@ export type IssueUpdateInput = z.infer<typeof issueUpdateSchema>;
 export type IssueFilterInput = z.infer<typeof issueFilterSchema>;
 export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
 export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
+export type IssueExpectedProperties = z.infer<typeof issueExpectedPropertiesSchema>;
