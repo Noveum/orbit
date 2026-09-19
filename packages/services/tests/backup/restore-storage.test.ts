@@ -118,4 +118,40 @@ describe('restoreStorageObjects', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('rejects upload when backup object size or checksum mismatches expected', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-restore-storage-mismatch-'));
+    try {
+      const key = 'org_abc/issue/att_1/file.txt';
+      const fileContent = new TextEncoder().encode('valid content');
+      const filePath = join(tempDir, key);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, fileContent);
+
+      const store = new Map<string, Uint8Array>();
+      const driver = createMockDriver(store);
+
+      await expect(
+        restoreStorageObjects({
+          objectsDir: tempDir,
+          expectedObjects: [
+            { key, sha256: 'wrong_hash', bytes: fileContent.byteLength, contentType: 'text/plain' },
+          ],
+          driver,
+        }),
+      ).rejects.toThrow(/checksum mismatch/);
+
+      await expect(
+        restoreStorageObjects({
+          objectsDir: tempDir,
+          expectedObjects: [{ key, sha256: 'some_hash', bytes: 9999, contentType: 'text/plain' }],
+          driver,
+        }),
+      ).rejects.toThrow(/size mismatch/);
+
+      expect(store.size).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

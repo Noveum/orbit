@@ -155,8 +155,8 @@ export function computeRestoreTargetIdentity(
 
   const identity =
     trimmedBucket !== undefined && trimmedBucket.length > 0
-      ? `${host}:${port}/${database}:${trimmedBucket}`
-      : `${host}:${port}/${database}`;
+      ? `${host}:${port}/db/${database}#bucket:${trimmedBucket}`
+      : `${host}:${port}/db/${database}`;
 
   return {
     host,

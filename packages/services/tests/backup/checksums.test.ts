@@ -155,4 +155,50 @@ describe('verifyPreMutationChecksums', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('fails when database dump path attempts traversal', async () => {
+    const { tempDir, manifest } = await createTempBackupDirectory();
+    try {
+      const traversalManifest = {
+        ...manifest,
+        checksums: {
+          ...manifest.checksums,
+          databaseDump: {
+            ...manifest.checksums.databaseDump,
+            file: '../escaped.dump',
+          },
+        },
+      };
+      await expect(verifyPreMutationChecksums(tempDir, traversalManifest)).rejects.toThrow(
+        /Path escapes directory/,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when object key attempts traversal', async () => {
+    const { tempDir, manifest } = await createTempBackupDirectory();
+    try {
+      const traversalManifest = {
+        ...manifest,
+        checksums: {
+          ...manifest.checksums,
+          objects: [
+            {
+              key: '../../etc/passwd',
+              bytes: 10,
+              sha256: 'abc',
+              contentType: 'text/plain',
+            },
+          ],
+        },
+      };
+      await expect(verifyPreMutationChecksums(tempDir, traversalManifest)).rejects.toThrow(
+        /Path escapes directory/,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

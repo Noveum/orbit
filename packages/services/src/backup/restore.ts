@@ -8,11 +8,11 @@ import {
   internal,
   validationFailed,
 } from '@orbit/shared';
-import { createStorageDriver, storageDriver } from '../storage/index.ts';
+import { createStorageDriver } from '../storage/index.ts';
 import type { StorageDriver } from '../storage/types.ts';
-import { verifyPreMutationChecksums } from './checksums.ts';
+import { assertContainedPath, verifyPreMutationChecksums } from './checksums.ts';
 import { verifyBackupCompatibility } from './compatibility.ts';
-import { setRecoveryState } from './readiness.ts';
+import { acquireRestoreLock, setRecoveryState } from './readiness.ts';
 import { restoreDatabase } from './restore-database.ts';
 import { restoreStorageObjects } from './restore-storage.ts';
 import { assertRestoreTargetConfirmed } from './target-guard.ts';
@@ -40,17 +40,26 @@ async function readManifest(
     throw validationFailed(`Manifest at ${manifestPath} is not valid JSON.`, { cause: error });
   }
 
-  return { backupDir, manifest: backupManifestSchema.parse(parsedJson) };
+  const manifest = backupManifestSchema.parse(parsedJson);
+  assertContainedPath(backupDir, manifest.checksums.databaseDump.file);
+  for (const obj of manifest.checksums.objects) {
+    assertContainedPath(join(backupDir, 'objects'), obj.key);
+  }
+
+  return { backupDir, manifest };
 }
 
 function resolveStorageDriver(
   options: BackupRestoreOptions,
-  env: Record<string, string | undefined>,
+  env: NodeJS.ProcessEnv,
 ): StorageDriver | undefined {
-  if (options.skipObjectRestore) return undefined;
-  if (options.storageDriver !== undefined) return options.storageDriver;
-  if (options.env === undefined) return storageDriver();
-  return createStorageDriver(env as NodeJS.ProcessEnv);
+  if (options.skipObjectRestore) {
+    return undefined;
+  }
+  if (options.storageDriver !== undefined) {
+    return options.storageDriver;
+  }
+  return createStorageDriver(env);
 }
 
 async function runDatabaseAndMigrations(
@@ -61,7 +70,7 @@ async function runDatabaseAndMigrations(
   pgRestorePath: string | undefined,
   pendingMigrationsCount: number,
 ): Promise<void> {
-  const dumpFile = join(backupDir, manifest.checksums.databaseDump.file);
+  const dumpFile = assertContainedPath(backupDir, manifest.checksums.databaseDump.file);
   await restoreDatabase({ databaseUrl, dumpFile, pgRestorePath });
 
   if (pendingMigrationsCount > 0) {
@@ -96,9 +105,10 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
   const compatibility = verifyBackupCompatibility(manifest, options.migrationsFolder);
 
   await verifyPreMutationChecksums(backupDir, manifest);
-  await setRecoveryState(databaseUrl, 'restoring');
 
   const driver = resolveStorageDriver(options, env);
+
+  await acquireRestoreLock(databaseUrl);
 
   try {
     await runDatabaseAndMigrations(

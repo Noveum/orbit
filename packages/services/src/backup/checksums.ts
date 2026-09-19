@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 import { type BackupManifest, validationFailed } from '@orbit/shared';
 
 export interface ChecksumsVerificationResult {
@@ -8,14 +8,45 @@ export interface ChecksumsVerificationResult {
   readonly objectsCount: number;
 }
 
+export function assertContainedPath(baseDir: string, relativePath: string): string {
+  if (isAbsolute(relativePath)) {
+    throw validationFailed(`Path must be relative, got absolute path: ${relativePath}`);
+  }
+  const resolvedBase = resolve(baseDir);
+  const resolvedTarget = resolve(baseDir, relativePath);
+  if (!resolvedTarget.startsWith(resolvedBase + sep) && resolvedTarget !== resolvedBase) {
+    throw validationFailed(`Path escapes directory: ${relativePath}`);
+  }
+  return resolvedTarget;
+}
+
+function computeStreamChecksum(filePath: string): Promise<{ bytes: number; sha256: string }> {
+  return new Promise((resolveResult, rejectResult) => {
+    const hash = createHash('sha256');
+    let bytes = 0;
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk: Buffer | string) => {
+      const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      bytes += buffer.length;
+      hash.update(buffer);
+    });
+    stream.on('end', () => {
+      resolveResult({ bytes, sha256: hash.digest('hex') });
+    });
+    stream.on('error', (error) => {
+      rejectResult(error);
+    });
+  });
+}
+
 export async function verifyPreMutationChecksums(
   backupDir: string,
   manifest: BackupManifest,
 ): Promise<ChecksumsVerificationResult> {
-  const dumpPath = join(backupDir, manifest.checksums.databaseDump.file);
-  let dumpBytes: Buffer;
+  const dumpPath = assertContainedPath(backupDir, manifest.checksums.databaseDump.file);
+  let dumpResult: { bytes: number; sha256: string };
   try {
-    dumpBytes = await readFile(dumpPath);
+    dumpResult = await computeStreamChecksum(dumpPath);
   } catch (error) {
     throw validationFailed(
       `Database dump file "${manifest.checksums.databaseDump.file}" is missing from backup directory: ${dumpPath}`,
@@ -23,24 +54,23 @@ export async function verifyPreMutationChecksums(
     );
   }
 
-  if (dumpBytes.byteLength !== manifest.checksums.databaseDump.bytes) {
+  if (dumpResult.bytes !== manifest.checksums.databaseDump.bytes) {
     throw validationFailed(
-      `Database dump size mismatch: expected ${manifest.checksums.databaseDump.bytes} bytes, found ${dumpBytes.byteLength} bytes.`,
+      `Database dump size mismatch: expected ${manifest.checksums.databaseDump.bytes} bytes, found ${dumpResult.bytes} bytes.`,
     );
   }
 
-  const dumpSha256 = createHash('sha256').update(dumpBytes).digest('hex');
-  if (dumpSha256.toLowerCase() !== manifest.checksums.databaseDump.sha256.toLowerCase()) {
+  if (dumpResult.sha256.toLowerCase() !== manifest.checksums.databaseDump.sha256.toLowerCase()) {
     throw validationFailed(
-      `Database dump checksum mismatch: expected ${manifest.checksums.databaseDump.sha256}, found ${dumpSha256}.`,
+      `Database dump checksum mismatch: expected ${manifest.checksums.databaseDump.sha256}, found ${dumpResult.sha256}.`,
     );
   }
 
   for (const objectEntry of manifest.checksums.objects) {
-    const objectPath = join(backupDir, 'objects', objectEntry.key);
-    let objBytes: Buffer;
+    const objectPath = assertContainedPath(join(backupDir, 'objects'), objectEntry.key);
+    let objResult: { bytes: number; sha256: string };
     try {
-      objBytes = await readFile(objectPath);
+      objResult = await computeStreamChecksum(objectPath);
     } catch (error) {
       throw validationFailed(
         `Referenced backup object "${objectEntry.key}" is missing from objects directory: ${objectPath}`,
@@ -48,16 +78,15 @@ export async function verifyPreMutationChecksums(
       );
     }
 
-    if (objBytes.byteLength !== objectEntry.bytes) {
+    if (objResult.bytes !== objectEntry.bytes) {
       throw validationFailed(
-        `Backup object "${objectEntry.key}" size mismatch: expected ${objectEntry.bytes} bytes, found ${objBytes.byteLength} bytes.`,
+        `Backup object "${objectEntry.key}" size mismatch: expected ${objectEntry.bytes} bytes, found ${objResult.bytes} bytes.`,
       );
     }
 
-    const objSha256 = createHash('sha256').update(objBytes).digest('hex');
-    if (objSha256.toLowerCase() !== objectEntry.sha256.toLowerCase()) {
+    if (objResult.sha256.toLowerCase() !== objectEntry.sha256.toLowerCase()) {
       throw validationFailed(
-        `Backup object "${objectEntry.key}" checksum mismatch: expected ${objectEntry.sha256}, found ${objSha256}.`,
+        `Backup object "${objectEntry.key}" checksum mismatch: expected ${objectEntry.sha256}, found ${objResult.sha256}.`,
       );
     }
   }
