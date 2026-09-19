@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import {
   catalogDriftBetween,
+  type Drift,
   expectedCatalog,
   isBehind,
   liveCatalog,
@@ -344,6 +345,22 @@ function declaredTableCount(live: Awaited<ReturnType<typeof liveCatalog>>): numb
   return live.tables.filter((table) => expectedNames.has(table.name)).length;
 }
 
+function pendingMigrationsProvideChecks(
+  migrations: readonly MigrationMeta[],
+  drift: Drift,
+): boolean {
+  const names = [
+    ...drift.missingCheckConstraints.map((entry) => entry.check),
+    ...drift.checkConstraintMismatches.map((entry) => entry.name),
+  ];
+  if (names.length === 0) return false;
+  return names.some((name) =>
+    migrations.some((migration) =>
+      migration.sql.some((statement) => statement.includes(`"${name}"`)),
+    ),
+  );
+}
+
 export async function releaseDatabase(
   url: string,
   migrationsFolder: string,
@@ -380,7 +397,11 @@ export async function releaseDatabase(
     const rows = await ledgerRows(sql);
     const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
-      if (needsCatchup(beforeDrift)) {
+      const pendingMigrations = migrations.slice(rows.length);
+      if (
+        needsCatchup(beforeDrift) ||
+        pendingMigrationsProvideChecks(pendingMigrations, beforeDrift)
+      ) {
         await migrate(drizzle({ client: sql }), { migrationsFolder });
         applied = pending;
         mode = 'migrated';
