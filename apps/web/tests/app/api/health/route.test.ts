@@ -113,9 +113,13 @@ describe('/api/health route', () => {
   });
 
   it('prefers DIRECT_URL over DATABASE_URL', async () => {
+    const validDatabaseUrl = resolveTestDatabaseUrl('orbit_test_web');
+    const reachable = await isDatabaseReachable(validDatabaseUrl);
+    expect(reachable).toBe(true);
+
     const origUrl = process.env['DATABASE_URL'];
     const origDirectUrl = process.env['DIRECT_URL'];
-    process.env['DATABASE_URL'] = 'postgres://orbit:orbit@localhost:5432/valid_db';
+    process.env['DATABASE_URL'] = validDatabaseUrl;
     process.env['DIRECT_URL'] = 'postgres://orbit:orbit@localhost:59999/down_db';
 
     try {

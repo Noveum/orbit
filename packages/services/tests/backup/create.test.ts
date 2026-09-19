@@ -81,7 +81,7 @@ async function setupPgDump(databaseUrl: string): Promise<string | undefined> {
     const shimDir = await mkdtemp(join(tmpdir(), 'orbit-pg-dump-shim-'));
     temporaryShimDir = shimDir;
     const isWindows = process.platform === 'win32';
-    const dumpLauncher = join(shimDir, isWindows ? 'pg_dump.cmd' : 'pg_dump');
+    const dumpLauncher = join(shimDir, isWindows ? 'pg_dump.exe' : 'pg_dump');
     const shimSource = join(shimDir, 'shim.ts');
     await writeFile(
       shimSource,
@@ -95,7 +95,7 @@ child.on('close', (code) => process.exit(code ?? 0));
 `,
     );
     if (isWindows) {
-      await writeFile(dumpLauncher, `@echo off\r\nbun run "${shimSource}" %*\r\n`);
+      Bun.spawnSync(['bun', 'build', '--compile', shimSource, '--outfile', dumpLauncher]);
     } else {
       await writeFile(dumpLauncher, `#!/bin/sh\nexec bun run "${shimSource}" "$@"\n`, {
         mode: 0o755,

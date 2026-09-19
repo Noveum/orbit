@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BackupManifest } from '@orbit/shared';
@@ -196,6 +196,66 @@ describe('verifyPreMutationChecksums', () => {
       };
       await expect(verifyPreMutationChecksums(tempDir, traversalManifest)).rejects.toThrow(
         /Path escapes directory/,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when database dump path is a symlink', async () => {
+    const { tempDir, manifest } = await createTempBackupDirectory();
+    try {
+      const realDump = join(tempDir, 'database.dump');
+      const linkDump = join(tempDir, 'symlink.dump');
+      try {
+        await symlink(realDump, linkDump);
+      } catch {
+        return;
+      }
+      const symlinkManifest = {
+        ...manifest,
+        checksums: {
+          ...manifest.checksums,
+          databaseDump: {
+            ...manifest.checksums.databaseDump,
+            file: 'symlink.dump',
+          },
+        },
+      };
+      await expect(verifyPreMutationChecksums(tempDir, symlinkManifest)).rejects.toThrow(
+        /Symlink paths are not permitted/,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when object path is a symlink', async () => {
+    const { tempDir, manifest } = await createTempBackupDirectory();
+    try {
+      const realObj = join(tempDir, 'objects', 'org_abc/issue/att_123/image.png');
+      const linkObj = join(tempDir, 'objects', 'symlink.png');
+      try {
+        await symlink(realObj, linkObj);
+      } catch {
+        return;
+      }
+      const symlinkManifest = {
+        ...manifest,
+        checksums: {
+          ...manifest.checksums,
+          objects: [
+            {
+              key: 'symlink.png',
+              bytes: manifest.checksums.objects[0]?.bytes ?? 0,
+              sha256: manifest.checksums.objects[0]?.sha256 ?? '',
+              contentType: 'image/png',
+            },
+          ],
+        },
+      };
+      await expect(verifyPreMutationChecksums(tempDir, symlinkManifest)).rejects.toThrow(
+        /Symlink paths are not permitted/,
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });

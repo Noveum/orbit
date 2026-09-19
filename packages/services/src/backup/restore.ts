@@ -10,7 +10,7 @@ import {
 } from '@orbit/shared';
 import { createStorageDriver } from '../storage/index.ts';
 import type { StorageDriver } from '../storage/types.ts';
-import { assertContainedPath, verifyPreMutationChecksums } from './checksums.ts';
+import { assertNoSymlinkPath, verifyPreMutationChecksums } from './checksums.ts';
 import { verifyBackupCompatibility } from './compatibility.ts';
 import { acquireRestoreLock, setRecoveryState } from './readiness.ts';
 import { restoreDatabase } from './restore-database.ts';
@@ -41,9 +41,9 @@ async function readManifest(
   }
 
   const manifest = backupManifestSchema.parse(parsedJson);
-  assertContainedPath(backupDir, manifest.checksums.databaseDump.file);
+  await assertNoSymlinkPath(backupDir, manifest.checksums.databaseDump.file);
   for (const obj of manifest.checksums.objects) {
-    assertContainedPath(join(backupDir, 'objects'), obj.key);
+    await assertNoSymlinkPath(join(backupDir, 'objects'), obj.key);
   }
 
   return { backupDir, manifest };
@@ -70,7 +70,7 @@ async function runDatabaseAndMigrations(
   pgRestorePath: string | undefined,
   pendingMigrationsCount: number,
 ): Promise<void> {
-  const dumpFile = assertContainedPath(backupDir, manifest.checksums.databaseDump.file);
+  const dumpFile = await assertNoSymlinkPath(backupDir, manifest.checksums.databaseDump.file);
   await restoreDatabase({ databaseUrl, dumpFile, pgRestorePath });
 
   if (pendingMigrationsCount > 0) {
