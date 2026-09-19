@@ -101,7 +101,7 @@ async function setupPostgresTools(databaseUrl: string): Promise<{
 
   let pgDumpPath: string | undefined;
   if (dumpNeedsShim) {
-    const dumpLauncher = join(shimDir, isWindows ? 'pg_dump.cmd' : 'pg_dump');
+    const dumpLauncher = join(shimDir, isWindows ? 'pg_dump.exe' : 'pg_dump');
     const dumpSource = join(shimDir, 'dump_shim.ts');
     await writeFile(
       dumpSource,
@@ -115,7 +115,7 @@ child.on('close', (code) => process.exit(code ?? 0));
 `,
     );
     if (isWindows) {
-      await writeFile(dumpLauncher, `@echo off\r\nbun run "${dumpSource}" %*\r\n`);
+      Bun.spawnSync(['bun', 'build', '--compile', dumpSource, '--outfile', dumpLauncher]);
     } else {
       await writeFile(dumpLauncher, `#!/bin/sh\nexec bun run "${dumpSource}" "$@"\n`, {
         mode: 0o755,
@@ -126,7 +126,7 @@ child.on('close', (code) => process.exit(code ?? 0));
 
   let pgRestorePath: string | undefined;
   if (restoreNeedsShim) {
-    const restoreLauncher = join(shimDir, isWindows ? 'pg_restore.cmd' : 'pg_restore');
+    const restoreLauncher = join(shimDir, isWindows ? 'pg_restore.exe' : 'pg_restore');
     const restoreSource = join(shimDir, 'restore_shim.ts');
     await writeFile(
       restoreSource,
@@ -157,7 +157,7 @@ child.on('close', (code) => {
 `,
     );
     if (isWindows) {
-      await writeFile(restoreLauncher, `@echo off\r\nbun run "${restoreSource}" %*\r\n`);
+      Bun.spawnSync(['bun', 'build', '--compile', restoreSource, '--outfile', restoreLauncher]);
     } else {
       await writeFile(restoreLauncher, `#!/bin/sh\nexec bun run "${restoreSource}" "$@"\n`, {
         mode: 0o755,
@@ -256,21 +256,34 @@ describe('restoreBackup integration and readiness lifecycle', () => {
   it('rejects concurrent restore attempt when another restore holds the lock', async () => {
     if (!reachable) return;
 
-    await setRecoveryState(databaseUrl, 'restoring');
+    const tempBackupDir = await mkdtemp(join(tmpdir(), 'orbit-lock-test-'));
     try {
+      const backupResult = await createBackup({
+        destinationDir: tempBackupDir,
+        databaseUrl,
+        pgDumpPath: resolvedPgDump,
+      });
+
+      await setRecoveryState(databaseUrl, 'restoring');
+
       await expect(
         restoreBackup({
-          backupPath: 'non_existent_path',
+          backupPath: backupResult.backupDir,
           databaseUrl,
-          confirmDestructiveRestoreTarget: computeRestoreTargetIdentity(databaseUrl).identity,
+          confirmDestructiveRestoreTarget: computeRestoreTargetIdentity(
+            databaseUrl,
+            process.env['S3_BUCKET'],
+          ).identity,
           skipRedisCheck: true,
+          pgRestorePath: resolvedPgRestore,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/Another restore operation is currently in progress/);
 
       await expect(acquireRestoreLock(databaseUrl)).rejects.toThrow(
         /Another restore operation is currently in progress/,
       );
     } finally {
+      await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
       await setRecoveryState(databaseUrl, 'ready');
     }
   });
@@ -327,6 +340,13 @@ describe('restoreBackup integration and readiness lifecycle', () => {
 
       expect(backupResult.manifest.checksums.databaseDump.bytes).toBeGreaterThan(0);
 
+      const mutateSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        await mutateSql`update organization set name = 'Mutated Org' where id = ${orgId}`;
+      } finally {
+        await mutateSql.end({ timeout: 5 });
+      }
+
       const targetIdentity = computeRestoreTargetIdentity(
         databaseUrl,
         process.env['S3_BUCKET'],
@@ -349,10 +369,11 @@ describe('restoreBackup integration and readiness lifecycle', () => {
 
       const verifySql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
       try {
-        const [orgRow] = await verifySql<{ id: string }[]>`
-          select id from organization where id = ${orgId}
+        const [orgRow] = await verifySql<{ id: string; name: string }[]>`
+          select id, name from organization where id = ${orgId}
         `;
         expect(orgRow?.id).toBe(orgId);
+        expect(orgRow?.name).toBe('Rst Org');
       } finally {
         await verifySql.end({ timeout: 5 });
       }

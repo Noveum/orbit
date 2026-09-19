@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { validationFailed } from '@orbit/shared';
 import { assertSafeKey } from '../storage/key.ts';
-import { assertContainedPath } from './checksums.ts';
+import { openValidatedFile } from './checksums.ts';
 import type { RestoreStorageOptions, RestoreStorageResult } from './types.ts';
 
 export async function restoreStorageObjects(
@@ -15,7 +14,6 @@ export async function restoreStorageObjects(
 
   for (const expected of expectedObjects) {
     const safeKey = assertSafeKey(expected.key);
-    const sourcePath = assertContainedPath(objectsDir, safeKey);
     const contentType = expected.contentType ?? 'application/octet-stream';
 
     const existingStat = await driver.stat(safeKey);
@@ -30,7 +28,14 @@ export async function restoreStorageObjects(
       }
     }
 
-    const data = await readFile(sourcePath);
+    const handle = await openValidatedFile(objectsDir, safeKey);
+    let data: Buffer;
+    try {
+      data = await handle.readFile();
+    } finally {
+      await handle.close();
+    }
+
     if (data.byteLength !== expected.bytes) {
       throw validationFailed(
         `Backup object "${expected.key}" size mismatch: expected ${expected.bytes} bytes, found ${data.byteLength} bytes.`,
