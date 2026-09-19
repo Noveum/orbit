@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { getRecoveryState, setRecoveryState } from '@orbit/services/backup';
+import { getRecoveryState, setRecoveryState } from '@orbit/services/backup/readiness';
 import { resolveTestDatabaseUrl } from '../../../../../../scripts/test-env.ts';
 import { GET } from '../../../../src/app/api/health/route.ts';
 

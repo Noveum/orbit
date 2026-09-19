@@ -1,4 +1,4 @@
-import { getRecoveryState } from '@orbit/services/backup';
+import { getRecoveryState } from '@orbit/services/backup/readiness';
 
 export const dynamic = 'force-dynamic';
 

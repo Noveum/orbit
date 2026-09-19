@@ -8,6 +8,7 @@
     "./markdown": "./src/markdown/index.ts",
     "./storage": "./src/storage/index.ts",
     "./backup": "./src/backup/index.ts",
+    "./backup/readiness": "./src/backup/readiness.ts",
     "./email": "./src/email/index.ts",
     "./github": "./src/github/index.ts",
     "./notifications": "./src/notifications/index.ts",
