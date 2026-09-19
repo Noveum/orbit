@@ -202,7 +202,7 @@ function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
 
 describe('createBackup', () => {
   beforeAll(async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     resolvedPgDump = await setupPgDump(databaseUrl);
   });
 
@@ -231,7 +231,7 @@ describe('createBackup', () => {
   });
 
   it('marks incomplete backup atomically when pg_dump fails or is missing', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
@@ -262,7 +262,7 @@ describe('createBackup', () => {
   });
 
   it('marks incomplete backup atomically when object capture fails', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -319,7 +319,7 @@ describe('createBackup', () => {
   });
 
   it('exercises a complete successful backup with database dump and storage capture', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
     const testBytes = new TextEncoder().encode('successful backup integration test payload');

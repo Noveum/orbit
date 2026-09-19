@@ -78,14 +78,12 @@ describe('validateRestore', () => {
 
   beforeAll(async () => {
     reachable = await isDatabaseReachable(databaseUrl);
-    if (!reachable) {
-      return;
-    }
+    expect(reachable).toBe(true);
     await releaseDatabase(databaseUrl, MIGRATIONS);
   });
 
   it('validates a healthy database and matching storage driver', async () => {
-    if (!reachable) return;
+    expect(reachable).toBe(true);
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const orgId = `org_val_${stamp}`;
     const userId = `usr_val_${stamp}`;
@@ -188,7 +186,7 @@ describe('validateRestore', () => {
   });
 
   it('fails validation when an organization has no members', async () => {
-    if (!reachable) return;
+    expect(reachable).toBe(true);
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const orgId = `org_unowned_${stamp}`;
 
@@ -219,7 +217,7 @@ describe('validateRestore', () => {
   });
 
   it('fails validation when configured redis endpoint is unreachable', async () => {
-    if (!reachable) return;
+    expect(reachable).toBe(true);
 
     const result = await validateRestore({
       databaseUrl,

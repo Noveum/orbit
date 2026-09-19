@@ -39,7 +39,7 @@ describe('/api/health route', () => {
   });
 
   it('returns 503 unready when target is in restoring or validation_failed state', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_web');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_web');
     const reachable = await isDatabaseReachable(databaseUrl);
     expect(reachable).toBe(true);
 
