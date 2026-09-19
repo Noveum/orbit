@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type BackupManifest, validationFailed } from '@orbit/shared';
 
@@ -13,9 +13,9 @@ export async function verifyPreMutationChecksums(
   manifest: BackupManifest,
 ): Promise<ChecksumsVerificationResult> {
   const dumpPath = join(backupDir, manifest.checksums.databaseDump.file);
-  let dumpStat: Awaited<ReturnType<typeof stat>>;
+  let dumpBytes: Buffer;
   try {
-    dumpStat = await stat(dumpPath);
+    dumpBytes = await readFile(dumpPath);
   } catch (error) {
     throw validationFailed(
       `Database dump file "${manifest.checksums.databaseDump.file}" is missing from backup directory: ${dumpPath}`,
@@ -23,13 +23,12 @@ export async function verifyPreMutationChecksums(
     );
   }
 
-  if (dumpStat.size !== manifest.checksums.databaseDump.bytes) {
+  if (dumpBytes.byteLength !== manifest.checksums.databaseDump.bytes) {
     throw validationFailed(
-      `Database dump size mismatch: expected ${manifest.checksums.databaseDump.bytes} bytes, found ${dumpStat.size} bytes.`,
+      `Database dump size mismatch: expected ${manifest.checksums.databaseDump.bytes} bytes, found ${dumpBytes.byteLength} bytes.`,
     );
   }
 
-  const dumpBytes = await readFile(dumpPath);
   const dumpSha256 = createHash('sha256').update(dumpBytes).digest('hex');
   if (dumpSha256.toLowerCase() !== manifest.checksums.databaseDump.sha256.toLowerCase()) {
     throw validationFailed(
@@ -39,9 +38,9 @@ export async function verifyPreMutationChecksums(
 
   for (const objectEntry of manifest.checksums.objects) {
     const objectPath = join(backupDir, 'objects', objectEntry.key);
-    let objStat: Awaited<ReturnType<typeof stat>>;
+    let objBytes: Buffer;
     try {
-      objStat = await stat(objectPath);
+      objBytes = await readFile(objectPath);
     } catch (error) {
       throw validationFailed(
         `Referenced backup object "${objectEntry.key}" is missing from objects directory: ${objectPath}`,
@@ -49,13 +48,12 @@ export async function verifyPreMutationChecksums(
       );
     }
 
-    if (objStat.size !== objectEntry.bytes) {
+    if (objBytes.byteLength !== objectEntry.bytes) {
       throw validationFailed(
-        `Backup object "${objectEntry.key}" size mismatch: expected ${objectEntry.bytes} bytes, found ${objStat.size} bytes.`,
+        `Backup object "${objectEntry.key}" size mismatch: expected ${objectEntry.bytes} bytes, found ${objBytes.byteLength} bytes.`,
       );
     }
 
-    const objBytes = await readFile(objectPath);
     const objSha256 = createHash('sha256').update(objBytes).digest('hex');
     if (objSha256.toLowerCase() !== objectEntry.sha256.toLowerCase()) {
       throw validationFailed(
