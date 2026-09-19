@@ -1073,6 +1073,26 @@ function checkPropertyMatch(expected: unknown, current: unknown, label: string):
   throw conflict(`Cannot undo: ${label} was changed by another update.`);
 }
 
+function checkArrayMatch(
+  expected: readonly string[] | undefined,
+  current: readonly string[],
+  label: string,
+): void {
+  if (expected === undefined) {
+    return;
+  }
+  if (expected.length !== current.length) {
+    throw conflict(`Cannot undo: ${label} was changed by another update.`);
+  }
+  const expectedSorted = [...expected].sort();
+  const currentSorted = [...current].sort();
+  for (let i = 0; i < expectedSorted.length; i++) {
+    if (expectedSorted[i] !== currentSorted[i]) {
+      throw conflict(`Cannot undo: ${label} was changed by another update.`);
+    }
+  }
+}
+
 function checkDueDateMatch(
   expected: Date | string | null | undefined,
   current: string | null,
@@ -1087,7 +1107,12 @@ function checkDueDateMatch(
   }
 }
 
-function assertExpectedIssueState(current: IssueRow, expected: IssueExpectedProperties): void {
+export function assertExpectedIssueState(
+  current: IssueRow,
+  expected: IssueExpectedProperties,
+  currentLabels: readonly string[],
+  currentReviewers: readonly string[],
+): void {
   checkPropertyMatch(expected.stateId, current.stateId, 'state');
   checkPropertyMatch(expected.assigneeId, current.assigneeId, 'assignee');
   checkPropertyMatch(expected.priority, current.priority, 'priority');
@@ -1095,7 +1120,28 @@ function assertExpectedIssueState(current: IssueRow, expected: IssueExpectedProp
   checkPropertyMatch(expected.projectId, current.projectId, 'project');
   checkPropertyMatch(expected.milestoneId, current.milestoneId, 'milestone');
   checkPropertyMatch(expected.cycleId, current.cycleId, 'sprint cycle');
+  checkPropertyMatch(expected.parentId, current.parentId, 'parent');
   checkDueDateMatch(expected.dueDate, current.dueDate);
+  checkArrayMatch(expected.labelIds, currentLabels, 'labels');
+  checkArrayMatch(expected.reviewerIds, currentReviewers, 'reviewers');
+}
+
+async function assertExpectedUpdates(
+  tx: Executor,
+  loaded: ReadonlyMap<string, IssueRow>,
+  issueIds: readonly string[],
+  expected: IssueExpectedProperties,
+): Promise<void> {
+  const labels = expected.labelIds === undefined ? null : await labelIdsByIssue(tx, issueIds);
+  const reviewers =
+    expected.reviewerIds === undefined ? null : await reviewerIdsByIssue(tx, issueIds);
+
+  for (const issueId of issueIds) {
+    const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
+    const currentLabels = labels === null ? [] : (labels.get(issueId) ?? []);
+    const currentReviewers = reviewers === null ? [] : (reviewers.get(issueId) ?? []);
+    assertExpectedIssueState(current, expected, currentLabels, currentReviewers);
+  }
 }
 
 async function applyIssueUpdates(
@@ -1105,6 +1151,9 @@ async function applyIssueUpdates(
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue[]> {
   const loaded = await loadIssues(tx, principal.organizationId, issueIds);
+  if (parsed.expected !== undefined) {
+    await assertExpectedUpdates(tx, loaded, issueIds, parsed.expected);
+  }
   if (parsed.cycleId !== undefined) {
     await lockCycleAssignmentWorkspace(tx, principal.organizationId);
     const teamIds = [...new Set([...loaded.values()].map((issue) => issue.teamId))].sort();
@@ -1118,9 +1167,6 @@ async function applyIssueUpdates(
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
     const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
-    if (parsed.expected !== undefined) {
-      assertExpectedIssueState(current, parsed.expected);
-    }
     pending.push(await pendingUpdateFor(context, current));
   }
 

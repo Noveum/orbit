@@ -18,25 +18,25 @@ export interface PropertyUndoEntry {
   readonly expectedForRedo: IssueExpectedProperties;
 }
 
+const tabUndoStack: PropertyUndoEntry[] = [];
+const tabRedoStack: PropertyUndoEntry[] = [];
+
+export function recordTabPropertyChange(entry: PropertyUndoEntry): void {
+  tabRedoStack.length = 0;
+  tabUndoStack.push(entry);
+  if (tabUndoStack.length > MAX_HISTORY) {
+    tabUndoStack.shift();
+  }
+}
+
 export function useIssuePropertyUndo() {
-  const undoStackRef = useRef<PropertyUndoEntry[]>([]);
-  const redoStackRef = useRef<PropertyUndoEntry[]>([]);
   const inFlightRef = useRef(false);
   const updateIssueMutation = useUpdateIssue();
   const { toast } = useToast();
 
-  const recordPropertyChange = useCallback((entry: PropertyUndoEntry) => {
-    redoStackRef.current = [];
-    const nextStack = [...undoStackRef.current, entry];
-    if (nextStack.length > MAX_HISTORY) {
-      nextStack.shift();
-    }
-    undoStackRef.current = nextStack;
-  }, []);
-
   const undo = useCallback(async () => {
     if (inFlightRef.current) return;
-    const entry = undoStackRef.current.pop();
+    const entry = tabUndoStack.pop();
     if (entry === undefined) return;
 
     inFlightRef.current = true;
@@ -49,17 +49,13 @@ export function useIssuePropertyUndo() {
         },
       });
 
-      redoStackRef.current.push(entry);
+      tabRedoStack.push(entry);
       toast({
         title: `Reverted ${entry.propertyLabel}`,
         tone: 'neutral',
       });
     } catch {
-      toast({
-        title: `Could not undo ${entry.propertyLabel}`,
-        description: 'The issue was modified elsewhere.',
-        tone: 'danger',
-      });
+      return;
     } finally {
       inFlightRef.current = false;
     }
@@ -67,7 +63,7 @@ export function useIssuePropertyUndo() {
 
   const redo = useCallback(async () => {
     if (inFlightRef.current) return;
-    const entry = redoStackRef.current.pop();
+    const entry = tabRedoStack.pop();
     if (entry === undefined) return;
 
     inFlightRef.current = true;
@@ -80,17 +76,13 @@ export function useIssuePropertyUndo() {
         },
       });
 
-      undoStackRef.current.push(entry);
+      tabUndoStack.push(entry);
       toast({
         title: `Restored ${entry.propertyLabel}`,
         tone: 'neutral',
       });
     } catch {
-      toast({
-        title: `Could not redo ${entry.propertyLabel}`,
-        description: 'The issue was modified elsewhere.',
-        tone: 'danger',
-      });
+      return;
     } finally {
       inFlightRef.current = false;
     }
@@ -110,7 +102,7 @@ export function useIssuePropertyUndo() {
   });
 
   return {
-    recordPropertyChange,
+    recordPropertyChange: recordTabPropertyChange,
     undo,
     redo,
   };

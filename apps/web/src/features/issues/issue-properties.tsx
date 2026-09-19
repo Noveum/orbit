@@ -27,7 +27,6 @@ import { projectsForTeam } from './project-scope.ts';
 import { PropertyMenu } from './property-menu.tsx';
 import { ReviewerAvatars } from './reviewer-avatars.tsx';
 import { StateGlyph } from './state-glyph.tsx';
-import { type PropertyUndoEntry, useIssuePropertyUndo } from './use-issue-property-undo.ts';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
 
 type MenuKey =
@@ -48,80 +47,6 @@ const rowClassName = cn(
   rowHover,
 );
 
-function buildUndoEntry(
-  issue: Issue,
-  values: Parameters<ReturnType<typeof useUpdateIssue>['mutate']>[0]['patch'],
-  label: string,
-): PropertyUndoEntry {
-  const inversePatch: Record<string, unknown> = {};
-  const expectedForUndo: Record<string, unknown> = {};
-  const expectedForRedo: Record<string, unknown> = {};
-
-  if (values.stateId !== undefined) {
-    inversePatch['stateId'] = issue.stateId;
-    expectedForUndo['stateId'] = values.stateId;
-    expectedForRedo['stateId'] = issue.stateId;
-  }
-  if (values.priority !== undefined) {
-    inversePatch['priority'] = issue.priority;
-    expectedForUndo['priority'] = values.priority;
-    expectedForRedo['priority'] = issue.priority;
-  }
-  if (values.assigneeId !== undefined) {
-    inversePatch['assigneeId'] = issue.assigneeId;
-    expectedForUndo['assigneeId'] = values.assigneeId;
-    expectedForRedo['assigneeId'] = issue.assigneeId;
-  }
-  if (values.estimate !== undefined) {
-    inversePatch['estimate'] = issue.estimate;
-    expectedForUndo['estimate'] = values.estimate;
-    expectedForRedo['estimate'] = issue.estimate;
-  }
-  if (values.projectId !== undefined) {
-    inversePatch['projectId'] = issue.projectId;
-    expectedForUndo['projectId'] = values.projectId;
-    expectedForRedo['projectId'] = issue.projectId;
-    if (issue.milestoneId !== null) {
-      inversePatch['milestoneId'] = issue.milestoneId;
-      expectedForUndo['milestoneId'] = null;
-      expectedForRedo['milestoneId'] = issue.milestoneId;
-    }
-  }
-  if (values.milestoneId !== undefined) {
-    inversePatch['milestoneId'] = issue.milestoneId;
-    expectedForUndo['milestoneId'] = values.milestoneId;
-    expectedForRedo['milestoneId'] = issue.milestoneId;
-  }
-  if (values.cycleId !== undefined) {
-    inversePatch['cycleId'] = issue.cycleId;
-    expectedForUndo['cycleId'] = values.cycleId;
-    expectedForRedo['cycleId'] = issue.cycleId;
-  }
-  if (values.dueDate !== undefined) {
-    inversePatch['dueDate'] = issue.dueDate;
-    expectedForUndo['dueDate'] = values.dueDate;
-    expectedForRedo['dueDate'] = issue.dueDate;
-  }
-  if (values.labelIds !== undefined) {
-    inversePatch['labelIds'] = [...issue.labelIds];
-  }
-  if (values.reviewerIds !== undefined) {
-    inversePatch['reviewerIds'] = [...(issue.reviewerIds ?? [])];
-  }
-  if (values.parentId !== undefined) {
-    inversePatch['parentId'] = issue.parentId;
-  }
-
-  return {
-    issue,
-    propertyLabel: label,
-    patch: values as Record<string, unknown>,
-    inversePatch,
-    expectedForUndo,
-    expectedForRedo,
-  };
-}
-
 export interface IssuePropertiesProps {
   readonly issue: Issue;
   readonly parent?: Issue | null;
@@ -131,7 +56,6 @@ export interface IssuePropertiesProps {
 export function IssueProperties({ issue, parent = null, onDeleted }: IssuePropertiesProps) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
-  const { recordPropertyChange } = useIssuePropertyUndo();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
   const states = statesForTeam(workspace.states, issue.teamId);
@@ -156,16 +80,8 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const parentLabel =
     issue.parentId === null ? 'No parent' : (parent?.identifier ?? 'Parent issue');
 
-  const patch = (values: Parameters<typeof update.mutate>[0]['patch'], label = 'Property') => {
-    const entry = buildUndoEntry(issue, values, label);
-    update.mutate(
-      { issue, patch: values },
-      {
-        onSuccess: () => {
-          recordPropertyChange(entry);
-        },
-      },
-    );
+  const patch = (values: Parameters<typeof update.mutate>[0]['patch'], _label?: string) => {
+    update.mutate({ issue, patch: values });
   };
 
   const toggle = (key: MenuKey) => (open: boolean) => setOpenMenu(open ? key : null);

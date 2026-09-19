@@ -29,6 +29,7 @@ import type {
 import { useBootstrap } from '@/lib/query/use-issues.ts';
 import { IssueDeletionProvider } from './issue-deletion.tsx';
 import { QuickCreateDialog } from './quick-create.tsx';
+import { useIssuePropertyUndo } from './use-issue-property-undo.ts';
 
 export interface WorkspaceData {
   readonly ready: boolean;
@@ -139,6 +140,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  useIssuePropertyUndo();
 
   const [now, setNow] = useState(Date.now);
   useEffect(() => {

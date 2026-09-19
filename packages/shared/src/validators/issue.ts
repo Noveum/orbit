@@ -57,6 +57,9 @@ export const issueExpectedPropertiesSchema = z
     milestoneId: idSchema.nullable().optional(),
     cycleId: idSchema.nullable().optional(),
     dueDate: calendarDateSchema.nullable().optional(),
+    parentId: idSchema.nullable().optional(),
+    labelIds: z.array(idSchema).max(50).optional(),
+    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).optional(),
   })
   .strict();
 

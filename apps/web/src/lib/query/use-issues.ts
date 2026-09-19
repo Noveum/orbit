@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
+import { recordTabPropertyChange } from '@/features/issues/use-issue-property-undo.ts';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
   issueCacheResetGeneration,
@@ -664,6 +665,109 @@ function resortTeamIssueLists(client: QueryClient, teamId: string): void {
   );
 }
 
+function resolvePropertyLabel(patch: IssuePatch): string {
+  if (patch.stateId !== undefined) return 'Status';
+  if (patch.priority !== undefined) return 'Priority';
+  if (patch.assigneeId !== undefined) return 'Assignee';
+  if (patch.estimate !== undefined) return 'Estimate';
+  if (patch.projectId !== undefined) return 'Project';
+  if (patch.milestoneId !== undefined) return 'Milestone';
+  if (patch.cycleId !== undefined) return 'Sprint';
+  if (patch.dueDate !== undefined) return 'Due date';
+  if (patch.labelIds !== undefined) return 'Labels';
+  if (patch.reviewerIds !== undefined) return 'Reviewers';
+  if (patch.parentId !== undefined) return 'Parent';
+  return 'Property';
+}
+
+function captureIssueHistory(issue: Issue, patch: IssuePatch): void {
+  if (patch.expected !== undefined) {
+    return;
+  }
+
+  const inversePatch: Record<string, unknown> = {};
+  const expectedForUndo: Record<string, unknown> = {
+    labelIds: [...issue.labelIds],
+    reviewerIds: [...(issue.reviewerIds ?? [])],
+    parentId: issue.parentId,
+  };
+  const expectedForRedo: Record<string, unknown> = {
+    labelIds: [...issue.labelIds],
+    reviewerIds: [...(issue.reviewerIds ?? [])],
+    parentId: issue.parentId,
+  };
+
+  if (patch.stateId !== undefined) {
+    inversePatch['stateId'] = issue.stateId;
+    expectedForUndo['stateId'] = patch.stateId;
+    expectedForRedo['stateId'] = issue.stateId;
+  }
+  if (patch.priority !== undefined) {
+    inversePatch['priority'] = issue.priority;
+    expectedForUndo['priority'] = patch.priority;
+    expectedForRedo['priority'] = issue.priority;
+  }
+  if (patch.assigneeId !== undefined) {
+    inversePatch['assigneeId'] = issue.assigneeId;
+    expectedForUndo['assigneeId'] = patch.assigneeId;
+    expectedForRedo['assigneeId'] = issue.assigneeId;
+  }
+  if (patch.estimate !== undefined) {
+    inversePatch['estimate'] = issue.estimate;
+    expectedForUndo['estimate'] = patch.estimate;
+    expectedForRedo['estimate'] = issue.estimate;
+  }
+  if (patch.projectId !== undefined) {
+    inversePatch['projectId'] = issue.projectId;
+    expectedForUndo['projectId'] = patch.projectId;
+    expectedForRedo['projectId'] = issue.projectId;
+    if (issue.milestoneId !== null) {
+      inversePatch['milestoneId'] = issue.milestoneId;
+      expectedForUndo['milestoneId'] = null;
+      expectedForRedo['milestoneId'] = issue.milestoneId;
+    }
+  }
+  if (patch.milestoneId !== undefined) {
+    inversePatch['milestoneId'] = issue.milestoneId;
+    expectedForUndo['milestoneId'] = patch.milestoneId;
+    expectedForRedo['milestoneId'] = issue.milestoneId;
+  }
+  if (patch.cycleId !== undefined) {
+    inversePatch['cycleId'] = issue.cycleId;
+    expectedForUndo['cycleId'] = patch.cycleId;
+    expectedForRedo['cycleId'] = issue.cycleId;
+  }
+  if (patch.dueDate !== undefined) {
+    inversePatch['dueDate'] = issue.dueDate;
+    expectedForUndo['dueDate'] = patch.dueDate;
+    expectedForRedo['dueDate'] = issue.dueDate;
+  }
+  if (patch.labelIds !== undefined) {
+    inversePatch['labelIds'] = [...issue.labelIds];
+    expectedForUndo['labelIds'] = [...patch.labelIds];
+    expectedForRedo['labelIds'] = [...issue.labelIds];
+  }
+  if (patch.reviewerIds !== undefined) {
+    inversePatch['reviewerIds'] = [...(issue.reviewerIds ?? [])];
+    expectedForUndo['reviewerIds'] = [...patch.reviewerIds];
+    expectedForRedo['reviewerIds'] = [...(issue.reviewerIds ?? [])];
+  }
+  if (patch.parentId !== undefined) {
+    inversePatch['parentId'] = issue.parentId;
+    expectedForUndo['parentId'] = patch.parentId;
+    expectedForRedo['parentId'] = issue.parentId;
+  }
+
+  recordTabPropertyChange({
+    issue,
+    propertyLabel: resolvePropertyLabel(patch),
+    patch: patch as Record<string, unknown>,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  });
+}
+
 export function useUpdateIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -677,6 +781,8 @@ export function useUpdateIssue() {
       return result.issue;
     },
     onMutate: async (input) => {
+      captureIssueHistory(input.issue, input.patch);
+
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
         client.cancelQueries({ queryKey: [ISSUES_ROOT] }),

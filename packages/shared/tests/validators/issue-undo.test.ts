@@ -9,6 +9,9 @@ describe('issue property undo preconditions', () => {
         stateId: 'state_in_progress',
         priority: 1,
         assigneeId: null,
+        parentId: 'parent_1',
+        labelIds: ['label_1', 'label_2'],
+        reviewerIds: ['user_1'],
       },
     });
     expect(parsed.success).toBe(true);
@@ -29,10 +32,12 @@ describe('issue property undo preconditions', () => {
       assigneeId: null,
       milestoneId: null,
       projectId: null,
+      parentId: null,
     });
     expect(parsed.assigneeId).toBeNull();
     expect(parsed.milestoneId).toBeNull();
     expect(parsed.projectId).toBeNull();
+    expect(parsed.parentId).toBeNull();
   });
 
   it('validates priority bounds within expected preconditions', () => {
@@ -51,5 +56,19 @@ describe('issue property undo preconditions', () => {
         priority: 5,
       }).success,
     ).toBe(false);
+  });
+
+  it('enforces bounds on label and reviewer expected arrays', () => {
+    expect(
+      issueExpectedPropertiesSchema.safeParse({
+        labelIds: Array.from({ length: 51 }, (_, i) => `label_${i}`),
+      }).success,
+    ).toBe(false);
+    expect(
+      issueExpectedPropertiesSchema.safeParse({
+        labelIds: ['label_1', 'label_2'],
+        reviewerIds: ['user_1'],
+      }).success,
+    ).toBe(true);
   });
 });
