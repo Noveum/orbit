@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import {
   channelTypeKey,
   NotificationChannels,
@@ -39,6 +40,21 @@ function renderChannels(
       urgentBypassEnabled
       slackDm={slackDm}
     />,
+  );
+}
+
+function renderChannelsStrictly(disabledKeys: string[]): void {
+  render(
+    <StrictMode>
+      <NotificationChannels
+        disabledKeys={disabledKeys}
+        quietHoursEnabled
+        quietHoursStart="18:00"
+        quietHoursEnd="09:00"
+        urgentBypassEnabled
+        slackDm="available"
+      />
+    </StrictMode>,
   );
 }
 
@@ -334,6 +350,22 @@ describe('NotificationChannels', () => {
       expect(sentBody).not.toBeNull();
     });
     expect(disabledAfterSave()).toEqual([]);
+  });
+
+  it('restores the earlier picks under a double invoked state updater', async () => {
+    const user = userEvent.setup();
+    renderChannelsStrictly([channelTypeKey('email', 'mention')]);
+
+    await user.click(screen.getByLabelText('Email notifications'));
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+    expect(await screen.findByText('Notification preferences saved.')).toBeVisible();
+
+    await user.click(screen.getByLabelText('Email notifications'));
+    await user.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => {
+      expect(disabledAfterSave()).toEqual([channelTypeKey('email', 'mention')]);
+    });
   });
 
   it('does not call a stale save current when a channel changes while the request is in flight', async () => {

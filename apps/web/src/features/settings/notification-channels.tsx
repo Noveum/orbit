@@ -148,14 +148,16 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   function setChannelEnabled(channel: NotificationChannel, enabled: boolean): void {
     if (isLocked(channel)) return;
     const keys = channelKeys(channel);
-    apply((next) => {
-      if (!enabled) {
+    if (!enabled) {
+      apply((next) => {
         remembered.current.set(channel, new Set(keys.filter((key) => next.has(key))));
         for (const key of keys) next.add(key);
-        return;
-      }
-      const previous = remembered.current.get(channel);
-      remembered.current.delete(channel);
+      });
+      return;
+    }
+    const previous = remembered.current.get(channel);
+    remembered.current.delete(channel);
+    apply((next) => {
       for (const key of keys) {
         if (previous?.has(key) === true) continue;
         next.delete(key);
