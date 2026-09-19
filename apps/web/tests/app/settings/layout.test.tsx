@@ -1,35 +1,24 @@
+process.env['BETTER_AUTH_SECRET'] = 'test-secret-value-32-chars-minimum-length-spec';
+
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import * as navigation from 'next/navigation';
 import type { MembershipContext } from '@/lib/auth/principal.ts';
 import type { ActiveSession } from '@/lib/auth/session.ts';
 
+const { mockMembership, mockSession } = await import('../../../tests-support.ts');
+const { HotkeyProvider } = await import('@/lib/keyboard/index.ts');
+
 const sessionHolder: { value: ActiveSession | null } = { value: null };
 const membershipHolder: { value: MembershipContext | null } = { value: null };
 
-mock.module('@/lib/auth/session.ts', () => ({
-  requireSession: async () => {
-    await Promise.resolve();
-    if (sessionHolder.value === null) throw new Error('redirect:/login');
-    return sessionHolder.value;
-  },
-}));
-
-mock.module('@/lib/auth/principal.ts', () => ({
-  resolveMembership: async () => {
-    await Promise.resolve();
-    return membershipHolder.value;
-  },
-}));
+mockSession(() => sessionHolder.value);
+mockMembership(() => membershipHolder.value);
 
 mock.module('next/navigation', () => ({
   ...navigation,
   usePathname: () => '/settings/general',
 }));
-
-import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-
-process.env['BETTER_AUTH_SECRET'] = 'test-secret-value-32-chars-minimum-length-spec';
 
 const { default: SettingsLayout } = await import('@/app/(app)/settings/layout.tsx');
 
