@@ -3,7 +3,13 @@ import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from './check-drift.ts';
+import {
+  type Catalog,
+  catalogDriftBetween,
+  expectedCatalog,
+  isBehind,
+  liveCatalog,
+} from './check-drift.ts';
 import * as schema from './schema/index.ts';
 
 interface LedgerRow {
@@ -347,6 +353,21 @@ function declaredTableCount(live: Awaited<ReturnType<typeof liveCatalog>>): numb
   return live.tables.filter((table) => expectedNames.has(table.name)).length;
 }
 
+const DROP_TABLE_STATEMENT = /^\s*drop\s+table\s+(?:if\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/iu;
+
+function pendingMigrationsDropLiveTables(
+  migrations: readonly MigrationMeta[],
+  live: Catalog,
+): boolean {
+  const liveTables = new Set(live.tables.map((table) => table.name));
+  return migrations.some((migration) =>
+    migration.sql.some((statement) => {
+      const match = DROP_TABLE_STATEMENT.exec(statement);
+      return match?.[1] !== undefined && liveTables.has(match[1].toLowerCase());
+    }),
+  );
+}
+
 export async function releaseDatabase(
   url: string,
   migrationsFolder: string,
@@ -383,7 +404,10 @@ export async function releaseDatabase(
     const rows = await ledgerRows(sql);
     const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
-      if (isBehind(beforeDrift)) {
+      if (
+        isBehind(beforeDrift) ||
+        pendingMigrationsDropLiveTables(migrations.slice(rows.length), before)
+      ) {
         await migrate(drizzle({ client: sql }), { migrationsFolder });
         applied = pending;
         mode = 'migrated';
