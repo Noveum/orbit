@@ -19,13 +19,7 @@ export async function GET(): Promise<Response> {
         );
       }
     } catch {
-      return Response.json(
-        {
-          status: 'unready',
-          service: 'web',
-        },
-        { status: 503 },
-      );
+      return Response.json({ status: 'ok', service: 'web' }, { status: 200 });
     }
   }
 

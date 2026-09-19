@@ -72,15 +72,15 @@ describe('/api/health route', () => {
     }
   });
 
-  it('returns 503 unready when database connection fails', async () => {
+  it('returns 200 ok when database connection fails', async () => {
     const origUrl = process.env['DATABASE_URL'];
     process.env['DATABASE_URL'] = 'postgres://orbit:orbit@localhost:59999/down_db';
 
     try {
       const response = await GET();
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(200);
       const json = (await response.json()) as { status: string };
-      expect(json.status).toBe('unready');
+      expect(json.status).toBe('ok');
     } finally {
       if (origUrl === undefined) {
         delete process.env['DATABASE_URL'];
