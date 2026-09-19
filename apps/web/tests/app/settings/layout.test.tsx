@@ -1,6 +1,7 @@
-process.env['BETTER_AUTH_SECRET'] = 'test-secret-value-32-chars-minimum-length-spec';
+const originalAuthSecret = process.env['BETTER_AUTH_SECRET'];
+process.env['BETTER_AUTH_SECRET'] ??= 'test-secret-value-32-chars-minimum-length-spec';
 
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import * as navigation from 'next/navigation';
 import type { MembershipContext } from '@/lib/auth/principal.ts';
@@ -27,6 +28,11 @@ function renderLayout(ui: React.ReactNode) {
 }
 
 describe('SettingsLayout', () => {
+  afterAll(() => {
+    if (originalAuthSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+    else process.env['BETTER_AUTH_SECRET'] = originalAuthSecret;
+  });
+
   beforeEach(() => {
     const now = new Date();
     sessionHolder.value = {
@@ -75,8 +81,10 @@ describe('SettingsLayout', () => {
   });
 
   it('hides AI provider link and sets canManageAi to false when workspace deletion is pending', async () => {
+    const current = membershipHolder.value;
+    if (current === null) throw new Error('membership expected');
     membershipHolder.value = {
-      ...membershipHolder.value!,
+      ...current,
       deletionRequestedAt: new Date(),
     };
 
