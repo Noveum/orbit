@@ -119,6 +119,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       options.pgRestorePath,
       compatibility.pendingMigrationsCount,
     );
+    await setRecoveryState(databaseUrl, 'restoring');
 
     let objectsReconciled = 0;
     if (driver !== undefined) {
