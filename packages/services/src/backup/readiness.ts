@@ -1,5 +1,44 @@
-import type { RestoreRecoveryState } from '@orbit/shared';
+import {
+  type RestoreRecoveryState,
+  restoreRecoveryStateSchema,
+  validationFailed,
+} from '@orbit/shared';
 import postgres from 'postgres';
+
+export async function acquireRestoreLock(databaseUrl: string): Promise<void> {
+  const sql = postgres(databaseUrl, {
+    max: 1,
+    connect_timeout: 5,
+    idle_timeout: 5,
+    prepare: false,
+    onnotice: (_notice) => undefined,
+  });
+  try {
+    await sql`
+      create table if not exists public.orbit_recovery_state (
+        id text primary key,
+        status text not null check (status in ('restoring', 'validation_failed', 'ready')),
+        error text,
+        updated_at timestamptz not null default now()
+      )
+    `;
+    const result = await sql<{ id: string }[]>`
+      insert into public.orbit_recovery_state (id, status, error, updated_at)
+      values ('readiness', 'restoring', null, now())
+      on conflict (id) do update set
+        status = 'restoring',
+        error = null,
+        updated_at = now()
+      where public.orbit_recovery_state.status != 'restoring'
+      returning id
+    `;
+    if (result.length === 0) {
+      throw validationFailed('Another restore operation is currently in progress.');
+    }
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
 
 export async function setRecoveryState(
   databaseUrl: string,
@@ -17,7 +56,7 @@ export async function setRecoveryState(
     await sql`
       create table if not exists public.orbit_recovery_state (
         id text primary key,
-        status text not null,
+        status text not null check (status in ('restoring', 'validation_failed', 'ready')),
         error text,
         updated_at timestamptz not null default now()
       )
@@ -65,12 +104,12 @@ export async function getRecoveryState(databaseUrl: string): Promise<RestoreReco
       return null;
     }
 
-    return {
-      id: 'readiness',
-      status: row.status as 'restoring' | 'validation_failed' | 'ready',
+    return restoreRecoveryStateSchema.parse({
+      id: row.id,
+      status: row.status,
       error: row.error,
       updatedAt: row.updated_at,
-    };
+    });
   } finally {
     await sql.end({ timeout: 5 });
   }

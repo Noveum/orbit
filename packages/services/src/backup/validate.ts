@@ -28,22 +28,34 @@ function pingRedis(endpoint: string): Promise<boolean> {
     const host = parsed.hostname.length > 0 ? parsed.hostname : '127.0.0.1';
     const port = parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 6379;
     const socket = createConnection({ host, port });
+    let settled = false;
+    const settle = (result: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
     socket.setTimeout(2000);
     socket.on('connect', () => {
       socket.write('PING\r\n');
     });
     socket.on('data', (chunk) => {
       const text = chunk.toString('utf8');
-      socket.destroy();
-      resolve(text.includes('PONG'));
+      settle(text.includes('PONG'));
     });
     socket.on('error', () => {
-      socket.destroy();
-      resolve(false);
+      settle(false);
     });
     socket.on('timeout', () => {
-      socket.destroy();
-      resolve(false);
+      settle(false);
+    });
+    socket.on('end', () => {
+      settle(false);
+    });
+    socket.on('close', () => {
+      settle(false);
     });
   });
 }
@@ -497,6 +509,9 @@ export async function validateRestore(
   const redisEndpoint = redisUrl ?? process.env['REDIS_URL'];
   if (skipRedisCheck !== true && redisEndpoint !== undefined && redisEndpoint.length > 0) {
     redisTested = await pingRedis(redisEndpoint);
+    if (!redisTested) {
+      allErrors.push(`Failed to ping configured Redis endpoint: ${redisEndpoint}`);
+    }
   }
 
   const valid = allErrors.length === 0;

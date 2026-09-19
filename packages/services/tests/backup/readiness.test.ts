@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import postgres from 'postgres';
 import { resolveTestDatabaseUrl } from '../../../../scripts/test-env.ts';
-import { getRecoveryState, setRecoveryState } from '../../src/backup/readiness.ts';
+import {
+  acquireRestoreLock,
+  getRecoveryState,
+  setRecoveryState,
+} from '../../src/backup/readiness.ts';
 
 async function isDatabaseReachable(url: string): Promise<boolean> {
   try {
@@ -24,7 +28,7 @@ describe('readiness state management', () => {
   }, 10_000);
 
   it('sets and retrieves recovery state when database is reachable', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     const reachable = await isDatabaseReachable(databaseUrl);
     if (!reachable) return;
 
@@ -41,5 +45,24 @@ describe('readiness state management', () => {
     await setRecoveryState(databaseUrl, 'ready');
     state = await getRecoveryState(databaseUrl);
     expect(state?.status).toBe('ready');
+  });
+
+  it('acquires restore lock exclusively and rejects concurrent restore attempts', async () => {
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const reachable = await isDatabaseReachable(databaseUrl);
+    if (!reachable) return;
+
+    await setRecoveryState(databaseUrl, 'ready');
+    await acquireRestoreLock(databaseUrl);
+    const state = await getRecoveryState(databaseUrl);
+    expect(state?.status).toBe('restoring');
+
+    await expect(acquireRestoreLock(databaseUrl)).rejects.toThrow(
+      /Another restore operation is currently in progress/,
+    );
+
+    await setRecoveryState(databaseUrl, 'ready');
+    await expect(acquireRestoreLock(databaseUrl)).resolves.toBeUndefined();
+    await setRecoveryState(databaseUrl, 'ready');
   });
 });

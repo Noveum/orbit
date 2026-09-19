@@ -13,7 +13,7 @@ describe('restoreTargetIdentitySchema and computeRestoreTargetIdentity', () => {
     expect(target.port).toBe('5432');
     expect(target.database).toBe('orbit');
     expect(target.bucket).toBeUndefined();
-    expect(target.identity).toBe('db.example.com:5432/orbit');
+    expect(target.identity).toBe('db.example.com:5432/db/orbit');
     expect(target.identity).not.toContain('secret');
     expect(target.identity).not.toContain('user');
     expect(restoreTargetIdentitySchema.safeParse(target).success).toBe(true);
@@ -28,7 +28,7 @@ describe('restoreTargetIdentitySchema and computeRestoreTargetIdentity', () => {
     expect(target.port).toBe('5434');
     expect(target.database).toBe('orbit_test');
     expect(target.bucket).toBe('orbit-uploads-bucket');
-    expect(target.identity).toBe('localhost:5434/orbit_test:orbit-uploads-bucket');
+    expect(target.identity).toBe('localhost:5434/db/orbit_test#bucket:orbit-uploads-bucket');
     expect(target.identity).not.toContain('password');
     expect(restoreTargetIdentitySchema.safeParse(target).success).toBe(true);
   });

@@ -3,7 +3,7 @@ import { getRecoveryState } from '@orbit/services/backup/readiness';
 export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<Response> {
-  const databaseUrl = process.env['DATABASE_URL'] ?? process.env['DIRECT_URL'];
+  const databaseUrl = process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'];
 
   if (databaseUrl !== undefined && databaseUrl.length > 0) {
     try {
@@ -19,7 +19,7 @@ export async function GET(): Promise<Response> {
         );
       }
     } catch {
-      return Response.json({ status: 'ok', service: 'web' }, { status: 200 });
+      return Response.json({ status: 'unready', service: 'web' }, { status: 503 });
     }
   }
 

@@ -82,7 +82,16 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
   const sanitizedUrl = parsed.toString();
 
   const binary = pgDumpPath ?? process.env['PG_DUMP_PATH'] ?? 'pg_dump';
-  const args = ['-Fc', '--no-owner', '--no-acl', '-d', sanitizedUrl, `--snapshot=${snapshotId}`];
+  const args = [
+    '-Fc',
+    '--no-owner',
+    '--no-acl',
+    '--exclude-table=public.orbit_recovery_state',
+    '--exclude-table=orbit_recovery_state',
+    '-d',
+    sanitizedUrl,
+    `--snapshot=${snapshotId}`,
+  ];
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,

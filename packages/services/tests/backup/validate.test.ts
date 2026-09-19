@@ -8,6 +8,18 @@ import type { StorageDriver, StoredObject, UploadTarget } from '../../src/storag
 
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
 
+async function isDatabaseReachable(url: string): Promise<boolean> {
+  const sql = postgres(url, { max: 1, connect_timeout: 2, idle_timeout: 2, prepare: false });
+  try {
+    await sql`select 1`;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+}
+
 function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
   return {
     name: 's3',
@@ -62,11 +74,18 @@ function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
 describe('validateRestore', () => {
   const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
 
+  let reachable = false;
+
   beforeAll(async () => {
+    reachable = await isDatabaseReachable(databaseUrl);
+    if (!reachable) {
+      return;
+    }
     await releaseDatabase(databaseUrl, MIGRATIONS);
   });
 
   it('validates a healthy database and matching storage driver', async () => {
+    if (!reachable) return;
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const orgId = `org_val_${stamp}`;
     const userId = `usr_val_${stamp}`;
@@ -120,6 +139,7 @@ describe('validateRestore', () => {
   });
 
   it('fails validation when referenced attachment object is missing in storage driver', async () => {
+    if (!reachable) return;
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const orgId = `org_miss_${stamp}`;
     const userId = `usr_miss_${stamp}`;
@@ -168,6 +188,7 @@ describe('validateRestore', () => {
   });
 
   it('fails validation when an organization has no members', async () => {
+    if (!reachable) return;
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const orgId = `org_unowned_${stamp}`;
 
@@ -195,5 +216,22 @@ describe('validateRestore', () => {
         await cleanupSql.end({ timeout: 5 });
       }
     }
+  });
+
+  it('fails validation when configured redis endpoint is unreachable', async () => {
+    if (!reachable) return;
+
+    const result = await validateRestore({
+      databaseUrl,
+      migrationsFolder: MIGRATIONS,
+      redisUrl: 'redis://127.0.0.1:59999',
+      skipRedisCheck: false,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.redis.tested).toBe(false);
+    expect(result.errors.some((e) => e.includes('Failed to ping configured Redis endpoint'))).toBe(
+      true,
+    );
   });
 });
