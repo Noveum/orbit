@@ -28,9 +28,9 @@ describe('readiness state management', () => {
   }, 10_000);
 
   it('sets and retrieves recovery state when database is reachable', async () => {
-    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
     const reachable = await isDatabaseReachable(databaseUrl);
-    if (!reachable) return;
+    expect(reachable).toBe(true);
 
     await setRecoveryState(databaseUrl, 'restoring');
     let state = await getRecoveryState(databaseUrl);
@@ -48,9 +48,9 @@ describe('readiness state management', () => {
   });
 
   it('acquires restore lock exclusively and rejects concurrent restore attempts', async () => {
-    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
     const reachable = await isDatabaseReachable(databaseUrl);
-    if (!reachable) return;
+    expect(reachable).toBe(true);
 
     await setRecoveryState(databaseUrl, 'ready');
     await acquireRestoreLock(databaseUrl);
