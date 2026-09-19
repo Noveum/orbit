@@ -122,3 +122,93 @@ export function validateConfigurationSafety(config: Record<string, string>): voi
     }
   }
 }
+
+export const restoreTargetIdentitySchema = z.object({
+  host: z.string().min(1),
+  port: z.string().min(1),
+  database: z.string().min(1),
+  bucket: z.string().optional(),
+  identity: z.string().min(1),
+});
+
+export type RestoreTargetIdentity = z.infer<typeof restoreTargetIdentitySchema>;
+
+export function computeRestoreTargetIdentity(
+  databaseUrl: string,
+  bucket?: string | undefined,
+): RestoreTargetIdentity {
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch (error) {
+    throw validationFailed('Invalid database connection URL for restore target.', { cause: error });
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const port = parsed.port.length > 0 ? parsed.port : '5432';
+  const database = parsed.pathname.replace(/^\//, '');
+  const trimmedBucket = bucket?.trim();
+
+  if (host.length === 0 || database.length === 0) {
+    throw validationFailed('DATABASE_URL must include host and database name for restore target.');
+  }
+
+  const identity =
+    trimmedBucket !== undefined && trimmedBucket.length > 0
+      ? `${host}:${port}/${database}:${trimmedBucket}`
+      : `${host}:${port}/${database}`;
+
+  return {
+    host,
+    port,
+    database,
+    ...(trimmedBucket !== undefined && trimmedBucket.length > 0 ? { bucket: trimmedBucket } : {}),
+    identity,
+  };
+}
+
+export const restoreValidationResultSchema = z.object({
+  valid: z.boolean(),
+  migrationStatus: z.object({
+    ledgerCount: z.number().int().nonnegative(),
+    isBehind: z.boolean(),
+    databaseVersion: z.string().min(1),
+  }),
+  integrity: z.object({
+    organizations: z.number().int().nonnegative(),
+    users: z.number().int().nonnegative(),
+    members: z.number().int().nonnegative(),
+    teams: z.number().int().nonnegative(),
+    issues: z.number().int().nonnegative(),
+    docs: z.number().int().nonnegative(),
+    attachments: z.number().int().nonnegative(),
+    mcpGrants: z.number().int().nonnegative(),
+    referentialIntegrityPassed: z.boolean(),
+  }),
+  storage: z.object({
+    checkedObjects: z.number().int().nonnegative(),
+    missingObjects: z.number().int().nonnegative(),
+    sizeMismatches: z.number().int().nonnegative(),
+  }),
+  auth: z.object({
+    accountsCount: z.number().int().nonnegative(),
+    bootstrapWindowClosed: z.boolean(),
+  }),
+  redis: z.object({
+    tested: z.boolean(),
+    emptyStartSafe: z.boolean(),
+  }),
+  durationMs: z.number().nonnegative(),
+  errors: z.array(z.string()).default([]),
+});
+
+export type RestoreValidationResult = z.infer<typeof restoreValidationResultSchema>;
+
+export const restoreRecoveryStateSchema = z.object({
+  id: z.literal('readiness'),
+  status: z.enum(['restoring', 'validation_failed', 'ready']),
+  error: z.string().nullable().optional(),
+  updatedAt: z.string(),
+});
+
+export type RestoreRecoveryState = z.infer<typeof restoreRecoveryStateSchema>;

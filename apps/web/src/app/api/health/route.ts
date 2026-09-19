@@ -1,5 +1,33 @@
+import { getRecoveryState } from '@orbit/services/backup';
+
 export const dynamic = 'force-dynamic';
 
-export function GET(): Response {
-  return Response.json({ status: 'ok', service: 'web' });
+export async function GET(): Promise<Response> {
+  const databaseUrl = process.env['DATABASE_URL'] ?? process.env['DIRECT_URL'];
+
+  if (databaseUrl !== undefined && databaseUrl.length > 0) {
+    try {
+      const recoveryState = await getRecoveryState(databaseUrl);
+      if (recoveryState !== null && recoveryState.status !== 'ready') {
+        return Response.json(
+          {
+            status: 'unready',
+            service: 'web',
+            recovery: recoveryState.status,
+          },
+          { status: 503 },
+        );
+      }
+    } catch {
+      return Response.json(
+        {
+          status: 'unready',
+          service: 'web',
+        },
+        { status: 503 },
+      );
+    }
+  }
+
+  return Response.json({ status: 'ok', service: 'web' }, { status: 200 });
 }
