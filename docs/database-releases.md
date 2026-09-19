@@ -3,6 +3,12 @@
 Development databases use `bun run db:push`. Production databases use ordered,
 immutable migrations through `bun run db:release`.
 
+`db:push` is not a substitute for a migration when a change adds a constraint to a
+table that already exists. `drizzle-kit push` does not diff check constraints on
+existing tables, so the constraint is silently never added, while a fresh database
+built from the same schema does have it. Generate and release a migration for
+constraint changes, and run `db:check-drift` to confirm the catalog really has them.
+
 ## Before merging a schema change
 
 1. Generate and commit the Drizzle migration and metadata.
@@ -23,8 +29,8 @@ applies pending migrations transactionally, and checks the resulting catalog.
 
 The catalog check covers required tables, columns, PostgreSQL types, nullability,
 database defaults, generated columns, primary keys, index definitions, foreign-key
-targets and delete actions, and enum values. Additional tables, indexes and foreign
-keys are reported but preserved.
+targets and delete actions, enum values, and check constraints. Additional tables,
+indexes, foreign keys and check constraints are reported but preserved.
 
 ## Existing databases without a ledger
 

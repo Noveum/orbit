@@ -232,6 +232,53 @@ describe('database release', () => {
     ]);
   }, 60_000);
 
+  it('runs a pending migration that only adds a check instead of baselining it away', async () => {
+    await resetScratch();
+    await migrateScratch();
+    const source = await readFile(join(MIGRATIONS, '0021_mixed_dust.sql'), 'utf8');
+    const statement = source
+      .split('--> statement-breakpoint')
+      .map((part) => part.trim())
+      .find((part) => part.includes('ADD CONSTRAINT "github_pull_request_head_epoch_check"'));
+    expect(statement).toBeDefined();
+
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table github_pull_request drop constraint github_pull_request_head_epoch_check`;
+    });
+
+    const folder = await mkdtemp(join(tmpdir(), 'orbit-release-pending-check-'));
+    await cp(MIGRATIONS, folder, { recursive: true });
+    const journalPath = join(folder, 'meta', '_journal.json');
+    const journal = migrationJournalSchema.parse(JSON.parse(await readFile(journalPath, 'utf8')));
+    const last = journal.entries.at(-1);
+    if (last === undefined) throw new Error('the migration journal has no entries to build on');
+    const tag = '9999_release_pending_check_probe';
+    journal.entries.push({
+      idx: last.idx + 1,
+      version: last.version,
+      when: last.when + 1,
+      tag,
+      breakpoints: true,
+    });
+    await writeFile(journalPath, JSON.stringify(journal, null, 2));
+    await writeFile(join(folder, `${tag}.sql`), `${statement ?? ''}\n`);
+
+    let mode = '';
+    try {
+      mode = (await releaseDatabase(urlFor(SCRATCH), folder)).mode;
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+
+    expect(mode).toBe('migrated');
+    const constraint = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql`select convalidated from pg_constraint where conname = 'github_pull_request_head_epoch_check'`,
+    );
+    expect([...constraint]).toEqual([{ convalidated: true }]);
+  }, 60_000);
+
   it('restores deferred audit triggers while baselining a schema-pushed catalog', async () => {
     await resetScratch();
     await migrateScratch();
