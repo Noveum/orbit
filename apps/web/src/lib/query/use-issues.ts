@@ -2,6 +2,7 @@
 
 import { decodeFilter, hasCurrentSprintFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
+import type { IssueExpectedProperties } from '@orbit/shared/validators';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import {
   keepPreviousData,
@@ -82,7 +83,7 @@ import {
   withoutSubIssue,
 } from './sync.ts';
 
-export type { IssueQuery };
+export type { Issue, IssueQuery };
 export {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
@@ -391,6 +392,7 @@ export interface IssuePatch {
   readonly dueDate?: string | null;
   readonly estimate?: number | null;
   readonly labelIds?: readonly string[];
+  readonly expected?: IssueExpectedProperties;
 }
 
 function reconcile(

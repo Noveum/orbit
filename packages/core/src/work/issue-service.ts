@@ -23,6 +23,7 @@ import {
 } from '@orbit/shared/utils';
 import {
   duplicateIssueQuerySchema,
+  type IssueExpectedProperties,
   type IssueFilterInput,
   issueBulkUpdateSchema,
   issueCreateSchema,
@@ -1055,6 +1056,48 @@ async function subscribeChangedReviewers(
     });
 }
 
+function formatExpectedDueDate(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+}
+
+function checkPropertyMatch(expected: unknown, current: unknown, label: string): void {
+  if (expected === undefined || current === expected) {
+    return;
+  }
+  throw conflict(`Cannot undo: ${label} was changed by another update.`);
+}
+
+function checkDueDateMatch(
+  expected: Date | string | null | undefined,
+  current: string | null,
+): void {
+  if (expected === undefined) {
+    return;
+  }
+  const currentIso = current === null ? null : current.slice(0, 10);
+  const expectedIso = formatExpectedDueDate(expected);
+  if (currentIso !== expectedIso) {
+    throw conflict('Cannot undo: due date was changed by another update.');
+  }
+}
+
+function assertExpectedIssueState(current: IssueRow, expected: IssueExpectedProperties): void {
+  checkPropertyMatch(expected.stateId, current.stateId, 'state');
+  checkPropertyMatch(expected.assigneeId, current.assigneeId, 'assignee');
+  checkPropertyMatch(expected.priority, current.priority, 'priority');
+  checkPropertyMatch(expected.estimate, current.estimate, 'estimate');
+  checkPropertyMatch(expected.projectId, current.projectId, 'project');
+  checkPropertyMatch(expected.milestoneId, current.milestoneId, 'milestone');
+  checkPropertyMatch(expected.cycleId, current.cycleId, 'sprint cycle');
+  checkDueDateMatch(expected.dueDate, current.dueDate);
+}
+
 async function applyIssueUpdates(
   tx: Executor,
   principal: Principal,
@@ -1075,6 +1118,9 @@ async function applyIssueUpdates(
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
     const current = requireRow(loaded.get(issueId), 'That issue does not exist.');
+    if (parsed.expected !== undefined) {
+      assertExpectedIssueState(current, parsed.expected);
+    }
     pending.push(await pendingUpdateFor(context, current));
   }
 

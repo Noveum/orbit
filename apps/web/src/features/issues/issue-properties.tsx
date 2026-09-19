@@ -27,6 +27,7 @@ import { projectsForTeam } from './project-scope.ts';
 import { PropertyMenu } from './property-menu.tsx';
 import { ReviewerAvatars } from './reviewer-avatars.tsx';
 import { StateGlyph } from './state-glyph.tsx';
+import { type PropertyUndoEntry, useIssuePropertyUndo } from './use-issue-property-undo.ts';
 import { statesForTeam, useWorkspace } from './workspace-provider.tsx';
 
 type MenuKey =
@@ -47,6 +48,80 @@ const rowClassName = cn(
   rowHover,
 );
 
+function buildUndoEntry(
+  issue: Issue,
+  values: Parameters<ReturnType<typeof useUpdateIssue>['mutate']>[0]['patch'],
+  label: string,
+): PropertyUndoEntry {
+  const inversePatch: Record<string, unknown> = {};
+  const expectedForUndo: Record<string, unknown> = {};
+  const expectedForRedo: Record<string, unknown> = {};
+
+  if (values.stateId !== undefined) {
+    inversePatch['stateId'] = issue.stateId;
+    expectedForUndo['stateId'] = values.stateId;
+    expectedForRedo['stateId'] = issue.stateId;
+  }
+  if (values.priority !== undefined) {
+    inversePatch['priority'] = issue.priority;
+    expectedForUndo['priority'] = values.priority;
+    expectedForRedo['priority'] = issue.priority;
+  }
+  if (values.assigneeId !== undefined) {
+    inversePatch['assigneeId'] = issue.assigneeId;
+    expectedForUndo['assigneeId'] = values.assigneeId;
+    expectedForRedo['assigneeId'] = issue.assigneeId;
+  }
+  if (values.estimate !== undefined) {
+    inversePatch['estimate'] = issue.estimate;
+    expectedForUndo['estimate'] = values.estimate;
+    expectedForRedo['estimate'] = issue.estimate;
+  }
+  if (values.projectId !== undefined) {
+    inversePatch['projectId'] = issue.projectId;
+    expectedForUndo['projectId'] = values.projectId;
+    expectedForRedo['projectId'] = issue.projectId;
+    if (issue.milestoneId !== null) {
+      inversePatch['milestoneId'] = issue.milestoneId;
+      expectedForUndo['milestoneId'] = null;
+      expectedForRedo['milestoneId'] = issue.milestoneId;
+    }
+  }
+  if (values.milestoneId !== undefined) {
+    inversePatch['milestoneId'] = issue.milestoneId;
+    expectedForUndo['milestoneId'] = values.milestoneId;
+    expectedForRedo['milestoneId'] = issue.milestoneId;
+  }
+  if (values.cycleId !== undefined) {
+    inversePatch['cycleId'] = issue.cycleId;
+    expectedForUndo['cycleId'] = values.cycleId;
+    expectedForRedo['cycleId'] = issue.cycleId;
+  }
+  if (values.dueDate !== undefined) {
+    inversePatch['dueDate'] = issue.dueDate;
+    expectedForUndo['dueDate'] = values.dueDate;
+    expectedForRedo['dueDate'] = issue.dueDate;
+  }
+  if (values.labelIds !== undefined) {
+    inversePatch['labelIds'] = [...issue.labelIds];
+  }
+  if (values.reviewerIds !== undefined) {
+    inversePatch['reviewerIds'] = [...(issue.reviewerIds ?? [])];
+  }
+  if (values.parentId !== undefined) {
+    inversePatch['parentId'] = issue.parentId;
+  }
+
+  return {
+    issue,
+    propertyLabel: label,
+    patch: values as Record<string, unknown>,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  };
+}
+
 export interface IssuePropertiesProps {
   readonly issue: Issue;
   readonly parent?: Issue | null;
@@ -56,6 +131,7 @@ export interface IssuePropertiesProps {
 export function IssueProperties({ issue, parent = null, onDeleted }: IssuePropertiesProps) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
+  const { recordPropertyChange } = useIssuePropertyUndo();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
   const states = statesForTeam(workspace.states, issue.teamId);
@@ -80,8 +156,16 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const parentLabel =
     issue.parentId === null ? 'No parent' : (parent?.identifier ?? 'Parent issue');
 
-  const patch = (values: Parameters<typeof update.mutate>[0]['patch']) => {
-    update.mutate({ issue, patch: values });
+  const patch = (values: Parameters<typeof update.mutate>[0]['patch'], label = 'Property') => {
+    const entry = buildUndoEntry(issue, values, label);
+    update.mutate(
+      { issue, patch: values },
+      {
+        onSuccess: () => {
+          recordPropertyChange(entry);
+        },
+      },
+    );
   };
 
   const toggle = (key: MenuKey) => (open: boolean) => setOpenMenu(open ? key : null);
@@ -149,7 +233,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
             icon: <StateGlyph category={entry.category} color={entry.color} />,
           }))}
           selected={[issue.stateId]}
-          onSelect={(stateId) => patch({ stateId })}
+          onSelect={(stateId) => patch({ stateId }, 'Status')}
           testId="menu-status"
         >
           <button type="button" className={rowClassName} data-testid="property-status">
@@ -174,7 +258,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
             icon: <PriorityGlyph priority={value} />,
           }))}
           selected={[String(issue.priority)]}
-          onSelect={(value) => patch({ priority: Number(value) })}
+          onSelect={(value) => patch({ priority: Number(value) }, 'Priority')}
         >
           <button type="button" className={rowClassName} data-testid="property-priority">
             <span aria-hidden="true" className="flex items-center">
@@ -199,7 +283,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
             })),
           ]}
           selected={issue.assigneeId === null ? ['none'] : [issue.assigneeId]}
-          onSelect={(value) => patch({ assigneeId: value === 'none' ? null : value })}
+          onSelect={(value) => patch({ assigneeId: value === 'none' ? null : value }, 'Assignee')}
         >
           <button type="button" className={rowClassName} data-testid="property-assignee">
             <span aria-hidden="true" className="flex items-center">
@@ -231,11 +315,14 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           onSelect={(reviewerId) => {
             const removing = reviewerIds.includes(reviewerId);
             if (!removing && reviewerIds.length >= ISSUE_REVIEWER_MAX_COUNT) return;
-            patch({
-              reviewerIds: removing
-                ? reviewerIds.filter((id) => id !== reviewerId)
-                : [...reviewerIds, reviewerId],
-            });
+            patch(
+              {
+                reviewerIds: removing
+                  ? reviewerIds.filter((id) => id !== reviewerId)
+                  : [...reviewerIds, reviewerId],
+              },
+              'Reviewers',
+            );
           }}
           testId="menu-reviewers"
         >
@@ -268,7 +355,9 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
             })),
           ]}
           selected={issue.estimate === null ? ['none'] : [String(issue.estimate)]}
-          onSelect={(value) => patch({ estimate: value === 'none' ? null : Number(value) })}
+          onSelect={(value) =>
+            patch({ estimate: value === 'none' ? null : Number(value) }, 'Estimate')
+          }
           testId="menu-estimate"
         >
           <button type="button" className={rowClassName} data-testid="property-estimate">
@@ -299,11 +388,14 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           }))}
           selected={issue.labelIds}
           onSelect={(labelId) =>
-            patch({
-              labelIds: issue.labelIds.includes(labelId)
-                ? issue.labelIds.filter((entry) => entry !== labelId)
-                : [...issue.labelIds, labelId],
-            })
+            patch(
+              {
+                labelIds: issue.labelIds.includes(labelId)
+                  ? issue.labelIds.filter((entry) => entry !== labelId)
+                  : [...issue.labelIds, labelId],
+              },
+              'Labels',
+            )
           }
         >
           <button type="button" className={rowClassName} data-testid="property-labels">
@@ -320,7 +412,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
         projects={assignableProjects}
         open={openMenu === 'project'}
         onOpenChange={toggle('project')}
-        onSelect={(projectId) => patch({ projectId })}
+        onSelect={(projectId) => patch({ projectId }, 'Project')}
       />
 
       <MilestoneProperty
@@ -328,7 +420,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
         milestones={milestones}
         open={openMenu === 'milestone'}
         onOpenChange={toggle('milestone')}
-        onSelect={(milestoneId) => patch({ milestoneId })}
+        onSelect={(milestoneId) => patch({ milestoneId }, 'Milestone')}
       />
 
       <PropertyRow label="Due date" shortcut="shift+d">
@@ -336,7 +428,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           value={issue.dueDate}
           open={openMenu === 'dueDate'}
           onOpenChange={toggle('dueDate')}
-          onChange={(dueDate) => patch({ dueDate })}
+          onChange={(dueDate) => patch({ dueDate }, 'Due date')}
           triggerClassName={rowClassName}
         />
       </PropertyRow>
@@ -349,7 +441,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
             excludedIds={[issue.id, ...(issue.parentId === null ? [] : [issue.parentId])]}
             testId="parent-picker"
             placeholder="Search for a parent issue"
-            onPick={(picked) => patch({ parentId: picked.id })}
+            onPick={(picked) => patch({ parentId: picked.id }, 'Parent')}
           >
             <button type="button" className={rowClassName} data-testid="property-parent">
               {parentLabel}
@@ -360,7 +452,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
               type="button"
               aria-label="Clear parent"
               data-testid="clear-parent"
-              onClick={() => patch({ parentId: null })}
+              onClick={() => patch({ parentId: null }, 'Parent')}
               className={cn(
                 'flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:text-text',
                 rowHover,
@@ -378,7 +470,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
         teamKey={teamKey}
         open={openMenu === 'cycle'}
         onOpenChange={toggle('cycle')}
-        onSelect={(cycleId) => patch({ cycleId })}
+        onSelect={(cycleId) => patch({ cycleId }, 'Sprint')}
       />
 
       <DeleteIssueRow issue={issue} onDeleted={onDeleted} />
