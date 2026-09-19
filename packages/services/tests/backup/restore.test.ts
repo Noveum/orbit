@@ -238,9 +238,7 @@ describe('restoreBackup integration and readiness lifecycle', () => {
 
   beforeAll(async () => {
     reachable = await isDatabaseReachable(databaseUrl);
-    if (!reachable) {
-      return;
-    }
+    expect(reachable).toBe(true);
     const tools = await setupPostgresTools(databaseUrl);
     resolvedPgDump = tools.pgDumpPath;
     resolvedPgRestore = tools.pgRestorePath;
@@ -254,13 +252,16 @@ describe('restoreBackup integration and readiness lifecycle', () => {
   });
 
   it('rejects concurrent restore attempt when another restore holds the lock', async () => {
-    if (!reachable) return;
+    expect(reachable).toBe(true);
 
     const tempBackupDir = await mkdtemp(join(tmpdir(), 'orbit-lock-test-'));
+    const driverStore = new Map<string, Uint8Array>();
+    const driver = createMockDriver(driverStore);
     try {
       const backupResult = await createBackup({
         destinationDir: tempBackupDir,
         databaseUrl,
+        storageDriver: driver,
         pgDumpPath: resolvedPgDump,
       });
 
@@ -274,6 +275,7 @@ describe('restoreBackup integration and readiness lifecycle', () => {
             databaseUrl,
             process.env['S3_BUCKET'],
           ).identity,
+          storageDriver: driver,
           skipRedisCheck: true,
           pgRestorePath: resolvedPgRestore,
         }),
@@ -289,7 +291,7 @@ describe('restoreBackup integration and readiness lifecycle', () => {
   });
 
   it('preserves readiness progression throughout recovery and succeeds', async () => {
-    if (!reachable) return;
+    expect(reachable).toBe(true);
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
@@ -391,7 +393,7 @@ describe('restoreBackup integration and readiness lifecycle', () => {
   }, 30_000);
 
   it('marks recovery state as validation_failed when validation fails after restore', async () => {
-    if (!reachable) return;
+    expect(reachable).toBe(true);
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
