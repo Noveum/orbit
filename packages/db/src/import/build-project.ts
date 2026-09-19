@@ -159,32 +159,6 @@ function buildCycles(
   return cycleIds;
 }
 
-function buildMilestones(
-  entry: PlaneProjectExport,
-  projectId: string,
-  createdAt: Date,
-  context: BuildContext,
-  rows: ImportRows,
-): Map<string, string> {
-  const milestoneIds = new Map<string, string>();
-  entry.modules.forEach((module, index) => {
-    const milestoneId = id();
-    milestoneIds.set(module.id, milestoneId);
-    rows.milestones.push({
-      id: milestoneId,
-      organizationId: context.organizationId,
-      projectId,
-      name: module.name,
-      description: module.description ?? '',
-      targetDate: day(module.target_date),
-      sortOrder: (index + 1) * 1024,
-      syncId: 0,
-      createdAt: at(module.created_at, createdAt),
-    });
-  });
-  return milestoneIds;
-}
-
 function invert(
   groups: Record<string, string[]>,
   ids: ReadonlyMap<string, string>,
@@ -223,13 +197,11 @@ interface IssueContext {
   readonly categories: ReadonlyMap<string, StateCategory>;
   readonly labelIds: ReadonlyMap<string, string>;
   readonly cycleIds: ReadonlyMap<string, string>;
-  readonly milestoneIds: ReadonlyMap<string, string>;
 }
 
 interface IssueLinks {
   readonly issueIds: ReadonlyMap<string, string>;
   readonly cycleByIssue: ReadonlyMap<string, string>;
-  readonly milestoneByIssue: ReadonlyMap<string, string>;
 }
 
 function pushIssue(
@@ -273,7 +245,6 @@ function pushIssue(
     creatorId,
     assigneeId: assigneeId ?? null,
     projectId: issueContext.projectId,
-    milestoneId: linked.milestoneByIssue.get(issue.id) ?? null,
     cycleId,
     parentId: issue.parent === null ? null : (linked.issueIds.get(issue.parent) ?? null),
     estimate: estimateFor(issue),
@@ -344,7 +315,6 @@ function buildIssues(
   const linked: IssueLinks = {
     issueIds,
     cycleByIssue: invert(entry.cycleIssues, issueContext.cycleIds),
-    milestoneByIssue: invert(entry.moduleIssues, issueContext.milestoneIds),
   };
 
   for (const issue of importable) {
@@ -468,11 +438,10 @@ export function buildProject(
   rows.projectTeams.push({ id: id(), projectId, teamId });
 
   const cycleIds = buildCycles(entry, createdAt, context, rows);
-  const milestoneIds = buildMilestones(entry, projectId, createdAt, context, rows);
 
   const skippedDrafts = buildIssues(
     entry,
-    { teamId, key, projectId, createdAt, stateIds, categories, labelIds, cycleIds, milestoneIds },
+    { teamId, key, projectId, createdAt, stateIds, categories, labelIds, cycleIds },
     context,
     rows,
   );

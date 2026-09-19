@@ -294,7 +294,6 @@ for (const project of projects) {
   }
   const labels = await collect<PlaneLabel>(`/projects/${id}/labels/?per_page=100`);
   const cycles = await collect<PlaneGrouping>(`/projects/${id}/cycles/?per_page=100`);
-  const modules = await collect<PlaneGrouping>(`/projects/${id}/modules/?per_page=100`);
   const projectMembers = await get<PlaneMember[]>(`/projects/${id}/members/`).catch(() => []);
   const issueTypes = await get<unknown[]>(`/projects/${id}/issue-types/`).catch(() => []);
   const pages = await collect<PlanePage>(`/projects/${id}/pages/?per_page=100`).catch(() => []);
@@ -308,14 +307,6 @@ for (const project of projects) {
       `/projects/${id}/cycles/${item.id}/cycle-issues/?per_page=100`,
     ).catch(() => []);
     cycleIssues[item.id] = rows.map((row) => row.issue ?? row.id);
-  }
-
-  const moduleIssues: Record<string, string[]> = {};
-  for (const item of modules) {
-    const rows = await collect<PlaneGroupingIssue>(
-      `/projects/${id}/modules/${item.id}/module-issues/?per_page=100`,
-    ).catch(() => []);
-    moduleIssues[item.id] = rows.map((row) => row.issue ?? row.id);
   }
 
   const comments: Record<string, PlaneComment[]> = {};
@@ -358,11 +349,9 @@ for (const project of projects) {
   await writeJson(directory, 'states', states);
   await writeJson(directory, 'labels', labels);
   await writeJson(directory, 'cycles', cycles);
-  await writeJson(directory, 'modules', modules);
   await writeJson(directory, 'members', projectMembers);
   await writeJson(directory, 'issue-types', issueTypes);
   await writeJson(directory, 'cycle-issues', cycleIssues);
-  await writeJson(directory, 'module-issues', moduleIssues);
   await writeJson(directory, 'comments', comments);
   await writeJson(directory, 'links', links);
   await writeJson(directory, 'pages', pageDetails);
@@ -413,7 +402,7 @@ for (const project of projects) {
   const commentCount = Object.values(comments).reduce((total, rows) => total + rows.length, 0);
   summaryRows.push(
     `| ${project.name} | ${project.identifier} | ${issues.length} | ${states.length} | ${labels.length} | ` +
-      `${cycles.length} | ${modules.length} | ${pageDetails.length} | ${commentCount} |`,
+      `${cycles.length} | ${pageDetails.length} | ${commentCount} |`,
   );
   log(
     `${project.identifier}: done. ${issues.length} issues, ${commentCount} comments, ${pageDetails.length} pages`,
@@ -432,8 +421,8 @@ await writeText(
     `- ${members.length} workspace members`,
     `- ${workspacePages.length} workspace pages`,
     '',
-    '| Project | Key | Issues | States | Labels | Cycles | Modules | Pages | Comments |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Project | Key | Issues | States | Labels | Cycles | Pages | Comments |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
     ...summaryRows,
     '',
   ].join('\n'),
