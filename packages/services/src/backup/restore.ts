@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { releaseDatabase } from '@orbit/db/migration-release';
@@ -22,23 +22,9 @@ import { validateRestore } from './validate.ts';
 async function readManifest(
   backupPath: string,
 ): Promise<{ backupDir: string; manifest: BackupManifest }> {
-  let pathStat: Awaited<ReturnType<typeof stat>>;
-  try {
-    pathStat = await stat(backupPath);
-  } catch (error) {
-    throw validationFailed(`Backup path does not exist: ${backupPath}`, { cause: error });
-  }
-
-  let backupDir: string;
-  let manifestPath: string;
-
-  if (pathStat.isDirectory()) {
-    backupDir = backupPath;
-    manifestPath = join(backupDir, 'manifest.json');
-  } else {
-    backupDir = dirname(backupPath);
-    manifestPath = backupPath;
-  }
+  const isExplicitJson = backupPath.endsWith('.json');
+  const manifestPath = isExplicitJson ? backupPath : join(backupPath, 'manifest.json');
+  const backupDir = isExplicitJson ? dirname(backupPath) : backupPath;
 
   let rawManifestText: string;
   try {
