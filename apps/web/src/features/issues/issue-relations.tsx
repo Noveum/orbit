@@ -73,7 +73,7 @@ export function IssueRelations({ issue, canMarkDuplicate = true }: IssueRelation
             <IssuePicker
               open={pickingDuplicate}
               onOpenChange={setPickingDuplicate}
-              excludedIds={[issue.id, ...linkedIds]}
+              excludedIds={[issue.id]}
               testId="mark-duplicate-picker"
               placeholder="Search for survivor issue"
               onPick={(picked) => markDuplicate.mutate(picked.id)}

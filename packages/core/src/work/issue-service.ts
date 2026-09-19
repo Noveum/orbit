@@ -2327,8 +2327,17 @@ export async function setRelation(
   if (parsed.relatedIssueId === issueId) {
     throw validationFailed('An issue cannot relate to itself.');
   }
-  if (parsed.type === 'duplicate_of' || parsed.type === 'duplicated_by') {
-    throw validationFailed('Use markAsDuplicate to set duplicate issue relations.');
+  if (parsed.type === 'duplicate_of') {
+    const result = await markAsDuplicate(principal, issueId, {
+      survivorIssueId: parsed.relatedIssueId,
+    });
+    return { relations: result.relations, actions: result.actions };
+  }
+  if (parsed.type === 'duplicated_by') {
+    const result = await markAsDuplicate(principal, parsed.relatedIssueId, {
+      survivorIssueId: issueId,
+    });
+    return { relations: result.relations, actions: result.actions };
   }
 
   return await db.transaction(async (tx) => {

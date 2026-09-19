@@ -373,6 +373,19 @@ describe('issues', () => {
     });
   });
 
+  it('marks duplicate via set_relation when type is duplicate_of', async () => {
+    const duplicate = await newIssue('Duplicate issue');
+    const survivor = await newIssue('Survivor issue');
+    const res = await admin.result('set_relation', {
+      issue: duplicate.identifier,
+      relatedIssue: survivor.identifier,
+      type: 'duplicate_of',
+    });
+    expect(res['issue']).toBe(duplicate.identifier);
+    expect(res['relatedIssue']).toBe(survivor.identifier);
+    expect(res['type']).toBe('duplicate_of');
+  });
+
   it('unlinks two issues from either end', async () => {
     const first = await newIssue('Still blocks the other');
     const second = await newIssue('Still blocked by the first');

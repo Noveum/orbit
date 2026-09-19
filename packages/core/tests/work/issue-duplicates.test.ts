@@ -13,6 +13,7 @@ import {
   createIssue,
   findDuplicateIssues,
   listRelatedIssues,
+  listRelations,
   listSubscribers,
   markAsDuplicate,
   setRelation,
@@ -187,29 +188,46 @@ describe('markAsDuplicate', () => {
     });
   });
 
-  it('disallows duplicate_of and duplicated_by relation types in setRelation', async () => {
-    const { issue: issueA } = await createIssue(workspace.admin, {
+  it('routes duplicate_of and duplicated_by relation types in setRelation to markAsDuplicate', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
-      title: 'Issue A',
+      title: 'Duplicate Issue',
     });
-    const { issue: issueB } = await createIssue(workspace.admin, {
+    const { issue: survivor } = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
-      title: 'Issue B',
+      title: 'Survivor Issue',
     });
 
-    let error: unknown;
-    try {
-      await setRelation(workspace.admin, issueA.id, {
-        relatedIssueId: issueB.id,
-        type: 'duplicate_of',
-      });
-    } catch (e) {
-      error = e;
-    }
-    expect(error).toMatchObject({
-      code: 'validation_failed',
-      message: 'Use markAsDuplicate to set duplicate issue relations.',
+    const result = await setRelation(workspace.admin, duplicate.id, {
+      relatedIssueId: survivor.id,
+      type: 'duplicate_of',
     });
+
+    expect(result.relations.map((r) => r.type)).toContain('duplicate_of');
+
+    const relations = await listRelations(workspace.admin, duplicate.id);
+    expect(relations.map((r) => r.type)).toContain('duplicate_of');
+  });
+
+  it('allows an already-linked related issue to be marked as duplicate', async () => {
+    const { issue: duplicate } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Duplicate Issue',
+    });
+    const { issue: survivor } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Survivor Issue',
+    });
+
+    await setRelation(workspace.admin, duplicate.id, {
+      relatedIssueId: survivor.id,
+      type: 'related',
+    });
+
+    const result = await markAsDuplicate(workspace.admin, duplicate.id, {
+      survivorIssueId: survivor.id,
+    });
+    expect(result.relations.map((r) => r.type)).toContain('duplicate_of');
   });
 
   it('short-circuits on second identical markAsDuplicate call', async () => {
