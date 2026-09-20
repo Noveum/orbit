@@ -130,6 +130,7 @@ async function seed(): Promise<void> {
     title: 'Dashboard',
     stateId: todo.id,
     creatorId: workspace.adminUser.id,
+    creatorUserId: workspace.adminUser.id,
   });
 }
 

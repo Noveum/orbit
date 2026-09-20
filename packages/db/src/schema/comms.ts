@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
 import { comment } from './content.ts';
+import { mcpGrant } from './oauth.ts';
 import { organization, team } from './org.ts';
 import { issue, project, workflowState } from './work.ts';
 
@@ -48,6 +49,9 @@ export const notification = pgTable(
     actorType: text('actor_type').notNull().default('user'),
     actorId: text('actor_id').notNull(),
     actorName: text('actor_name').notNull(),
+    principalUserId: text('principal_user_id').references(() => user.id, { onDelete: 'set null' }),
+    principalName: text('principal_name'),
+    grantId: text('grant_id').references(() => mcpGrant.id, { onDelete: 'restrict' }),
     entityType: text('entity_type').notNull(),
     entityId: text('entity_id').notNull(),
     title: text('title').notNull(),
@@ -689,6 +693,9 @@ export const auditLog = pgTable(
     actorType: text('actor_type').notNull().default('user'),
     actorId: text('actor_id').notNull(),
     actorName: text('actor_name').notNull(),
+    principalUserId: text('principal_user_id').references(() => user.id, { onDelete: 'set null' }),
+    principalName: text('principal_name'),
+    grantId: text('grant_id').references(() => mcpGrant.id, { onDelete: 'restrict' }),
     action: text('action').notNull(),
     entityType: text('entity_type').notNull(),
     entityId: text('entity_id').notNull(),

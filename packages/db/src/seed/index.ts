@@ -377,6 +377,7 @@ async function attachLabels(
   await db.insert(schema.issueLabel).values(rows);
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: seed data creation remains intentionally ordered.
 async function seedIssues(
   userIds: Map<string, string>,
   teams: Map<string, TeamRecord>,
@@ -415,7 +416,10 @@ async function seedIssues(
       stateId,
       priority: entry.priority,
       creatorId: required(userIds.get('alex'), 'missing creator'),
+      creatorUserId: required(userIds.get('alex'), 'missing creator'),
       assigneeId: entry.assignee === null ? null : (userIds.get(entry.assignee) ?? null),
+      assigneeUserId: entry.assignee === null ? null : (userIds.get(entry.assignee) ?? null),
+      ownerUserId: entry.assignee === null ? null : (userIds.get(entry.assignee) ?? null),
       projectId: project?.id ?? null,
       milestoneId:
         entry.milestone === null ? null : (project?.milestones.get(entry.milestone) ?? null),

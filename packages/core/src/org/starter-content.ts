@@ -135,6 +135,7 @@ const WELCOME_DOC = (organizationName: string): string =>
     'Delete anything you do not need. Nothing here is precious.',
   ].join('\n');
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: starter content persists related records together.
 export async function seedStarterContent(
   executor: Executor,
   params: SeedParams,
@@ -220,7 +221,10 @@ export async function seedStarterContent(
         stateId: state.id,
         priority: seed.priority,
         creatorId: params.creatorId,
+        creatorUserId: params.creatorId,
         assigneeId: seed.assignToCreator ? params.creatorId : null,
+        assigneeUserId: seed.assignToCreator ? params.creatorId : null,
+        ownerUserId: seed.assignToCreator ? params.creatorId : null,
         projectId: seed.inProject ? projectId : null,
         cycleId: seed.inCycle ? params.cycle.id : null,
         sortOrder: number * 1024,

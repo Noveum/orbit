@@ -722,6 +722,7 @@ describe('loadSprintAnalytics', () => {
       title: 'Sibling work',
       stateId: todo.id,
       creatorId: workspace.adminUser.id,
+      creatorUserId: workspace.adminUser.id,
       cycleId,
       estimate: 3,
       archivedAt: new Date('2026-01-03T00:00:00.000Z'),

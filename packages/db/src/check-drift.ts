@@ -28,12 +28,18 @@ export interface CatalogForeignKey {
   readonly onUpdate: string;
 }
 
+export interface CatalogCheckConstraint {
+  readonly name: string;
+  readonly expression: string;
+}
+
 export interface CatalogTable {
   readonly name: string;
   readonly columns: readonly CatalogColumn[];
   readonly primaryKey: readonly string[];
   readonly indexes: readonly CatalogIndex[];
   readonly foreignKeys: readonly CatalogForeignKey[];
+  readonly checks: readonly CatalogCheckConstraint[];
 }
 
 export interface CatalogEnum {
@@ -70,11 +76,14 @@ export interface Drift {
   readonly indexMismatches: NamedMismatch[];
   readonly missingForeignKeys: { table: string; foreignKey: string }[];
   readonly foreignKeyMismatches: NamedMismatch[];
+  readonly missingChecks: { table: string; check: string }[];
+  readonly checkMismatches: NamedMismatch[];
   readonly missingEnums: string[];
   readonly enumMismatches: { name: string; expected: string; actual: string }[];
   readonly undeclaredTables: string[];
   readonly undeclaredIndexes: { table: string; index: string }[];
   readonly undeclaredForeignKeys: { table: string; foreignKey: string }[];
+  readonly undeclaredChecks: { table: string; check: string }[];
 }
 
 interface PgEnumLike {
@@ -216,6 +225,10 @@ function stableForeignKey(foreignKey: CatalogForeignKey): string {
   });
 }
 
+function stableCheck(check: CatalogCheckConstraint): string {
+  return normalizeSql(check.expression);
+}
+
 export function expectedCatalog(module: Record<string, unknown>): Catalog {
   const tables: CatalogTable[] = [];
   const enums: CatalogEnum[] = [];
@@ -290,6 +303,9 @@ export function expectedCatalog(module: Record<string, unknown>): Catalog {
           };
         })
         .sort((left, right) => left.name.localeCompare(right.name)),
+      checks: config.checks
+        .map((check) => ({ name: check.name, expression: dialect.sqlToQuery(check.value).sql }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
     });
   }
 
@@ -335,6 +351,12 @@ interface LiveForeignKeyRow {
 interface LiveEnumRow {
   readonly enum_name: string;
   readonly values: string[];
+}
+
+interface LiveCheckRow {
+  readonly table_name: string;
+  readonly constraint_name: string;
+  readonly definition: string;
 }
 
 function referentialAction(value: string): string {
@@ -432,6 +454,16 @@ export async function liveCatalog(url: string): Promise<Catalog> {
       where namespace.nspname = 'public'
       group by type_row.typname
     `;
+    const checks = await sql<LiveCheckRow[]>`
+      select
+        source.relname as table_name,
+        constraint_row.conname as constraint_name,
+        pg_get_constraintdef(constraint_row.oid) as definition
+      from pg_constraint constraint_row
+      join pg_class source on source.oid = constraint_row.conrelid
+      join pg_namespace namespace on namespace.oid = source.relnamespace
+      where namespace.nspname = 'public' and constraint_row.contype = 'c'
+    `;
 
     const primaryByTable = new Map(primaryKeys.map((row) => [row.table_name, row.columns]));
     const indexesByTable = new Map<string, CatalogIndex[]>();
@@ -471,6 +503,15 @@ export async function liveCatalog(url: string): Promise<Catalog> {
       });
       columnsByTable.set(row.table_name, entries);
     }
+    const checksByTable = new Map<string, CatalogCheckConstraint[]>();
+    for (const row of checks) {
+      const entries = checksByTable.get(row.table_name) ?? [];
+      entries.push({
+        name: row.constraint_name,
+        expression: row.definition.replace(/^CHECK\s*/iu, ''),
+      });
+      checksByTable.set(row.table_name, entries);
+    }
 
     return {
       tables: [...columnsByTable.entries()]
@@ -482,6 +523,9 @@ export async function liveCatalog(url: string): Promise<Catalog> {
             left.name.localeCompare(right.name),
           ),
           foreignKeys: (foreignKeysByTable.get(name) ?? []).sort((left, right) =>
+            left.name.localeCompare(right.name),
+          ),
+          checks: (checksByTable.get(name) ?? []).sort((left, right) =>
             left.name.localeCompare(right.name),
           ),
         }))
@@ -505,11 +549,14 @@ function emptyDrift(): Drift {
     indexMismatches: [],
     missingForeignKeys: [],
     foreignKeyMismatches: [],
+    missingChecks: [],
+    checkMismatches: [],
     missingEnums: [],
     enumMismatches: [],
     undeclaredTables: [],
     undeclaredIndexes: [],
     undeclaredForeignKeys: [],
+    undeclaredChecks: [],
   };
 }
 
@@ -615,11 +662,38 @@ function compareForeignKeys(expected: CatalogTable, live: CatalogTable, drift: D
   }
 }
 
+function compareChecks(expected: CatalogTable, live: CatalogTable, drift: Drift): void {
+  const liveChecks = new Map(live.checks.map((check) => [check.name, check]));
+  const unmatched = new Set(live.checks);
+  for (const check of expected.checks) {
+    const named = liveChecks.get(check.name);
+    const equivalent = live.checks.find(
+      (entry) => unmatched.has(entry) && stableCheck(entry) === stableCheck(check),
+    );
+    const actual = equivalent ?? named;
+    if (actual === undefined) {
+      drift.missingChecks.push({ table: expected.name, check: check.name });
+    } else if (stableCheck(actual) !== stableCheck(check)) {
+      drift.checkMismatches.push({
+        table: expected.name,
+        name: check.name,
+        expected: stableCheck(check),
+        actual: stableCheck(actual),
+      });
+    }
+    if (actual !== undefined) unmatched.delete(actual);
+  }
+  for (const check of unmatched) {
+    drift.undeclaredChecks.push({ table: expected.name, check: check.name });
+  }
+}
+
 function compareTable(expected: CatalogTable, live: CatalogTable, drift: Drift): void {
   compareColumns(expected, live, drift);
   comparePrimaryKey(expected, live, drift);
   compareIndexes(expected, live, drift);
   compareForeignKeys(expected, live, drift);
+  compareChecks(expected, live, drift);
 }
 
 function compareEnums(expected: Catalog, live: Catalog, drift: Drift): void {
@@ -660,6 +734,9 @@ export function catalogDriftBetween(expected: Catalog, live: Catalog): Drift {
         foreignKey: foreignKey.name,
       })),
     );
+    drift.undeclaredChecks.push(
+      ...table.checks.map((check) => ({ table: table.name, check: check.name })),
+    );
   }
   compareEnums(expected, live, drift);
 
@@ -676,6 +753,8 @@ export function isBehind(drift: Drift): boolean {
     drift.indexMismatches.length > 0 ||
     drift.missingForeignKeys.length > 0 ||
     drift.foreignKeyMismatches.length > 0 ||
+    drift.missingChecks.length > 0 ||
+    drift.checkMismatches.length > 0 ||
     drift.missingEnums.length > 0 ||
     drift.enumMismatches.length > 0
   );
@@ -701,6 +780,8 @@ function requiredDriftLines(drift: Drift): string[] {
     ...drift.foreignKeyMismatches.map(
       (entry) => `  foreign key mismatch ${entry.table}.${entry.name}`,
     ),
+    ...drift.missingChecks.map((entry) => `  missing check       ${entry.table}.${entry.check}`),
+    ...drift.checkMismatches.map((entry) => `  check mismatch      ${entry.table}.${entry.name}`),
     ...drift.missingEnums.map((entry) => `  missing enum        ${entry}`),
     ...drift.enumMismatches.map((entry) => `  enum mismatch       ${entry.name}`),
   ];
@@ -723,14 +804,19 @@ export function describeDrift(drift: Drift, target: string): string {
       ...drift.undeclaredTables.map((table) => `  ${table}`),
     );
   }
-  if (drift.undeclaredIndexes.length > 0 || drift.undeclaredForeignKeys.length > 0) {
+  if (
+    drift.undeclaredIndexes.length > 0 ||
+    drift.undeclaredForeignKeys.length > 0 ||
+    drift.undeclaredChecks.length > 0
+  ) {
     lines.push(
       '',
-      'Additional indexes and foreign keys are preserved and reported:',
+      'Additional indexes, foreign keys, and checks are preserved and reported:',
       ...drift.undeclaredIndexes.map((entry) => `  index ${entry.table}.${entry.index}`),
       ...drift.undeclaredForeignKeys.map(
         (entry) => `  foreign key ${entry.table}.${entry.foreignKey}`,
       ),
+      ...drift.undeclaredChecks.map((entry) => `  check ${entry.table}.${entry.check}`),
     );
   }
 

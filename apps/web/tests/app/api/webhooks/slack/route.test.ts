@@ -78,6 +78,7 @@ async function seedWorkspace(
     title: issueTitle,
     stateId: state.id,
     creatorId: seeded.adminUser.id,
+    creatorUserId: seeded.adminUser.id,
   });
   const integrationId = await ensureSlackIntegration(db, {
     organizationId: seeded.organizationId,
@@ -162,6 +163,7 @@ async function createIssueInAnotherTeam(
     title,
     stateId,
     creatorId: target.adminUser.id,
+    creatorUserId: target.adminUser.id,
   });
   return { teamId, url: `https://orbit.local/issue/${identifier}` };
 }

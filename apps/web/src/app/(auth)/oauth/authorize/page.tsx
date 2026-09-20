@@ -1,4 +1,9 @@
-import { getMcpClient, listOrganizationsForUser, userHasPasskey } from '@orbit/core';
+import {
+  getMcpClient,
+  listOrganizationsForUser,
+  listSelectablePersonalAgents,
+  userHasPasskey,
+} from '@orbit/core';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -66,6 +71,13 @@ export default async function AuthorizePage({
     userHasPasskey(session.user.id),
   ]);
 
+  const agentsByOrganization = await Promise.all(
+    organizations.map(async (entry) => ({
+      organizationId: entry.organization.id,
+      agents: await listSelectablePersonalAgents(session.user.id, entry.organization.id, clientId),
+    })),
+  );
+
   if (organizations.length === 0) {
     return (
       <ConsentShell>
@@ -89,6 +101,15 @@ export default async function AuthorizePage({
           id: entry.organization.id,
           name: entry.organization.name,
         }))}
+        agents={agentsByOrganization.flatMap((entry) =>
+          entry.agents.map((agent) => ({
+            id: agent.id,
+            organizationId: entry.organizationId,
+            name: agent.name,
+            avatar: agent.avatar,
+            hasActiveGrant: agent.activeGrantId !== null,
+          })),
+        )}
         requirePasskey={requirePasskey}
         userEmail={session.user.email}
       />

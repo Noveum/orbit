@@ -2872,6 +2872,7 @@ describe('resolveIssueUnfurls', () => {
         title: 'Ship the thing',
         stateId,
         creatorId: `usr_${suffix}`,
+        creatorUserId: `usr_${suffix}`,
       });
 
       const url = 'https://orbit.local/issue/ENG-42';
@@ -2905,6 +2906,7 @@ describe('resolveIssueUnfurls', () => {
         title: 'Team A only',
         stateId,
         creatorId: `usr_${suffix}`,
+        creatorUserId: `usr_${suffix}`,
       });
       const url = 'https://orbit.local/issue/ENG-43';
 
@@ -2941,6 +2943,7 @@ describe('resolveIssueUnfurls', () => {
         title: 'Workspace issue',
         stateId,
         creatorId: `usr_${suffix}`,
+        creatorUserId: `usr_${suffix}`,
       });
       const url = 'https://orbit.local/issue/ENG-44';
 

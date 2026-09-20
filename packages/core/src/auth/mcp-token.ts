@@ -1,10 +1,12 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, db, desc, eq, gt, isNull, schema } from '@orbit/db';
-import { forbidden, notFound, unauthorized, validationFailed } from '@orbit/shared/errors';
+import { and, db, desc, eq, gt, inArray, isNull, schema } from '@orbit/db';
+import { forbidden, notFound, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import type { AgentIdentitySelection } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { type Executor, newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
+import { agentLifecycle, preparePersonalAgentConsent } from './agent-identity-service.ts';
 
 const MCP_CREDENTIAL_PREFIX = 'orbit-mcp-v1';
 const BASE64URL_SEGMENT = /^[A-Za-z0-9_-]+$/;
@@ -67,6 +69,10 @@ export interface McpAccessContext {
   readonly clientId: string;
   readonly organizationId: string;
   readonly scopes: string;
+  readonly grantId: string;
+  readonly agentIdentityId: string;
+  readonly agentName: string;
+  readonly agentAvatar: string | null;
 }
 
 export async function verifyMcpAccessToken(
@@ -79,16 +85,20 @@ export async function verifyMcpAccessToken(
   if (binding === null) throw rejection;
 
   const [record] = await db
-    .select({ token: schema.oauthAccessToken, grant: schema.mcpGrant })
+    .select({
+      token: schema.oauthAccessToken,
+      grant: schema.mcpGrant,
+      identity: schema.agentIdentity,
+    })
     .from(schema.oauthAccessToken)
-    .leftJoin(
+    .innerJoin(
       schema.mcpGrant,
       and(
         eq(schema.mcpGrant.id, binding.grantId),
-        eq(schema.mcpGrant.clientId, schema.oauthAccessToken.clientId),
-        eq(schema.mcpGrant.userId, schema.oauthAccessToken.userId),
+        eq(schema.oauthAccessToken.mcpGrantId, binding.grantId),
       ),
     )
+    .innerJoin(schema.agentIdentity, eq(schema.agentIdentity.id, schema.mcpGrant.agentIdentityId))
     .where(eq(schema.oauthAccessToken.accessToken, binding.credential))
     .limit(1);
   if (record === undefined) throw rejection;
@@ -96,11 +106,34 @@ export async function verifyMcpAccessToken(
   if (tokenRow.accessTokenExpiresAt.getTime() <= now.getTime()) {
     throw unauthorized('That access token has expired.');
   }
-  if (tokenRow.userId === null) throw rejection;
-
   const grant = record.grant;
-  if (grant === null || grant.revokedAt !== null) {
-    throw unauthorized('This connection has been revoked. Reconnect Orbit to continue.');
+  if (tokenRow.userId === null || grant.userId === null || tokenRow.mcpGrantId !== grant.id) {
+    throw rejection;
+  }
+  if (grant.revokedAt !== null) {
+    throw unauthorized('This connection has been revoked. Reconnect Orbit to continue.', {
+      details: { reason: 'grant_revoked' },
+    });
+  }
+  const identity = record.identity;
+  if (
+    grant.agentIdentityId === null ||
+    grant.agentIdentityId !== identity.id ||
+    grant.clientId !== tokenRow.clientId ||
+    grant.userId !== tokenRow.userId ||
+    identity.ownerUserId !== grant.userId ||
+    identity.organizationId !== grant.organizationId ||
+    identity.clientId !== grant.clientId
+  ) {
+    throw unauthorized('This connection requires an agent identity.', {
+      details: { reason: 'agent_identity_required' },
+    });
+  }
+  if (identity.deletedAt !== null) {
+    throw unauthorized('This agent has been deleted.', { details: { reason: 'agent_deleted' } });
+  }
+  if (agentLifecycle(identity) !== 'active') {
+    throw unauthorized('This agent is inactive.', { details: { reason: 'agent_inactive' } });
   }
   const grantedScopes = new Set(grant.scopes.split(/\s+/).filter(Boolean));
   const tokenScopes = tokenRow.scopes.split(/\s+/).filter(Boolean);
@@ -108,15 +141,19 @@ export async function verifyMcpAccessToken(
     throw unauthorized("This connection's permissions have changed. Reconnect Orbit to continue.");
   }
 
-  const principal = await resolvePrincipal(tokenRow.userId, grant.organizationId);
+  const principal = await resolvePrincipal(grant.userId, grant.organizationId);
   await db.update(schema.mcpGrant).set({ lastUsedAt: now }).where(eq(schema.mcpGrant.id, grant.id));
 
   return {
     principal,
-    userId: tokenRow.userId,
+    userId: grant.userId,
     clientId: tokenRow.clientId,
     organizationId: grant.organizationId,
     scopes: tokenRow.scopes,
+    grantId: grant.id,
+    agentIdentityId: identity.id,
+    agentName: identity.name,
+    agentAvatar: identity.avatar,
   };
 }
 
@@ -167,6 +204,7 @@ export interface RecordMcpGrantInput {
   readonly userId: string;
   readonly organizationId: string;
   readonly scopes: string;
+  readonly agentIdentityId?: string;
 }
 
 async function writeMcpGrant(
@@ -175,14 +213,34 @@ async function writeMcpGrant(
   now: Date = new Date(),
 ): Promise<string> {
   const grantId = newId();
-  await executor
-    .delete(schema.oauthAccessToken)
-    .where(
-      and(
-        eq(schema.oauthAccessToken.clientId, input.clientId),
-        eq(schema.oauthAccessToken.userId, input.userId),
-      ),
-    );
+  if (input.agentIdentityId !== undefined) {
+    const active = await executor
+      .select({ id: schema.mcpGrant.id })
+      .from(schema.mcpGrant)
+      .where(
+        and(
+          eq(schema.mcpGrant.agentIdentityId, input.agentIdentityId),
+          isNull(schema.mcpGrant.revokedAt),
+        ),
+      )
+      .for('update');
+    const activeIds = active.map((grant) => grant.id);
+    if (activeIds.length > 0) {
+      await executor
+        .update(schema.mcpGrant)
+        .set({ revokedAt: now, revokeReason: 'grant_rotated' })
+        .where(inArray(schema.mcpGrant.id, activeIds));
+      await executor
+        .delete(schema.oauthAccessToken)
+        .where(inArray(schema.oauthAccessToken.mcpGrantId, activeIds));
+    }
+  }
+  const [principal] = await executor
+    .select({ name: schema.user.name })
+    .from(schema.user)
+    .where(eq(schema.user.id, input.userId))
+    .limit(1);
+  if (principal === undefined) throw notFound('That person does not exist.');
   const [grant] = await executor
     .insert(schema.mcpGrant)
     .values({
@@ -191,20 +249,11 @@ async function writeMcpGrant(
       userId: input.userId,
       organizationId: input.organizationId,
       scopes: input.scopes,
+      principalNameSnapshot: principal.name,
       createdAt: now,
       lastUsedAt: null,
       revokedAt: null,
-    })
-    .onConflictDoUpdate({
-      target: [schema.mcpGrant.clientId, schema.mcpGrant.userId],
-      set: {
-        id: grantId,
-        organizationId: input.organizationId,
-        scopes: input.scopes,
-        createdAt: now,
-        lastUsedAt: null,
-        revokedAt: null,
-      },
+      ...(input.agentIdentityId === undefined ? {} : { agentIdentityId: input.agentIdentityId }),
     })
     .returning({ id: schema.mcpGrant.id });
   if (grant === undefined) throw new Error('The MCP grant could not be stored.');
@@ -263,15 +312,11 @@ export async function revokeMcpGrant(
     .limit(1);
   if (grant === undefined) throw notFound('That connection does not exist.');
 
-  await db.update(schema.mcpGrant).set({ revokedAt: now }).where(eq(schema.mcpGrant.id, id));
   await db
-    .delete(schema.oauthAccessToken)
-    .where(
-      and(
-        eq(schema.oauthAccessToken.clientId, grant.clientId),
-        eq(schema.oauthAccessToken.userId, userId),
-      ),
-    );
+    .update(schema.mcpGrant)
+    .set({ revokedAt: now, revokeReason: 'connection_revoked' })
+    .where(eq(schema.mcpGrant.id, id));
+  await db.delete(schema.oauthAccessToken).where(eq(schema.oauthAccessToken.mcpGrantId, id));
 }
 
 const CONSENT_CODE_TTL_MS = 600_000;
@@ -300,6 +345,7 @@ export type FinalizeMcpConsentInput =
       readonly consentCode: string;
       readonly accept: true;
       readonly organizationId: string;
+      readonly identitySelection: AgentIdentitySelection;
     };
 
 export async function finalizeMcpConsent(
@@ -343,12 +389,14 @@ export async function finalizeMcpConsent(
     };
   }
 
-  if (typeof input.organizationId !== 'string' || input.organizationId.length === 0) {
-    throw validationFailed('Choose a workspace before approving this connection.');
-  }
-
   const code = authorizationCode();
   await db.transaction(async (tx) => {
+    const prepared = await preparePersonalAgentConsent(tx, {
+      userId: input.userId,
+      organizationId: input.organizationId,
+      clientId: value.clientId,
+      selection: input.identitySelection,
+    });
     const mcpGrantId = await writeMcpGrant(
       tx,
       {
@@ -356,6 +404,7 @@ export async function finalizeMcpConsent(
         userId: input.userId,
         organizationId: input.organizationId,
         scopes: value.scope.join(' '),
+        agentIdentityId: prepared.identity.id,
       },
       now,
     );

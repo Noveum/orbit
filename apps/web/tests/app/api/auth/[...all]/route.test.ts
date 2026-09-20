@@ -98,6 +98,7 @@ async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
     consentCode,
     accept: true,
     organizationId: workspace.organizationId,
+    identitySelection: { createAgent: { name: 'Researcher', avatar: null } },
   });
   const code = new URL(approved.redirectUri).searchParams.get('code');
   if (code === null) throw new Error('the consent redirect did not carry a code');
@@ -607,7 +608,7 @@ describe('MCP authorize PKCE boundary', () => {
     });
   });
 
-  it('refuses an authorization code after re-consent selects another workspace', async () => {
+  it('keeps an authorization code valid when another workspace grant is recorded', async () => {
     await withNativeFetchGlobals(async () => {
       const { code, verifier } = await finalizedAuthorizationCode(workspace);
       const other = await createOrganization(workspace.adminUser.id, {
@@ -634,9 +635,8 @@ describe('MCP authorize PKCE boundary', () => {
           }),
         }),
       );
-      expect(token.status).toBe(400);
-      expect(await token.json()).toMatchObject({ error: 'invalid_grant' });
-      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
+      expect(token.status).toBe(200);
+      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(1);
     });
   });
 

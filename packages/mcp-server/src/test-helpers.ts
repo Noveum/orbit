@@ -10,7 +10,7 @@ import {
   resolvePrincipal,
   unbindMcpCredential,
 } from '@orbit/core';
-import { db, schema, sql } from '@orbit/db';
+import { db, eq, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { handleMcpRequest, MCP_PATH } from './server.ts';
@@ -117,7 +117,30 @@ export async function mintToken(
     type: 'public',
     userId,
   });
-  const grantId = await recordMcpGrant({ clientId, userId, organizationId, scopes });
+  const [owner] = await db
+    .select({ name: schema.user.name })
+    .from(schema.user)
+    .where(eq(schema.user.id, userId))
+    .limit(1);
+  if (owner === undefined) throw new Error('The test agent owner does not exist.');
+  const agentIdentityId = randomUUID();
+  await db.insert(schema.agentIdentity).values({
+    id: agentIdentityId,
+    organizationId,
+    ownerUserId: userId,
+    ownerNameSnapshot: owner.name,
+    clientId,
+    clientNameSnapshot: name,
+    name: `${name} Agent`,
+    avatar: null,
+  });
+  const grantId = await recordMcpGrant({
+    clientId,
+    userId,
+    organizationId,
+    scopes,
+    agentIdentityId,
+  });
   const accessToken = token('at_');
   await db.insert(schema.oauthAccessToken).values({
     id: randomUUID(),
@@ -127,6 +150,7 @@ export async function mintToken(
     refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
     clientId,
     userId,
+    mcpGrantId: grantId,
     scopes,
   });
   return bindMcpCredential(accessToken, grantId, secret);

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { createHmac, randomUUID } from 'node:crypto';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, isNull, schema } from '@orbit/db';
 import {
   bindMcpCredential,
   type FinalizeMcpConsentInput,
@@ -8,7 +8,7 @@ import {
   getMcpClient,
   listMcpGrants,
   passkeyVerifiedWithin,
-  recordMcpGrant,
+  recordMcpGrant as persistMcpGrant,
   revokeMcpGrant,
   unbindMcpCredential,
   userHasPasskey,
@@ -64,6 +64,50 @@ async function createClient(name = 'Claude'): Promise<string> {
   return clientId;
 }
 
+async function recordMcpGrant(input: {
+  clientId: string;
+  userId: string;
+  organizationId: string;
+  scopes: string;
+}): Promise<string> {
+  const [owner] = await db
+    .select({ name: schema.user.name })
+    .from(schema.user)
+    .where(eq(schema.user.id, input.userId))
+    .limit(1);
+  const [client] = await db
+    .select({ name: schema.oauthApplication.name })
+    .from(schema.oauthApplication)
+    .where(eq(schema.oauthApplication.clientId, input.clientId))
+    .limit(1);
+  if (owner === undefined || client === undefined) throw new Error('missing identity fixture data');
+  const [identity] = await db
+    .select({ id: schema.agentIdentity.id })
+    .from(schema.agentIdentity)
+    .where(
+      and(
+        eq(schema.agentIdentity.organizationId, input.organizationId),
+        eq(schema.agentIdentity.ownerUserId, input.userId),
+        eq(schema.agentIdentity.clientId, input.clientId),
+      ),
+    )
+    .limit(1);
+  const agentIdentityId = identity?.id ?? randomUUID();
+  if (identity === undefined) {
+    await db.insert(schema.agentIdentity).values({
+      id: agentIdentityId,
+      organizationId: input.organizationId,
+      ownerUserId: input.userId,
+      ownerNameSnapshot: owner.name,
+      clientId: input.clientId,
+      clientNameSnapshot: client.name,
+      name: 'Researcher',
+      avatar: null,
+    });
+  }
+  return await persistMcpGrant({ ...input, agentIdentityId });
+}
+
 async function issueToken(
   clientId: string,
   userId: string,
@@ -71,6 +115,12 @@ async function issueToken(
   scopes = SCOPES,
 ): Promise<string> {
   const accessToken = `at_${randomUUID().replace(/-/g, '')}`;
+  const [grant] = await db
+    .select({ id: schema.mcpGrant.id })
+    .from(schema.mcpGrant)
+    .where(and(eq(schema.mcpGrant.clientId, clientId), isNull(schema.mcpGrant.revokedAt)))
+    .limit(1);
+  if (grant === undefined) throw new Error('the test client has no MCP grant');
   await db.insert(schema.oauthAccessToken).values({
     id: randomUUID(),
     accessToken,
@@ -79,14 +129,9 @@ async function issueToken(
     refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
     clientId,
     userId,
+    mcpGrantId: grant.id,
     scopes,
   });
-  const [grant] = await db
-    .select({ id: schema.mcpGrant.id })
-    .from(schema.mcpGrant)
-    .where(eq(schema.mcpGrant.clientId, clientId))
-    .limit(1);
-  if (grant === undefined) throw new Error('the test client has no MCP grant');
   return bindMcpCredential(accessToken, grant.id, MCP_SECRET);
 }
 
@@ -118,7 +163,7 @@ describe('recordMcpGrant', () => {
     expect(grants[0]?.organizationId).toBe(workspace.organizationId);
   });
 
-  it('upserts the workspace when the same client re-consents', async () => {
+  it('keeps another workspace identity connected when the same client re-consents', async () => {
     const clientId = await createClient();
     const other = await createOrganizationFor(workspace.adminUser.id);
     const firstGrantId = await recordMcpGrant({
@@ -135,13 +180,15 @@ describe('recordMcpGrant', () => {
     });
 
     const grants = await listMcpGrants(workspace.adminUser.id);
-    expect(grants).toHaveLength(1);
-    expect(grants[0]?.organizationId).toBe(other);
+    expect(grants).toHaveLength(2);
+    expect(grants.map((grant) => grant.organizationId)).toEqual(
+      expect.arrayContaining([workspace.organizationId, other]),
+    );
     expect(secondGrantId).not.toBe(firstGrantId);
-    expect(grants[0]?.id).toBe(secondGrantId);
+    expect(grants.map((grant) => grant.id)).toContain(secondGrantId);
   });
 
-  it('invalidates a token issued for the workspace bound before re-consent', async () => {
+  it('does not invalidate another workspace identity token when re-consenting', async () => {
     const clientId = await createClient();
     const other = await createOrganizationFor(workspace.adminUser.id);
     await recordMcpGrant({
@@ -163,12 +210,12 @@ describe('recordMcpGrant', () => {
       scopes: SCOPES,
     });
 
-    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
+    expect((await verifyMcpAccessToken(token)).organizationId).toBe(workspace.organizationId);
     const remaining = await db
       .select()
       .from(schema.oauthAccessToken)
       .where(eq(schema.oauthAccessToken.accessToken, rawTokenOf(token)));
-    expect(remaining).toHaveLength(0);
+    expect(remaining).toHaveLength(1);
   });
 });
 
@@ -380,6 +427,7 @@ describe('finalizeMcpConsent', () => {
       consentCode,
       accept: true,
       organizationId: workspace.organizationId,
+      identitySelection: { createAgent: { name: 'Researcher', avatar: null } },
     });
 
     const url = new URL(redirectUri);
@@ -454,6 +502,7 @@ describe('finalizeMcpConsent', () => {
         consentCode,
         accept: true,
         organizationId: workspace.organizationId,
+        identitySelection: { createAgent: { name: 'Researcher', avatar: null } },
       }),
     ).rejects.toMatchObject({ code: 'unauthorized' });
   });
@@ -467,6 +516,7 @@ describe('finalizeMcpConsent', () => {
         consentCode,
         accept: true,
         organizationId: workspace.organizationId,
+        identitySelection: { createAgent: { name: 'Researcher', avatar: null } },
       }),
     ).rejects.toMatchObject({ code: 'forbidden' });
   });
@@ -478,6 +528,7 @@ describe('finalizeMcpConsent', () => {
         consentCode: 'nope',
         accept: true,
         organizationId: workspace.organizationId,
+        identitySelection: { createAgent: { name: 'Researcher', avatar: null } },
       }),
     ).rejects.toMatchObject({ code: 'unauthorized' });
   });

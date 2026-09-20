@@ -467,6 +467,7 @@ describe('refreshWorkspaceRepositories', () => {
       title: 'GitHub inbox',
       stateId: stateNamed(workspace, 'Todo').id,
       creatorId: workspace.adminUser.id,
+      creatorUserId: workspace.adminUser.id,
     });
     const installations = await listGithubInstallations(db, workspace.organizationId);
 

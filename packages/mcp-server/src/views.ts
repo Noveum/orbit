@@ -1,5 +1,6 @@
 import {
   type IssueListRow,
+  type IssueRow,
   listMembers,
   listWorkflowStates,
   reviewerIdsByIssue,
@@ -47,8 +48,10 @@ export function deltaViews(actions: readonly SyncAction[]): DeltaView[] {
   }));
 }
 
+type IssueDescriptionRow = IssueListRow | IssueRow;
+
 function toView(
-  row: IssueListRow,
+  row: IssueDescriptionRow,
   stateNames: ReadonlyMap<string, string>,
   userNames: ReadonlyMap<string, string>,
   reviewerIds: readonly string[],
@@ -78,7 +81,7 @@ function toView(
 
 export async function describeIssues(
   principal: Principal,
-  rows: readonly IssueListRow[],
+  rows: readonly IssueDescriptionRow[],
 ): Promise<IssueView[]> {
   if (rows.length === 0) return [];
 
@@ -102,7 +105,10 @@ export async function describeIssues(
   return rows.map((row) => toView(row, stateNames, userNames, reviewers.get(row.id) ?? []));
 }
 
-export async function describeIssue(principal: Principal, row: IssueListRow): Promise<IssueView> {
+export async function describeIssue(
+  principal: Principal,
+  row: IssueDescriptionRow,
+): Promise<IssueView> {
   const [view] = await describeIssues(principal, [row]);
   if (view === undefined) throw new Error('The issue could not be described.');
   return view;

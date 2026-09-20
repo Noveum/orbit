@@ -51,6 +51,7 @@ import {
 import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { type CanonicalIssueRead, canonicalIssueRead } from './issue-actor-view.ts';
 import {
   applyStateTimestamps,
   type IssueRow,
@@ -384,6 +385,12 @@ function collectIssueChanges(
   track('stateId', patch.stateId);
   track('priority', patch.priority);
   track('assigneeId', patch.assigneeId);
+  if (values.assigneeId !== undefined) {
+    values.assigneeUserId = values.assigneeId;
+    if (current.ownerUserId === null && values.assigneeId !== null) {
+      values.ownerUserId = values.assigneeId;
+    }
+  }
   track('projectId', patch.projectId);
   track(
     'milestoneId',
@@ -868,7 +875,10 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         stateId: state.id,
         priority: parsed.priority,
         creatorId: principal.userId,
+        creatorUserId: principal.userId,
         assigneeId,
+        assigneeUserId: assigneeId,
+        ownerUserId: assigneeId,
         projectId: parsed.projectId,
         milestoneId: parsed.milestoneId,
         cycleId: parsed.cycleId,
@@ -1285,6 +1295,12 @@ function applyRegrouping(
   };
   regroup('cycleId', parsed.cycleId);
   regroup('assigneeId', parsed.assigneeId);
+  if (values.assigneeId !== undefined) {
+    values.assigneeUserId = values.assigneeId;
+    if (current.ownerUserId === null && values.assigneeId !== null) {
+      values.ownerUserId = values.assigneeId;
+    }
+  }
   regroup('priority', parsed.priority);
   if (parsed.projectId !== undefined && parsed.projectId !== current.projectId) {
     regroup('projectId', parsed.projectId);
@@ -1808,8 +1824,9 @@ export type TrimmedIssueColumn =
   | 'estimatePointId'
   | 'stateEnteredAt';
 
-export type IssueListRow = Omit<IssueRow, TrimmedIssueColumn> &
-  Partial<Pick<IssueRow, TrimmedIssueColumn>>;
+export type IssueListRow = CanonicalIssueRead<
+  Omit<IssueRow, TrimmedIssueColumn> & Partial<Pick<IssueRow, TrimmedIssueColumn>>
+>;
 
 export interface IssuePage {
   readonly issues: IssueListRow[];
@@ -1838,7 +1855,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
     .limit(filter.limit + 1);
 
-  const page = rows.slice(0, filter.limit);
+  const page = rows.slice(0, filter.limit).map(canonicalIssueRead);
   const last = page.at(-1);
   const nextCursor =
     rows.length > filter.limit && last !== undefined
@@ -2226,7 +2243,10 @@ export async function getIssueFacets(
   return { scopeTotal: Number(scopeTotal[0]?.total ?? 0), facets };
 }
 
-export async function getIssue(principal: Principal, idOrIdentifier: string): Promise<IssueRow> {
+export async function getIssue(
+  principal: Principal,
+  idOrIdentifier: string,
+): Promise<CanonicalIssueRead<IssueRow>> {
   assertCan(principal, 'issue:read');
   const parsed = parseIssueIdentifier(idOrIdentifier);
   const identifier = parsed === null ? null : issueIdentifier(parsed.prefix, parsed.number);
@@ -2260,7 +2280,7 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
   const row = direct ?? aliased;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
-  return issue;
+  return canonicalIssueRead(issue);
 }
 
 export async function listIssueLabels(

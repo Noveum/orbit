@@ -185,4 +185,23 @@ describe('catalog drift', () => {
     expect(drift.enumMismatches.map((entry) => entry.name)).toContain('notification_reason');
     expect(isBehind(drift)).toBe(true);
   });
+
+  it('detects removal or mutation of declared check constraints', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table issue drop constraint issue_creator_actor_check`;
+      await sql`
+        alter table issue add constraint issue_creator_actor_check
+        check (creator_user_id is not null or creator_agent_id is not null)
+      `;
+      await sql`alter table issue drop constraint issue_assignee_actor_check`;
+    });
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.checkMismatches.map((entry) => entry.name)).toContain('issue_creator_actor_check');
+    expect(drift.missingChecks).toContainEqual({
+      table: 'issue',
+      check: 'issue_assignee_actor_check',
+    });
+    expect(isBehind(drift)).toBe(true);
+  });
 });

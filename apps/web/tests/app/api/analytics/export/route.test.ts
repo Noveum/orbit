@@ -115,6 +115,7 @@ describe('GET /api/analytics/export', () => {
             title: `Visible cap issue ${number}`,
             stateId: state.id,
             creatorId: workspace.adminUser.id,
+            creatorUserId: workspace.adminUser.id,
             createdAt,
           };
         }),

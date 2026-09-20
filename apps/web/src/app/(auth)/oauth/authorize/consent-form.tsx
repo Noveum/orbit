@@ -17,6 +17,14 @@ export interface ConsentOrganization {
   readonly name: string;
 }
 
+export interface ConsentAgent {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly name: string;
+  readonly avatar: string | null;
+  readonly hasActiveGrant: boolean;
+}
+
 export interface ConsentFormProps {
   readonly consentCode: string;
   readonly clientId: string;
@@ -24,6 +32,7 @@ export interface ConsentFormProps {
   readonly scope: string;
   readonly scopes: readonly string[];
   readonly organizations: readonly ConsentOrganization[];
+  readonly agents?: readonly ConsentAgent[];
   readonly requirePasskey: boolean;
   readonly userEmail: string;
 }
@@ -43,26 +52,45 @@ function messageOf(error: unknown): string {
 
 export function ConsentForm({
   consentCode,
-  clientId,
   clientName,
-  scope,
   scopes,
   organizations,
+  agents = [],
   requirePasskey,
   userEmail,
 }: ConsentFormProps) {
   const { toast } = useToast();
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
+  const [agentIdentityId, setAgentIdentityId] = useState(agents[0]?.id ?? '');
+  const [agentName, setAgentName] = useState('');
   const [pending, setPending] = useState<Pending>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
 
   const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
+  const selectableAgents = agents.filter((agent) => agent.organizationId === organizationId);
 
   async function post(decision: 'allow' | 'deny'): Promise<DecisionResponse> {
     const response = await fetch('/oauth/authorize/decision', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, consentCode, clientId, scope, organizationId }),
+      body: JSON.stringify(
+        decision === 'deny'
+          ? { decision, consentCode }
+          : {
+              decision,
+              consentCode,
+              organizationId,
+              identitySelection:
+                agentIdentityId.length > 0
+                  ? {
+                      agentIdentityId,
+                      replaceActiveGrant: selectableAgents.some(
+                        (agent) => agent.id === agentIdentityId && agent.hasActiveGrant,
+                      ),
+                    }
+                  : { createAgent: { name: agentName, avatar: null } },
+            },
+      ),
     });
     const data = (await response.json().catch(() => ({}))) as DecisionResponse;
     if (response.status === 200) return data;
@@ -123,7 +151,13 @@ export function ConsentForm({
         Workspace
         <select
           value={organizationId}
-          onChange={(event) => setOrganizationId(event.target.value)}
+          onChange={(event) => {
+            const nextOrganizationId = event.target.value;
+            setOrganizationId(nextOrganizationId);
+            setAgentIdentityId(
+              agents.find((agent) => agent.organizationId === nextOrganizationId)?.id ?? '',
+            );
+          }}
           disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
         >
@@ -134,6 +168,37 @@ export function ConsentForm({
           ))}
         </select>
       </label>
+
+      <label className="flex flex-col gap-1.5 text-2xs text-faint">
+        Agent identity
+        <select
+          value={agentIdentityId}
+          onChange={(event) => setAgentIdentityId(event.target.value)}
+          disabled={pending !== null}
+          className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+        >
+          <option value="">Create a new agent</option>
+          {selectableAgents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
+              {agent.hasActiveGrant ? ' (replace connection)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {agentIdentityId.length === 0 ? (
+        <label className="flex flex-col gap-1.5 text-2xs text-faint">
+          Agent name
+          <input
+            value={agentName}
+            onChange={(event) => setAgentName(event.target.value)}
+            maxLength={64}
+            disabled={pending !== null}
+            className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+          />
+        </label>
+      ) : null}
 
       {permissions.length > 0 ? (
         <div className="flex flex-col gap-1.5">
@@ -163,7 +228,11 @@ export function ConsentForm({
           type="button"
           variant="primary"
           block
-          disabled={pending !== null || organizationId === ''}
+          disabled={
+            pending !== null ||
+            organizationId === '' ||
+            (agentIdentityId === '' && agentName.trim() === '')
+          }
           onClick={() => run('allow')}
         >
           {pending === 'allow' ? (

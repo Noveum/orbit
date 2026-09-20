@@ -9,6 +9,7 @@ function tableWithIndex(index: CatalogIndex): CatalogTable {
     primaryKey: [],
     indexes: [index],
     foreignKeys: [],
+    checks: [],
   };
 }
 

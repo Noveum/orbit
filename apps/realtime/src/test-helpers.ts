@@ -150,6 +150,7 @@ export async function createIssue(
     title: 'Realtime issue',
     stateId,
     creatorId,
+    creatorUserId: creatorId,
   });
   return issueId;
 }

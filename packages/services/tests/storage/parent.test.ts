@@ -105,6 +105,7 @@ async function seed(tx: TestTransaction): Promise<Fixture> {
       title: 'Mine',
       stateId: openStateId,
       creatorId: userId,
+      creatorUserId: userId,
     },
     {
       id: closedIssueId,
@@ -115,6 +116,7 @@ async function seed(tx: TestTransaction): Promise<Fixture> {
       title: 'Not mine',
       stateId: closedStateId,
       creatorId: userId,
+      creatorUserId: userId,
     },
   ]);
 

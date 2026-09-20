@@ -251,7 +251,12 @@ export async function removeMember(
 
     const reassigned = await tx
       .update(schema.issue)
-      .set({ assigneeId: nextAssignee, updatedAt: new Date(), syncId })
+      .set({
+        assigneeId: nextAssignee,
+        assigneeUserId: nextAssignee,
+        updatedAt: new Date(),
+        syncId,
+      })
       .where(
         and(
           eq(schema.issue.organizationId, principal.organizationId),

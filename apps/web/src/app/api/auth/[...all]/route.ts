@@ -93,7 +93,23 @@ async function activeMcpGrant(grantId: string): Promise<boolean> {
   const [grant] = await db
     .select({ id: schema.mcpGrant.id })
     .from(schema.mcpGrant)
-    .where(and(eq(schema.mcpGrant.id, grantId), isNull(schema.mcpGrant.revokedAt)))
+    .innerJoin(schema.agentIdentity, eq(schema.agentIdentity.id, schema.mcpGrant.agentIdentityId))
+    .innerJoin(
+      schema.member,
+      and(
+        eq(schema.member.organizationId, schema.agentIdentity.organizationId),
+        eq(schema.member.userId, schema.agentIdentity.ownerUserId),
+      ),
+    )
+    .where(
+      and(
+        eq(schema.mcpGrant.id, grantId),
+        isNull(schema.mcpGrant.revokedAt),
+        isNull(schema.agentIdentity.deletedAt),
+        isNull(schema.agentIdentity.ownerDisabledAt),
+        isNull(schema.agentIdentity.adminDisabledAt),
+      ),
+    )
     .limit(1);
   return grant !== undefined;
 }
@@ -120,25 +136,53 @@ async function acceptIssuedMcpToken(
   accessToken: string,
   sourceRefreshToken: string | null,
 ): Promise<boolean> {
-  if (sourceRefreshToken === null) {
-    if (await activeMcpGrant(grantId)) return true;
-    await db
-      .delete(schema.oauthAccessToken)
-      .where(eq(schema.oauthAccessToken.accessToken, accessToken));
-    return false;
-  }
   return await db.transaction(async (tx) => {
-    const [consumed] = await tx
-      .delete(schema.oauthAccessToken)
-      .where(eq(schema.oauthAccessToken.refreshToken, sourceRefreshToken))
-      .returning({ id: schema.oauthAccessToken.id });
-    if (consumed !== undefined) {
-      const [grant] = await tx
-        .select({ id: schema.mcpGrant.id })
-        .from(schema.mcpGrant)
-        .where(and(eq(schema.mcpGrant.id, grantId), isNull(schema.mcpGrant.revokedAt)))
-        .limit(1);
-      if (grant !== undefined) return true;
+    const [grant] = await tx
+      .select({ id: schema.mcpGrant.id })
+      .from(schema.mcpGrant)
+      .innerJoin(schema.agentIdentity, eq(schema.agentIdentity.id, schema.mcpGrant.agentIdentityId))
+      .innerJoin(
+        schema.member,
+        and(
+          eq(schema.member.organizationId, schema.agentIdentity.organizationId),
+          eq(schema.member.userId, schema.agentIdentity.ownerUserId),
+        ),
+      )
+      .where(
+        and(
+          eq(schema.mcpGrant.id, grantId),
+          isNull(schema.mcpGrant.revokedAt),
+          isNull(schema.agentIdentity.deletedAt),
+          isNull(schema.agentIdentity.ownerDisabledAt),
+          isNull(schema.agentIdentity.adminDisabledAt),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (grant !== undefined) {
+      if (sourceRefreshToken !== null) {
+        const [consumed] = await tx
+          .delete(schema.oauthAccessToken)
+          .where(
+            and(
+              eq(schema.oauthAccessToken.refreshToken, sourceRefreshToken),
+              eq(schema.oauthAccessToken.mcpGrantId, grantId),
+            ),
+          )
+          .returning({ id: schema.oauthAccessToken.id });
+        if (consumed === undefined) {
+          await tx
+            .delete(schema.oauthAccessToken)
+            .where(eq(schema.oauthAccessToken.accessToken, accessToken));
+          return false;
+        }
+      }
+      const [bound] = await tx
+        .update(schema.oauthAccessToken)
+        .set({ mcpGrantId: grantId })
+        .where(eq(schema.oauthAccessToken.accessToken, accessToken))
+        .returning({ id: schema.oauthAccessToken.id });
+      if (bound !== undefined) return true;
     }
     await tx
       .delete(schema.oauthAccessToken)

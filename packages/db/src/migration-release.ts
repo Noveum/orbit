@@ -18,7 +18,9 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
-const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([1786217938315, 1786623194883, 1788083189965]);
+const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
+  1786217938315, 1786623194883, 1788083189965, 1789829081921,
+]);
 
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>
@@ -113,6 +115,41 @@ async function baselineLedger(
           'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
         );
       }
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1789829081921)) {
+      await tx`
+        update issue
+        set
+          creator_user_id = creator_id,
+          assignee_user_id = assignee_id,
+          owner_user_id = assignee_id
+      `;
+      await tx`
+        update issue_activity
+        set principal_user_id = actor_id, principal_name = actor_name
+        where actor_type = 'user'
+      `;
+      await tx`
+        update audit_log
+        set principal_user_id = actor_id, principal_name = actor_name
+        where actor_type = 'user'
+      `;
+      await tx`
+        update notification
+        set principal_user_id = actor_id, principal_name = actor_name
+        where actor_type = 'user'
+      `;
+      await tx`
+        update mcp_grant
+        set principal_name_snapshot = coalesce("user".name, 'Former member')
+        from "user"
+        where "user".id = mcp_grant.user_id
+      `;
+      await tx`
+        update mcp_grant
+        set principal_name_snapshot = 'Former member'
+        where principal_name_snapshot is null
+      `;
     }
     await tx`create schema if not exists drizzle`;
     await tx`
