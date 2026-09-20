@@ -43,13 +43,12 @@ function isSpecialIpv4Range(b0: number, b1: number, b2: number): boolean {
 }
 
 export function isPrivateIpv4Octets(octets: readonly [number, number, number, number]): boolean {
-  const [b0, b1, b2, b3] = octets;
+  const [b0, b1, b2] = octets;
   if (b0 === 0 || b0 === 10 || b0 === 127 || b0 >= 224) return true;
   if (b0 === 100 && b1 >= 64 && b1 <= 127) return true;
   if (b0 === 169 && b1 === 254) return true;
   if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
   if (b0 === 192 && b1 === 168) return true;
-  if (b0 === 255 && b1 === 255 && b2 === 255 && b3 === 255) return true;
   return isSpecialIpv4Range(b0, b1, b2);
 }
 
@@ -174,8 +173,16 @@ export function isPrivateIpv6(ip: string): boolean {
   return isPrivateIpv6Groups(groups);
 }
 
+function stripTrailingDots(text: string): string {
+  let end = text.length;
+  while (end > 0 && text.charCodeAt(end - 1) === 46) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
 export function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase().replace(/\.+$/, '');
+  const normalized = stripTrailingDots(hostname.trim().toLowerCase());
   if (
     normalized === 'localhost' ||
     normalized.endsWith('.localhost') ||

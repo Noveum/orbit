@@ -40,6 +40,7 @@ describe('AI endpoint IP parsing and private guard', () => {
     expect(isPrivateIpv4('0.0.0.0')).toBe(true);
     expect(isPrivateIpv4('224.0.0.1')).toBe(true);
     expect(isPrivateIpv4('240.0.0.1')).toBe(true);
+    expect(isPrivateIpv4('255.255.255.255')).toBe(true);
     expect(isPrivateIpv4('8.8.8.8')).toBe(false);
     expect(isPrivateIpv4('93.184.216.34')).toBe(false);
   });
@@ -77,6 +78,7 @@ describe('AI endpoint IP parsing and private guard', () => {
 
   it('rejects localhost with trailing dot and local domain suffixes', () => {
     expect(isPrivateOrLoopbackHost('localhost.')).toBe(true);
+    expect(isPrivateOrLoopbackHost('localhost.........')).toBe(true);
     expect(isPrivateOrLoopbackHost('localhost')).toBe(true);
     expect(isPrivateOrLoopbackHost('sub.localhost.')).toBe(true);
     expect(isPrivateOrLoopbackHost('model.local.')).toBe(true);
