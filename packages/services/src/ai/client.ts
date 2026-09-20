@@ -7,12 +7,15 @@ import {
   openAiCompletionResponseSchema,
 } from '@orbit/shared/validators';
 import { decryptAiApiKey } from './credentials.ts';
+import { safeFetch } from './transport.ts';
 import type {
   AiCompletionOptions,
   AiCompletionResult,
   AiProviderConfig,
   AiTokenUsage,
 } from './types.ts';
+
+const defaultFetch = globalThis.fetch;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 60_000;
@@ -229,9 +232,15 @@ async function callOpenAiCompatible(
   if (options.maxTokens !== undefined) body['max_tokens'] = options.maxTokens;
   if (options.temperature !== undefined) body['temperature'] = options.temperature;
 
+  const transportFetch =
+    options.fetchFn ??
+    (globalThis.fetch !== defaultFetch && options.dnsLookup === undefined
+      ? globalThis.fetch
+      : undefined);
+
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await safeFetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -239,7 +248,9 @@ async function callOpenAiCompatible(
       },
       body: JSON.stringify(body),
       signal,
-      redirect: 'manual',
+      allowPrivate: options.allowPrivate,
+      dnsLookup: options.dnsLookup,
+      fetchFn: transportFetch,
     });
   } catch (error) {
     throw new AiClientError(
@@ -303,9 +314,15 @@ async function callAnthropic(
   };
   if (options.temperature !== undefined) body['temperature'] = options.temperature;
 
+  const transportFetch =
+    options.fetchFn ??
+    (globalThis.fetch !== defaultFetch && options.dnsLookup === undefined
+      ? globalThis.fetch
+      : undefined);
+
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await safeFetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -314,7 +331,9 @@ async function callAnthropic(
       },
       body: JSON.stringify(body),
       signal,
-      redirect: 'manual',
+      allowPrivate: options.allowPrivate,
+      dnsLookup: options.dnsLookup,
+      fetchFn: transportFetch,
     });
   } catch (error) {
     throw new AiClientError('Failed to connect to Anthropic endpoint.', error, target.apiKey);

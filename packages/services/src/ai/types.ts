@@ -1,4 +1,5 @@
 import type { AiProviderKind } from '@orbit/shared/validators';
+import type { DnsLookupFn } from './transport.ts';
 
 export interface AiProviderConfig {
   readonly kind: AiProviderKind;
@@ -17,6 +18,9 @@ export interface AiCompletionOptions {
   readonly timeoutMs?: number | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly recordUsage?: boolean | undefined;
+  readonly fetchFn?: ((url: string, init?: RequestInit) => Promise<Response>) | undefined;
+  readonly dnsLookup?: DnsLookupFn | undefined;
+  readonly allowPrivate?: boolean | undefined;
 }
 
 export interface AiTokenUsage {

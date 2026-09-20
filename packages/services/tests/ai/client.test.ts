@@ -295,4 +295,71 @@ describe('AI client complete()', () => {
 
     expect(canceled).toBe(true);
   });
+
+  it('rejects connection when hostname resolves to loopback or private address', async () => {
+    delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+
+    const mockLookup = (
+      _h: string,
+      _o: unknown,
+      cb: (
+        err: Error | null,
+        addrs: readonly { address: string; family: number }[],
+        family: number,
+      ) => void,
+    ) => {
+      cb(null, [{ address: '127.0.0.1', family: 4 }], 4);
+    };
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        dnsLookup: mockLookup as never,
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiClientError);
+  });
+
+  it('rejects connection when DNS changes to private destination between validation and connection', async () => {
+    delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+
+    let calls = 0;
+    const rebindingLookup = (
+      _h: string,
+      _o: unknown,
+      cb: (
+        err: Error | null,
+        addrs: readonly { address: string; family: number }[],
+        family: number,
+      ) => void,
+    ) => {
+      calls += 1;
+      const address = calls === 1 ? '93.184.216.34' : '169.254.169.254';
+      cb(null, [{ address, family: 4 }], 4);
+    };
+
+    await new Promise<void>((resolve) => {
+      rebindingLookup('api.openai.com', {}, () => resolve());
+    });
+
+    await expect(
+      complete('Say hello', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4o',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        dnsLookup: rebindingLookup as never,
+        recordUsage: false,
+      }),
+    ).rejects.toThrow(AiClientError);
+  });
 });
