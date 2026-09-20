@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
 import type { IssueRow } from '../../src/work/issue-fields.ts';
-import { assertExpectedIssueState } from '../../src/work/issue-service.ts';
+import {
+  assertExpectedIssueState,
+  createIssue,
+  updateIssue,
+} from '../../src/work/issue-service.ts';
 
 const baseIssue: IssueRow = {
   id: 'issue_123',
@@ -175,5 +180,46 @@ describe('Cross-user concurrency conflict validation (6 cases)', () => {
     }).toThrow('Cannot undo: parent was changed by another update.');
 
     expect(issueAfterBChangedParent.parentId).toBe('issue_parent_123');
+  });
+});
+
+describe('service-level updateIssue CAS transaction integration', () => {
+  let workspace: Workspace;
+
+  beforeEach(async () => {
+    await resetDatabase();
+    workspace = await createWorkspace('Nova');
+  });
+
+  it('rejects updateIssue through database transaction when expected stateId is stale', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Service CAS test issue',
+    });
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, {
+        title: 'New title',
+        expected: {
+          stateId: 'stale_state_id_that_never_existed',
+        },
+      }),
+    ).rejects.toThrow('Cannot undo: state was changed by another update.');
+  });
+
+  it('rejects updateIssue through database transaction when expected labelIds are stale', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Service CAS test issue for labels',
+    });
+
+    await expect(
+      updateIssue(workspace.admin, issue.id, {
+        title: 'New title',
+        expected: {
+          labelIds: ['stale_label_id_123'],
+        },
+      }),
+    ).rejects.toThrow('Cannot undo: labels was changed by another update.');
   });
 });
