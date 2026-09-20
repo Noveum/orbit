@@ -246,4 +246,29 @@ describe('catalog drift', () => {
     });
     expect(isBehind(drift)).toBe(true);
   });
+
+  it('detects a check whose cast changed between integer and numeric', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        alter table notification_conversation add constraint notification_conversation_cast_check
+        check ((event_count)::integer > 1)
+      `;
+    });
+    const beforeCast = await liveCatalog(urlFor(SCRATCH));
+
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table notification_conversation drop constraint notification_conversation_cast_check`;
+      await sql`
+        alter table notification_conversation add constraint notification_conversation_cast_check
+        check ((event_count)::numeric > 1)
+      `;
+    });
+    const afterCast = await liveCatalog(urlFor(SCRATCH));
+
+    const drift = catalogDriftBetween(beforeCast, afterCast);
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toEqual([
+      'notification_conversation_cast_check',
+    ]);
+    expect(isBehind(drift)).toBe(true);
+  });
 });

@@ -241,21 +241,32 @@ function skipTypeCast(value: string, start: number): number {
   return index;
 }
 
-function stripTypeCasts(segment: string): string {
+function stripLiteralTypeCasts(value: string): string {
   let result = '';
   let index = 0;
-  while (index < segment.length) {
-    if (segment[index] === ':' && segment[index + 1] === ':') {
-      const end = skipTypeCast(segment, index + 2);
+  while (index < value.length) {
+    const character = value[index];
+    if (character === "'") {
+      const end = endOfLiteral(value, index);
+      result += value.slice(index, end);
+      index = end;
+      continue;
+    }
+    if (character === ':' && value[index + 1] === ':' && endsWithQuotedLiteral(result)) {
+      const end = skipTypeCast(value, index + 2);
       if (end !== index + 2) {
         index = end;
         continue;
       }
     }
-    result += segment[index] ?? '';
+    result += character ?? '';
     index += 1;
   }
   return result;
+}
+
+function endsWithQuotedLiteral(value: string): boolean {
+  return value.trimEnd().endsWith("'");
 }
 
 function stripQualifiers(segment: string): string {
@@ -551,9 +562,7 @@ export function normalizeCheckExpression(value: string): string {
   const normalized = normalizeSqlCaseAndIdentifiers(value)
     .trim()
     .replace(/^check\s+/, '');
-  const stripped = transformOutsideLiterals(normalized, (segment) =>
-    stripQualifiers(stripTypeCasts(segment)),
-  );
+  const stripped = stripLiteralTypeCasts(transformOutsideLiterals(normalized, stripQualifiers));
   return collapseCheckSpacing(
     normalizeBooleanParentheses(normalizeAnyAllSpacing(canonicalizeInLists(stripped))),
   );

@@ -239,3 +239,39 @@ describe('catalog check matching', () => {
     expect(needsCatchup(drift)).toBe(false);
   });
 });
+
+describe('catalog check cast sensitivity', () => {
+  it('does not treat a changed operand cast as the same constraint', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('measurement_value_check', 'value::integer > 1')]),
+      catalogWithChecks([checkWith('measurement_value_check', 'value::numeric > 1')]),
+    );
+
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toEqual([
+      'measurement_value_check',
+    ]);
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('treats an operand cast as unchanged when only the qualifier differs', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('measurement_value_check', 'value::integer > 1')]),
+      catalogWithChecks([
+        checkWith('measurement_value_check', '"measurement"."value"::integer > 1'),
+      ]),
+    );
+
+    expect(drift.checkConstraintMismatches).toEqual([]);
+    expect(isBehind(drift)).toBe(false);
+  });
+
+  it('still ignores the text cast PostgreSQL adds to a string literal', () => {
+    const drift = catalogDriftBetween(
+      catalogWithChecks([checkWith('source_kind_check', "source_kind = 'check_run'")]),
+      catalogWithChecks([checkWith('source_kind_check', "source_kind = 'check_run'::text")]),
+    );
+
+    expect(drift.checkConstraintMismatches).toEqual([]);
+    expect(isBehind(drift)).toBe(false);
+  });
+});
