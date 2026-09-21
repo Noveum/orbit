@@ -1,0 +1,180 @@
+import '../../../tests-preload.ts';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook } from '@testing-library/react';
+import React from 'react';
+import { ToastProvider } from '@/components/ui/toast.tsx';
+import {
+  clearTabHistory,
+  getTabRedoStack,
+  getTabUndoStack,
+  pushTestRedoEntry,
+  recordTabPropertyChange,
+} from '@/features/issues/use-issue-property-undo.ts';
+import type { Issue } from '@/lib/query/schemas.ts';
+import {
+  captureIssueHistory,
+  hasSupportedProperty,
+  useUpdateIssue,
+} from '@/lib/query/use-issues.ts';
+
+const mockIssue: Issue = {
+  id: 'issue_flow_1',
+  organizationId: 'org_flow',
+  teamId: 'team_flow',
+  number: 10,
+  identifier: 'FLOW-10',
+  title: 'Original Title',
+  description: 'Original Description',
+  stateId: 'state_todo',
+  priority: 2,
+  creatorId: 'user_1',
+  assigneeId: 'user_2',
+  projectId: 'proj_1',
+  milestoneId: 'mile_1',
+  cycleId: 'cycle_1',
+  parentId: null,
+  estimate: 5,
+  dueDate: '2026-11-01',
+  sortOrder: 500,
+  startedAt: null,
+  completedAt: null,
+  canceledAt: null,
+  syncId: 1,
+  createdAt: '2026-11-01T00:00:00.000Z',
+  updatedAt: '2026-11-01T00:00:00.000Z',
+  archivedAt: null,
+  stateEnteredAt: '2026-11-01T00:00:00.000Z',
+  labelIds: ['label_1'],
+  reviewerIds: ['user_3'],
+};
+
+describe('Issue undo mutation lifecycle and sequencing', () => {
+  beforeEach(() => {
+    clearTabHistory();
+  });
+
+  it('title-only and description-only edits produce no property undo history', () => {
+    expect(hasSupportedProperty({ title: 'New Renamed Title' })).toBe(false);
+    expect(hasSupportedProperty({ description: 'New Description Text' })).toBe(false);
+
+    const titleEntry = captureIssueHistory(mockIssue, { title: 'New Renamed Title' }, 1);
+    expect(titleEntry).toBeUndefined();
+
+    const descEntry = captureIssueHistory(mockIssue, { description: 'Updated' }, 2);
+    expect(descEntry).toBeUndefined();
+  });
+
+  it('successful property mutations create history entry with complete baseline', () => {
+    const entry = captureIssueHistory(mockIssue, { stateId: 'state_done' }, 1);
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+
+    recordTabPropertyChange(entry);
+
+    const stack = getTabUndoStack();
+    expect(stack.length).toBe(1);
+    expect(stack[0]?.propertyLabel).toBe('Status');
+    expect(stack[0]?.expectedForUndo.labelIds).toEqual(['label_1']);
+    expect(stack[0]?.expectedForUndo.reviewerIds).toEqual(['user_3']);
+  });
+
+  it('failed property mutation creates no undo entry and does not wipe existing redo history', () => {
+    const existingEntry = captureIssueHistory(mockIssue, { priority: 1 }, 1);
+    if (existingEntry !== undefined) {
+      pushTestRedoEntry(existingEntry);
+    }
+    expect(getTabRedoStack().length).toBe(1);
+
+    const failedAttemptEntry = captureIssueHistory(mockIssue, { stateId: 'state_canceled' }, 2);
+    expect(failedAttemptEntry).toBeDefined();
+
+    expect(getTabUndoStack().length).toBe(0);
+    expect(getTabRedoStack().length).toBe(1);
+  });
+
+  it('rapid successful mutations preserve user action order even with out-of-order responses', () => {
+    const entryA = captureIssueHistory(mockIssue, { stateId: 'state_in_progress' }, 1);
+    const entryB = captureIssueHistory(mockIssue, { priority: 4 }, 2);
+    const entryC = captureIssueHistory(mockIssue, { assigneeId: null }, 3);
+
+    expect(entryA).toBeDefined();
+    expect(entryB).toBeDefined();
+    expect(entryC).toBeDefined();
+    if (entryA === undefined || entryB === undefined || entryC === undefined) return;
+
+    recordTabPropertyChange(entryB);
+    recordTabPropertyChange(entryC);
+    recordTabPropertyChange(entryA);
+
+    const stack = getTabUndoStack();
+    expect(stack.length).toBe(3);
+    expect(stack[0]?.sequence).toBe(1);
+    expect(stack[0]?.propertyLabel).toBe('Status');
+    expect(stack[1]?.sequence).toBe(2);
+    expect(stack[1]?.propertyLabel).toBe('Priority');
+    expect(stack[2]?.sequence).toBe(3);
+    expect(stack[2]?.propertyLabel).toBe('Assignee');
+  });
+
+  it('exercises actual useUpdateIssue lifecycle: A fails + B succeeds -> A omitted, B retained in history', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
+      if (body?.stateId !== undefined) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ message: 'Database failure' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ issue: { ...mockIssue, ...body, syncId: 2 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          mutations: { retry: false },
+        },
+      });
+      const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(ToastProvider, null, children),
+        );
+
+      const { result } = renderHook(() => useUpdateIssue(), { wrapper });
+
+      await act(async () => {
+        await expect(
+          result.current.mutateAsync({
+            issue: mockIssue,
+            patch: { stateId: 'state_done' },
+          }),
+        ).rejects.toThrow();
+      });
+
+      await act(async () => {
+        await result.current.mutateAsync({
+          issue: mockIssue,
+          patch: { priority: 1 },
+        });
+      });
+
+      const stack = getTabUndoStack();
+      expect(stack.length).toBe(1);
+      expect(stack[0]?.propertyLabel).toBe('Priority');
+      expect(stack[0]?.patch['priority']).toBe(1);
+      expect(stack.some((entry) => entry.propertyLabel === 'Status')).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

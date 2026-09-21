@@ -13,7 +13,11 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
-import { recordTabPropertyChange } from '@/features/issues/use-issue-property-undo.ts';
+import {
+  nextActionSequence,
+  type PropertyUndoEntry,
+  recordTabPropertyChange,
+} from '@/features/issues/use-issue-property-undo.ts';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
   issueCacheResetGeneration,
@@ -665,6 +669,24 @@ function resortTeamIssueLists(client: QueryClient, teamId: string): void {
   );
 }
 
+const SUPPORTED_PROPERTY_KEYS = [
+  'stateId',
+  'priority',
+  'assigneeId',
+  'estimate',
+  'projectId',
+  'milestoneId',
+  'cycleId',
+  'dueDate',
+  'labelIds',
+  'reviewerIds',
+  'parentId',
+] as const;
+
+export function hasSupportedProperty(patch: IssuePatch): boolean {
+  return SUPPORTED_PROPERTY_KEYS.some((key) => patch[key] !== undefined);
+}
+
 function resolvePropertyLabel(patch: IssuePatch): string {
   if (patch.stateId !== undefined) return 'Status';
   if (patch.priority !== undefined) return 'Priority';
@@ -680,11 +702,21 @@ function resolvePropertyLabel(patch: IssuePatch): string {
   return 'Property';
 }
 
-function captureIssueHistory(issue: Issue, patch: IssuePatch): void {
-  if (patch.expected !== undefined) {
-    return;
-  }
+function assignScalarDelta(
+  field: string,
+  patchValue: unknown,
+  issueValue: unknown,
+  inversePatch: Record<string, unknown>,
+  expectedForUndo: Record<string, unknown>,
+  expectedForRedo: Record<string, unknown>,
+): void {
+  if (patchValue === undefined) return;
+  inversePatch[field] = issueValue;
+  expectedForUndo[field] = patchValue;
+  expectedForRedo[field] = issueValue;
+}
 
+function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
   const inversePatch: Record<string, unknown> = {};
   const expectedForUndo: Record<string, unknown> = {
     labelIds: [...issue.labelIds],
@@ -697,26 +729,63 @@ function captureIssueHistory(issue: Issue, patch: IssuePatch): void {
     parentId: issue.parentId,
   };
 
-  if (patch.stateId !== undefined) {
-    inversePatch['stateId'] = issue.stateId;
-    expectedForUndo['stateId'] = patch.stateId;
-    expectedForRedo['stateId'] = issue.stateId;
-  }
-  if (patch.priority !== undefined) {
-    inversePatch['priority'] = issue.priority;
-    expectedForUndo['priority'] = patch.priority;
-    expectedForRedo['priority'] = issue.priority;
-  }
-  if (patch.assigneeId !== undefined) {
-    inversePatch['assigneeId'] = issue.assigneeId;
-    expectedForUndo['assigneeId'] = patch.assigneeId;
-    expectedForRedo['assigneeId'] = issue.assigneeId;
-  }
-  if (patch.estimate !== undefined) {
-    inversePatch['estimate'] = issue.estimate;
-    expectedForUndo['estimate'] = patch.estimate;
-    expectedForRedo['estimate'] = issue.estimate;
-  }
+  assignScalarDelta(
+    'stateId',
+    patch.stateId,
+    issue.stateId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'priority',
+    patch.priority,
+    issue.priority,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'assigneeId',
+    patch.assigneeId,
+    issue.assigneeId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'estimate',
+    patch.estimate,
+    issue.estimate,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'cycleId',
+    patch.cycleId,
+    issue.cycleId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'dueDate',
+    patch.dueDate,
+    issue.dueDate,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'milestoneId',
+    patch.milestoneId,
+    issue.milestoneId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+
   if (patch.projectId !== undefined) {
     inversePatch['projectId'] = issue.projectId;
     expectedForUndo['projectId'] = patch.projectId;
@@ -726,21 +795,6 @@ function captureIssueHistory(issue: Issue, patch: IssuePatch): void {
       expectedForUndo['milestoneId'] = null;
       expectedForRedo['milestoneId'] = issue.milestoneId;
     }
-  }
-  if (patch.milestoneId !== undefined) {
-    inversePatch['milestoneId'] = issue.milestoneId;
-    expectedForUndo['milestoneId'] = patch.milestoneId;
-    expectedForRedo['milestoneId'] = issue.milestoneId;
-  }
-  if (patch.cycleId !== undefined) {
-    inversePatch['cycleId'] = issue.cycleId;
-    expectedForUndo['cycleId'] = patch.cycleId;
-    expectedForRedo['cycleId'] = issue.cycleId;
-  }
-  if (patch.dueDate !== undefined) {
-    inversePatch['dueDate'] = issue.dueDate;
-    expectedForUndo['dueDate'] = patch.dueDate;
-    expectedForRedo['dueDate'] = issue.dueDate;
   }
   if (patch.labelIds !== undefined) {
     inversePatch['labelIds'] = [...issue.labelIds];
@@ -758,14 +812,29 @@ function captureIssueHistory(issue: Issue, patch: IssuePatch): void {
     expectedForRedo['parentId'] = issue.parentId;
   }
 
-  recordTabPropertyChange({
+  return { inversePatch, expectedForUndo, expectedForRedo };
+}
+
+export function captureIssueHistory(
+  issue: Issue,
+  patch: IssuePatch,
+  sequence: number,
+): PropertyUndoEntry | undefined {
+  if (patch.expected !== undefined || !hasSupportedProperty(patch)) {
+    return undefined;
+  }
+
+  const { inversePatch, expectedForUndo, expectedForRedo } = buildUndoDeltas(issue, patch);
+
+  return {
+    sequence,
     issue,
     propertyLabel: resolvePropertyLabel(patch),
     patch: patch as Record<string, unknown>,
     inversePatch,
     expectedForUndo,
     expectedForRedo,
-  });
+  };
 }
 
 export function useUpdateIssue() {
@@ -781,7 +850,8 @@ export function useUpdateIssue() {
       return result.issue;
     },
     onMutate: async (input) => {
-      captureIssueHistory(input.issue, input.patch);
+      const sequence = nextActionSequence();
+      const undoEntry = captureIssueHistory(input.issue, input.patch, sequence);
 
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
@@ -810,6 +880,7 @@ export function useUpdateIssue() {
         });
       }
       return {
+        undoEntry,
         previousDetail,
         optimisticDetail,
         identifier: input.issue.identifier,
@@ -837,7 +908,10 @@ export function useUpdateIssue() {
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
-    onSuccess: (issue) => {
+    onSuccess: (issue, _variables, context) => {
+      if (context?.undoEntry !== undefined) {
+        recordTabPropertyChange(context.undoEntry);
+      }
       placeIssue(client, issue);
       refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>

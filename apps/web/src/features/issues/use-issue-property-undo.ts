@@ -10,6 +10,7 @@ import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 const MAX_HISTORY = 20;
 
 export interface PropertyUndoEntry {
+  readonly sequence: number;
   readonly issue: Issue;
   readonly propertyLabel: string;
   readonly patch: Record<string, unknown>;
@@ -20,13 +21,42 @@ export interface PropertyUndoEntry {
 
 const tabUndoStack: PropertyUndoEntry[] = [];
 const tabRedoStack: PropertyUndoEntry[] = [];
+let actionSequenceCounter = 0;
+
+export function nextActionSequence(): number {
+  actionSequenceCounter += 1;
+  return actionSequenceCounter;
+}
 
 export function recordTabPropertyChange(entry: PropertyUndoEntry): void {
   tabRedoStack.length = 0;
-  tabUndoStack.push(entry);
+  const insertIndex = tabUndoStack.findIndex((item) => item.sequence > entry.sequence);
+  if (insertIndex === -1) {
+    tabUndoStack.push(entry);
+  } else {
+    tabUndoStack.splice(insertIndex, 0, entry);
+  }
   if (tabUndoStack.length > MAX_HISTORY) {
     tabUndoStack.shift();
   }
+}
+
+export function getTabUndoStack(): readonly PropertyUndoEntry[] {
+  return tabUndoStack;
+}
+
+export function getTabRedoStack(): readonly PropertyUndoEntry[] {
+  return tabRedoStack;
+}
+
+export function clearTabHistory(): void {
+  tabUndoStack.length = 0;
+  tabRedoStack.length = 0;
+  actionSequenceCounter = 0;
+}
+
+export function pushTestRedoEntry(entry: PropertyUndoEntry): void {
+  tabRedoStack.push(entry);
 }
 
 export function useIssuePropertyUndo() {
