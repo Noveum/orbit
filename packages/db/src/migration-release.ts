@@ -349,14 +349,18 @@ function pendingMigrationsProvideChecks(
   migrations: readonly MigrationMeta[],
   drift: Drift,
 ): boolean {
-  const names = [
-    ...drift.missingCheckConstraints.map((entry) => entry.check),
-    ...drift.checkConstraintMismatches.map((entry) => entry.name),
+  const targets = [
+    ...drift.missingCheckConstraints.map((entry) => ({ table: entry.table, name: entry.check })),
+    ...drift.checkConstraintMismatches.map((entry) => ({ table: entry.table, name: entry.name })),
   ];
-  if (names.length === 0) return false;
-  return names.some((name) =>
+  if (targets.length === 0) return false;
+  return targets.some(({ table, name }) =>
     migrations.some((migration) =>
-      migration.sql.some((statement) => statement.includes(`"${name}"`)),
+      migration.sql.some(
+        (statement) =>
+          statement.includes(`ALTER TABLE "${table}" `) &&
+          statement.includes(`ADD CONSTRAINT "${name}" CHECK`),
+      ),
     ),
   );
 }

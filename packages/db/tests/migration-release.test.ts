@@ -279,6 +279,47 @@ describe('database release', () => {
     expect([...constraint]).toEqual([{ convalidated: true }]);
   }, 60_000);
 
+  it('does not route a same-named check on another table to the migration path', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table github_pull_request drop constraint github_pull_request_head_epoch_check`;
+    });
+
+    const folder = await mkdtemp(join(tmpdir(), 'orbit-release-stray-check-'));
+    await cp(MIGRATIONS, folder, { recursive: true });
+    const journalPath = join(folder, 'meta', '_journal.json');
+    const journal = migrationJournalSchema.parse(JSON.parse(await readFile(journalPath, 'utf8')));
+    const last = journal.entries.at(-1);
+    if (last === undefined) throw new Error('the migration journal has no entries to build on');
+    const tag = '9999_release_stray_check_probe';
+    journal.entries.push({
+      idx: last.idx + 1,
+      version: last.version,
+      when: last.when + 1,
+      tag,
+      breakpoints: true,
+    });
+    await writeFile(journalPath, JSON.stringify(journal, null, 2));
+    await writeFile(
+      join(folder, `${tag}.sql`),
+      'ALTER TABLE "notification" ADD CONSTRAINT "github_pull_request_head_epoch_check" CHECK (true);\n',
+    );
+
+    try {
+      await expect(releaseDatabase(urlFor(SCRATCH), folder)).rejects.toThrow('still incompatible');
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+
+    const stray = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql`select count(*)::int as count from pg_constraint where conname = 'github_pull_request_head_epoch_check' and conrelid = 'notification'::regclass`,
+    );
+    expect([...stray]).toEqual([{ count: 0 }]);
+  }, 60_000);
+
   it('restores deferred audit triggers while baselining a schema-pushed catalog', async () => {
     await resetScratch();
     await migrateScratch();
