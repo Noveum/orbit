@@ -177,4 +177,23 @@ describe('IssueRelations', () => {
     expect(screen.queryByText('Downstream work')).toBeNull();
     expect(screen.getByTestId('add-relation')).toBeInTheDocument();
   });
+
+  it('allows picking an already-linked issue as duplicate in mark-duplicate-picker', async () => {
+    served = [
+      relation({
+        id: 'rel_1',
+        type: 'related',
+        issue: issue({ id: 'issue_2', identifier: 'ENG-2', title: 'Related issue' }),
+      }),
+    ];
+    searchable = [issue({ id: 'issue_2', identifier: 'ENG-2', title: 'Related issue' })];
+    stubFetch();
+    const user = userEvent.setup();
+
+    render(<IssueRelations issue={issue()} />);
+    await user.click(await screen.findByTestId('mark-as-duplicate'));
+    await user.type(await screen.findByTestId('mark-duplicate-picker-search'), 'Related');
+
+    expect(await screen.findByTestId('mark-duplicate-picker-option-ENG-2')).toBeInTheDocument();
+  });
 });

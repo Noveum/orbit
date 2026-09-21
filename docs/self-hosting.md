@@ -269,6 +269,12 @@ dated tag for deployed versions.
 Watch the [releases](https://github.com/Noveum/orbit/releases) for anything
 labelled `breaking change` and follow the upgrade notes in the associated release.
 
+Upgrades across this release drop four tables the app never displayed: `module`,
+`module_member`, `module_issue` and `module_link`. A Plane import before #287
+filled them and nothing has read them since, so the migration removes them.
+Databases that materialized their schema without a migration ledger can remove
+them with `packages/db/catchup/drop-module-tables-catchup.sql`.
+
 ### Backups
 
 Back up Postgres and object storage together. Orbit ships a coordinated backup

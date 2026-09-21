@@ -378,7 +378,6 @@ describe('domain invariants', () => {
   it('scopes every soft deletable uniqueness rule to live rows', () => {
     expect(partialIndexNamesOf(schema.team)).toContain('team_org_key_active_unique');
     expect(partialIndexNamesOf(schema.project)).toContain('project_org_slug_active_unique');
-    expect(partialIndexNamesOf(schema.module)).toContain('module_team_name_active_unique');
     expect(partialIndexNamesOf(schema.estimateScale)).toContain(
       'estimate_scale_org_name_active_unique',
     );
@@ -542,10 +541,6 @@ describe('domain invariants', () => {
 
 describe('tables reserved for later streams', () => {
   const reserved = [
-    schema.module,
-    schema.moduleMember,
-    schema.moduleIssue,
-    schema.moduleLink,
     schema.cycleProgressSnapshot,
     schema.docVersion,
     schema.issueIdentifierAlias,

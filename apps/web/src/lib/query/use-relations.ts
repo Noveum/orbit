@@ -6,7 +6,7 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import { queryKeys } from './keys.ts';
 import type { IssueRelation } from './schemas.ts';
-import { issueRelationListSchema } from './schemas.ts';
+import { issueRelationListSchema, issueResponseSchema } from './schemas.ts';
 
 export interface RelationInput {
   readonly relatedIssueId: string;
@@ -89,6 +89,38 @@ export function useRemoveRelation(issueId: string) {
     },
     onSuccess: (relations) => {
       client.setQueryData(key, relations);
+    },
+  });
+}
+
+export function useMarkDuplicate(issueId: string) {
+  const client = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (survivorIssueId: string) => {
+      return await apiFetch(
+        `/api/issues/${encodeURIComponent(issueId)}/duplicate`,
+        issueResponseSchema,
+        {
+          method: 'POST',
+          body: { survivorIssueId },
+        },
+      );
+    },
+    onError: (error) => {
+      toast({
+        title: 'Could not mark issue as duplicate',
+        description: messageOf(error),
+        tone: 'danger',
+      });
+    },
+    onSuccess: (_data, survivorIssueId) => {
+      toast({ title: 'Marked issue as duplicate' });
+      client.invalidateQueries({ queryKey: queryKeys.issue(issueId) });
+      client.invalidateQueries({ queryKey: queryKeys.issueRelations(issueId) });
+      client.invalidateQueries({ queryKey: queryKeys.issue(survivorIssueId) });
+      client.invalidateQueries({ queryKey: queryKeys.issueRelations(survivorIssueId) });
     },
   });
 }

@@ -675,4 +675,52 @@ describe('database release', () => {
     expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
     expect(ledger?.count).toBe(migrations.length);
   }, 60_000);
+
+  it('runs a pending table-drop migration instead of baselining it away', async () => {
+    await resetScratch();
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const dropIndex = migrations.findIndex((migration) =>
+      migration.sql.some((statement) => statement.includes('DROP TABLE "module"')),
+    );
+    expect(dropIndex).toBeGreaterThan(0);
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of migrations.slice(0, dropIndex)) {
+        for (const statement of migration.sql) await sql.unsafe(statement);
+        await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+      }
+    });
+
+    const before = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ table_name: string }[]>`
+        select table_name from information_schema.tables
+        where table_schema = 'public'
+          and table_name in ('module', 'module_issue', 'module_link', 'module_member')
+        order by table_name
+      `,
+    );
+    expect([...before]).toHaveLength(4);
+
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const remaining = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ table_name: string }[]>`
+        select table_name from information_schema.tables
+        where table_schema = 'public'
+          and table_name in ('module', 'module_issue', 'module_link', 'module_member')
+        order by table_name
+      `,
+    );
+    const ledger = await run(
+      urlFor(SCRATCH),
+      (sql) => sql`select hash from drizzle.__drizzle_migrations order by created_at`,
+    );
+
+    expect(result.mode).toBe('migrated');
+    expect(result.applied).toBe(migrations.length - dropIndex);
+    expect([...remaining]).toEqual([]);
+    expect(ledger.map((row) => row['hash'])).toEqual(migrations.map((migration) => migration.hash));
+  }, 60_000);
 });

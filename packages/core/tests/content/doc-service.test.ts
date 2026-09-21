@@ -196,9 +196,15 @@ describe('updateDoc', () => {
     const kept = await updateDoc(workspace.admin, doc.id, { title: 'Still shared' });
     expect(kept.doc.publishToken).toBe(token);
 
-    const closed = await updateDoc(workspace.admin, doc.id, { visibility: 'workspace' });
-    expect(closed.doc.publishToken).toBeNull();
+    const withdrawn = await updateDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    const replacement = withdrawn.doc.publishToken;
+    if (replacement === null) throw new Error('expected a workspace token to replace it');
+    expect(replacement).not.toBe(token);
     expect(await getPublishedDoc(token)).toBeNull();
+    expect((await resolvePublishedDoc(replacement, workspace.adminUser.id)).status).toBe('ok');
+
+    const closed = await updateDoc(workspace.admin, doc.id, { visibility: 'private' });
+    expect(closed.doc.publishToken).toBeNull();
   });
 });
 
@@ -217,7 +223,7 @@ describe('archiveDoc', () => {
 });
 
 describe('shareDoc', () => {
-  it('mints a token on publish, keeps it stable, and revokes it back to workspace', async () => {
+  it('mints a token on publish, keeps it stable, and withdraws it from the public', async () => {
     const doc = await newDoc();
     expect(await getPublishedDoc('missing')).toBeNull();
 
@@ -235,8 +241,12 @@ describe('shareDoc', () => {
     expect(await getPublishedDoc(token)).not.toBeNull();
 
     const revoked = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
-    expect(revoked.publishToken).toBeNull();
+    const replacement = revoked.publishToken;
+    if (replacement === null) throw new Error('expected a workspace token to replace it');
+    expect(replacement).not.toBe(token);
     expect(await getPublishedDoc(token)).toBeNull();
+    expect(await resolvePublishedDoc(token, workspace.adminUser.id)).toEqual({ status: 'missing' });
+    expect((await resolvePublishedDoc(replacement, workspace.adminUser.id)).status).toBe('ok');
   });
 
   it('hides an archived doc from its published url', async () => {
@@ -450,9 +460,9 @@ describe('visibility modes', () => {
       { code: 'forbidden' },
     );
     const workspaceShare = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
-    expect(workspaceShare.publishToken).toBeNull();
-    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'missing' });
-    expect(await resolvePublishedDoc(token, member.user.id)).toEqual({ status: 'missing' });
+    expect(workspaceShare.publishToken).toBe(token);
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'sign-in' });
+    expect((await resolvePublishedDoc(token, member.user.id)).status).toBe('ok');
     expect((await getDoc(member.principal, doc.id)).access).toBe('write');
     await updateDoc(member.principal, doc.id, { content: 'Changed' });
     expect((await getDoc(member.principal, doc.id)).doc.content).toBe('Changed');
@@ -478,6 +488,76 @@ describe('visibility modes', () => {
     const other = await createWorkspace('Elsewhere');
     expect(await resolvePublishedDoc(token, other.adminUser.id)).toEqual({ status: 'missing' });
     expect((await listPublicDocs()).some((row) => row.id === doc.id)).toBe(false);
+  });
+});
+
+describe('the workspace link', () => {
+  async function shared(visibility: string) {
+    const { doc } = await createDoc(workspace.admin, {
+      visibility,
+      title: 'Build record',
+      content: '# Build record',
+    });
+    return doc;
+  }
+
+  it('gives an editable workspace doc a link of its own', async () => {
+    const doc = await shared('workspace');
+    const token = doc.publishToken;
+    if (token === null) throw new Error('expected a workspace token');
+
+    const member = await addMember(workspace, 'guest', { name: 'Gia Guest' });
+    const opened = await resolvePublishedDoc(token, member.user.id);
+    expect(opened.status).toBe('ok');
+    if (opened.status !== 'ok') return;
+    expect(opened.detail.doc.id).toBe(doc.id);
+  });
+
+  it('keeps that link off limits to anonymous readers and to other workspaces', async () => {
+    const doc = await shared('workspace');
+    const token = doc.publishToken ?? '';
+    const other = await createWorkspace('Elsewhere');
+
+    expect(await resolvePublishedDoc(token, null)).toEqual({ status: 'sign-in' });
+    expect(await resolvePublishedDoc(token, other.adminUser.id)).toEqual({ status: 'missing' });
+    expect(await getPublishedDoc(token)).toBeNull();
+    expect((await listPublicDocs()).some((row) => row.id === doc.id)).toBe(false);
+  });
+
+  it('holds the same link steady across both workspace access levels', async () => {
+    const doc = await shared('workspace');
+    const first = doc.publishToken;
+
+    const readOnly = await shareDoc(workspace.admin, doc.id, { visibility: 'members' });
+    expect(readOnly.publishToken).toBe(first);
+
+    const editable = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    expect(editable.publishToken).toBe(first);
+  });
+
+  it('drops the link entirely when the doc goes private', async () => {
+    const doc = await shared('workspace');
+    const token = doc.publishToken ?? '';
+
+    const closed = await shareDoc(workspace.admin, doc.id, { visibility: 'private' });
+    expect(closed.publishToken).toBeNull();
+    expect(await resolvePublishedDoc(token, workspace.adminUser.id)).toEqual({ status: 'missing' });
+  });
+
+  it('mints a fresh link when a doc is pulled back from the outside world', async () => {
+    const doc = await shared('workspace');
+    const published = await shareDoc(workspace.admin, doc.id, { visibility: 'link' });
+    const external = published.publishToken;
+    if (external === null) throw new Error('expected a public token');
+
+    const withdrawn = await shareDoc(workspace.admin, doc.id, { visibility: 'workspace' });
+    const replacement = withdrawn.publishToken;
+    if (replacement === null) throw new Error('expected a workspace token to replace it');
+    expect(replacement).not.toBe(external);
+    expect((await resolvePublishedDoc(replacement, workspace.adminUser.id)).status).toBe('ok');
+    expect(await resolvePublishedDoc(external, workspace.adminUser.id)).toEqual({
+      status: 'missing',
+    });
   });
 });
 

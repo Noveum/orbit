@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import {
+  type Catalog,
   catalogDriftBetween,
   type Drift,
   expectedCatalog,
@@ -26,7 +27,7 @@ export interface ReleaseResult {
 
 const LOCK_KEY = 4_611_358_438_132_153;
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
-  1786217938315, 1786623194883, 1788083189965, 1788724695589, 1788724695585,
+  1786217938315, 1786623194883, 1788083189965, 1788724695589, 1788724695585, 1789603762953,
 ]);
 const NOTIFICATION_AUDIT_MIGRATION = 1788724695590;
 const NOTIFICATION_AUDIT_ARTIFACTS = [
@@ -323,6 +324,15 @@ async function baselineLedger(
         end $$;
       `;
     }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1789603762953)) {
+      await tx`
+        update doc
+        set publish_token =
+          replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+        where visibility in ('workspace', 'members')
+          and (publish_token is null or publish_token = '')
+      `;
+    }
     await tx`create schema if not exists drizzle`;
     await tx`
       create table if not exists drizzle.__drizzle_migrations (
@@ -365,6 +375,21 @@ function pendingMigrationsProvideChecks(
   );
 }
 
+const DROP_TABLE_STATEMENT = /^\s*drop\s+table\s+(?:if\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/iu;
+
+function pendingMigrationsDropLiveTables(
+  migrations: readonly MigrationMeta[],
+  live: Catalog,
+): boolean {
+  const liveTables = new Set(live.tables.map((table) => table.name));
+  return migrations.some((migration) =>
+    migration.sql.some((statement) => {
+      const match = DROP_TABLE_STATEMENT.exec(statement);
+      return match?.[1] !== undefined && liveTables.has(match[1].toLowerCase());
+    }),
+  );
+}
+
 export async function releaseDatabase(
   url: string,
   migrationsFolder: string,
@@ -404,7 +429,8 @@ export async function releaseDatabase(
       const pendingMigrations = migrations.slice(rows.length);
       if (
         needsCatchup(beforeDrift) ||
-        pendingMigrationsProvideChecks(pendingMigrations, beforeDrift)
+        pendingMigrationsProvideChecks(pendingMigrations, beforeDrift) ||
+        pendingMigrationsDropLiveTables(pendingMigrations, before)
       ) {
         await migrate(drizzle({ client: sql }), { migrationsFolder });
         applied = pending;

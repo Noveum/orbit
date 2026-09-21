@@ -1,4 +1,4 @@
-import { isHtmlDoc } from '@orbit/shared/constants';
+import { isHtmlDoc, isWorkspaceShared } from '@orbit/shared/constants';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { DocReader } from '@/features/docs/doc-reader.tsx';
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
 
 function publishedBanner(visibility: string): string {
   if (isIndexable(visibility)) return 'Published doc, read only';
-  if (visibility === 'members') return 'Members only, read only';
+  if (isWorkspaceShared(visibility)) return 'Workspace only, read only';
   return 'Unlisted, read only';
 }
 

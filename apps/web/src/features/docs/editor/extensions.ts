@@ -9,6 +9,7 @@ import { Placeholder } from '@tiptap/extensions';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { CodeBlockView } from './code-block-view.tsx';
+import { LinkClick } from './link-click.ts';
 import { calloutToneOf } from './markdown.ts';
 
 export const MENU_KEYS = ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'] as const;
@@ -110,6 +111,7 @@ export function editorExtensions(handler: MenuKeyHandlerRef, placeholder = '') {
     Callout,
     ToggleSummary,
     ToggleBlock,
+    LinkClick,
     MenuKeymap.configure({ handler }),
   ];
 }
