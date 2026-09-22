@@ -19,6 +19,7 @@ export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
   doc_access_requested: 'Document access requested',
   doc_access_granted: 'Document access granted',
   project_update: 'Project update',
+  project_stale: 'Project stale',
   reminder_due: 'Reminder due',
   subscription_activity: 'Activity you follow',
   invite_accepted: 'Invite accepted',
@@ -53,7 +54,7 @@ export const NOTIFICATION_GROUPS: readonly NotificationGroup[] = [
   },
   {
     title: 'Projects and reminders',
-    types: ['project_update', 'reminder_due', 'subscription_activity'],
+    types: ['project_update', 'project_stale', 'reminder_due', 'subscription_activity'],
   },
   {
     title: 'Workspace',
