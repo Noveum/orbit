@@ -166,9 +166,14 @@ export const duplicateIssueQuerySchema = z.object({
     .default(DUPLICATE_SUGGESTIONS_MAX_COUNT),
 });
 
+export const issueMarkDuplicateSchema = z.object({
+  survivorIssueId: idSchema,
+});
+
 export type IssueCreateInput = z.infer<typeof issueCreateSchema>;
 export type IssueUpdateInput = z.infer<typeof issueUpdateSchema>;
 export type IssueFilterInput = z.infer<typeof issueFilterSchema>;
 export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
 export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
 export type IssueExpectedProperties = z.infer<typeof issueExpectedPropertiesSchema>;
+export type IssueMarkDuplicateInput = z.infer<typeof issueMarkDuplicateSchema>;

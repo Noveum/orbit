@@ -28,7 +28,11 @@ const { DocShareMenu, shareTrigger, visibleChoices } = await import(
   '../../../src/features/docs/doc-share-menu.tsx'
 );
 
-function doc(visibility: string, publishToken: string | null = null): Doc {
+function doc(
+  visibility: string,
+  publishToken: string | null = null,
+  kind: 'markdown' | 'html' = 'markdown',
+): Doc {
   return {
     id: 'doc_1',
     organizationId: 'org_1',
@@ -37,7 +41,7 @@ function doc(visibility: string, publishToken: string | null = null): Doc {
     parentId: null,
     title: 'Delta protocol',
     slug: 'delta-protocol',
-    kind: 'markdown',
+    kind,
     content: '',
     sortOrder: 0,
     visibility,
@@ -198,6 +202,48 @@ describe('copying a link to a doc', () => {
     expect(screen.queryByTestId('doc-rotate-link')).toBeNull();
     await user.click(screen.getByTestId('doc-copy-link'));
     expect(clipboard.value).toContain('/docs/doc_1');
+  });
+
+  it('offers a workspace link beside the document link for an ordinary doc', async () => {
+    const user = await openShare(doc('workspace', 'token_1'));
+    const clipboard = stubClipboard();
+
+    expect(screen.getByTestId('doc-copy-link-url')).toHaveTextContent('/docs/doc_1');
+    expect(screen.getByTestId('doc-copy-workspace-link-url')).toHaveTextContent(
+      '/d/delta-protocol-token_1',
+    );
+    await user.click(screen.getByTestId('doc-copy-workspace-link'));
+
+    expect(clipboard.value).toContain('/d/delta-protocol-token_1');
+  });
+
+  it('sends an html page to its own url rather than the reader', async () => {
+    await openShare(doc('workspace', 'token_1', 'html'));
+
+    expect(screen.getByTestId('doc-copy-workspace-link-url')).toHaveTextContent(
+      '/h/delta-protocol-token_1',
+    );
+  });
+
+  it('offers the same workspace link on the view-only access level', async () => {
+    await openShare(doc('members', 'token_1'));
+
+    expect(screen.getByTestId('doc-copy-workspace-link-url')).toHaveTextContent(
+      '/d/delta-protocol-token_1',
+    );
+  });
+
+  it('leaves a private doc with nothing but its document link', async () => {
+    await openShare(doc('private'));
+
+    expect(screen.queryByTestId('doc-copy-workspace-link')).toBeNull();
+  });
+
+  it('shows the public link alone once a doc is shared outside the workspace', async () => {
+    await openShare(doc('link', 'token_1', 'html'));
+
+    expect(screen.getByTestId('doc-copy-link-url')).toHaveTextContent('/h/delta-protocol-token_1');
+    expect(screen.queryByTestId('doc-copy-workspace-link')).toBeNull();
   });
 
   it('keeps the public link and its reset out of sight while the doc has none', async () => {

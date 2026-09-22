@@ -25,8 +25,12 @@ export function isExternallyShared(visibility: string): boolean {
   return visibility === 'link' || visibility === 'public';
 }
 
+export function isWorkspaceShared(visibility: string): boolean {
+  return visibility === 'workspace' || visibility === 'members';
+}
+
 export function isPublished(visibility: string): boolean {
-  return visibility === 'members' || isExternallyShared(visibility);
+  return isWorkspaceShared(visibility) || isExternallyShared(visibility);
 }
 
 export function isRestricted(visibility: string): boolean {

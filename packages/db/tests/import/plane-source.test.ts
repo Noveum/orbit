@@ -36,7 +36,6 @@ function makeExport(identifiers: readonly string[], cached: readonly string[]): 
     writeFileSync(resolve(directory, 'issues.json'), JSON.stringify([]));
     writeFileSync(resolve(directory, 'states.json'), JSON.stringify([]));
     writeFileSync(resolve(directory, 'cycle-issues.json'), JSON.stringify({}));
-    writeFileSync(resolve(directory, 'module-issues.json'), JSON.stringify({}));
   }
   return root;
 }

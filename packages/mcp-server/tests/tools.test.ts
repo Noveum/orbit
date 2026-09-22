@@ -373,6 +373,19 @@ describe('issues', () => {
     });
   });
 
+  it('marks duplicate via set_relation when type is duplicate_of', async () => {
+    const duplicate = await newIssue('Duplicate issue');
+    const survivor = await newIssue('Survivor issue');
+    const res = await admin.result('set_relation', {
+      issue: duplicate.identifier,
+      relatedIssue: survivor.identifier,
+      type: 'duplicate_of',
+    });
+    expect(res['issue']).toBe(duplicate.identifier);
+    expect(res['relatedIssue']).toBe(survivor.identifier);
+    expect(res['type']).toBe('duplicate_of');
+  });
+
   it('unlinks two issues from either end', async () => {
     const first = await newIssue('Still blocks the other');
     const second = await newIssue('Still blocked by the first');
@@ -423,6 +436,26 @@ describe('issues', () => {
 
     expect(failure.isError).toBe(true);
     expect(errorPayload(failure).code).toBe('not_found');
+  });
+
+  it('marks an issue as duplicate of another issue via MCP', async () => {
+    const survivor = await newIssue('Survivor issue');
+    const duplicate = await newIssue('Duplicate issue');
+
+    const result = await admin.result('mark_issue_duplicate', {
+      issue: duplicate.identifier,
+      survivorIssue: survivor.identifier,
+    });
+
+    expect(result['issue']).toBe(duplicate.identifier);
+    expect(result['survivorIssue']).toBe(survivor.identifier);
+
+    const survivorDetails = await admin.result('get_issue', { issue: survivor.identifier });
+    expect(relationsOf(survivorDetails)).toContainEqual({
+      type: 'duplicated_by',
+      identifier: duplicate.identifier,
+      title: 'Duplicate issue',
+    });
   });
 
   it('makes an issue a sub issue and detaches it again', async () => {
@@ -937,6 +970,7 @@ describe('what a token is allowed to do', () => {
       'delete_sprint',
       'delete_state',
       'delete_view',
+      'mark_issue_duplicate',
       'remove_member',
       'remove_relation',
       'remove_team_member',
