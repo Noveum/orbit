@@ -126,8 +126,8 @@ function ConversationDetail({
   readonly canWriteDocs: boolean;
   readonly canPublishDocs: boolean;
 }) {
-  const [context, setContext] = useState(false);
   const issue = issueIdentifierFromUrl(row.url);
+  const [context, setContext] = useState(issue !== null);
   const doc = docIdFromUrl(row.url);
   const hasContext = issue !== null || doc !== null;
   return (
@@ -157,14 +157,14 @@ function ConversationDetail({
           <span>
             {row.eventCount} {row.eventCount === 1 ? 'update' : 'updates'} in this conversation
           </span>
-          {hasContext ? (
+          {hasContext && issue === null ? (
             <button
               type="button"
               aria-pressed={context}
               onClick={() => setContext((value) => !value)}
               className="text-accent hover:underline"
             >
-              {context ? 'Show conversation' : `Show ${issue === null ? 'document' : 'issue'}`}
+              {context ? 'Show conversation' : 'Show document'}
             </button>
           ) : null}
         </div>
@@ -188,6 +188,7 @@ function ConversationDetail({
           }}
           canWriteDocs={canWriteDocs}
           canPublishDocs={canPublishDocs}
+          focusActivity
           onIssueDeleted={() => setContext(false)}
         />
       ) : (

@@ -112,6 +112,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
 }));
 
 const { InboxView } = await import('@/features/inbox/inbox-view.tsx');
+const { ConversationInbox } = await import('@/features/inbox/conversation-inbox.tsx');
 
 const DETAIL = {
   issue: {
@@ -223,6 +224,7 @@ function renderInbox(
     canWriteDocs: true,
     canPublishDocs: true,
   },
+  grouped = false,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -230,16 +232,47 @@ function renderInbox(
       <TooltipProvider>
         <ToastProvider>
           <HotkeyProvider>
-            <InboxView
-              items={items}
-              unreadCount={1}
-              unreadMentions={0}
-              unreadActivity={0}
-              userId="user_1"
-              nextCursor={null}
-              canWriteDocs={docAccess.canWriteDocs}
-              canPublishDocs={docAccess.canPublishDocs}
-            />
+            {grouped ? (
+              <ConversationInbox
+                initialPage={{
+                  conversations: items.map((entry, index) => ({
+                    ...entry,
+                    subjectType: 'issue',
+                    subjectId: 'issue_1',
+                    conversationKey: entry.id,
+                    category: 'activity',
+                    latestEventId: 'event_1',
+                    occurredAt: entry.createdAt,
+                    lastActivityAt: entry.createdAt,
+                    lastActivitySeq: items.length - index,
+                    eventCount: 3,
+                    unreadEventCount: 0,
+                    unreadMentionCount: 0,
+                    hasMention: false,
+                    dismissedAt: null,
+                    syncId: 1,
+                  })),
+                  nextCursor: null,
+                  counters: { unreadCount: 0, unreadActivityCount: 0, unreadMentionCount: 0 },
+                  counterVersion: 1,
+                }}
+                userId="user_1"
+                organizationId="org_1"
+                canWriteDocs
+                canPublishDocs
+              />
+            ) : (
+              <InboxView
+                items={items}
+                unreadCount={1}
+                unreadMentions={0}
+                unreadActivity={0}
+                userId="user_1"
+                nextCursor={null}
+                canWriteDocs={docAccess.canWriteDocs}
+                canPublishDocs={docAccess.canPublishDocs}
+              />
+            )}
           </HotkeyProvider>
         </ToastProvider>
       </TooltipProvider>
@@ -412,5 +445,71 @@ describe('reading a notification in the inbox', () => {
     expect(screen.queryByTestId('issue-detail')).toBeNull();
     expect(screen.queryByTestId('doc-surface')).toBeNull();
     expect(screen.getByText('Ada joined the workspace')).toBeInTheDocument();
+  });
+});
+
+describe('opening grouped issue notifications', () => {
+  const docAccess = { canWriteDocs: true, canPublishDocs: true };
+  const originalScroll = Element.prototype.scrollIntoView;
+  let scrolled: Element[] = [];
+
+  beforeEach(() => {
+    scrolled = [];
+    Element.prototype.scrollIntoView = function () {
+      scrolled.push(this);
+    };
+  });
+
+  afterEach(() => {
+    Element.prototype.scrollIntoView = originalScroll;
+  });
+
+  it('opens the full issue and lands on the comment from the conversation URL', async () => {
+    renderInbox([item({ read: true })], docAccess, true);
+    const target = await screen.findByTestId('comment-comment_9');
+    expect(await screen.findByTestId('issue-title')).toHaveValue(
+      'Review the AutoFix pull requests',
+    );
+    expect(screen.getByTestId('property-status')).toBeInTheDocument();
+    expect(target).toHaveAttribute('data-focused', 'true');
+    await waitFor(() => expect(scrolled).toContain(target));
+    expect(screen.queryByRole('button', { name: 'Show issue' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show conversation' })).toBeNull();
+    expect(requests.some((path) => path.includes('/events'))).toBe(false);
+  });
+
+  it('lands on the latest activity when no comment is targeted', async () => {
+    renderInbox([item({ read: true, url: '/issue/ENG-3', entityType: 'issue' })], docAccess, true);
+    const end = await screen.findByTestId('issue-activity-end');
+    await waitFor(() => expect(scrolled).toContain(end));
+    expect(screen.getByTestId('comment-composer')).toBeInTheDocument();
+  });
+
+  it('falls back to activity when the targeted comment no longer exists', async () => {
+    renderInbox([item({ read: true, url: '/issue/ENG-3#comment-deleted' })], docAccess, true);
+    const end = await screen.findByTestId('issue-activity-end');
+    await waitFor(() => expect(scrolled).toContain(end));
+  });
+
+  it('opens the next selected issue directly too', async () => {
+    renderInbox(
+      [
+        item({ read: true, title: 'First' }),
+        item({
+          read: true,
+          id: 'notification_2',
+          title: 'Second',
+          url: '/issue/ENG-4#comment-comment_8',
+        }),
+      ],
+      docAccess,
+      true,
+    );
+    await screen.findByTestId('comment-comment_9');
+    await userEvent.setup().click(screen.getByRole('button', { name: /Second/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('comment-comment_8')).toHaveAttribute('data-focused', 'true'),
+    );
+    expect(requests.some((path) => path.includes('ENG-4'))).toBe(true);
   });
 });

@@ -276,7 +276,9 @@ export function NotificationBody({
   canWriteDocs,
   canPublishDocs,
   onIssueDeleted,
+  focusActivity = false,
 }: {
+  readonly focusActivity?: boolean;
   readonly item: InboxItem;
   readonly canWriteDocs: boolean;
   readonly canPublishDocs: boolean;
@@ -289,7 +291,10 @@ export function NotificationBody({
         <IssueDetailView
           key={item.id}
           identifier={identifier}
-          focusCommentId={item.entityType === 'comment' ? item.entityId : null}
+          focusCommentId={
+            item.url.split('#comment-')[1] || (item.entityType === 'comment' ? item.entityId : null)
+          }
+          focusActivity={focusActivity}
           onDeleted={onIssueDeleted}
         />
       </div>
