@@ -88,6 +88,58 @@ describe('CommentComposer', () => {
     await waitFor(() => expect(surface().textContent).toBe(''));
   });
 
+  for (const modifier of ['Meta', 'Control']) {
+    it(`submits unchanged text with ${modifier}+Enter`, async () => {
+      const onSubmit = mock();
+      render(<CommentComposer members={members} initialValue="ship it" onSubmit={onSubmit} />);
+      const user = userEvent.setup();
+      await user.click(surface());
+      await user.keyboard(`{${modifier}>}{Enter}{/${modifier}}`);
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(onSubmit).toHaveBeenCalledWith('ship it');
+      await waitFor(() => expect(surface().textContent).toBe(''));
+    });
+
+    it(`does not post an empty comment with ${modifier}+Enter`, async () => {
+      const onSubmit = mock();
+      render(<CommentComposer members={members} onSubmit={onSubmit} />);
+      const user = userEvent.setup();
+      await user.click(surface());
+      await user.keyboard(`{${modifier}>}{Enter}{Enter}{/${modifier}}`);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(surface().textContent).toBe('');
+      expect(screen.getByTestId('comment-composer-submit')).toBeDisabled();
+    });
+
+    it(`does not submit while pending with ${modifier}+Enter`, async () => {
+      const onSubmit = mock();
+      render(
+        <CommentComposer members={members} initialValue="ship it" pending onSubmit={onSubmit} />,
+      );
+      const user = userEvent.setup();
+      await user.click(surface());
+      await user.keyboard(`{${modifier}>}{Enter}{/${modifier}}`);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(surface().textContent).toBe('ship it');
+    });
+  }
+
+  it('saves an edited comment without adding a break', async () => {
+    const onSubmit = mock();
+    render(
+      <CommentComposer
+        members={members}
+        submitLabel="Save"
+        initialValue="already **written**"
+        onSubmit={onSubmit}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(surface());
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(onSubmit).toHaveBeenCalledWith('already **written**');
+  });
+
   it('submits with the button and clears the draft', async () => {
     const user = userEvent.setup();
     const onSubmit = mock();

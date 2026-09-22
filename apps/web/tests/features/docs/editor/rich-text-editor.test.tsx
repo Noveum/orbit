@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Editor } from '@tiptap/core';
 import { useState } from 'react';
@@ -296,5 +296,37 @@ describe('opening a stored document without touching it', () => {
   it('leaves the body alone, trailing spaces and inner blank lines included', () => {
     expect(settledMarkdown('One\n\nTwo')).toBe('One\n\nTwo');
     expect(settledMarkdown('Trailing spaces   ')).toBe('Trailing spaces   ');
+  });
+});
+
+describe('keyboard saving', () => {
+  for (const modifier of ['metaKey', 'ctrlKey']) {
+    it(`saves before the editor changes the document with ${modifier}`, async () => {
+      const onChange = mock();
+      const onForceSave = mock();
+      render(
+        <RichTextEditor
+          value="Keep this text"
+          onChange={onChange}
+          onForceSave={onForceSave}
+          ariaLabel="Body"
+        />,
+      );
+      const textbox = await screen.findByRole('textbox', { name: 'Body' });
+      onChange.mockClear();
+      fireEvent.keyDown(textbox, { key: 'Enter', [modifier]: true });
+      expect(onForceSave).toHaveBeenCalledTimes(1);
+      expect(onChange).not.toHaveBeenCalled();
+      expect(textbox.textContent).toBe('Keep this text');
+    });
+  }
+
+  it('keeps Shift+Enter available for intentional line breaks', async () => {
+    const onChange = mock();
+    const editor = await mountEditor({ onChange });
+    editor.commands.setContent('<p>First line</p>');
+    editor.commands.setTextSelection('First line'.length + 1);
+    fireEvent.keyDown(editor.view.dom, { key: 'Enter', shiftKey: true });
+    expect(editor.getJSON().content?.[0]?.content?.at(-1)?.type).toBe('hardBreak');
   });
 });
