@@ -61,13 +61,9 @@ for (const name of TEST_DATABASES) {
   if (!DATABASE_NAME.test(name)) {
     throw new Error(`Refusing to create "${name}": it does not look like a test database.`);
   }
-  const existing = await admin`select 1 from pg_database where datname = ${name}`;
-  if (existing.length > 0) {
-    console.log(`${name} already exists`);
-    continue;
-  }
+  await admin.unsafe(`drop database if exists "${name}" with (force)`);
   await admin.unsafe(`create database "${name}"`);
-  console.log(`created ${name}`);
+  console.log(`recreated ${name}`);
 }
 
 await admin.end();
