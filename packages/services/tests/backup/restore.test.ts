@@ -265,25 +265,32 @@ describe('restoreBackup integration and readiness lifecycle', () => {
         pgDumpPath: resolvedPgDump,
       });
 
-      await setRecoveryState(databaseUrl, 'restoring');
-
-      await expect(
-        restoreBackup({
-          backupPath: backupResult.backupDir,
-          databaseUrl,
-          confirmDestructiveRestoreTarget: computeRestoreTargetIdentity(
+      const lock = await acquireRestoreLock(databaseUrl);
+      try {
+        await expect(
+          restoreBackup({
+            backupPath: backupResult.backupDir,
             databaseUrl,
-            process.env['S3_BUCKET'],
-          ).identity,
-          storageDriver: driver,
-          skipRedisCheck: true,
-          pgRestorePath: resolvedPgRestore,
-        }),
-      ).rejects.toThrow(/Another restore operation is currently in progress/);
+            confirmDestructiveRestoreTarget: computeRestoreTargetIdentity(
+              databaseUrl,
+              process.env['S3_BUCKET'],
+            ).identity,
+            storageDriver: driver,
+            skipRedisCheck: true,
+            pgRestorePath: resolvedPgRestore,
+          }),
+        ).rejects.toThrow(/Another restore operation is currently in progress/);
 
-      await expect(acquireRestoreLock(databaseUrl)).rejects.toThrow(
-        /Another restore operation is currently in progress/,
-      );
+        await expect(acquireRestoreLock(databaseUrl)).rejects.toThrow(
+          /Another restore operation is currently in progress/,
+        );
+      } finally {
+        await lock.release();
+      }
+
+      await setRecoveryState(databaseUrl, 'restoring', 'interrupted');
+      const retryLock = await acquireRestoreLock(databaseUrl);
+      await retryLock.release();
     } finally {
       await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
       await setRecoveryState(databaseUrl, 'ready');

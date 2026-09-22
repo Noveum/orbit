@@ -1,9 +1,9 @@
-import { createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from '@orbit/db/check-drift';
 import * as schema from '@orbit/db/schema';
 import type { RestoreValidationResult } from '@orbit/shared';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
+import Redis from 'ioredis';
 import postgres from 'postgres';
 import { assertSafeKey } from '../storage/key.ts';
 import type { StorageDriver } from '../storage/types.ts';
@@ -16,48 +16,46 @@ export interface ValidateRestoreOptions {
   readonly skipRedisCheck?: boolean | undefined;
 }
 
-function pingRedis(endpoint: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    let parsed: URL;
-    try {
-      parsed = new URL(endpoint);
-    } catch {
-      resolve(false);
-      return;
+export function redactRedisEndpoint(endpoint: string): string {
+  try {
+    const url = new URL(endpoint);
+    if (url.password.length > 0) {
+      url.password = '***';
     }
-    const host = parsed.hostname.length > 0 ? parsed.hostname : '127.0.0.1';
-    const port = parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 6379;
-    const socket = createConnection({ host, port });
-    let settled = false;
-    const settle = (result: boolean): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      socket.destroy();
-      resolve(result);
-    };
-    socket.setTimeout(2000);
-    socket.on('connect', () => {
-      socket.write('PING\r\n');
+    if (url.username.length > 0) {
+      url.username = '***';
+    }
+    return url.toString();
+  } catch {
+    return 'invalid-endpoint';
+  }
+}
+
+export async function pingRedis(endpoint: string): Promise<boolean> {
+  let client: Redis | undefined;
+  try {
+    const isTls = endpoint.startsWith('rediss://');
+    client = new Redis(endpoint, {
+      connectTimeout: 2000,
+      maxRetriesPerRequest: 0,
+      lazyConnect: true,
+      enableReadyCheck: false,
+      protocol: 2,
+      disableClientInfo: true,
+      retryStrategy: () => null,
+      ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
     });
-    socket.on('data', (chunk) => {
-      const text = chunk.toString('utf8');
-      settle(text.includes('PONG'));
-    });
-    socket.on('error', () => {
-      settle(false);
-    });
-    socket.on('timeout', () => {
-      settle(false);
-    });
-    socket.on('end', () => {
-      settle(false);
-    });
-    socket.on('close', () => {
-      settle(false);
-    });
-  });
+    client.on('error', () => undefined);
+    await client.connect();
+    const result = await client.ping();
+    await client.quit().catch(() => client?.disconnect());
+    return result === 'PONG';
+  } catch {
+    if (client !== undefined) {
+      client.disconnect();
+    }
+    return false;
+  }
 }
 
 function defaultMigrationsFolder(customPath: string | undefined): string {
@@ -510,7 +508,9 @@ export async function validateRestore(
   if (skipRedisCheck !== true && redisEndpoint !== undefined && redisEndpoint.length > 0) {
     redisTested = await pingRedis(redisEndpoint);
     if (!redisTested) {
-      allErrors.push(`Failed to ping configured Redis endpoint: ${redisEndpoint}`);
+      allErrors.push(
+        `Failed to ping configured Redis endpoint: ${redactRedisEndpoint(redisEndpoint)}`,
+      );
     }
   }
 

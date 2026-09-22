@@ -209,8 +209,16 @@ describe('verifyPreMutationChecksums', () => {
       const linkDump = join(tempDir, 'symlink.dump');
       try {
         await symlink(realDump, linkDump);
-      } catch {
-        return;
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          (error.code === 'ENOSYS' || (process.platform === 'win32' && error.code === 'EPERM'))
+        ) {
+          return;
+        }
+        throw error;
       }
       const symlinkManifest = {
         ...manifest,
@@ -237,8 +245,16 @@ describe('verifyPreMutationChecksums', () => {
       const linkObj = join(tempDir, 'objects', 'symlink.png');
       try {
         await symlink(realObj, linkObj);
-      } catch {
-        return;
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          (error.code === 'ENOSYS' || (process.platform === 'win32' && error.code === 'EPERM'))
+        ) {
+          return;
+        }
+        throw error;
       }
       const symlinkManifest = {
         ...manifest,

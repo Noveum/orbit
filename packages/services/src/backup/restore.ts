@@ -108,7 +108,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
 
   const driver = resolveStorageDriver(options, env);
 
-  await acquireRestoreLock(databaseUrl);
+  const lock = await acquireRestoreLock(databaseUrl);
 
   try {
     await runDatabaseAndMigrations(
@@ -158,5 +158,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
     const errorMessage = error instanceof Error ? error.message : String(error);
     await setRecoveryState(databaseUrl, 'validation_failed', errorMessage).catch(() => undefined);
     throw error;
+  } finally {
+    await lock.release().catch(() => undefined);
   }
 }

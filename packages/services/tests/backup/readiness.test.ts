@@ -53,7 +53,7 @@ describe('readiness state management', () => {
     expect(reachable).toBe(true);
 
     await setRecoveryState(databaseUrl, 'ready');
-    await acquireRestoreLock(databaseUrl);
+    const lock = await acquireRestoreLock(databaseUrl);
     const state = await getRecoveryState(databaseUrl);
     expect(state?.status).toBe('restoring');
 
@@ -61,8 +61,34 @@ describe('readiness state management', () => {
       /Another restore operation is currently in progress/,
     );
 
+    await lock.release();
     await setRecoveryState(databaseUrl, 'ready');
-    await expect(acquireRestoreLock(databaseUrl)).resolves.toBeUndefined();
+    const secondLock = await acquireRestoreLock(databaseUrl);
+    await secondLock.release();
     await setRecoveryState(databaseUrl, 'ready');
+  });
+
+  it('allows safe retry after an interrupted restore process left status restoring', async () => {
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const reachable = await isDatabaseReachable(databaseUrl);
+    expect(reachable).toBe(true);
+
+    await setRecoveryState(databaseUrl, 'restoring', 'interrupted');
+    const state = await getRecoveryState(databaseUrl);
+    expect(state?.status).toBe('restoring');
+
+    const lock = await acquireRestoreLock(databaseUrl);
+    try {
+      const recoveredState = await getRecoveryState(databaseUrl);
+      expect(recoveredState?.status).toBe('restoring');
+      expect(recoveredState?.error).toBeNull();
+
+      await expect(acquireRestoreLock(databaseUrl)).rejects.toThrow(
+        /Another restore operation is currently in progress/,
+      );
+    } finally {
+      await lock.release();
+      await setRecoveryState(databaseUrl, 'ready');
+    }
   });
 });
