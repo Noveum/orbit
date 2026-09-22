@@ -116,7 +116,7 @@ afterEach(() => {
 });
 
 describe('useComments', () => {
-  it('reads one bounded page of the thread', async () => {
+  it('reads a short thread in one bounded page', async () => {
     const log = stubFetch(() => ({ payload: { comments: [comment('c1', 'Hello')] } }));
     const client = newClient();
 
@@ -126,6 +126,29 @@ describe('useComments', () => {
     expect(bodies(result.current.data)).toEqual(['Hello']);
     expect(log.urls[0]).toContain(`issueId=${ISSUE}`);
     expect(log.urls[0]).toContain('limit=50');
+  });
+
+  it('loads later pages before marking the thread ready for comment navigation', async () => {
+    const later = gate();
+    const log = stubFetch((url) =>
+      url.includes('cursor=')
+        ? later.held
+        : {
+            payload: {
+              comments: Array.from({ length: 50 }, (_, index) => comment(`c${index}`, 'Earlier')),
+              nextCursor: 'c49',
+            },
+          },
+    );
+    const { result } = renderHook(() => useComments(ISSUE), { wrapper: wrapper(newClient()) });
+    await waitFor(() => expect(log.urls).toHaveLength(2));
+    expect(result.current.isSuccess).toBe(false);
+    expect(log.urls[1]).toContain('cursor=c49');
+    later.release({ payload: { comments: [comment('target', 'Latest')], nextCursor: null } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toHaveLength(51);
+    expect(result.current.data?.at(-1)?.comment.id).toBe('target');
+    expect(log.urls).toHaveLength(2);
   });
 
   it('never asks when there is no issue to ask about', async () => {
