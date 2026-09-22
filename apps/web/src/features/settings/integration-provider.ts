@@ -1,3 +1,5 @@
+import { integrationSettingsProviderSchema } from '@orbit/shared/validators';
+
 export type IntegrationProvider = 'github' | 'slack' | 'mcp';
 
 export function integrationProvider(
@@ -5,7 +7,8 @@ export function integrationProvider(
   canManage: boolean,
   hasSlack: boolean,
 ): IntegrationProvider {
-  if (!canManage || requested === 'mcp') return 'mcp';
-  if (requested === 'slack' && hasSlack) return 'slack';
+  const provider = integrationSettingsProviderSchema.catch('github').parse(requested);
+  if (!canManage || provider === 'mcp') return 'mcp';
+  if (provider === 'slack' && hasSlack) return 'slack';
   return 'github';
 }

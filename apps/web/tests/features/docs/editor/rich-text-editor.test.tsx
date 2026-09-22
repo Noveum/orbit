@@ -321,6 +321,28 @@ describe('keyboard saving', () => {
     });
   }
 
+  for (const modifier of ['metaKey', 'ctrlKey']) {
+    it(`does not save during IME composition with ${modifier}`, async () => {
+      const onChange = mock();
+      const onForceSave = mock();
+      render(
+        <RichTextEditor
+          value="Keep this text"
+          onChange={onChange}
+          onForceSave={onForceSave}
+          ariaLabel="Body"
+        />,
+      );
+      const textbox = await screen.findByRole('textbox', { name: 'Body' });
+      onChange.mockClear();
+      fireEvent.compositionStart(textbox);
+      fireEvent.keyDown(textbox, { key: 'Enter', [modifier]: true, isComposing: true });
+      expect(onForceSave).not.toHaveBeenCalled();
+      expect(onChange).not.toHaveBeenCalled();
+      expect(textbox.textContent).toBe('Keep this text');
+    });
+  }
+
   it('keeps Shift+Enter available for intentional line breaks', async () => {
     const onChange = mock();
     const editor = await mountEditor({ onChange });

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { idSchema } from './common.ts';
 
+export const integrationSettingsProviderSchema = z.enum(['github', 'slack', 'mcp']);
+
 const githubInstallationIdSchema = z.string().trim().regex(/^\d+$/).max(32);
 const githubRepositoryIdSchema = z.string().trim().regex(/^\d+$/).max(32);
 
