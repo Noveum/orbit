@@ -17,9 +17,7 @@ export default async function SettingsLayout({ children }: { children: ReactNode
     membership.deletionRequestedAt === null &&
     can(membership.principal, 'ai:manage');
 
-  const canManageDeployment =
-    membership !== null &&
-    can(membership.principal, 'org:manage');
+  const canManageDeployment = membership !== null && can(membership.principal, 'org:manage');
 
   return (
     <SettingsShell

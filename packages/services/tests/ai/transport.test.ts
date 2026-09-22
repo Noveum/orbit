@@ -387,4 +387,77 @@ describe('safeFetch connection establishment destination validation', () => {
       });
     }
   });
+
+  it('closes upstream HTTP connection immediately when cancelling a compressed response', async () => {
+    process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = 'true';
+
+    let serverClosed = false;
+    let serverInterval: ReturnType<typeof setInterval> | undefined;
+
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip',
+      });
+      const gzip = zlib.createGzip();
+      gzip.pipe(res);
+
+      gzip.write('streaming chunk data ');
+      gzip.flush();
+
+      serverInterval = setInterval(() => {
+        gzip.write('streaming chunk data ');
+        gzip.flush();
+      }, 20);
+
+      const onClose = () => {
+        if (serverInterval !== undefined) {
+          clearInterval(serverInterval);
+        }
+        serverClosed = true;
+      };
+
+      req.on('close', onClose);
+      res.on('close', onClose);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const response = await safeFetch(`http://127.0.0.1:${port}/stream`, {
+        dnsLookup: mockDns('127.0.0.1'),
+      });
+      expect(response.status).toBe(200);
+      expect(response.body).not.toBeNull();
+
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const firstChunk = await reader?.read();
+      expect(firstChunk?.done).toBe(false);
+
+      await reader?.cancel();
+
+      await new Promise<void>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (serverClosed) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 10);
+      });
+
+      expect(serverClosed).toBe(true);
+    } finally {
+      if (serverInterval !== undefined) {
+        clearInterval(serverInterval);
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
+  });
 });

@@ -409,4 +409,77 @@ describe('AI client complete()', () => {
       });
     }
   });
+
+  it('rejects oversized chunked compressed response and closes connection immediately', async () => {
+    process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = 'true';
+
+    let serverClosed = false;
+    let serverInterval: ReturnType<typeof setInterval> | undefined;
+
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip',
+      });
+      const gzip = zlib.createGzip();
+      gzip.pipe(res);
+
+      const chunk = 'x'.repeat(64 * 1024);
+      gzip.write(chunk);
+      gzip.flush();
+      serverInterval = setInterval(() => {
+        gzip.write(chunk);
+        gzip.flush();
+      }, 10);
+
+      const onClose = () => {
+        if (serverInterval !== undefined) {
+          clearInterval(serverInterval);
+        }
+        serverClosed = true;
+      };
+
+      req.on('close', onClose);
+      res.on('close', onClose);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const port = (server.address() as AddressInfo).port;
+    try {
+      await expect(
+        complete('Hello', {
+          config: {
+            kind: 'openai-compatible',
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            model: 'gpt-4o',
+            enabled: true,
+          },
+          apiKey: 'sk-mock-key',
+          recordUsage: false,
+          allowPrivate: true,
+        }),
+      ).rejects.toThrow(AiClientError);
+
+      await new Promise<void>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (serverClosed) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 10);
+      });
+
+      expect(serverClosed).toBe(true);
+    } finally {
+      if (serverInterval !== undefined) {
+        clearInterval(serverInterval);
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
+  });
 });

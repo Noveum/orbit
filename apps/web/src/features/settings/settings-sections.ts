@@ -53,9 +53,7 @@ export function settingsGroupsFor(
   canManageDeployment = false,
 ): readonly SettingsGroup[] {
   const canManageAi =
-    typeof permissionsOrAi === 'object'
-      ? (permissionsOrAi.canManageAi ?? false)
-      : permissionsOrAi;
+    typeof permissionsOrAi === 'object' ? (permissionsOrAi.canManageAi ?? false) : permissionsOrAi;
   const deploymentAllowed =
     typeof permissionsOrAi === 'object'
       ? (permissionsOrAi.canManageDeployment ?? false)
@@ -109,4 +107,3 @@ export function settingsSectionsFlat(
     (group) => group.sections,
   );
 }
-

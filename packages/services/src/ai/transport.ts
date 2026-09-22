@@ -155,7 +155,47 @@ function decompressBody(
   };
 }
 
-function buildWebResponse(res: http.IncomingMessage, isHead: boolean): Response {
+function hookCancellation(
+  req: http.ClientRequest,
+  res: http.IncomingMessage,
+  bodyStream: stream.Readable,
+  decompressed: boolean,
+): stream.Readable {
+  res.on('error', () => undefined);
+  req.on('error', () => undefined);
+
+  let closing = false;
+  const closeUpstream = () => {
+    if (closing) return;
+    closing = true;
+    if (!res.destroyed) res.destroy();
+    if (!req.destroyed) req.destroy();
+    res.socket?.destroy();
+    req.socket?.destroy();
+  };
+
+  if (decompressed) {
+    const originalDestroy = bodyStream.destroy.bind(bodyStream);
+    bodyStream.destroy = (error?: Error) => {
+      closeUpstream();
+      return originalDestroy(error);
+    };
+  }
+
+  bodyStream.on('close', () => {
+    if (!res.readableEnded) {
+      closeUpstream();
+    }
+  });
+
+  return bodyStream;
+}
+
+function buildWebResponse(
+  req: http.ClientRequest,
+  res: http.IncomingMessage,
+  isHead: boolean,
+): Response {
   const statusCode = res.statusCode ?? 200;
 
   if (isNullBodyStatus(statusCode) || isHead) {
@@ -167,7 +207,12 @@ function buildWebResponse(res: http.IncomingMessage, isHead: boolean): Response 
     });
   }
 
-  const { stream: bodyStream, decompressed } = decompressBody(res, res.headers['content-encoding']);
+  const { stream: rawBodyStream, decompressed } = decompressBody(
+    res,
+    res.headers['content-encoding'],
+  );
+
+  const bodyStream = hookCancellation(req, res, rawBodyStream, decompressed);
 
   const webHeaders = toWebHeaders(res.headers);
   if (decompressed) {
@@ -233,7 +278,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     const req = client.request(reqOptions, (res) => {
       try {
         const isHead = (options.method ?? 'GET').toUpperCase() === 'HEAD';
-        resolve(buildWebResponse(res, isHead));
+        resolve(buildWebResponse(req, res, isHead));
       } catch (err) {
         res.resume();
         reject(err);
