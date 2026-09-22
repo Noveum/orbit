@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportStandalone } from '../scripts/export-docker-preview';
 import { initializeDockerPreview } from '../scripts/init-docker-preview';
+import { startDockerPreview } from '../scripts/start-docker-preview';
 
 const directories: string[] = [];
 
@@ -65,4 +66,46 @@ test('preview credentials are readable only by their owner', async () => {
   } finally {
     await handle.close();
   }
+});
+
+test('one-command startup initializes once and preserves credentials on retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'orbit-docker-start-'));
+  directories.push(root);
+  const commands: string[][] = [];
+  const run = (command: string[], cwd: string) => {
+    expect(cwd).toBe(root);
+    commands.push(command);
+    return Promise.resolve();
+  };
+  await startDockerPreview(root, run);
+  const original = await readFile(join(root, '.env.docker.local'), 'utf8');
+  expect(commands.map((command) => command.at(-1))).toEqual([
+    'version',
+    '{{.ServerVersion}}',
+    'preview:tools',
+    'preview:infra',
+    'preview:migrate',
+    'preview:build',
+    'preview:up',
+    'preview:storage-check',
+    'preview:status',
+  ]);
+  await startDockerPreview(root, run);
+  expect(await readFile(join(root, '.env.docker.local'), 'utf8')).toBe(original);
+});
+
+test('failed migrations stop startup before building or replacing the running application', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'orbit-docker-failure-'));
+  directories.push(root);
+  const commands: string[] = [];
+  await expect(
+    startDockerPreview(root, (command) => {
+      commands.push(command.join(' '));
+      if (command.includes('preview:migrate'))
+        return Promise.reject(new Error('Migration failed.'));
+      return Promise.resolve();
+    }),
+  ).rejects.toThrow('Migration failed.');
+  expect(commands.some((command) => command.includes('preview:build'))).toBe(false);
+  expect(commands.some((command) => command.includes('preview:up'))).toBe(false);
 });
