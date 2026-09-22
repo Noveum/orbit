@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import zlib from 'node:zlib';
 import { AiClientError, AiDisabledError, complete } from '../../src/ai/client.ts';
 
 const originalFetch = globalThis.fetch;
@@ -361,5 +364,49 @@ describe('AI client complete()', () => {
         recordUsage: false,
       }),
     ).rejects.toThrow(AiClientError);
+  });
+
+  it('completes prompt against real HTTP server returning gzip-compressed response', async () => {
+    process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = 'true';
+
+    const payload = JSON.stringify({
+      choices: [{ message: { content: 'Decompressed message!' } }],
+      usage: { prompt_tokens: 15, completion_tokens: 8, total_tokens: 23 },
+    });
+    const gzipped = zlib.gzipSync(Buffer.from(payload));
+
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip',
+        'content-length': String(gzipped.length),
+      });
+      res.end(gzipped);
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const result = await complete('Hello gzip', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: `http://127.0.0.1:${port}/v1`,
+          model: 'gpt-4o',
+          enabled: true,
+        },
+        apiKey: 'sk-mock-key',
+        recordUsage: false,
+        allowPrivate: true,
+      });
+      expect(result.text).toBe('Decompressed message!');
+      expect(result.usage).toEqual({ promptTokens: 15, completionTokens: 8, totalTokens: 23 });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
   });
 });

@@ -1,7 +1,9 @@
 import dns from 'node:dns';
 import http from 'node:http';
 import https from 'node:https';
+import type stream from 'node:stream';
 import { Readable } from 'node:stream';
+import zlib from 'node:zlib';
 import { isPrivateOrLoopbackHost } from '@orbit/shared/validators';
 
 export type DnsLookupCallback = (
@@ -90,6 +92,97 @@ function toWebHeaders(nodeHeaders: http.IncomingHttpHeaders): Headers {
   return headers;
 }
 
+function isNullBodyStatus(status: number): boolean {
+  return status === 101 || status === 204 || status === 205 || status === 304;
+}
+
+function hasHeader(headers: Record<string, string> | undefined, name: string): boolean {
+  if (headers === undefined) return false;
+  const target = name.toLowerCase();
+  return Object.keys(headers).some((k) => k.toLowerCase() === target);
+}
+
+function createDecompressor(encoding: string): stream.Transform | null {
+  switch (encoding) {
+    case 'gzip':
+    case 'x-gzip':
+      return zlib.createGunzip();
+    case 'deflate':
+      return zlib.createInflate();
+    case 'br':
+      return zlib.createBrotliDecompress();
+    default:
+      return null;
+  }
+}
+
+interface DecompressResult {
+  readonly stream: stream.Readable;
+  readonly decompressed: boolean;
+}
+
+function decompressBody(
+  res: http.IncomingMessage,
+  rawEncoding: string | undefined,
+): DecompressResult {
+  if (rawEncoding === undefined || rawEncoding.length === 0) {
+    return { stream: res, decompressed: false };
+  }
+
+  const encodings = rawEncoding
+    .toLowerCase()
+    .split(',')
+    .map((e) => e.trim())
+    .filter((e) => e.length > 0);
+
+  let current: stream.Readable = res;
+  let count = 0;
+  for (let i = encodings.length - 1; i >= 0; i--) {
+    const enc = encodings[i];
+    if (enc === undefined) continue;
+    const decompressor = createDecompressor(enc);
+    if (decompressor === null) {
+      break;
+    }
+    current.on('error', (err) => decompressor.destroy(err));
+    current = current.pipe(decompressor);
+    count += 1;
+  }
+
+  return {
+    stream: current,
+    decompressed: count > 0,
+  };
+}
+
+function buildWebResponse(res: http.IncomingMessage, isHead: boolean): Response {
+  const statusCode = res.statusCode ?? 200;
+
+  if (isNullBodyStatus(statusCode) || isHead) {
+    res.resume();
+    return new Response(null, {
+      status: statusCode,
+      statusText: res.statusMessage ?? '',
+      headers: toWebHeaders(res.headers),
+    });
+  }
+
+  const { stream: bodyStream, decompressed } = decompressBody(res, res.headers['content-encoding']);
+
+  const webHeaders = toWebHeaders(res.headers);
+  if (decompressed) {
+    webHeaders.delete('content-encoding');
+    webHeaders.delete('content-length');
+  }
+
+  const webStream = Readable.toWeb(bodyStream) as unknown as BodyInit;
+  return new Response(webStream, {
+    status: statusCode,
+    statusText: res.statusMessage ?? '',
+    headers: webHeaders,
+  });
+}
+
 export async function safeFetch(url: string, options: SafeFetchOptions = {}): Promise<Response> {
   const parsed = new URL(url);
   const allowPrivate = options.allowPrivate ?? process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] === 'true';
@@ -115,13 +208,18 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
   const lookup = createSafeLookup(allowPrivate, options.dnsLookup);
   const client = parsed.protocol === 'https:' ? https : http;
 
+  const reqHeaders: Record<string, string> = { ...options.headers };
+  if (!hasHeader(options.headers, 'accept-encoding')) {
+    reqHeaders['accept-encoding'] = 'gzip, deflate, br';
+  }
+
   const reqOptions: https.RequestOptions = {
     protocol: parsed.protocol,
     hostname: cleanHost,
     port: defaultPortForProtocol(parsed.protocol, parsed.port),
     path: parsed.pathname + parsed.search,
     method: options.method ?? 'GET',
-    headers: options.headers,
+    headers: reqHeaders,
     lookup,
     servername: cleanHost,
   };
@@ -133,14 +231,13 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     }
 
     const req = client.request(reqOptions, (res) => {
-      const webStream = Readable.toWeb(res) as unknown as BodyInit;
-      resolve(
-        new Response(webStream, {
-          status: res.statusCode ?? 200,
-          statusText: res.statusMessage ?? '',
-          headers: toWebHeaders(res.headers),
-        }),
-      );
+      try {
+        const isHead = (options.method ?? 'GET').toUpperCase() === 'HEAD';
+        resolve(buildWebResponse(res, isHead));
+      } catch (err) {
+        res.resume();
+        reject(err);
+      }
     });
 
     req.on('error', (err) => {
