@@ -61,7 +61,17 @@
     "check-bun-imports": "bun scripts/check-bun-imports.ts",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:preview": "vitepress preview docs",
+    "preview:start": "bun scripts/start-docker-preview.ts",
+    "preview:init": "bun scripts/init-docker-preview.ts",
+    "preview:tools": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml build tools",
+    "preview:infra": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml up -d postgres redis storage",
+    "preview:migrate": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml run --rm tools bun run db:release",
+    "preview:build": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml run --rm tools bun scripts/export-docker-preview.ts && docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml build web",
+    "preview:up": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml up -d --wait --wait-timeout 180 web",
+    "preview:down": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml down",
+    "preview:status": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml ps",
+    "preview:storage-check": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml run --rm tools bun scripts/smoke-docker-storage.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
