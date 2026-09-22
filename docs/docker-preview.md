@@ -37,6 +37,16 @@ the container to particular CPU cores. Single-CPU hosts and engines without
 cpuset support use the same commands. Hosted builds retain their normal settings.
 
 ```bash
+bun run preview:start
+```
+
+This command checks Docker, generates credentials only when absent, builds the
+tooling image, starts storage and databases, applies migrations, builds the web
+image, waits for service health, and tests storage uploads and downloads. It stops
+at the first failure. Retrying preserves existing credentials and data. Run only
+one startup at a time. The same steps can also be run individually:
+
+```bash
 bun run preview:init
 bun run preview:tools
 bun run preview:infra
