@@ -14,6 +14,11 @@ export interface ValidateRestoreOptions {
   readonly migrationsFolder?: string | undefined;
   readonly redisUrl?: string | undefined;
   readonly skipRedisCheck?: boolean | undefined;
+  readonly redisCa?: string | undefined;
+}
+
+export interface PingRedisOptions {
+  readonly ca?: string | undefined;
 }
 
 export function redactRedisEndpoint(endpoint: string): string {
@@ -31,19 +36,30 @@ export function redactRedisEndpoint(endpoint: string): string {
   }
 }
 
-export async function pingRedis(endpoint: string): Promise<boolean> {
+export async function pingRedis(
+  endpoint: string,
+  options?: PingRedisOptions | undefined,
+): Promise<boolean> {
   let client: Redis | undefined;
   try {
     const isTls = endpoint.startsWith('rediss://');
+    const ca = options?.ca ?? process.env['REDIS_CA_CERT'] ?? process.env['REDIS_TLS_CA'];
     client = new Redis(endpoint, {
       connectTimeout: 2000,
+      commandTimeout: 2000,
       maxRetriesPerRequest: 0,
       lazyConnect: true,
       enableReadyCheck: false,
       protocol: 2,
       disableClientInfo: true,
       retryStrategy: () => null,
-      ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
+      ...(isTls
+        ? {
+            tls: {
+              ...(ca !== undefined && ca.length > 0 ? { ca } : {}),
+            },
+          }
+        : {}),
     });
     client.on('error', () => undefined);
     await client.connect();
@@ -506,7 +522,7 @@ export async function validateRestore(
 
   const redisEndpoint = redisUrl ?? process.env['REDIS_URL'];
   if (skipRedisCheck !== true && redisEndpoint !== undefined && redisEndpoint.length > 0) {
-    redisTested = await pingRedis(redisEndpoint);
+    redisTested = await pingRedis(redisEndpoint, { ca: options.redisCa });
     if (!redisTested) {
       allErrors.push(
         `Failed to ping configured Redis endpoint: ${redactRedisEndpoint(redisEndpoint)}`,

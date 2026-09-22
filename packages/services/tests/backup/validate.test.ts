@@ -334,7 +334,7 @@ describe('validateRestore', () => {
     }
   });
 
-  it('connects to rediss TLS endpoint successfully', async () => {
+  it('connects to rediss TLS endpoint successfully with trusted CA and rejects unverified', async () => {
     const server = tls.createServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, (socket) => {
       socket.on('data', (chunk) => {
         const text = chunk.toString().toUpperCase();
@@ -352,9 +352,37 @@ describe('validateRestore', () => {
     const port = typeof address === 'object' && address !== null ? address.port : 0;
 
     try {
-      const pingResult = await pingRedis(`rediss://127.0.0.1:${port}`);
+      const pingResult = await pingRedis(`rediss://127.0.0.1:${port}`, { ca: TEST_TLS_CERT });
       expect(pingResult).toBe(true);
+
+      const unverifiedResult = await pingRedis(`rediss://127.0.0.1:${port}`);
+      expect(unverifiedResult).toBe(false);
     } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('times out and fails when redis peer is silent', async () => {
+    const sockets = new Set<import('node:net').Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+    try {
+      const start = Date.now();
+      const pingResult = await pingRedis(`redis://127.0.0.1:${port}`);
+      const duration = Date.now() - start;
+      expect(pingResult).toBe(false);
+      expect(duration).toBeGreaterThanOrEqual(1800);
+    } finally {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
