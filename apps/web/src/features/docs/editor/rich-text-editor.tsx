@@ -377,15 +377,19 @@ export function RichTextEditor({
   }, [editor, highlight, items.length, listId, menu, optionPrefix]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (!(event.metaKey || event.ctrlKey)) return;
+    if (!editable || event.nativeEvent.isComposing || !(event.metaKey || event.ctrlKey)) return;
+    if (!(event.target instanceof Node && editor?.view.dom.contains(event.target))) return;
     const key = event.key.toLowerCase();
-    if (key === 'enter' && onSubmit !== undefined) {
+    const submit = onSubmit ?? onForceSave;
+    if (key === 'enter' && submit !== undefined) {
       event.preventDefault();
-      onSubmit();
+      event.stopPropagation();
+      submit();
       return;
     }
     if (key === 's' && onForceSave !== undefined) {
       event.preventDefault();
+      event.stopPropagation();
       onForceSave();
     }
   };
@@ -421,7 +425,7 @@ export function RichTextEditor({
         !editable && 'opacity-60',
         className,
       )}
-      onKeyDown={onKeyDown}
+      onKeyDownCapture={onKeyDown}
       onPaste={onPaste}
       onDrop={onDrop}
       onDragOver={(event) => {

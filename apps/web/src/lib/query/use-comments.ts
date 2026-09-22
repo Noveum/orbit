@@ -20,12 +20,19 @@ export function useComments(issueId: string | null) {
     queryKey: queryKeys.comments(issueId ?? 'none'),
     enabled: issueId !== null,
     queryFn: async ({ signal }): Promise<readonly Comment[]> => {
-      const result = await apiFetch(
-        `/api/comments?issueId=${encodeURIComponent(issueId ?? '')}&limit=${COMMENT_PAGE_SIZE}`,
-        commentListSchema,
-        { signal },
-      );
-      return result.comments;
+      const comments: Comment[] = [];
+      let cursor: string | null = null;
+      do {
+        const params = new URLSearchParams({
+          issueId: issueId ?? '',
+          limit: String(COMMENT_PAGE_SIZE),
+        });
+        if (cursor !== null) params.set('cursor', cursor);
+        const result = await apiFetch(`/api/comments?${params}`, commentListSchema, { signal });
+        comments.push(...result.comments);
+        cursor = result.nextCursor;
+      } while (cursor !== null);
+      return comments;
     },
   });
 }
