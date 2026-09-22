@@ -14,6 +14,7 @@ import {
 import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import {
+  getTabUndoStack,
   nextActionSequence,
   type PropertyUndoEntry,
   recordTabPropertyChange,
@@ -687,19 +688,65 @@ export function hasSupportedProperty(patch: IssuePatch): boolean {
   return SUPPORTED_PROPERTY_KEYS.some((key) => patch[key] !== undefined);
 }
 
-function resolvePropertyLabel(patch: IssuePatch): string {
-  if (patch.stateId !== undefined) return 'Status';
-  if (patch.priority !== undefined) return 'Priority';
-  if (patch.assigneeId !== undefined) return 'Assignee';
-  if (patch.estimate !== undefined) return 'Estimate';
-  if (patch.projectId !== undefined) return 'Project';
-  if (patch.milestoneId !== undefined) return 'Milestone';
-  if (patch.cycleId !== undefined) return 'Sprint';
-  if (patch.dueDate !== undefined) return 'Due date';
-  if (patch.labelIds !== undefined) return 'Labels';
-  if (patch.reviewerIds !== undefined) return 'Reviewers';
-  if (patch.parentId !== undefined) return 'Parent';
-  return 'Property';
+export function filterSupportedPatch(patch: IssuePatch): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const key of SUPPORTED_PROPERTY_KEYS) {
+    if (patch[key] !== undefined) {
+      filtered[key] = patch[key];
+    }
+  }
+  return filtered;
+}
+
+interface ActiveIssueMutation {
+  readonly sequence: number;
+  readonly patch: IssuePatch;
+  entry: PropertyUndoEntry | undefined;
+  status: 'pending' | 'succeeded';
+}
+
+interface IssueMutationTracker {
+  readonly rootBase: Issue;
+  readonly active: ActiveIssueMutation[];
+}
+
+const mutationTrackers = new Map<string, IssueMutationTracker>();
+
+function applyPatchToIssue(base: Issue, patch: IssuePatch): Issue {
+  const next: Issue = Object.assign({}, base);
+  if (patch.stateId !== undefined) next.stateId = patch.stateId;
+  if (patch.priority !== undefined) next.priority = patch.priority;
+  if (patch.assigneeId !== undefined) next.assigneeId = patch.assigneeId;
+  if (patch.estimate !== undefined) next.estimate = patch.estimate;
+  if (patch.projectId !== undefined) next.projectId = patch.projectId;
+  if (patch.milestoneId !== undefined) next.milestoneId = patch.milestoneId;
+  if (patch.cycleId !== undefined) next.cycleId = patch.cycleId;
+  if (patch.dueDate !== undefined) next.dueDate = patch.dueDate;
+  if (patch.labelIds !== undefined) next.labelIds = [...patch.labelIds];
+  if (patch.reviewerIds !== undefined) next.reviewerIds = [...patch.reviewerIds];
+  if (patch.parentId !== undefined) next.parentId = patch.parentId;
+  return next;
+}
+
+function reconcileTracker(tracker: IssueMutationTracker): void {
+  let currentBase = tracker.rootBase;
+
+  for (const mutation of [...tracker.active].sort((a, b) => a.sequence - b.sequence)) {
+    const nextEntry = captureIssueHistory(currentBase, mutation.patch, mutation.sequence);
+
+    if (mutation.status === 'succeeded' && nextEntry !== undefined) {
+      const existing = getTabUndoStack().find((entry) => entry.sequence === mutation.sequence);
+
+      if (existing !== undefined) {
+        Object.assign(existing.inversePatch, nextEntry.inversePatch);
+        Object.assign(existing.expectedForUndo, nextEntry.expectedForUndo);
+        Object.assign(existing.expectedForRedo, nextEntry.expectedForRedo);
+      }
+    }
+
+    mutation.entry = nextEntry;
+    currentBase = applyPatchToIssue(currentBase, mutation.patch);
+  }
 }
 
 function assignScalarDelta(
@@ -790,22 +837,26 @@ function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
     inversePatch['projectId'] = issue.projectId;
     expectedForUndo['projectId'] = patch.projectId;
     expectedForRedo['projectId'] = issue.projectId;
+
     if (issue.milestoneId !== null) {
       inversePatch['milestoneId'] = issue.milestoneId;
       expectedForUndo['milestoneId'] = null;
       expectedForRedo['milestoneId'] = issue.milestoneId;
     }
   }
+
   if (patch.labelIds !== undefined) {
     inversePatch['labelIds'] = [...issue.labelIds];
     expectedForUndo['labelIds'] = [...patch.labelIds];
     expectedForRedo['labelIds'] = [...issue.labelIds];
   }
+
   if (patch.reviewerIds !== undefined) {
     inversePatch['reviewerIds'] = [...(issue.reviewerIds ?? [])];
     expectedForUndo['reviewerIds'] = [...patch.reviewerIds];
     expectedForRedo['reviewerIds'] = [...(issue.reviewerIds ?? [])];
   }
+
   if (patch.parentId !== undefined) {
     inversePatch['parentId'] = issue.parentId;
     expectedForUndo['parentId'] = patch.parentId;
@@ -815,12 +866,29 @@ function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
   return { inversePatch, expectedForUndo, expectedForRedo };
 }
 
+function resolvePropertyLabel(patch: IssuePatch): string {
+  if (patch.stateId !== undefined) return 'Status';
+  if (patch.priority !== undefined) return 'Priority';
+  if (patch.assigneeId !== undefined) return 'Assignee';
+  if (patch.estimate !== undefined) return 'Estimate';
+  if (patch.projectId !== undefined) return 'Project';
+  if (patch.milestoneId !== undefined) return 'Milestone';
+  if (patch.cycleId !== undefined) return 'Sprint';
+  if (patch.dueDate !== undefined) return 'Due date';
+  if (patch.labelIds !== undefined) return 'Labels';
+  if (patch.reviewerIds !== undefined) return 'Reviewers';
+  if (patch.parentId !== undefined) return 'Parent';
+  return 'Property';
+}
+
 export function captureIssueHistory(
   issue: Issue,
   patch: IssuePatch,
   sequence: number,
 ): PropertyUndoEntry | undefined {
-  if (patch.expected !== undefined || !hasSupportedProperty(patch)) {
+  const supportedForwardPatch = filterSupportedPatch(patch);
+
+  if (patch.expected !== undefined || Object.keys(supportedForwardPatch).length === 0) {
     return undefined;
   }
 
@@ -830,7 +898,7 @@ export function captureIssueHistory(
     sequence,
     issue,
     propertyLabel: resolvePropertyLabel(patch),
-    patch: patch as Record<string, unknown>,
+    patch: supportedForwardPatch,
     inversePatch,
     expectedForUndo,
     expectedForRedo,
@@ -850,8 +918,30 @@ export function useUpdateIssue() {
       return result.issue;
     },
     onMutate: async (input) => {
+      let tracker = mutationTrackers.get(input.issue.id);
+      if (tracker === undefined) {
+        const detailKey = queryKeys.issue(input.issue.identifier);
+        const heldDetail = client.getQueryData<IssueDetail>(detailKey);
+        const fallbackBase = heldDetail?.issue ?? input.issue;
+        tracker = { rootBase: fallbackBase, active: [] };
+        mutationTrackers.set(input.issue.id, tracker);
+      }
+
+      let currentBase = tracker.rootBase;
+      for (const m of tracker.active) {
+        currentBase = applyPatchToIssue(currentBase, m.patch);
+      }
+
       const sequence = nextActionSequence();
-      const undoEntry = captureIssueHistory(input.issue, input.patch, sequence);
+      const undoEntry = captureIssueHistory(currentBase, input.patch, sequence);
+
+      const activeRecord: ActiveIssueMutation = {
+        sequence,
+        patch: input.patch,
+        entry: undoEntry,
+        status: 'pending',
+      };
+      tracker.active.push(activeRecord);
 
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
@@ -862,11 +952,11 @@ export function useUpdateIssue() {
 
       const { reviewerIds, ...patch } = input.patch;
       const optimistic: Issue = {
-        ...input.issue,
+        ...currentBase,
         ...patch,
         ...(reviewerIds === undefined ? {} : { reviewerIds: [...reviewerIds] }),
         labelIds:
-          input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
+          input.patch.labelIds === undefined ? currentBase.labelIds : [...input.patch.labelIds],
       };
       placeIssue(client, optimistic, false);
       let optimisticDetail: IssueDetail | undefined;
@@ -880,6 +970,7 @@ export function useUpdateIssue() {
         });
       }
       return {
+        sequence,
         undoEntry,
         previousDetail,
         optimisticDetail,
@@ -889,6 +980,21 @@ export function useUpdateIssue() {
       };
     },
     onError: (error, input, context) => {
+      const tracker = mutationTrackers.get(input.issue.id);
+      if (tracker !== undefined && context !== undefined) {
+        const remaining = tracker.active.filter(
+          (mutation) => mutation.sequence !== context.sequence,
+        );
+        tracker.active.length = 0;
+        tracker.active.push(...remaining);
+
+        if (tracker.active.length === 0) {
+          mutationTrackers.delete(input.issue.id);
+        } else {
+          reconcileTracker(tracker);
+        }
+      }
+
       const currentDetail =
         context === undefined
           ? undefined
@@ -908,10 +1014,21 @@ export function useUpdateIssue() {
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
-    onSuccess: (issue, _variables, context) => {
-      if (context?.undoEntry !== undefined) {
-        recordTabPropertyChange(context.undoEntry);
+    onSuccess: (issue, input, context) => {
+      const tracker = mutationTrackers.get(input.issue.id);
+      const activeRecord = tracker?.active.find(
+        (mutation) => mutation.sequence === context?.sequence,
+      );
+
+      if (activeRecord !== undefined) {
+        activeRecord.status = 'succeeded';
       }
+      const entryToCommit = activeRecord?.entry ?? context?.undoEntry;
+
+      if (entryToCommit !== undefined) {
+        recordTabPropertyChange(entryToCommit);
+      }
+
       placeIssue(client, issue);
       refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
@@ -920,7 +1037,18 @@ export function useUpdateIssue() {
           : { ...current, issue },
       );
     },
-    onSettled: (_issue, _error, input) => {
+    onSettled: (_issue, _error, input, context) => {
+      const tracker = mutationTrackers.get(input.issue.id);
+      if (tracker !== undefined && context !== undefined) {
+        const remaining = tracker.active.filter(
+          (mutation) => mutation.sequence !== context.sequence,
+        );
+        tracker.active.length = 0;
+        tracker.active.push(...remaining);
+        if (tracker.active.length === 0) {
+          mutationTrackers.delete(input.issue.id);
+        }
+      }
       if (input.patch.parentId === undefined) return;
       client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
     },

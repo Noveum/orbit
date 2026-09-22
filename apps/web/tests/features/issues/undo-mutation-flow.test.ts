@@ -1,5 +1,6 @@
 import '../../../tests-preload.ts';
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { issueUpdateSchema } from '@orbit/shared/validators';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import React from 'react';
@@ -14,6 +15,7 @@ import {
 import type { Issue } from '@/lib/query/schemas.ts';
 import {
   captureIssueHistory,
+  filterSupportedPatch,
   hasSupportedProperty,
   useUpdateIssue,
 } from '@/lib/query/use-issues.ts';
@@ -63,6 +65,18 @@ describe('Issue undo mutation lifecycle and sequencing', () => {
 
     const descEntry = captureIssueHistory(mockIssue, { description: 'Updated' }, 2);
     expect(descEntry).toBeUndefined();
+  });
+
+  it('filters mixed patches so forward history retains only supported properties and excludes title', () => {
+    const mixedPatch = { title: 'New Title', stateId: 'state_done' };
+    const filtered = filterSupportedPatch(mixedPatch);
+    expect(filtered['title']).toBeUndefined();
+    expect(filtered['stateId']).toBe('state_done');
+
+    const entry = captureIssueHistory(mockIssue, mixedPatch, 1);
+    expect(entry).toBeDefined();
+    expect(entry?.patch['title']).toBeUndefined();
+    expect(entry?.patch['stateId']).toBe('state_done');
   });
 
   it('successful property mutations create history entry with complete baseline', () => {
@@ -117,11 +131,12 @@ describe('Issue undo mutation lifecycle and sequencing', () => {
     expect(stack[2]?.propertyLabel).toBe('Assignee');
   });
 
-  it('exercises actual useUpdateIssue lifecycle: A fails + B succeeds -> A omitted, B retained in history', async () => {
+  it('exercises real useUpdateIssue lifecycle with Zod parsing: A fails + B succeeds -> A omitted, B retained', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
-      if (body?.stateId !== undefined) {
+      const raw = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
+      const body = issueUpdateSchema.parse(raw);
+      if (body.stateId === 'state_fail') {
         return Promise.resolve(
           new Response(JSON.stringify({ message: 'Database failure' }), {
             status: 500,
@@ -156,7 +171,7 @@ describe('Issue undo mutation lifecycle and sequencing', () => {
         await expect(
           result.current.mutateAsync({
             issue: mockIssue,
-            patch: { stateId: 'state_done' },
+            patch: { stateId: 'state_fail' },
           }),
         ).rejects.toThrow();
       });
@@ -173,6 +188,117 @@ describe('Issue undo mutation lifecycle and sequencing', () => {
       expect(stack[0]?.propertyLabel).toBe('Priority');
       expect(stack[0]?.patch['priority']).toBe(1);
       expect(stack.some((entry) => entry.propertyLabel === 'Status')).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('exercises real useUpdateIssue with two rapid same-property mutations started without awaiting', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
+      const body = issueUpdateSchema.parse(raw);
+      return Promise.resolve(
+        new Response(JSON.stringify({ issue: { ...mockIssue, ...body, syncId: 2 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          mutations: { retry: false },
+        },
+      });
+      const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(ToastProvider, null, children),
+        );
+
+      const { result } = renderHook(() => useUpdateIssue(), { wrapper });
+
+      await act(async () => {
+        const promiseA = result.current.mutateAsync({
+          issue: mockIssue,
+          patch: { stateId: 'state_in_progress' },
+        });
+        const promiseB = result.current.mutateAsync({
+          issue: mockIssue,
+          patch: { stateId: 'state_done' },
+        });
+        await Promise.all([promiseA, promiseB]);
+      });
+
+      const stack = getTabUndoStack();
+      expect(stack.length).toBe(2);
+      expect(stack[0]?.patch['stateId']).toBe('state_in_progress');
+      expect(stack[0]?.inversePatch['stateId']).toBe('state_todo');
+      expect(stack[1]?.patch['stateId']).toBe('state_done');
+      expect(stack[1]?.inversePatch['stateId']).toBe('state_in_progress');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('reconciles pending mutation base when an earlier rapid mutation in flight fails', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
+      const body = issueUpdateSchema.parse(raw);
+      if (body.stateId === 'state_fail') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ message: 'A failed' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ issue: { ...mockIssue, ...body, syncId: 2 } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          mutations: { retry: false },
+        },
+      });
+      const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(ToastProvider, null, children),
+        );
+
+      const { result } = renderHook(() => useUpdateIssue(), { wrapper });
+
+      await act(async () => {
+        const promiseA = result.current
+          .mutateAsync({
+            issue: mockIssue,
+            patch: { stateId: 'state_fail' },
+          })
+          .catch(() => undefined);
+        const promiseB = result.current.mutateAsync({
+          issue: mockIssue,
+          patch: { stateId: 'state_done' },
+        });
+        await Promise.all([promiseA, promiseB]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      const stack = getTabUndoStack();
+      expect(stack.length).toBe(1);
+      expect(stack[0]?.patch['stateId']).toBe('state_done');
+      expect(stack[0]?.inversePatch['stateId']).toBe('state_todo');
     } finally {
       globalThis.fetch = originalFetch;
     }
