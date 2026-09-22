@@ -35,6 +35,19 @@ function withoutAuthentication(run: () => void): void {
 }
 
 describe('production authentication configuration', () => {
+  it('limits Docker preview workers without changing other builds', () => {
+    const original = process.env['ORBIT_PREVIEW_BUILD'];
+    try {
+      process.env['ORBIT_PREVIEW_BUILD'] = '1';
+      expect(nextConfig(PHASE_DEVELOPMENT_SERVER).experimental?.cpus).toBe(1);
+      delete process.env['ORBIT_PREVIEW_BUILD'];
+      expect(nextConfig(PHASE_DEVELOPMENT_SERVER).experimental?.cpus).toBeUndefined();
+    } finally {
+      if (original === undefined) delete process.env['ORBIT_PREVIEW_BUILD'];
+      else process.env['ORBIT_PREVIEW_BUILD'] = original;
+    }
+  });
+
   it('rejects a deployment with no first-login path', () => {
     expect(() => assertProductionAuthenticationConfigured(productionEnvironment)).toThrow(
       'ORBIT_PASSWORD_AUTH',

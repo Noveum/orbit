@@ -51,6 +51,7 @@ export default function config(phase: string): NextConfig {
       : workspacePackages,
     typedRoutes: false,
     experimental: {
+      ...(process.env['ORBIT_PREVIEW_BUILD'] === '1' ? { cpus: 1 } : {}),
       turbopackFileSystemCacheForDev: process.env['ORBIT_TURBOPACK_DISK_CACHE'] !== 'false',
       optimizePackageImports: ['lucide-react'],
     },
