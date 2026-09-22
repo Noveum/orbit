@@ -31,9 +31,10 @@ MinIO. Back up both together. A database-only backup does not preserve file byte
 Install Bun 1.3.14 or newer and Docker with Compose v2. Run from the repository root.
 Docker needs enough free memory for a full Next.js build in addition to the
 database and storage services. Concurrent builds can exhaust Docker Desktop's
-memory even when the host still has free memory. The tooling container uses CPU
-cores 0 and 1 to bound Next.js worker fan-out. On a single-core Docker engine, add
-`ORBIT_PREVIEW_BUILD_CPUS=0` to `.env.docker.local`.
+memory even when the host still has free memory. The tooling container sets
+`ORBIT_PREVIEW_BUILD=1`, which limits Next.js to one build worker without pinning
+the container to particular CPU cores. Single-CPU hosts and engines without
+cpuset support use the same commands. Hosted builds retain their normal settings.
 
 ```bash
 bun run preview:init

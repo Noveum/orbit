@@ -1,4 +1,4 @@
-import { cp, mkdir, rename, rm } from 'node:fs/promises';
+import { access, cp, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export async function exportStandalone(source: string, output: string): Promise<void> {
@@ -12,6 +12,12 @@ export async function exportStandalone(source: string, output: string): Promise<
 }
 
 if (import.meta.main) {
+  try {
+    await access('/workspace/apps/web/package.json');
+    await access('/output');
+  } catch {
+    throw new Error('Run bun run preview:build from the repository root to build inside Docker.');
+  }
   const build = Bun.spawn(['bun', 'run', 'build'], {
     cwd: '/workspace/apps/web',
     stdout: 'inherit',

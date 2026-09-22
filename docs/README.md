@@ -13,6 +13,7 @@ gated behind a plan.
 | Run Orbit on your machine in five minutes | [Getting started](getting-started.md) |
 | Understand what Orbit calls things | [Concepts](concepts.md) |
 | Put Orbit on the internet for your team | [Self-hosting](self-hosting.md) |
+| Evaluate the app with bundled database and file storage | [Docker Compose preview](docker-preview.md) |
 | Look up an environment variable | [Configuration](configuration.md) |
 | Stop reaching for the mouse | [Keyboard shortcuts](keyboard-shortcuts.md) |
 | Let an AI agent read and update your board | [MCP server](mcp.md) |

@@ -77,11 +77,12 @@ services:
 
   tools:
     profiles: [tools]
-    cpuset: ${ORBIT_PREVIEW_BUILD_CPUS:-0-1}
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.tools
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      ORBIT_PREVIEW_BUILD: "1"
     volumes:
       - ../../.artifacts/docker-preview:/output
     depends_on:

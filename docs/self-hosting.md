@@ -243,9 +243,10 @@ location / {
 }
 ```
 
-You can run Postgres, Redis and MinIO from the bundled `docker-compose.yml`, but
-change every credential in it first. It is written for local development and its
-passwords are in this repository.
+For a complete evaluation stack, use the [Docker Compose preview](docker-preview.md).
+It supplies Postgres, Redis and MinIO with generated private credentials and
+persistent volumes. The root `docker-compose.yml` is for local development only;
+its published passwords must never be used for a deployed installation.
 
 ## Keeping it running
 
