@@ -6,9 +6,11 @@ import postgres from 'postgres';
 import {
   type Catalog,
   catalogDriftBetween,
+  type Drift,
   expectedCatalog,
   isBehind,
   liveCatalog,
+  needsCatchup,
 } from './check-drift.ts';
 import * as schema from './schema/index.ts';
 
@@ -353,6 +355,26 @@ function declaredTableCount(live: Awaited<ReturnType<typeof liveCatalog>>): numb
   return live.tables.filter((table) => expectedNames.has(table.name)).length;
 }
 
+function pendingMigrationsProvideChecks(
+  migrations: readonly MigrationMeta[],
+  drift: Drift,
+): boolean {
+  const targets = [
+    ...drift.missingCheckConstraints.map((entry) => ({ table: entry.table, name: entry.check })),
+    ...drift.checkConstraintMismatches.map((entry) => ({ table: entry.table, name: entry.name })),
+  ];
+  if (targets.length === 0) return false;
+  return targets.some(({ table, name }) =>
+    migrations.some((migration) =>
+      migration.sql.some(
+        (statement) =>
+          statement.includes(`ALTER TABLE "${table}" `) &&
+          statement.includes(`ADD CONSTRAINT "${name}" CHECK`),
+      ),
+    ),
+  );
+}
+
 const DROP_TABLE_STATEMENT = /^\s*drop\s+table\s+(?:if\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/iu;
 
 function pendingMigrationsDropLiveTables(
@@ -392,7 +414,7 @@ export async function releaseDatabase(
     let applied = 0;
 
     if ((!hadLedger || existingRows.length === 0) && declaredTableCount(before) > 0) {
-      if (isBehind(beforeDrift)) {
+      if (needsCatchup(beforeDrift)) {
         throw new Error(
           'This legacy database is not compatible with the current schema. Apply the required catchup scripts, verify drift, and run db:release again.',
         );
@@ -404,9 +426,11 @@ export async function releaseDatabase(
     const rows = await ledgerRows(sql);
     const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
+      const pendingMigrations = migrations.slice(rows.length);
       if (
-        isBehind(beforeDrift) ||
-        pendingMigrationsDropLiveTables(migrations.slice(rows.length), before)
+        needsCatchup(beforeDrift) ||
+        pendingMigrationsProvideChecks(pendingMigrations, beforeDrift) ||
+        pendingMigrationsDropLiveTables(pendingMigrations, before)
       ) {
         await migrate(drizzle({ client: sql }), { migrationsFolder });
         applied = pending;
