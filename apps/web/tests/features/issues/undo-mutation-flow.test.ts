@@ -303,4 +303,148 @@ describe('Issue undo mutation lifecycle and sequencing', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('keeps a succeeded mutation in the tracker so a later mutation uses its updated base', async () => {
+    const originalFetch = globalThis.fetch;
+
+    let resolveA: ((response: Response) => void) | undefined;
+    let resolveB: ((response: Response) => void) | undefined;
+    let resolveC: ((response: Response) => void) | undefined;
+
+    const responseA = new Promise<Response>((resolve) => {
+      resolveA = resolve;
+    });
+
+    const responseB = new Promise<Response>((resolve) => {
+      resolveB = resolve;
+    });
+
+    const responseC = new Promise<Response>((resolve) => {
+      resolveC = resolve;
+    });
+
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
+      const body = issueUpdateSchema.parse(raw);
+
+      if (body.priority === 1) {
+        return responseA;
+      }
+
+      if (body.stateId === 'state_in_progress') {
+        return responseB;
+      }
+
+      return responseC;
+    }) as typeof globalThis.fetch;
+
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          mutations: { retry: false },
+        },
+      });
+
+      const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(ToastProvider, null, children),
+        );
+
+      const { result } = renderHook(() => useUpdateIssue(), { wrapper });
+
+      const promiseA = result.current
+        .mutateAsync({
+          issue: mockIssue,
+          patch: { priority: 1 },
+        })
+        .catch(() => undefined);
+
+      const promiseB = result.current.mutateAsync({
+        issue: mockIssue,
+        patch: { stateId: 'state_in_progress' },
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(resolveA).toBeDefined();
+      expect(resolveB).toBeDefined();
+
+      resolveB?.(
+        new Response(
+          JSON.stringify({
+            issue: {
+              ...mockIssue,
+              stateId: 'state_in_progress',
+              syncId: 2,
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+
+      await act(async () => {
+        await promiseB;
+      });
+
+      const promiseC = result.current.mutateAsync({
+        issue: mockIssue,
+        patch: { stateId: 'state_done' },
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(resolveC).toBeDefined();
+
+      resolveC?.(
+        new Response(
+          JSON.stringify({
+            issue: {
+              ...mockIssue,
+              stateId: 'state_done',
+              syncId: 3,
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+
+      await act(async () => {
+        await promiseC;
+      });
+
+      resolveA?.(
+        new Response(JSON.stringify({ message: 'A failed' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      await act(async () => {
+        await promiseA;
+      });
+
+      const stack = getTabUndoStack();
+
+      expect(stack.length).toBe(2);
+      expect(stack[0]?.patch['stateId']).toBe('state_in_progress');
+      expect(stack[1]?.patch['stateId']).toBe('state_done');
+      expect(stack[1]?.inversePatch['stateId']).toBe('state_in_progress');
+      expect(stack[1]?.expectedForUndo['stateId']).toBe('state_done');
+      expect(stack.some((entry) => entry.patch['priority'] === 1)).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

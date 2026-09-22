@@ -702,7 +702,7 @@ interface ActiveIssueMutation {
   readonly sequence: number;
   readonly patch: IssuePatch;
   entry: PropertyUndoEntry | undefined;
-  status: 'pending' | 'succeeded';
+  status: 'pending' | 'succeeded' | 'failed';
 }
 
 interface IssueMutationTracker {
@@ -732,6 +732,10 @@ function reconcileTracker(tracker: IssueMutationTracker): void {
   let currentBase = tracker.rootBase;
 
   for (const mutation of [...tracker.active].sort((a, b) => a.sequence - b.sequence)) {
+    if (mutation.status === 'failed') {
+      continue;
+    }
+
     const nextEntry = captureIssueHistory(currentBase, mutation.patch, mutation.sequence);
 
     if (mutation.status === 'succeeded' && nextEntry !== undefined) {
@@ -747,6 +751,10 @@ function reconcileTracker(tracker: IssueMutationTracker): void {
     mutation.entry = nextEntry;
     currentBase = applyPatchToIssue(currentBase, mutation.patch);
   }
+}
+
+function hasPendingMutation(tracker: IssueMutationTracker): boolean {
+  return tracker.active.some((mutation) => mutation.status === 'pending');
 }
 
 function assignScalarDelta(
@@ -981,17 +989,18 @@ export function useUpdateIssue() {
     },
     onError: (error, input, context) => {
       const tracker = mutationTrackers.get(input.issue.id);
-      if (tracker !== undefined && context !== undefined) {
-        const remaining = tracker.active.filter(
-          (mutation) => mutation.sequence !== context.sequence,
-        );
-        tracker.active.length = 0;
-        tracker.active.push(...remaining);
 
-        if (tracker.active.length === 0) {
+      if (tracker !== undefined && context !== undefined) {
+        const mutation = tracker.active.find((item) => item.sequence === context.sequence);
+
+        if (mutation !== undefined) {
+          mutation.status = 'failed';
+        }
+
+        reconcileTracker(tracker);
+
+        if (!hasPendingMutation(tracker)) {
           mutationTrackers.delete(input.issue.id);
-        } else {
-          reconcileTracker(tracker);
         }
       }
 
@@ -1039,17 +1048,21 @@ export function useUpdateIssue() {
     },
     onSettled: (_issue, _error, input, context) => {
       const tracker = mutationTrackers.get(input.issue.id);
+
       if (tracker !== undefined && context !== undefined) {
-        const remaining = tracker.active.filter(
-          (mutation) => mutation.sequence !== context.sequence,
-        );
-        tracker.active.length = 0;
-        tracker.active.push(...remaining);
-        if (tracker.active.length === 0) {
+        const mutation = tracker.active.find((item) => item.sequence === context.sequence);
+
+        if (mutation !== undefined && _error === undefined) {
+          mutation.status = 'succeeded';
+        }
+
+        if (!hasPendingMutation(tracker)) {
           mutationTrackers.delete(input.issue.id);
         }
       }
+
       if (input.patch.parentId === undefined) return;
+
       client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
     },
   });
