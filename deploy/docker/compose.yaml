@@ -114,7 +114,7 @@ services:
         condition: service_completed_successfully
 
   web:
-    image: orbit-preview-web:local
+    image: ${COMPOSE_PROJECT_NAME:-orbit-preview}-web:local
     build:
       context: ../../.artifacts/docker-preview/standalone
       dockerfile: ../../../deploy/docker/Dockerfile
@@ -136,7 +136,7 @@ services:
     restart: unless-stopped
 
   realtime:
-    image: orbit-preview-web:local
+    image: ${COMPOSE_PROJECT_NAME:-orbit-preview}-web:local
     command: [node, apps/web/realtime.mjs]
     environment: *app-environment
     init: true
@@ -151,7 +151,7 @@ services:
     restart: unless-stopped
 
   scheduler:
-    image: orbit-preview-web:local
+    image: ${COMPOSE_PROJECT_NAME:-orbit-preview}-web:local
     command: [node, apps/web/scheduler.mjs]
     environment:
       CRON_SECRET: ${CRON_SECRET:?Add CRON_SECRET to .env.docker.local}

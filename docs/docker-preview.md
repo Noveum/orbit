@@ -108,6 +108,15 @@ bucket, update the checkout, then repeat `preview:tools`, `preview:migrate`,
 `preview:build` and `preview:up`. Run one build at a time. A failed build does not
 replace the currently running image.
 
+When upgrading an installation that predates the scheduler, run `preview:start`
+instead of those individual steps. It adds the required scheduler secret before
+Compose loads the configuration, while preserving existing credentials.
+
+The web, realtime and scheduler services share an image tagged with the Compose
+project name. Keep `COMPOSE_PROJECT_NAME` stable across upgrades. Separate
+installations must use different project names and host ports so their images,
+networks and persistent volumes remain independent.
+
 ## Publishing a provider template
 
 This directory is an evaluation template, not a ready-made Railway, Render,
