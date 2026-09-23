@@ -20,7 +20,7 @@ mock.module('next/navigation', () => ({
 }));
 
 const { default: DeploymentSettingsPage } = await import(
-  '../../../../src/app/(app)/settings/deployment/page.tsx'
+  '@/app/(app)/settings/deployment/page.tsx'
 );
 
 afterAll(() => {

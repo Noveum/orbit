@@ -287,6 +287,7 @@ function renderBoard(
   showEmptyGroups = false,
   onVisibilityActivityStart?: () => () => void,
   boardStates: readonly WorkflowState[] = [todo, doing],
+  creationScope?: Readonly<Record<string, string>>,
 ) {
   const makeGroups = (nextRows: readonly Issue[]) =>
     groupIssues(
@@ -316,6 +317,7 @@ function renderBoard(
             <Board
               groups={makeGroups(nextRows)}
               draggable={nextDraggable}
+              {...(creationScope === undefined ? {} : { creationScope })}
               {...(columnSource === undefined ? {} : { columnSource })}
               {...(onVisibilityActivityStart === undefined ? {} : { onVisibilityActivityStart })}
             />
@@ -336,6 +338,69 @@ function renderBoard(
 }
 
 describe('Board card keyboard boundaries', () => {
+  it.each(['team', 'project'] as const)('creates merged states within the %s scope', (scope) => {
+    const previous = workspace;
+    const other = { ...doing, id: 'state_design_doing', teamId: 'team_2' };
+    const states = [doing, other];
+    workspace = {
+      ...workspace,
+      states,
+      stateById: new Map(states.map((state) => [state.id, state])),
+      projects: [
+        {
+          id: 'project_1',
+          name: 'Design project',
+          status: 'started',
+          slug: 'design',
+          color: '#5a63c8',
+          icon: 'box',
+          teamIds: ['team_2'],
+        },
+      ],
+    };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(
+        false,
+        [],
+        undefined,
+        true,
+        undefined,
+        mergeStatesByName(states).states,
+        scope === 'team' ? { teamId: 'team_2' } : { projectId: 'project_1' },
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Progress' }));
+      expect(openQuickCreate).toHaveBeenCalledWith(other.teamId, other.id);
+    } finally {
+      workspace = previous;
+    }
+  });
+
+  it('requires a team choice when a merged status belongs to multiple teams', () => {
+    const previous = workspace;
+    const other = { ...doing, id: 'state_design_doing', teamId: 'team_2' };
+    const states = [doing, other];
+    workspace = {
+      ...workspace,
+      teams: [
+        ...workspace.teams,
+        { id: 'team_2', name: 'Design', key: 'DES', icon: 'circle', color: '#5a63c8' },
+      ],
+      states,
+      stateById: new Map(states.map((state) => [state.id, state])),
+    };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(false, [], undefined, true, undefined, mergeStatesByName(states).states);
+      fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Progress' }));
+      expect(openQuickCreate).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Design' }));
+      expect(openQuickCreate).toHaveBeenCalledWith(other.teamId, other.id);
+    } finally {
+      workspace = previous;
+    }
+  });
+
   it('matches the named state when merged columns share a category', () => {
     const previous = workspace;
     const review: WorkflowState = { ...doing, id: 'state_review', name: 'In Review', position: 3 };

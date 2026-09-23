@@ -15,8 +15,9 @@ const scheduler = createMaintenanceScheduler(async (path) => {
     await response.body?.cancel();
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     console.info(JSON.stringify({ job: path, status: 'ok' }));
-  } catch {
-    console.error(JSON.stringify({ job: path, status: 'failed' }));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(JSON.stringify({ job: path, status: 'failed', reason }));
   }
 });
 const timer = setInterval(() => scheduler.tick(), 1_000);

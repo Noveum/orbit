@@ -28,6 +28,8 @@ import { permissionsFor } from '@orbit/shared/policy';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button.tsx';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog.tsx';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { mergedStateKey, UNGROUPED_ID } from '@/features/filters/grouping.ts';
@@ -52,6 +54,7 @@ import { createBoardSensorController } from './board-sensors.ts';
 import { GroupGlyph } from './group-glyph.tsx';
 import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
+import { projectSupportsTeam } from './project-scope.ts';
 import { useBoardAutoScroll } from './use-board-autoscroll.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
@@ -74,12 +77,29 @@ export interface BoardProps {
   readonly loadingMore?: boolean;
   readonly onLoadMore?: (() => void) | undefined;
   readonly columnSource?: BoardColumnSource | undefined;
+  readonly creationScope?: Readonly<Record<string, string>>;
   readonly groupBy?: GroupByField;
   readonly filtered?: boolean;
   readonly onVisibilityActivityStart?: () => () => void;
 }
 
 const EMPTY_QUERY: IssueQuery = { filter: emptyFilterGroup(), orderBy: 'manual' };
+
+function creationStates(
+  groupId: string,
+  states: ReadonlyMap<string, WorkflowState>,
+  projects: readonly Project[],
+  scope: Readonly<Record<string, string>> | undefined,
+): WorkflowState[] {
+  const projectId = scope?.['projectId'];
+  const project = projects.find((entry) => entry.id === projectId);
+  return [...states.values()].filter(
+    (state) =>
+      (state.id === groupId || mergedStateKey(state) === groupId) &&
+      (scope?.['teamId'] === undefined || state.teamId === scope['teamId']) &&
+      (projectId === undefined || projectSupportsTeam(project, state.teamId)),
+  );
+}
 
 const EMPTY_COLUMN = {
   query: EMPTY_QUERY,
@@ -1012,12 +1032,18 @@ export function Board({
   loadingMore = false,
   onLoadMore,
   columnSource,
+  creationScope,
   groupBy = 'state',
   resolveState,
   filtered = false,
   onVisibilityActivityStart,
 }: BoardProps) {
-  const { labelById, memberById, stateById, projects, cycles, openQuickCreate } = useWorkspace();
+  const { labelById, memberById, stateById, teams, projects, cycles, openQuickCreate } =
+    useWorkspace();
+  const [creationGroup, setCreationGroup] = useState<IssueGroup | null>(null);
+  const scope = creationScope ?? columnSource?.scope;
+  const creationOptions =
+    creationGroup === null ? [] : creationStates(creationGroup.id, stateById, projects, scope);
   const queryClient = useQueryClient();
   const move = useMoveIssue();
   const positionsIncomplete = boardPositionsAreIncomplete(filtered, columnSource?.display);
@@ -1844,14 +1870,17 @@ export function Board({
           columnsReady={columnsReady}
           pendingIssueIds={pendingIds}
           onCreate={() => {
-            const state =
-              groupBy === 'state'
-                ? (stateById.get(group.id) ??
-                  [...stateById.values()].find(
-                    (candidate) => mergedStateKey(candidate) === group.id,
-                  ))
-                : undefined;
-            openQuickCreate(state?.teamId, state?.id);
+            if (groupBy !== 'state') {
+              openQuickCreate(scope?.['teamId']);
+              return;
+            }
+            const options = creationStates(group.id, stateById, projects, scope);
+            const state = options[0];
+            if (options.length === 1 && state !== undefined) {
+              openQuickCreate(state.teamId, state.id);
+            } else {
+              setCreationGroup(group);
+            }
           }}
           onCardNode={registerCardNode}
           onColumnNode={registerColumnNode}
@@ -1862,7 +1891,40 @@ export function Board({
     </div>
   );
 
-  const peek = <IssuePeek issueId={peekId} issue={peekIssue} onClose={() => setPeekId(null)} />;
+  const peek = (
+    <>
+      <IssuePeek issueId={peekId} issue={peekIssue} onClose={() => setPeekId(null)} />
+      <Dialog
+        open={creationGroup !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreationGroup(null);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Choose a team</DialogTitle>
+          <DialogDescription>
+            {creationOptions.length === 0
+              ? 'No team in this view has this status.'
+              : `Create an issue in ${creationGroup?.title}.`}
+          </DialogDescription>
+          <div className="flex flex-col gap-2">
+            {creationOptions.map((state) => (
+              <Button
+                key={state.id}
+                variant="secondary"
+                onClick={() => {
+                  setCreationGroup(null);
+                  openQuickCreate(state.teamId, state.id);
+                }}
+              >
+                {teams.find((team) => team.id === state.teamId)?.name ?? state.teamId}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 
   if (!draggable) {
     return (
