@@ -25,15 +25,30 @@ for (const upload of uploads) {
     });
     assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
     assert.ok(preflight.ok);
+    const methods =
+      preflight.headers
+        .get('access-control-allow-methods')
+        ?.split(',')
+        .map((value) => value.trim().toUpperCase()) ?? [];
+    assert.ok(methods.includes('PUT'), 'CORS preflight must allow PUT');
+    const headers =
+      preflight.headers
+        .get('access-control-allow-headers')
+        ?.split(',')
+        .map((value) => value.trim().toLowerCase()) ?? [];
+    assert.ok(headers.includes('content-type'), 'CORS preflight must allow content-type');
     const put = await fetch(target.url, {
       method: target.method,
       headers: { ...target.headers, origin },
       body,
     });
     assert.ok(put.ok);
+    assert.equal(put.headers.get('access-control-allow-origin'), origin);
     assert.equal((await storage.stat(key))?.size, body.size);
     const url = await storage.getUrl(key, 60, { contentType: upload.type });
-    const download = await fetch(url);
+    const download = await fetch(url, { headers: { origin } });
+    assert.ok(download.ok);
+    assert.equal(download.headers.get('access-control-allow-origin'), origin);
     assert.equal(download.headers.get('content-type'), upload.type);
     assert.equal(await download.text(), upload.body);
     const foreign = await fetch(target.url, {
