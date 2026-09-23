@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { CopyRow } from '../settings/integration-card.tsx';
 
-export function AiConnectBanner() {
+export function AiConnectBanner({ mcpUrl }: { readonly mcpUrl: string }) {
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,10 +42,18 @@ export function AiConnectBanner() {
             {error}
           </p>
         )}
-        <div className="mt-1 flex gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <Button asChild variant="primary" size="sm">
             <Link href="/settings/mcp">Connect an AI tool</Link>
           </Button>
+          <div className="w-full max-w-md">
+            <CopyRow
+              value={mcpUrl}
+              label="Copy MCP server URL"
+              testId="ai-connect-banner-url"
+              onError={setError}
+            />
+          </div>
         </div>
       </div>
       <Button
