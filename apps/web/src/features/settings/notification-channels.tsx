@@ -115,6 +115,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   const slackDmNotice = slackDmNoticeFor(props.slackDm);
 
   function summaryFor(channel: NotificationChannel, enabled: number): string {
+    if (channel === 'push') return 'Push delivery is not available in this release.';
     if (channel === 'email' && props.emailEnabled === false) {
       return 'Unavailable until the server operator configures email delivery.';
     }
@@ -123,6 +124,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   }
 
   function isLocked(channel: NotificationChannel): boolean {
+    if (channel === 'push') return true;
     if (channel === 'email' && props.emailEnabled === false) return true;
     return channel === 'slack_dm' && props.slackDm !== 'available';
   }

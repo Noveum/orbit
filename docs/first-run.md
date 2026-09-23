@@ -48,6 +48,10 @@ installing it for a workspace. Slack requires its feature flag and app
 credentials, workspace authorization, and individual connections for personal
 DMs. Follow [Configuration](configuration.md) for the variable reference.
 
+Push delivery is not implemented in this release. Its notification controls are
+disabled and saved preferences are preserved. Use the inbox, configured email,
+or connected Slack DMs for delivered notifications.
+
 ## Verify the running installation
 
 1. Complete a real sign-up, sign-out and sign-in. Reload a protected page and
