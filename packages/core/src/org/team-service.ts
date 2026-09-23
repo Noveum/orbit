@@ -10,6 +10,11 @@ import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
+import { canonicalIssueReads } from '../work/issue-actor-view.ts';
+import { clearHumanIssueResponsibility } from '../work/issue-responsibility.ts';
+import { issueScopes } from '../work/issue-service.ts';
+import { labelIdsByIssue } from '../work/label-service.ts';
+import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import { createDefaultWorkflowStates } from '../work/workflow-state-service.ts';
 
 export type TeamRow = typeof schema.team.$inferSelect;
@@ -392,26 +397,42 @@ export async function removeTeamMember(
       .for('update');
     const current = requireRow(teamMember, 'That person is not on this team.');
 
-    if (membership.role !== 'admin') {
-      const [review] = await tx
-        .select({ issueId: schema.issueReviewer.issueId })
-        .from(schema.issueReviewer)
-        .innerJoin(schema.issue, eq(schema.issue.id, schema.issueReviewer.issueId))
-        .where(and(eq(schema.issue.teamId, team.id), eq(schema.issueReviewer.userId, userId)))
-        .limit(1);
-      if (review !== undefined) {
-        throw conflict('Remove this person as a reviewer before removing them from the team.');
-      }
-    }
-
     const syncId = await nextSyncId(tx);
+    const responsibility =
+      membership.role === 'admin'
+        ? { changed: [] }
+        : await clearHumanIssueResponsibility(tx, principal.organizationId, userId, syncId, {
+            teamId,
+          });
     const actor = await principalActor(tx, principal);
     const [removed] = await tx
       .delete(schema.teamMember)
       .where(eq(schema.teamMember.id, current.id))
       .returning();
     const row = requireRow(removed, 'That person is not on this team.');
+    const views = await canonicalIssueReads(tx, responsibility.changed);
+    const issueIds = views.map((issue) => issue.id);
+    const [labels, reviewers] = await Promise.all([
+      labelIdsByIssue(tx, issueIds),
+      reviewerIdsByIssue(tx, issueIds),
+    ]);
     return [
+      ...views.map((row) =>
+        buildSyncAction({
+          syncId,
+          organizationId: principal.organizationId,
+          scopes: issueScopes(row),
+          action: 'update',
+          model: 'issue',
+          modelId: row.id,
+          data: {
+            ...row,
+            labelIds: labels.get(row.id) ?? [],
+            reviewerIds: reviewers.get(row.id) ?? [],
+          },
+          actor: { type: 'system', id: 'system', name: 'System' },
+        }),
+      ),
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,

@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { applyCatchup } from './apply-catchup.ts';
 
 const TEST_DATABASES = [
   'orbit_test_core',
@@ -94,4 +95,5 @@ for (const name of TEST_DATABASES) {
     throw new Error(`Could not push the schema to ${name}.`);
   }
   console.log(`schema applied to ${name}`);
+  await applyCatchup(url, 'agent-actors.sql');
 }

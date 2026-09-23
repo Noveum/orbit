@@ -2,13 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { DEFAULT_WORKFLOW_STATES } from '@orbit/core';
 import {
   addMember,
-  connect,
   createWorkspace,
   mintToken,
   resetDatabase,
   type TestClient,
   type TestWorkspace,
 } from '../src/test-helpers.ts';
+import { connectHuman } from './human-client.ts';
 
 let workspace: TestWorkspace;
 let agent: TestClient;
@@ -28,7 +28,7 @@ function idOf(payload: Record<string, unknown>, path: readonly string[]): string
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  agent = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  agent = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
   await addMember(workspace, 'member', 'Bea Builder');
 
   state['team'] = workspace.teamKey;

@@ -7,6 +7,8 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../../scripts/test-env.ts';
+import { applyCatchup } from '../../src/apply-catchup.ts';
+import { releaseDatabase } from '../../src/migration-release.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_agent_actor_migrations', currentLane());
@@ -122,9 +124,7 @@ describe('agent actor migration', () => {
       await migrate(drizzle({ client: sql }), { migrationsFolder: legacyDirectory });
     });
     await seedLegacyData();
-    await run(urlFor(SCRATCH), async (sql) => {
-      await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS });
-    });
+    await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
   }, 30_000);
 
   afterAll(async () => {
@@ -238,6 +238,7 @@ describe('agent actor migration', () => {
             'agent_identity_org_owner_idx',
             'oauth_access_token_mcp_grant_idx'
           )
+        order by indexname
       `,
     );
 
@@ -271,6 +272,21 @@ describe('agent actor migration', () => {
     expect(oldUnique?.exists).toBe(false);
   });
 
+  it('releases the complete migration chain into a fresh database', async () => {
+    const fresh = `${SCRATCH}_fresh`;
+    await run(urlFor('postgres'), async (sql) => {
+      await sql.unsafe(`drop database if exists "${fresh}"`);
+      await sql.unsafe(`create database "${fresh}"`);
+    });
+    try {
+      const result = await releaseDatabase(urlFor(fresh), MIGRATIONS);
+      expect(result.mode).toBe('migrated');
+      expect(result.applied).toBe(result.total);
+    } finally {
+      await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database "${fresh}"`));
+    }
+  });
+
   it('freezes legacy unbound grants and removes their unbound credentials', async () => {
     const [grant] = await run(
       urlFor(SCRATCH),
@@ -288,6 +304,69 @@ describe('agent actor migration', () => {
     expect(grant?.revoke_reason).toBe('agent_identity_required');
     expect(token?.total).toBe('0');
   });
+
+  it('finishes catchup for unassigned issues and deleted human actors', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        insert into issue_activity
+          (id, organization_id, issue_id, actor_type, actor_id, actor_name, field)
+        values (
+          'former-activity', 'agent-org', 'unassigned-issue', 'user',
+          'former-user', 'Former user', 'title'
+        )
+      `;
+      await sql`
+        insert into audit_log
+          (id, organization_id, actor_type, actor_id, actor_name, action, entity_type, entity_id)
+        values (
+          'former-audit', 'agent-org', 'user', 'former-user', 'Former user',
+          'issue.updated', 'issue', 'unassigned-issue'
+        )
+      `;
+      await sql`
+        insert into notification
+          (id, organization_id, user_id, type, actor_type, actor_id, actor_name,
+           entity_type, entity_id, title, url)
+        values (
+          'former-notification', 'agent-org', 'agent-owner', 'issue', 'user',
+          'former-user', 'Former user', 'issue', 'unassigned-issue', 'Former', '/issue/AGENT-2'
+        )
+      `;
+    });
+
+    await applyCatchup(urlFor(SCRATCH), 'agent-actors.sql');
+    await applyCatchup(urlFor(SCRATCH), 'agent-actors.sql');
+
+    const [issue] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ owner_user_id: string | null }[]>`
+        select owner_user_id from issue where id = 'unassigned-issue'
+      `,
+    );
+    const actors = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ principal_user_id: string | null; principal_name: string | null }[]>`
+        select principal_user_id, principal_name
+        from issue_activity
+        where id = 'former-activity'
+        union all
+        select principal_user_id, principal_name
+        from audit_log
+        where id = 'former-audit'
+        union all
+        select principal_user_id, principal_name
+        from notification
+        where id = 'former-notification'
+      `,
+    );
+
+    expect(issue?.owner_user_id).toBeNull();
+    expect([...actors]).toEqual([
+      { principal_user_id: null, principal_name: 'Former user' },
+      { principal_user_id: null, principal_name: 'Former user' },
+      { principal_user_id: null, principal_name: 'Former user' },
+    ]);
+  }, 30_000);
 
   it('rejects invalid actor combinations and duplicate active agent grants in PostgreSQL', async () => {
     await run(urlFor(SCRATCH), async (sql) => {

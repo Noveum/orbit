@@ -3,7 +3,6 @@ import { createTeam, DEFAULT_WORKFLOW_STATES, listLabels, listWorkflowStates } f
 import { db, eq, schema } from '@orbit/db';
 import {
   addMember,
-  connect,
   createWorkspace,
   errorPayload,
   MCP_TEST_SCOPES,
@@ -12,6 +11,7 @@ import {
   type TestClient,
   type TestWorkspace,
 } from '../src/test-helpers.ts';
+import { connectHuman } from './human-client.ts';
 
 let workspace: TestWorkspace;
 let admin: TestClient;
@@ -37,10 +37,10 @@ function stateOf(payload: Record<string, unknown>): StateShape {
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
   const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(await mintToken(workspace.organizationId, guestMember.user.id));
-  readOnly = await connect(
+  guest = await connectHuman(await mintToken(workspace.organizationId, guestMember.user.id));
+  readOnly = await connectHuman(
     await mintToken(
       workspace.organizationId,
       workspace.adminUser.id,

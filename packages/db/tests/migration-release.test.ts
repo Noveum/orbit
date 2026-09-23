@@ -1,8 +1,6 @@
 import { afterAll, describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
 import { releaseDatabase } from '../src/migration-release.ts';
@@ -35,12 +33,82 @@ async function resetScratch(): Promise<void> {
 }
 
 async function migrateScratch(): Promise<void> {
-  await run(urlFor(SCRATCH), async (sql) => {
-    await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS });
-  });
+  await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
 }
 
 describe('database release', () => {
+  it('upgrades the original ledger prefix atomically and retries without losing consent history', async () => {
+    await resetScratch();
+    const historical = readMigrationFiles({ migrationsFolder: MIGRATIONS }).slice(0, 22);
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql.begin(async (tx) => {
+        await tx`create schema drizzle`;
+        await tx`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+        for (const migration of historical) {
+          const statements =
+            migration.folderMillis === 1789829740142 ? [...migration.sql].reverse() : migration.sql;
+          for (const statement of statements) await tx.unsafe(statement);
+          await tx`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+        }
+      });
+      await sql`insert into "user" (id, name, email, handle) values ('upgrade-owner', 'Owner', 'upgrade@example.com', 'upgrade-owner')`;
+      await sql`insert into organization (id, name, slug) values ('upgrade-org', 'Org', 'upgrade-org')`;
+      await sql`insert into oauth_application (id, client_id, name, redirect_urls, type) values ('upgrade-client', 'upgrade-client', 'Client', 'https://example.com', 'public')`;
+      await sql`insert into mcp_grant (id, client_id, user_id, organization_id, scopes, principal_name_snapshot, revoked_at) values ('upgrade-grant', 'upgrade-client', 'upgrade-owner', 'upgrade-org', 'orbit.read', 'Owner', now())`;
+      await sql`insert into oauth_consent (id, client_id, user_id, scopes, consent_given) values ('upgrade-consent', 'upgrade-client', 'upgrade-owner', 'orbit.read', true)`;
+      await sql`insert into oauth_access_token (id, client_id, user_id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, scopes) values ('upgrade-token', 'upgrade-client', 'upgrade-owner', 'upgrade-access', 'upgrade-refresh', now(), now(), 'orbit.read')`;
+      await sql`create function reject_upgrade() returns trigger as $$ begin raise exception 'upgrade interrupted'; end; $$ language plpgsql`;
+      await sql`create trigger reject_upgrade_trigger before update on mcp_grant for each row execute function reject_upgrade()`;
+    });
+    const originalLedger = await run(
+      urlFor(SCRATCH),
+      (sql) => sql`select * from drizzle.__drizzle_migrations order by id`,
+    );
+    const originalConsent = await run(urlFor(SCRATCH), (sql) => sql`select * from oauth_consent`);
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'upgrade interrupted',
+    );
+    expect([
+      ...(await run(
+        urlFor(SCRATCH),
+        (sql) => sql`select * from drizzle.__drizzle_migrations order by id`,
+      )),
+    ]).toEqual([...originalLedger]);
+    expect(
+      await run(urlFor(SCRATCH), (sql) => sql`select id from oauth_access_token`),
+    ).toHaveLength(1);
+    expect(
+      await run(
+        urlFor(SCRATCH),
+        (sql) =>
+          sql`select column_name from information_schema.columns where table_name = 'cycle_issue_membership' and column_name = 'assignee_agent_id_at_add'`,
+      ),
+    ).toHaveLength(0);
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`drop trigger reject_upgrade_trigger on mcp_grant`;
+      await sql`drop function reject_upgrade()`;
+    });
+    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).applied).toBe(3);
+    expect([
+      ...(await run(
+        urlFor(SCRATCH),
+        (sql) => sql`select * from drizzle.__drizzle_migrations order by id limit 22`,
+      )),
+    ]).toEqual([...originalLedger]);
+    expect([...(await run(urlFor(SCRATCH), (sql) => sql`select * from oauth_consent`))]).toEqual([
+      ...originalConsent,
+    ]);
+    expect(
+      await run(urlFor(SCRATCH), (sql) => sql`select id from oauth_access_token`),
+    ).toHaveLength(0);
+    expect(
+      (await run(urlFor(SCRATCH), (sql) => sql`select revoke_reason from mcp_grant`))[0]?.[
+        'revoke_reason'
+      ],
+    ).toBe('agent_identity_required');
+    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('current');
+  }, 60_000);
+
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);
@@ -261,5 +329,34 @@ describe('database release', () => {
 
     expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
     expect(ledger?.count).toBe(migrations.length);
+  }, 60_000);
+
+  it('keeps the original historical migration ledger without inserting compatibility records', async () => {
+    await resetScratch();
+    await migrateScratch();
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const [recorded] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ count: number }[]>`
+        select count(*)::integer as count
+        from drizzle.__drizzle_migrations
+        where created_at = 1789829500000
+      `,
+    );
+
+    expect(result.mode).toBe('current');
+    expect(recorded?.count).toBe(0);
+  }, 60_000);
+
+  it('refuses a missing historical constraint without inventing a ledger repair', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table mcp_grant drop constraint mcp_grant_agent_binding_fk`;
+    });
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'database is still incompatible',
+    );
   }, 60_000);
 });

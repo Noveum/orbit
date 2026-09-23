@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import { createComment, createIssue, createTeam } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import type { StorageDriver, StoredObject } from '@orbit/services/storage';
+import { connectHuman } from '../human-client.ts';
 
 const storageModule = await import('@orbit/services/storage');
 
@@ -36,14 +37,13 @@ mock.module('@orbit/services/storage', () => ({
 
 const {
   addMember,
-  connect,
   createWorkspace,
   errorPayload,
   mintToken,
   resetDatabase,
 }: typeof import('../../src/test-helpers.ts') = await import('../../src/test-helpers.ts');
 
-type TestClient = Awaited<ReturnType<typeof connect>>;
+type TestClient = Awaited<ReturnType<typeof connectHuman>>;
 type TestWorkspace = Awaited<ReturnType<typeof createWorkspace>>;
 
 let workspace: TestWorkspace;
@@ -56,9 +56,9 @@ let commentId: string;
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
   const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(await mintToken(workspace.organizationId, guestMember.user.id));
+  guest = await connectHuman(await mintToken(workspace.organizationId, guestMember.user.id));
 
   const created = await admin.result('create_issue', {
     team: workspace.teamKey,
@@ -172,7 +172,7 @@ describe('attach_file', () => {
     });
     const secret = await createComment(workspace.admin, behind.issue.id, { body: 'Private' });
     const insider = await addMember(workspace, 'member', 'Ida Insider');
-    const outside = await connect(await mintToken(workspace.organizationId, insider.user.id));
+    const outside = await connectHuman(await mintToken(workspace.organizationId, insider.user.id));
 
     try {
       const refused = await outside.call('attach_file', {

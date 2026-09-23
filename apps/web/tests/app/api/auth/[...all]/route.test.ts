@@ -2,13 +2,12 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import {
   createOrganization,
-  finalizeMcpConsent,
   recordMcpGrant,
   unbindMcpCredential,
   verifyMcpAccessToken,
 } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, eq, schema } from '@orbit/db';
+import { db, eq, pool, schema } from '@orbit/db';
 import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
 import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
 import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
@@ -72,36 +71,49 @@ async function withNativeFetchGlobals<T>(operation: () => Promise<T>): Promise<T
   }
 }
 
-async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
+async function boundGrantFixture(workspace: Workspace, organizationId = workspace.organizationId) {
+  const agentIdentityId = randomUUID();
+  await db.insert(schema.agentIdentity).values({
+    id: agentIdentityId,
+    organizationId,
+    ownerUserId: workspace.adminUser.id,
+    ownerNameSnapshot: workspace.adminUser.name,
+    clientId: 'client_test',
+    clientNameSnapshot: 'Test MCP client',
+    name: 'Researcher',
+  });
+  return recordMcpGrant({
+    clientId: 'client_test',
+    userId: workspace.adminUser.id,
+    organizationId,
+    scopes: 'openid offline_access orbit.read',
+    agentIdentityId,
+  });
+}
+
+async function authorizationCodeFixture(workspace: Workspace): Promise<{
   code: string;
   verifier: string;
 }> {
   const verifier = 'mcp-code-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
-  const consentCode = randomUUID().replace(/-/g, '');
+  const code = randomUUID().replace(/-/g, '');
+  const mcpGrantId = await boundGrantFixture(workspace);
   await db.insert(schema.verification).values({
     id: randomUUID(),
-    identifier: consentCode,
+    identifier: code,
     value: JSON.stringify({
       clientId: 'client_test',
       redirectURI: CALLBACK_URL,
       scope: ['openid', 'offline_access', 'orbit.read'],
       userId: workspace.adminUser.id,
-      requireConsent: true,
+      requireConsent: false,
+      mcpGrantId,
       state: 'state_test',
       codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
       codeChallengeMethod: 'S256',
     }),
     expiresAt: new Date(Date.now() + 600_000),
   });
-  const approved = await finalizeMcpConsent({
-    userId: workspace.adminUser.id,
-    consentCode,
-    accept: true,
-    organizationId: workspace.organizationId,
-    identitySelection: { createAgent: { name: 'Researcher', avatar: null } },
-  });
-  const code = new URL(approved.redirectUri).searchParams.get('code');
-  if (code === null) throw new Error('the consent redirect did not carry a code');
   return { code, verifier };
 }
 
@@ -385,7 +397,7 @@ describe('MCP authorize PKCE boundary', () => {
     await withNativeFetchGlobals(async () => {
       const invalidVerifiers = ['A'.repeat(42), 'A'.repeat(129), `${'A'.repeat(42)}%`];
       for (const verifier of invalidVerifiers) {
-        const { code } = await finalizedAuthorizationCode(workspace);
+        const { code } = await authorizationCodeFixture(workspace);
         const response = await authPost(
           new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
             method: 'POST',
@@ -412,7 +424,7 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('binds authorization and refresh tokens to the consented workspace grant', async () => {
     await withNativeFetchGlobals(async () => {
-      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const { code, verifier } = await authorizationCodeFixture(workspace);
       const token = await authPost(
         new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
           method: 'POST',
@@ -506,7 +518,7 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('lets only one concurrent refresh consume a credential', async () => {
     await withNativeFetchGlobals(async () => {
-      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const { code, verifier } = await authorizationCodeFixture(workspace);
       const token = await authPost(
         new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
           method: 'POST',
@@ -548,6 +560,84 @@ describe('MCP authorize PKCE boundary', () => {
     });
   });
 
+  it('rejects a refresh after a concurrent lifecycle pause commits', async () => {
+    await withNativeFetchGlobals(async () => {
+      const { code, verifier } = await authorizationCodeFixture(workspace);
+      const token = await authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            client_id: 'client_test',
+            redirect_uri: CALLBACK_URL,
+            code_verifier: verifier,
+          }),
+        }),
+      );
+      const tokenBody = (await token.json()) as Record<string, unknown>;
+      const refreshToken = tokenBody['refresh_token'];
+      if (typeof refreshToken !== 'string') {
+        throw new Error('the token response did not contain a refresh credential');
+      }
+      const [grant] = await db
+        .select({ id: schema.mcpGrant.id, identityId: schema.mcpGrant.agentIdentityId })
+        .from(schema.mcpGrant)
+        .where(eq(schema.mcpGrant.organizationId, workspace.organizationId));
+      if (grant?.identityId === null || grant === undefined)
+        throw new Error('missing grant fixture');
+      let releaseLifecycle = (): void => undefined;
+      const release = new Promise<void>((resolve) => {
+        releaseLifecycle = resolve;
+      });
+      let signalLocked = (): void => undefined;
+      const locked = new Promise<void>((resolve) => {
+        signalLocked = resolve;
+      });
+      const lifecycle = pool.begin(async (tx) => {
+        await tx.unsafe(
+          'select id from member where organization_id = $1 and user_id = $2 for update',
+          [workspace.organizationId, workspace.adminUser.id],
+        );
+        await tx.unsafe('select id from agent_identity where id = $1 for update', [
+          grant.identityId,
+        ]);
+        await tx.unsafe('select id from mcp_grant where id = $1 for update', [grant.id]);
+        signalLocked();
+        await release;
+        await tx.unsafe(
+          'update agent_identity set owner_disabled_at = now(), owner_disabled_by_user_id = $1 where id = $2',
+          [workspace.adminUser.id, grant.identityId],
+        );
+        await tx.unsafe(
+          "update mcp_grant set revoked_at = now(), revoke_reason = 'connection_revoked' where id = $1",
+          [grant.id],
+        );
+        await tx.unsafe('delete from oauth_access_token where mcp_grant_id = $1', [grant.id]);
+      });
+      await locked;
+      const refresh = authPost(
+        new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: 'client_test',
+          }),
+        }),
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      releaseLifecycle();
+      await lifecycle;
+      const response = await refresh;
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
+    });
+  });
+
   it('preserves HTTP Basic authentication for a confidential client', async () => {
     await withNativeFetchGlobals(async () => {
       const otherClientId = `other_${randomUUID().replace(/-/g, '')}`;
@@ -568,7 +658,7 @@ describe('MCP authorize PKCE boundary', () => {
         .from(schema.oauthApplication)
         .where(eq(schema.oauthApplication.clientId, otherClientId));
       expect(otherClient?.type).toBe('public');
-      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const { code, verifier } = await authorizationCodeFixture(workspace);
       const authorization = `Basic ${Buffer.from('client_test:client-secret').toString('base64')}`;
       const token = await authPost(
         new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
@@ -610,17 +700,12 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('keeps an authorization code valid when another workspace grant is recorded', async () => {
     await withNativeFetchGlobals(async () => {
-      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const { code, verifier } = await authorizationCodeFixture(workspace);
       const other = await createOrganization(workspace.adminUser.id, {
         name: 'Other workspace',
         slug: `other-${randomUUID().slice(0, 8)}`,
       });
-      await recordMcpGrant({
-        clientId: 'client_test',
-        userId: workspace.adminUser.id,
-        organizationId: other.organization.id,
-        scopes: 'openid offline_access orbit.read',
-      });
+      await boundGrantFixture(workspace, other.organization.id);
 
       const token = await authPost(
         new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
@@ -642,7 +727,7 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('rejects alternate token paths without exposing an unbound token', async () => {
     await withNativeFetchGlobals(async () => {
-      const { code, verifier } = await finalizedAuthorizationCode(workspace);
+      const { code, verifier } = await authorizationCodeFixture(workspace);
       for (const path of ['/api/auth/mcp/token/', '/api/auth/mcp/TOKEN', '/api/auth/mcp/%74oken']) {
         const token = await authPost(
           new Request(`${APP_ORIGIN}${path}`, {

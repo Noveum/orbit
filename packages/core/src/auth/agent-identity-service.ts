@@ -1,8 +1,16 @@
 import { and, count, db, eq, inArray, isNull, schema } from '@orbit/db';
 import { conflict, forbidden, notFound } from '@orbit/shared/errors';
-import type { Principal } from '@orbit/shared/policy';
-import type { AgentIdentityAction, AgentIdentitySelection } from '@orbit/shared/validators';
+import { agentIdentityAuthority, type Principal } from '@orbit/shared/policy';
+import {
+  type AgentIdentityAction,
+  type AgentIdentitySelection,
+  agentIdentityProfileSchema,
+} from '@orbit/shared/validators';
+import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
+import { resolvePrincipal } from '../org/member-service.ts';
+import { nextSyncId } from '../sync/sync-id.ts';
+import { clearAgentIssueResponsibility } from '../work/issue-responsibility.ts';
 
 const ACTIVE_AGENT_LIMIT = 2;
 
@@ -88,6 +96,22 @@ async function clientAndOwner(
   return { clientName: client.name, ownerName: owner.name };
 }
 
+async function assertOwnedAvatar(
+  executor: Executor,
+  ownerUserId: string,
+  avatar: string | null,
+): Promise<void> {
+  if (avatar === null) return;
+  const [owner] = await executor
+    .select({ image: schema.user.image })
+    .from(schema.user)
+    .where(eq(schema.user.id, ownerUserId))
+    .limit(1);
+  if (owner?.image !== avatar) {
+    throw forbidden('Use an avatar uploaded by this agent owner.');
+  }
+}
+
 async function lockedActiveGrantId(executor: Executor, identityId: string): Promise<string | null> {
   const [grant] = await executor
     .select({ id: schema.mcpGrant.id })
@@ -105,8 +129,9 @@ export async function preparePersonalAgentConsent(
   await lockMembership(executor, input.organizationId, input.userId);
   const names = await clientAndOwner(executor, input.clientId, input.userId);
   if ('createAgent' in input.selection) {
+    const profile = agentIdentityProfileSchema.parse(input.selection.createAgent);
+    await assertOwnedAvatar(executor, input.userId, profile.avatar);
     await assertActiveAgentCapacity(executor, input.organizationId, input.userId);
-    const profile = input.selection.createAgent;
     const [identity] = await executor
       .insert(schema.agentIdentity)
       .values({
@@ -169,8 +194,69 @@ async function revokeGrantAndTokens(
     .where(inArray(schema.oauthAccessToken.mcpGrantId, grantIds));
 }
 
-function canAdmin(principal: Principal): boolean {
-  return principal.role === 'admin';
+export async function deletePersonalAgentsForRemovedMember(
+  executor: Executor,
+  organizationId: string,
+  ownerUserId: string,
+  actorUserId: string,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const candidates = await executor
+    .select({ id: schema.agentIdentity.id })
+    .from(schema.agentIdentity)
+    .where(
+      and(
+        eq(schema.agentIdentity.organizationId, organizationId),
+        eq(schema.agentIdentity.ownerUserId, ownerUserId),
+        isNull(schema.agentIdentity.deletedAt),
+      ),
+    )
+    .orderBy(schema.agentIdentity.id)
+    .for('update');
+  const deleted: string[] = [];
+  for (const identity of candidates) {
+    await revokeGrantAndTokens(executor, identity.id, now);
+    await executor
+      .update(schema.agentIdentity)
+      .set({
+        deletedAt: now,
+        deletedByUserId: actorUserId,
+        deletedActorIdSnapshot: actorUserId,
+        deletedReason: 'membership_removed',
+        updatedAt: now,
+      })
+      .where(eq(schema.agentIdentity.id, identity.id));
+    deleted.push(identity.id);
+  }
+  return deleted;
+}
+
+async function revokeExactGrantAndTokens(
+  executor: Executor,
+  identityId: string,
+  grantId: string,
+  now: Date,
+): Promise<void> {
+  const [grant] = await executor
+    .select({ id: schema.mcpGrant.id })
+    .from(schema.mcpGrant)
+    .where(
+      and(
+        eq(schema.mcpGrant.id, grantId),
+        eq(schema.mcpGrant.agentIdentityId, identityId),
+        isNull(schema.mcpGrant.revokedAt),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  if (grant === undefined) throw notFound('That connection does not exist.');
+  await executor
+    .update(schema.mcpGrant)
+    .set({ revokedAt: now, revokeReason: 'connection_revoked' })
+    .where(eq(schema.mcpGrant.id, grant.id));
+  await executor
+    .delete(schema.oauthAccessToken)
+    .where(eq(schema.oauthAccessToken.mcpGrantId, grant.id));
 }
 
 async function lockedIdentityForAction(
@@ -224,18 +310,68 @@ export async function manageAgentIdentity(
 ): Promise<AgentIdentityRow> {
   return await db.transaction(async (tx) => {
     await lockActionMemberships(tx, principal, identityId);
+    const currentPrincipal = await resolvePrincipal(principal.userId, principal.organizationId, tx);
     const identity = await lockedIdentityForAction(tx, principal, identityId);
-    const isOwner = identity.ownerUserId === principal.userId;
-    if (!(isOwner || canAdmin(principal))) {
+    const authority = agentIdentityAuthority(currentPrincipal, identity);
+    if (authority === null) {
       throw forbidden('Only the agent owner or a workspace admin can manage this agent.', {
         details: { reason: 'agent_owner_required' },
       });
     }
+    const isOwner = authority === 'owner';
     if (action.action === 'update_profile') {
       return await updateAgentProfile(tx, identity, isOwner, action.profile, now);
     }
     if (identity.deletedAt !== null) throw conflict('Deleted agents cannot be changed.');
     await applyLifecycleAction(tx, identity, principal.userId, isOwner, action, now);
+    if (action.action !== 'resume') {
+      await clearAgentIssueResponsibility(
+        tx,
+        identity.organizationId,
+        [identity.id],
+        await nextSyncId(tx),
+        await principalActor(tx, principal),
+        now,
+      );
+    }
+    return await agentIdentityById(tx, identity.id);
+  });
+}
+
+export async function revokeAgentConnection(
+  principal: Principal,
+  identityId: string,
+  grantId: string,
+  now: Date = new Date(),
+): Promise<AgentIdentityRow> {
+  return await db.transaction(async (tx) => {
+    await lockActionMemberships(tx, principal, identityId);
+    const currentPrincipal = await resolvePrincipal(principal.userId, principal.organizationId, tx);
+    const identity = await lockedIdentityForAction(tx, principal, identityId);
+    if (agentIdentityAuthority(currentPrincipal, identity) === null) {
+      throw forbidden('Only the agent owner or a workspace admin can manage this agent.', {
+        details: { reason: 'agent_owner_required' },
+      });
+    }
+    if (identity.deletedAt !== null) throw conflict('Deleted agents cannot be changed.');
+    await revokeExactGrantAndTokens(tx, identity.id, grantId, now);
+    await clearAgentIssueResponsibility(
+      tx,
+      identity.organizationId,
+      [identity.id],
+      await nextSyncId(tx),
+      await principalActor(tx, principal),
+      now,
+    );
+    await tx
+      .update(schema.agentIdentity)
+      .set({
+        connectionRevokedAt: now,
+        connectionRevokedByUserId: principal.userId,
+        connectionRevokedActorIdSnapshot: principal.userId,
+        updatedAt: now,
+      })
+      .where(eq(schema.agentIdentity.id, identity.id));
     return await agentIdentityById(tx, identity.id);
   });
 }
@@ -262,9 +398,12 @@ async function updateAgentProfile(
   if (!isOwner || identity.deletedAt !== null) {
     throw forbidden('Only the agent owner can update an active agent profile.');
   }
+  const parsed = agentIdentityProfileSchema.parse(profile);
+  if (identity.ownerUserId === null) throw forbidden('The agent owner is unavailable.');
+  await assertOwnedAvatar(executor, identity.ownerUserId, parsed.avatar);
   const [updated] = await executor
     .update(schema.agentIdentity)
-    .set({ name: profile.name, avatar: profile.avatar, updatedAt: now })
+    .set({ name: parsed.name, avatar: parsed.avatar, updatedAt: now })
     .where(eq(schema.agentIdentity.id, identity.id))
     .returning();
   return requireRow(updated, 'That agent identity does not exist.');
@@ -288,6 +427,15 @@ async function applyLifecycleAction(
   }
   if (action.action === 'revoke_connection') {
     await revokeGrantAndTokens(executor, identity.id, now);
+    await executor
+      .update(schema.agentIdentity)
+      .set({
+        connectionRevokedAt: now,
+        connectionRevokedByUserId: actorUserId,
+        connectionRevokedActorIdSnapshot: actorUserId,
+        updatedAt: now,
+      })
+      .where(eq(schema.agentIdentity.id, identity.id));
     return;
   }
   await revokeGrantAndTokens(executor, identity.id, now);
@@ -296,6 +444,7 @@ async function applyLifecycleAction(
     .set({
       deletedAt: now,
       deletedByUserId: actorUserId,
+      deletedActorIdSnapshot: actorUserId,
       deletedReason: action.reason,
       updatedAt: now,
     })
@@ -309,9 +458,20 @@ async function pauseAgentIdentity(
   isOwner: boolean,
   now: Date,
 ): Promise<void> {
+  if (isOwner ? identity.ownerDisabledAt !== null : identity.adminDisabledAt !== null) return;
   const update = isOwner
-    ? { ownerDisabledAt: now, ownerDisabledByUserId: actorUserId, updatedAt: now }
-    : { adminDisabledAt: now, adminDisabledByUserId: actorUserId, updatedAt: now };
+    ? {
+        ownerDisabledAt: now,
+        ownerDisabledByUserId: actorUserId,
+        ownerDisabledActorIdSnapshot: actorUserId,
+        updatedAt: now,
+      }
+    : {
+        adminDisabledAt: now,
+        adminDisabledByUserId: actorUserId,
+        adminDisabledActorIdSnapshot: actorUserId,
+        updatedAt: now,
+      };
   await executor
     .update(schema.agentIdentity)
     .set(update)
@@ -335,7 +495,13 @@ async function resumeAgentIdentity(
     }
     await executor
       .update(schema.agentIdentity)
-      .set({ ownerDisabledAt: null, ownerDisabledByUserId: null, updatedAt: now })
+      .set({
+        ownerDisabledAt: null,
+        ownerResumedAt: now,
+        ownerResumedByUserId: actorUserId,
+        ownerResumedActorIdSnapshot: actorUserId,
+        updatedAt: now,
+      })
       .where(eq(schema.agentIdentity.id, identity.id));
     return;
   }
@@ -351,7 +517,13 @@ async function resumeAgentIdentity(
   }
   await executor
     .update(schema.agentIdentity)
-    .set({ adminDisabledAt: null, adminDisabledByUserId: null, updatedAt: now })
+    .set({
+      adminDisabledAt: null,
+      adminResumedAt: now,
+      adminResumedByUserId: actorUserId,
+      adminResumedActorIdSnapshot: actorUserId,
+      updatedAt: now,
+    })
     .where(eq(schema.agentIdentity.id, identity.id));
 }
 

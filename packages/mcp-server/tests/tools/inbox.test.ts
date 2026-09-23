@@ -1,13 +1,8 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
-import {
-  addMember,
-  connect,
-  createWorkspace,
-  mintToken,
-  resetDatabase,
-} from '../../src/test-helpers.ts';
+import { addMember, createWorkspace, mintToken, resetDatabase } from '../../src/test-helpers.ts';
+import { connectHuman } from '../human-client.ts';
 
-type TestClient = Awaited<ReturnType<typeof connect>>;
+type TestClient = Awaited<ReturnType<typeof connectHuman>>;
 type TestWorkspace = Awaited<ReturnType<typeof createWorkspace>>;
 
 let workspace: TestWorkspace;
@@ -19,11 +14,11 @@ let issueIdentifier: string;
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
 
   const member = await addMember(workspace, 'contributor', 'Yodu Desk');
   agentHandle = member.user.handle;
-  agent = await connect(await mintToken(workspace.organizationId, member.user.id));
+  agent = await connectHuman(await mintToken(workspace.organizationId, member.user.id));
 
   const created = await admin.result('create_issue', {
     team: workspace.teamKey,
@@ -118,7 +113,7 @@ describe('mark_notification_read', () => {
   });
 
   it('is withheld from a read-only token', async () => {
-    const readOnly = await connect(
+    const readOnly = await connectHuman(
       await mintToken(
         workspace.organizationId,
         workspace.adminUser.id,

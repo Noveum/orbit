@@ -47,9 +47,26 @@ export interface CatalogEnum {
   readonly values: readonly string[];
 }
 
+export interface CatalogFunction {
+  readonly name: string;
+  readonly identityArguments: string;
+  readonly returnType: string;
+  readonly language: string;
+  readonly definition: string;
+}
+
+export interface CatalogTrigger {
+  readonly table: string;
+  readonly name: string;
+  readonly definition: string;
+  readonly enabled: string;
+}
+
 export interface Catalog {
   readonly tables: readonly CatalogTable[];
   readonly enums: readonly CatalogEnum[];
+  readonly functions?: readonly CatalogFunction[];
+  readonly triggers?: readonly CatalogTrigger[];
 }
 
 export interface ColumnMismatch {
@@ -62,6 +79,12 @@ export interface ColumnMismatch {
 
 export interface NamedMismatch {
   readonly table: string;
+  readonly name: string;
+  readonly expected: string;
+  readonly actual: string;
+}
+
+export interface FunctionMismatch {
   readonly name: string;
   readonly expected: string;
   readonly actual: string;
@@ -80,10 +103,16 @@ export interface Drift {
   readonly checkMismatches: NamedMismatch[];
   readonly missingEnums: string[];
   readonly enumMismatches: { name: string; expected: string; actual: string }[];
+  readonly missingFunctions: string[];
+  readonly functionMismatches: FunctionMismatch[];
+  readonly missingTriggers: { table: string; trigger: string }[];
+  readonly triggerMismatches: NamedMismatch[];
   readonly undeclaredTables: string[];
   readonly undeclaredIndexes: { table: string; index: string }[];
   readonly undeclaredForeignKeys: { table: string; foreignKey: string }[];
   readonly undeclaredChecks: { table: string; check: string }[];
+  readonly undeclaredFunctions: string[];
+  readonly undeclaredTriggers: { table: string; trigger: string }[];
 }
 
 interface PgEnumLike {
@@ -226,8 +255,175 @@ function stableForeignKey(foreignKey: CatalogForeignKey): string {
 }
 
 function stableCheck(check: CatalogCheckConstraint): string {
-  return normalizeSql(check.expression);
+  const normalized = normalizeSqlCaseAndIdentifiers(check.expression).replace(
+    /('(?:''|[^'])*')::text\b/g,
+    '$1',
+  );
+  return canonicalBooleanExpression(normalized);
 }
+
+function canonicalBooleanExpression(expression: string): string {
+  let value = expression.trim();
+  while (enclosedInOuterParentheses(value)) value = value.slice(1, -1).trim();
+  const tokens =
+    value.match(/'(?:''|[^'])*'|\(|\)|\b(?:and|or)\b|[^'()]+?(?=\b(?:and|or)\b|['()]|$)/g) ?? [];
+  for (const operator of ['or', 'and']) {
+    let depth = 0;
+    const parts: string[] = [];
+    let part = '';
+    for (const token of tokens) {
+      if (token === '(') depth += 1;
+      if (token === ')') depth -= 1;
+      if (depth === 0 && token === operator) {
+        parts.push(part);
+        part = '';
+      } else {
+        part += token;
+      }
+    }
+    if (parts.length > 0) {
+      parts.push(part);
+      return `${operator}(${parts.map(canonicalBooleanExpression).join(',')})`;
+    }
+  }
+  return value
+    .split(/('(?:''|[^'])*')/g)
+    .map((part, index) =>
+      index % 2 === 1 ? part : part.replace(/\b[a-z_][a-z0-9_]*\./g, '').replace(/\s+/g, ' '),
+    )
+    .join('')
+    .trim();
+}
+
+function normalizeFunctionDefinition(value: string): string {
+  const body = value.match(/\bas\s+(\$[^$]*\$)([\s\S]*?)\1\s*$/iu)?.[2] ?? value;
+  return normalizeSqlCaseAndIdentifiers(body)
+    .split(/('(?:''|[^'])*')/g)
+    .map((part, index) => (index % 2 === 1 ? part : part.replace(/\bpublic\./g, '')))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeTriggerDefinition(value: string): string {
+  return normalizeSqlCaseAndIdentifiers(value)
+    .replace(/\bpublic\./g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stableFunction(value: CatalogFunction): string {
+  return JSON.stringify({
+    identityArguments: value.identityArguments,
+    returnType: value.returnType,
+    language: value.language,
+    definition: normalizeFunctionDefinition(value.definition),
+  });
+}
+
+function functionIdentity(value: CatalogFunction): string {
+  return `${value.name}(${value.identityArguments})`;
+}
+
+function stableTrigger(value: CatalogTrigger): string {
+  return JSON.stringify({
+    definition: normalizeTriggerDefinition(value.definition),
+    enabled: value.enabled,
+  });
+}
+
+const expectedLifecycleFunctions: readonly CatalogFunction[] = [
+  {
+    name: 'agent_identity_lifecycle_guard',
+    identityArguments: '',
+    returnType: 'trigger',
+    language: 'plpgsql',
+    definition: `
+      BEGIN
+        IF NEW."organization_id" IS DISTINCT FROM OLD."organization_id"
+          OR NEW."client_id" IS DISTINCT FROM OLD."client_id"
+          OR (NEW."owner_user_id" IS DISTINCT FROM OLD."owner_user_id" AND NOT (
+            OLD."deleted_at" IS NOT NULL AND NEW."owner_user_id" IS NULL
+            AND NOT EXISTS (SELECT 1 FROM "user" WHERE "id" = OLD."owner_user_id")
+          )) THEN
+          RAISE EXCEPTION 'agent identity binding is immutable';
+        END IF;
+        IF OLD."deleted_at" IS NOT NULL AND (
+          NEW."deleted_at" IS DISTINCT FROM OLD."deleted_at"
+          OR NEW."deleted_reason" IS DISTINCT FROM OLD."deleted_reason"
+          OR NEW."created_at" IS DISTINCT FROM OLD."created_at"
+          OR NEW."last_acted_at" IS DISTINCT FROM OLD."last_acted_at"
+          OR NEW."name" IS DISTINCT FROM OLD."name"
+          OR NEW."avatar" IS DISTINCT FROM OLD."avatar"
+          OR NEW."owner_name_snapshot" IS DISTINCT FROM OLD."owner_name_snapshot"
+          OR NEW."client_name_snapshot" IS DISTINCT FROM OLD."client_name_snapshot"
+          OR NEW."owner_disabled_actor_id_snapshot" IS DISTINCT FROM OLD."owner_disabled_actor_id_snapshot"
+          OR NEW."owner_resumed_actor_id_snapshot" IS DISTINCT FROM OLD."owner_resumed_actor_id_snapshot"
+          OR NEW."admin_disabled_actor_id_snapshot" IS DISTINCT FROM OLD."admin_disabled_actor_id_snapshot"
+          OR NEW."admin_resumed_actor_id_snapshot" IS DISTINCT FROM OLD."admin_resumed_actor_id_snapshot"
+          OR NEW."connection_revoked_actor_id_snapshot" IS DISTINCT FROM OLD."connection_revoked_actor_id_snapshot"
+          OR NEW."deleted_actor_id_snapshot" IS DISTINCT FROM OLD."deleted_actor_id_snapshot"
+        ) THEN
+          RAISE EXCEPTION 'deleted agent identity is immutable';
+        END IF;
+        IF OLD."deleted_at" IS NULL AND NEW."owner_user_id" IS NULL THEN
+          RAISE EXCEPTION 'active agent identity requires an owner';
+        END IF;
+        RETURN NEW;
+      END;
+    `,
+  },
+  {
+    name: 'mcp_grant_lifecycle_guard',
+    identityArguments: '',
+    returnType: 'trigger',
+    language: 'plpgsql',
+    definition: `
+      DECLARE identity_id text;
+      BEGIN
+        IF TG_TABLE_NAME = 'agent_identity' THEN
+          identity_id := NEW.id;
+        ELSE
+          identity_id := NEW.agent_identity_id;
+        END IF;
+        PERFORM 1 FROM agent_identity WHERE id = identity_id FOR UPDATE;
+        IF EXISTS (
+          SELECT 1 FROM mcp_grant g
+          JOIN agent_identity a ON a.id = g.agent_identity_id
+          WHERE a.id = identity_id AND g.revoked_at IS NULL
+            AND (a.deleted_at IS NOT NULL OR a.owner_disabled_at IS NOT NULL OR a.admin_disabled_at IS NOT NULL)
+        ) THEN
+          RAISE EXCEPTION 'active grant requires an active identity' USING ERRCODE = '23514';
+        END IF;
+        RETURN NULL;
+      END;
+    `,
+  },
+];
+
+const expectedLifecycleTriggers: readonly CatalogTrigger[] = [
+  {
+    table: 'agent_identity',
+    name: 'agent_identity_lifecycle_guard_trigger',
+    definition:
+      'CREATE TRIGGER agent_identity_lifecycle_guard_trigger BEFORE UPDATE ON agent_identity FOR EACH ROW EXECUTE FUNCTION agent_identity_lifecycle_guard()',
+    enabled: 'O',
+  },
+  {
+    table: 'mcp_grant',
+    name: 'mcp_grant_lifecycle_guard_trigger',
+    definition:
+      'CREATE CONSTRAINT TRIGGER mcp_grant_lifecycle_guard_trigger AFTER INSERT OR UPDATE ON mcp_grant DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mcp_grant_lifecycle_guard()',
+    enabled: 'O',
+  },
+  {
+    table: 'agent_identity',
+    name: 'agent_identity_active_grant_guard_trigger',
+    definition:
+      'CREATE CONSTRAINT TRIGGER agent_identity_active_grant_guard_trigger AFTER UPDATE ON agent_identity DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mcp_grant_lifecycle_guard()',
+    enabled: 'O',
+  },
+];
 
 export function expectedCatalog(module: Record<string, unknown>): Catalog {
   const tables: CatalogTable[] = [];
@@ -312,6 +508,13 @@ export function expectedCatalog(module: Record<string, unknown>): Catalog {
   return {
     tables: tables.sort((left, right) => left.name.localeCompare(right.name)),
     enums: enums.sort((left, right) => left.name.localeCompare(right.name)),
+    functions: [...expectedLifecycleFunctions].sort((left, right) =>
+      functionIdentity(left).localeCompare(functionIdentity(right)),
+    ),
+    triggers: [...expectedLifecycleTriggers].sort((left, right) => {
+      const tableOrder = left.table.localeCompare(right.table);
+      return tableOrder === 0 ? left.name.localeCompare(right.name) : tableOrder;
+    }),
   };
 }
 
@@ -357,6 +560,21 @@ interface LiveCheckRow {
   readonly table_name: string;
   readonly constraint_name: string;
   readonly definition: string;
+}
+
+interface LiveFunctionRow {
+  readonly function_name: string;
+  readonly identity_arguments: string;
+  readonly return_type: string;
+  readonly language: string;
+  readonly definition: string;
+}
+
+interface LiveTriggerRow {
+  readonly table_name: string;
+  readonly trigger_name: string;
+  readonly definition: string;
+  readonly enabled: string;
 }
 
 function referentialAction(value: string): string {
@@ -464,6 +682,37 @@ export async function liveCatalog(url: string): Promise<Catalog> {
       join pg_namespace namespace on namespace.oid = source.relnamespace
       where namespace.nspname = 'public' and constraint_row.contype = 'c'
     `;
+    const functions = await sql<LiveFunctionRow[]>`
+      select
+        routine_row.proname as function_name,
+        pg_get_function_identity_arguments(routine_row.oid) as identity_arguments,
+        pg_get_function_result(routine_row.oid) as return_type,
+        language.lanname as language,
+        pg_get_functiondef(routine_row.oid) as definition
+      from pg_proc routine_row
+      join pg_namespace namespace on namespace.oid = routine_row.pronamespace
+      join pg_language language on language.oid = routine_row.prolang
+      where namespace.nspname = 'public'
+        and routine_row.prokind = 'f'
+        and not exists (
+          select 1
+          from pg_depend dependency
+            where dependency.classid = 'pg_proc'::regclass
+            and dependency.objid = routine_row.oid
+            and dependency.deptype = 'e'
+        )
+    `;
+    const triggers = await sql<LiveTriggerRow[]>`
+      select
+        source.relname as table_name,
+        trigger_row.tgname as trigger_name,
+        pg_get_triggerdef(trigger_row.oid, true) as definition,
+        trigger_row.tgenabled as enabled
+      from pg_trigger trigger_row
+      join pg_class source on source.oid = trigger_row.tgrelid
+      join pg_namespace namespace on namespace.oid = source.relnamespace
+      where namespace.nspname = 'public' and not trigger_row.tgisinternal
+    `;
 
     const primaryByTable = new Map(primaryKeys.map((row) => [row.table_name, row.columns]));
     const indexesByTable = new Map<string, CatalogIndex[]>();
@@ -512,6 +761,19 @@ export async function liveCatalog(url: string): Promise<Catalog> {
       });
       checksByTable.set(row.table_name, entries);
     }
+    const catalogFunctions: CatalogFunction[] = functions.map((row) => ({
+      name: row.function_name,
+      identityArguments: row.identity_arguments,
+      returnType: row.return_type,
+      language: row.language,
+      definition: normalizeFunctionDefinition(row.definition),
+    }));
+    const catalogTriggers: CatalogTrigger[] = triggers.map((row) => ({
+      table: row.table_name,
+      name: row.trigger_name,
+      definition: normalizeTriggerDefinition(row.definition),
+      enabled: row.enabled,
+    }));
 
     return {
       tables: [...columnsByTable.entries()]
@@ -533,6 +795,13 @@ export async function liveCatalog(url: string): Promise<Catalog> {
       enums: enums
         .map((row) => ({ name: row.enum_name, values: row.values }))
         .sort((left, right) => left.name.localeCompare(right.name)),
+      functions: catalogFunctions.sort((left, right) =>
+        functionIdentity(left).localeCompare(functionIdentity(right)),
+      ),
+      triggers: catalogTriggers.sort((left, right) => {
+        const tableOrder = left.table.localeCompare(right.table);
+        return tableOrder === 0 ? left.name.localeCompare(right.name) : tableOrder;
+      }),
     };
   } finally {
     await sql.end({ timeout: 5 });
@@ -553,10 +822,16 @@ function emptyDrift(): Drift {
     checkMismatches: [],
     missingEnums: [],
     enumMismatches: [],
+    missingFunctions: [],
+    functionMismatches: [],
+    missingTriggers: [],
+    triggerMismatches: [],
     undeclaredTables: [],
     undeclaredIndexes: [],
     undeclaredForeignKeys: [],
     undeclaredChecks: [],
+    undeclaredFunctions: [],
+    undeclaredTriggers: [],
   };
 }
 
@@ -712,6 +987,69 @@ function compareEnums(expected: Catalog, live: Catalog, drift: Drift): void {
   }
 }
 
+function compareFunctions(expected: Catalog, live: Catalog, drift: Drift): void {
+  const expectedFunctions = expected.functions ?? [];
+  const liveFunctions = live.functions ?? [];
+  const liveByIdentity = new Map(liveFunctions.map((entry) => [functionIdentity(entry), entry]));
+  for (const functionEntry of expectedFunctions) {
+    const identity = functionIdentity(functionEntry);
+    const actual = liveByIdentity.get(identity);
+    if (actual === undefined) {
+      drift.missingFunctions.push(identity);
+      continue;
+    }
+    const expectedStable = stableFunction(functionEntry);
+    const actualStable = stableFunction(actual);
+    if (expectedStable !== actualStable) {
+      drift.functionMismatches.push({
+        name: identity,
+        expected: expectedStable,
+        actual: actualStable,
+      });
+    }
+  }
+  const expectedIdentities = new Set(expectedFunctions.map(functionIdentity));
+  for (const functionEntry of liveFunctions) {
+    const identity = functionIdentity(functionEntry);
+    if (!expectedIdentities.has(identity)) drift.undeclaredFunctions.push(identity);
+  }
+}
+
+function triggerIdentity(value: CatalogTrigger): string {
+  return `${value.table}.${value.name}`;
+}
+
+function compareTriggers(expected: Catalog, live: Catalog, drift: Drift): void {
+  const expectedTriggers = expected.triggers ?? [];
+  const liveTriggers = live.triggers ?? [];
+  const liveByIdentity = new Map(liveTriggers.map((entry) => [triggerIdentity(entry), entry]));
+  for (const trigger of expectedTriggers) {
+    const identity = triggerIdentity(trigger);
+    const actual = liveByIdentity.get(identity);
+    if (actual === undefined) {
+      drift.missingTriggers.push({ table: trigger.table, trigger: trigger.name });
+      continue;
+    }
+    const expectedStable = stableTrigger(trigger);
+    const actualStable = stableTrigger(actual);
+    if (expectedStable !== actualStable) {
+      drift.triggerMismatches.push({
+        table: trigger.table,
+        name: trigger.name,
+        expected: expectedStable,
+        actual: actualStable,
+      });
+    }
+  }
+  const expectedIdentities = new Set(expectedTriggers.map(triggerIdentity));
+  for (const trigger of liveTriggers) {
+    const identity = triggerIdentity(trigger);
+    if (!expectedIdentities.has(identity)) {
+      drift.undeclaredTriggers.push({ table: trigger.table, trigger: trigger.name });
+    }
+  }
+}
+
 export function catalogDriftBetween(expected: Catalog, live: Catalog): Drift {
   const drift = emptyDrift();
   const liveTables = new Map(live.tables.map((table) => [table.name, table]));
@@ -739,6 +1077,8 @@ export function catalogDriftBetween(expected: Catalog, live: Catalog): Drift {
     );
   }
   compareEnums(expected, live, drift);
+  compareFunctions(expected, live, drift);
+  compareTriggers(expected, live, drift);
 
   return drift;
 }
@@ -756,7 +1096,11 @@ export function isBehind(drift: Drift): boolean {
     drift.missingChecks.length > 0 ||
     drift.checkMismatches.length > 0 ||
     drift.missingEnums.length > 0 ||
-    drift.enumMismatches.length > 0
+    drift.enumMismatches.length > 0 ||
+    drift.missingFunctions.length > 0 ||
+    drift.functionMismatches.length > 0 ||
+    drift.missingTriggers.length > 0 ||
+    drift.triggerMismatches.length > 0
   );
 }
 
@@ -784,6 +1128,12 @@ function requiredDriftLines(drift: Drift): string[] {
     ...drift.checkMismatches.map((entry) => `  check mismatch      ${entry.table}.${entry.name}`),
     ...drift.missingEnums.map((entry) => `  missing enum        ${entry}`),
     ...drift.enumMismatches.map((entry) => `  enum mismatch       ${entry.name}`),
+    ...drift.missingFunctions.map((entry) => `  missing function    ${entry}`),
+    ...drift.functionMismatches.map((entry) => `  function mismatch   ${entry.name}`),
+    ...drift.missingTriggers.map(
+      (entry) => `  missing trigger     ${entry.table}.${entry.trigger}`,
+    ),
+    ...drift.triggerMismatches.map((entry) => `  trigger mismatch    ${entry.table}.${entry.name}`),
   ];
 }
 
@@ -807,16 +1157,20 @@ export function describeDrift(drift: Drift, target: string): string {
   if (
     drift.undeclaredIndexes.length > 0 ||
     drift.undeclaredForeignKeys.length > 0 ||
-    drift.undeclaredChecks.length > 0
+    drift.undeclaredChecks.length > 0 ||
+    drift.undeclaredFunctions.length > 0 ||
+    drift.undeclaredTriggers.length > 0
   ) {
     lines.push(
       '',
-      'Additional indexes, foreign keys, and checks are preserved and reported:',
+      'Additional indexes, foreign keys, checks, functions, and triggers are preserved and reported:',
       ...drift.undeclaredIndexes.map((entry) => `  index ${entry.table}.${entry.index}`),
       ...drift.undeclaredForeignKeys.map(
         (entry) => `  foreign key ${entry.table}.${entry.foreignKey}`,
       ),
       ...drift.undeclaredChecks.map((entry) => `  check ${entry.table}.${entry.check}`),
+      ...drift.undeclaredFunctions.map((entry) => `  function ${entry}`),
+      ...drift.undeclaredTriggers.map((entry) => `  trigger ${entry.table}.${entry.trigger}`),
     );
   }
 

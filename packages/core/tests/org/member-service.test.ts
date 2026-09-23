@@ -128,6 +128,83 @@ describe('updateMemberRole', () => {
 });
 
 describe('removeMember', () => {
+  it('deletes departing owners agents and revokes their exact connections only in this workspace', async () => {
+    const { user } = await addMember(workspace, 'member');
+    const other = await createWorkspace('Other');
+    await db.insert(schema.member).values({
+      id: newId(),
+      organizationId: other.organizationId,
+      userId: user.id,
+      role: 'member',
+    });
+    const clientId = `client_${newId()}`;
+    await db.insert(schema.oauthApplication).values({
+      id: newId(),
+      name: 'Agent Client',
+      clientId,
+      redirectUrls: 'http://127.0.0.1:9000/callback',
+      type: 'public',
+      userId: user.id,
+    });
+    const localIdentityId = newId();
+    const otherIdentityId = newId();
+    const localGrantId = newId();
+    const otherGrantId = newId();
+    for (const [organizationId, identityId] of [
+      [workspace.organizationId, localIdentityId],
+      [other.organizationId, otherIdentityId],
+    ]) {
+      if (organizationId === undefined || identityId === undefined) throw new Error('bad fixture');
+      await db.insert(schema.agentIdentity).values({
+        id: identityId,
+        organizationId,
+        ownerUserId: user.id,
+        ownerNameSnapshot: user.name,
+        clientId,
+        clientNameSnapshot: 'Agent Client',
+        name: 'Researcher',
+      });
+      await db.insert(schema.mcpGrant).values({
+        id: identityId === localIdentityId ? localGrantId : otherGrantId,
+        clientId,
+        userId: user.id,
+        organizationId,
+        agentIdentityId: identityId,
+        principalNameSnapshot: 'Researcher',
+        scopes: 'orbit.read',
+      });
+      await db.insert(schema.oauthAccessToken).values({
+        id: newId(),
+        accessToken: `at_${identityId}`,
+        refreshToken: `rt_${identityId}`,
+        accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+        refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
+        clientId,
+        userId: user.id,
+        mcpGrantId: identityId === localIdentityId ? localGrantId : otherGrantId,
+        scopes: 'orbit.read',
+      });
+    }
+
+    await removeMember(workspace.admin, await memberIdFor(user.id));
+
+    const identities = await db.select().from(schema.agentIdentity);
+    const local = identities.find((identity) => identity.id === localIdentityId);
+    const remaining = identities.find((identity) => identity.id === otherIdentityId);
+    expect(local?.deletedAt).toBeInstanceOf(Date);
+    expect(local?.deletedReason).toBe('membership_removed');
+    expect(local?.deletedActorIdSnapshot).toBe(workspace.admin.userId);
+    expect(remaining?.deletedAt).toBeNull();
+    const grants = await db.select().from(schema.mcpGrant);
+    expect(
+      grants.find((grant) => grant.agentIdentityId === localIdentityId)?.revokedAt,
+    ).toBeInstanceOf(Date);
+    expect(grants.find((grant) => grant.agentIdentityId === otherIdentityId)?.revokedAt).toBeNull();
+    const tokens = await db.select().from(schema.oauthAccessToken);
+    expect(tokens.some((token) => token.mcpGrantId === localGrantId)).toBe(false);
+    expect(tokens.some((token) => token.mcpGrantId === otherGrantId)).toBe(true);
+  });
+
   it('removes the Slack identity bound to the workspace membership', async () => {
     const { user } = await addMember(workspace, 'member');
     const localMemberId = await memberIdFor(user.id);

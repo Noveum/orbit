@@ -1,9 +1,11 @@
 import {
   getMcpClient,
+  getPendingMcpConsent,
   listOrganizationsForUser,
   listSelectablePersonalAgents,
   userHasPasskey,
 } from '@orbit/core';
+import { agentFeatureEnabled } from '@orbit/shared';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -41,10 +43,24 @@ export default async function AuthorizePage({
 }) {
   const params = await searchParams;
   const consentCode = first(params['consent_code']);
-  const clientId = first(params['client_id']);
-  const scope = first(params['scope']) ?? '';
 
-  if (consentCode === undefined || clientId === undefined) {
+  if (
+    consentCode === undefined ||
+    !agentFeatureEnabled('agent_identity_read') ||
+    !agentFeatureEnabled('agent_consent')
+  ) {
+    return (
+      <ConsentShell>
+        <p className="text-center text-muted text-sm">
+          This authorization link is invalid or has expired. Start the connection again from your AI
+          client.
+        </p>
+      </ConsentShell>
+    );
+  }
+
+  const pendingConsent = await getPendingMcpConsent(consentCode);
+  if (pendingConsent === null) {
     return (
       <ConsentShell>
         <p className="text-center text-muted text-sm">
@@ -57,13 +73,24 @@ export default async function AuthorizePage({
 
   const session = await getSession();
   if (session === null) {
-    const next = new URLSearchParams({
-      consent_code: consentCode,
-      client_id: clientId,
-      scope,
-    });
+    const next = new URLSearchParams({ consent_code: consentCode });
     redirect(`/login?next=${encodeURIComponent(`/oauth/authorize?${next.toString()}`)}`);
   }
+
+  if (pendingConsent.userId !== session.user.id) {
+    return (
+      <ConsentShell>
+        <p className="text-center text-muted text-sm">
+          This authorization link belongs to another account. Start the connection again from your
+          AI client.
+        </p>
+      </ConsentShell>
+    );
+  }
+
+  const clientId = pendingConsent.clientId;
+  const scopes = [...pendingConsent.scope];
+  const scope = scopes.join(' ');
 
   const [client, organizations, requirePasskey] = await Promise.all([
     getMcpClient(clientId),
@@ -96,7 +123,7 @@ export default async function AuthorizePage({
         clientId={clientId}
         clientName={client?.name ?? 'An MCP client'}
         scope={scope}
-        scopes={scope.split(' ').filter((entry) => entry.length > 0)}
+        scopes={scopes}
         organizations={organizations.map((entry) => ({
           id: entry.organization.id,
           name: entry.organization.name,

@@ -68,7 +68,7 @@ export function completionAttributionKind(): SQL<unknown> {
     when exists (
       select 1 from issue_activity person_assignment_history
       where person_assignment_history.issue_id = ${schema.issue.id}
-        and person_assignment_history.field = 'assigneeId'
+        and person_assignment_history.field in ('assigneeId', 'assignee')
     ) then 'reconstructed'
     else 'current_assignee'
   end`;
@@ -83,7 +83,7 @@ export function completionAttributionPerson(): SQL<unknown> {
         and person_outcome.outcome = 'completed'
         and person_outcome.completed_at is not distinct from ${schema.issue.completedAt}
     ) then (
-      select person_outcome.assignee_id_at_close
+      select case when person_outcome.assignee_agent_id_at_close is not null then 'agent:' || person_outcome.assignee_agent_id_at_close else person_outcome.assignee_id_at_close end
       from cycle_issue_outcome person_outcome
       where person_outcome.organization_id = ${schema.issue.organizationId}
         and person_outcome.issue_id = ${schema.issue.id}
@@ -95,16 +95,15 @@ export function completionAttributionPerson(): SQL<unknown> {
     when exists (
       select 1 from issue_activity person_assignment_before
       where person_assignment_before.issue_id = ${schema.issue.id}
-        and person_assignment_before.field = 'assigneeId'
+        and person_assignment_before.field in ('assigneeId', 'assignee')
         and person_assignment_before.created_at <= ${schema.issue.completedAt}
     ) then (
-      select coalesce(
-        person_assignment_before.to_value ->> 'id',
-        person_assignment_before.to_value #>> '{}'
-      )
+      select case when person_assignment_before.to_value ->> 'type' = 'agent'
+        then 'agent:' || (person_assignment_before.to_value ->> 'id')
+        else coalesce(person_assignment_before.to_value ->> 'id', person_assignment_before.to_value #>> '{}') end
       from issue_activity person_assignment_before
       where person_assignment_before.issue_id = ${schema.issue.id}
-        and person_assignment_before.field = 'assigneeId'
+        and person_assignment_before.field in ('assigneeId', 'assignee')
         and person_assignment_before.created_at <= ${schema.issue.completedAt}
       order by person_assignment_before.created_at desc, person_assignment_before.id desc
       limit 1
@@ -112,21 +111,20 @@ export function completionAttributionPerson(): SQL<unknown> {
     when exists (
       select 1 from issue_activity person_assignment_after
       where person_assignment_after.issue_id = ${schema.issue.id}
-        and person_assignment_after.field = 'assigneeId'
+        and person_assignment_after.field in ('assigneeId', 'assignee')
         and person_assignment_after.created_at > ${schema.issue.completedAt}
     ) then (
-      select coalesce(
-        person_assignment_after.from_value ->> 'id',
-        person_assignment_after.from_value #>> '{}'
-      )
+      select case when person_assignment_after.from_value ->> 'type' = 'agent'
+        then 'agent:' || (person_assignment_after.from_value ->> 'id')
+        else coalesce(person_assignment_after.from_value ->> 'id', person_assignment_after.from_value #>> '{}') end
       from issue_activity person_assignment_after
       where person_assignment_after.issue_id = ${schema.issue.id}
-        and person_assignment_after.field = 'assigneeId'
+        and person_assignment_after.field in ('assigneeId', 'assignee')
         and person_assignment_after.created_at > ${schema.issue.completedAt}
       order by person_assignment_after.created_at, person_assignment_after.id
       limit 1
     )
-    else ${schema.issue.assigneeId}
+    else case when ${schema.issue.assigneeAgentId} is not null then 'agent:' || ${schema.issue.assigneeAgentId} else coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) end
   end`;
 }
 

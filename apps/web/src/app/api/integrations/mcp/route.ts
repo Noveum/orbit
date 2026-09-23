@@ -1,5 +1,6 @@
 import { listMcpGrants, revokeMcpGrant } from '@orbit/core';
 import { validationFailed } from '@orbit/shared/errors';
+import { mcpGrantQuerySchema } from '@orbit/shared/validators';
 import { apiContext, handleRoute, searchParamsOf } from '@/lib/api/handler.ts';
 
 export async function GET(): Promise<Response> {
@@ -13,9 +14,9 @@ export async function GET(): Promise<Response> {
 export async function DELETE(request: Request): Promise<Response> {
   return await handleRoute(async () => {
     const { principal } = await apiContext();
-    const grantId = searchParamsOf(request)['grantId'] ?? '';
-    if (grantId.length === 0) throw validationFailed('A grantId is required.');
-    await revokeMcpGrant(grantId, principal.userId);
+    const parsed = mcpGrantQuerySchema.safeParse(searchParamsOf(request));
+    if (!parsed.success) throw validationFailed('A grantId is required.');
+    await revokeMcpGrant(parsed.data.grantId, principal);
     return { ok: true };
   });
 }

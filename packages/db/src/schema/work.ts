@@ -281,6 +281,9 @@ export const cycleIssueMembership = pgTable(
     entryKind: text('entry_kind').notNull(),
     estimateAtAdd: integer('estimate_at_add'),
     assigneeIdAtAdd: text('assignee_id_at_add').references(() => user.id, { onDelete: 'set null' }),
+    assigneeAgentIdAtAdd: text('assignee_agent_id_at_add').references(() => agentIdentity.id, {
+      onDelete: 'restrict',
+    }),
     projectIdAtAdd: text('project_id_at_add').references(() => project.id, {
       onDelete: 'set null',
     }),
@@ -320,6 +323,9 @@ export const cycleIssueOutcome = pgTable(
     estimateAtClose: integer('estimate_at_close'),
     assigneeIdAtClose: text('assignee_id_at_close').references(() => user.id, {
       onDelete: 'set null',
+    }),
+    assigneeAgentIdAtClose: text('assignee_agent_id_at_close').references(() => agentIdentity.id, {
+      onDelete: 'restrict',
     }),
     projectIdAtClose: text('project_id_at_close').references(() => project.id, {
       onDelete: 'set null',
@@ -714,7 +720,7 @@ export const issueActivity = pgTable(
       .where(sql`${table.field} = 'cycleId'`),
     index('issue_activity_assignee_attribution_idx')
       .on(table.organizationId, table.issueId, table.createdAt)
-      .where(sql`${table.field} = 'assigneeId'`),
+      .where(sql`${table.field} = any (array['assigneeId', 'assignee'])`),
   ],
 );
 

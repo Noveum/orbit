@@ -44,6 +44,7 @@ afterAll(() => {
 interface Fixture {
   readonly organizationId: string;
   readonly integrationId: string;
+  readonly directoryTeamId: string;
   readonly userId: string;
   readonly teamA: string;
   readonly teamB: string;
@@ -107,7 +108,7 @@ async function seedWorkspace(tx: TestTransaction, options: WorkspaceOptions): Pr
     });
   }
 
-  return { organizationId, integrationId, userId, teamA, teamB };
+  return { organizationId, integrationId, directoryTeamId: `T-${suffix}`, userId, teamA, teamB };
 }
 
 async function seed(tx: TestTransaction): Promise<Fixture> {
@@ -622,6 +623,20 @@ describe('resolveSlackContext stays inside the workspace it was asked about', ()
 });
 
 describe('syncSlackUserMappings', () => {
+  it('keeps directory fixtures isolated from other Slack workspaces', async () => {
+    await withRollback(async (tx) => {
+      const first = await seed(tx);
+      const second = await seed(tx);
+      for (const fixture of [first, second]) {
+        await tx
+          .update(integration)
+          .set({ config: { slackTeamId: fixture.directoryTeamId } })
+          .where(eq(integration.id, fixture.integrationId));
+      }
+      expect(first.directoryTeamId).not.toBe(second.directoryTeamId);
+    });
+  });
+
   it('waits for member removal before replacing the mapping snapshot', async () => {
     const fixture = await testDb.transaction(async (tx) => await seed(tx));
     const teammateId = `usr_${randomUUIDv7()}`;
@@ -642,7 +657,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'member-removal-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -720,7 +735,7 @@ describe('syncSlackUserMappings', () => {
 
       releaseRemoval();
       await removal;
-      await expect(sync).resolves.toEqual({
+      expect(await sync).toEqual({
         status: 'applied',
         eligibleMembers: 1,
         mappedMembers: 0,
@@ -749,7 +764,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'sync-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -883,7 +898,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'batch-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -958,7 +973,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'rollback-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -1038,7 +1053,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'stable-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -1111,7 +1126,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'expired-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -1144,7 +1159,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'previous-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -1155,7 +1170,7 @@ describe('syncSlackUserMappings', () => {
           .set({
             config: {
               credentialVersion: 'replacement-version',
-              slackTeamId: 'T-WORKSPACE',
+              slackTeamId: fixture.directoryTeamId,
               scopes: ['users:read', 'users:read.email'],
             },
           })
@@ -1187,7 +1202,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'reauthorize-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -1237,7 +1252,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'authority-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -1419,7 +1434,7 @@ describe('syncSlackUserMappings', () => {
         .set({
           config: {
             credentialVersion: 'slack-collision-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['users:read', 'users:read.email'],
           },
         })
@@ -2149,7 +2164,7 @@ describe('dispatchSlackDm', () => {
         .set({
           config: {
             credentialVersion: 'snapshot-before',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['chat:write', 'im:write'],
           },
         })
@@ -2176,7 +2191,7 @@ describe('dispatchSlackDm', () => {
             credentials: { botToken: 'xoxb-snapshot-after' },
             config: {
               credentialVersion: 'snapshot-after',
-              slackTeamId: 'T-WORKSPACE',
+              slackTeamId: fixture.directoryTeamId,
               scopes: ['chat:write', 'im:write'],
             },
           })
@@ -2193,7 +2208,7 @@ describe('dispatchSlackDm', () => {
       ).toBe('blocked');
 
       releaseConversation();
-      await expect(dispatch).resolves.toBe(1);
+      expect(await dispatch).toBe(1);
       await rotation;
       const [current] = await testDb
         .select({ config: integration.config })
@@ -2237,7 +2252,7 @@ describe('dispatchSlackDm', () => {
         .set({
           config: {
             credentialVersion: 'concurrent-dm-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['chat:write', 'im:write'],
           },
         })
@@ -2275,7 +2290,7 @@ describe('dispatchSlackDm', () => {
       expect(providerCalls.filter((url) => url.endsWith('conversations.open'))).toHaveLength(1);
 
       releaseConversation();
-      await expect(Promise.all([first, second])).resolves.toEqual([1, 1]);
+      expect(await Promise.all([first, second])).toEqual([1, 1]);
       expect(providerCalls.filter((url) => url.endsWith('conversations.open'))).toHaveLength(1);
       expect(providerCalls.filter((url) => url.endsWith('chat.postMessage'))).toHaveLength(2);
     } finally {
@@ -2371,7 +2386,7 @@ describe('dispatchSlackDm', () => {
 
       releaseReplacement();
       await replacement;
-      await expect(delivery).resolves.toBe(1);
+      expect(await delivery).toBe(1);
       expect(providerCalls).toEqual([
         {
           authorization: 'Bearer xoxb-replacement',
@@ -2408,7 +2423,7 @@ describe('dispatchSlackDm', () => {
         .set({
           config: {
             credentialVersion: 'dm-race-version',
-            slackTeamId: 'T-WORKSPACE',
+            slackTeamId: fixture.directoryTeamId,
             scopes: ['chat:write', 'im:write', 'users:read', 'users:read.email'],
           },
         })
@@ -2474,8 +2489,8 @@ describe('dispatchSlackDm', () => {
       ).toBe('blocked');
 
       releaseConversation();
-      await expect(dispatch).resolves.toBe(1);
-      await expect(sync).resolves.toEqual({
+      expect(await dispatch).toBe(1);
+      expect(await sync).toEqual({
         status: 'applied',
         eligibleMembers: 1,
         mappedMembers: 1,

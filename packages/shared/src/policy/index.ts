@@ -90,6 +90,22 @@ export interface Principal {
   readonly teamIds: readonly string[];
 }
 
+export interface AgentIdentityScope {
+  readonly organizationId: string;
+  readonly ownerUserId: string | null;
+}
+
+export type AgentIdentityAuthority = 'owner' | 'admin';
+
+export function agentIdentityAuthority(
+  principal: Principal,
+  identity: AgentIdentityScope,
+): AgentIdentityAuthority | null {
+  if (identity.organizationId !== principal.organizationId) return null;
+  if (identity.ownerUserId === principal.userId) return 'owner';
+  return principal.role === 'admin' ? 'admin' : null;
+}
+
 const NO_PERMISSIONS: readonly Permission[] = [];
 
 export function permissionsFor(role: OrgRole): readonly Permission[] {
@@ -189,3 +205,5 @@ export function canReadView(principal: Principal, view: ReadableViewRow): boolea
   if (view.visibility !== 'team' || view.teamId === null) return false;
   return isInTeam(principal, { id: view.teamId, organizationId: view.organizationId });
 }
+
+export { assertHumanIssueWriter } from './issue-writer.ts';

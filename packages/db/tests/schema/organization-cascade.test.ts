@@ -23,6 +23,7 @@ describe('organization deletion schema', () => {
       left join pg_constraint foreign_key
         on foreign_key.conrelid = child.oid
         and foreign_key.contype = 'f'
+        and foreign_key.confrelid = 'public.organization'::regclass
         and organization_column.attnum = any(foreign_key.conkey)
       left join pg_class parent on parent.oid = foreign_key.confrelid
       where namespace.nspname = 'public'

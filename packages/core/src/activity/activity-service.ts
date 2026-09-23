@@ -7,6 +7,26 @@ import { type Executor, newId } from '../internal.ts';
 
 export type ActivityRow = typeof schema.issueActivity.$inferSelect;
 
+function legacyAssignee(value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return { type: 'user', id: value };
+  if (typeof value === 'object' && 'id' in value && typeof value.id === 'string') {
+    return { ...value, type: 'user', id: value.id };
+  }
+  return value;
+}
+
+export function canonicalActivityRead(row: ActivityRow): ActivityRow {
+  return row.field === 'assigneeId'
+    ? {
+        ...row,
+        field: 'assignee',
+        fromValue: legacyAssignee(row.fromValue),
+        toValue: legacyAssignee(row.toValue),
+      }
+    : row;
+}
+
 export interface ActivityChange {
   readonly field: string;
   readonly from: unknown;
@@ -102,7 +122,7 @@ export async function listActivityPage(
     .orderBy(order(schema.issueActivity.createdAt), order(schema.issueActivity.id))
     .limit(limit + 1);
 
-  const activity = rows.slice(0, limit);
+  const activity = rows.slice(0, limit).map(canonicalActivityRead);
   return {
     activity,
     nextCursor: rows.length > limit ? (activity.at(-1)?.id ?? null) : null,
@@ -154,6 +174,8 @@ interface RenderedChange {
 }
 
 const FIELD_RENDERERS: Record<string, (change: RenderedChange) => string> = {
+  assignee: ({ from, to }) =>
+    to === null ? `unassigned ${from ?? 'the issue'}` : `assigned to ${to}`,
   stateId: ({ from, to }) =>
     from === null
       ? `set the status to ${to ?? 'unknown'}`

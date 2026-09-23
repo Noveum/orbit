@@ -1,15 +1,10 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
 import { createComment } from '@orbit/core';
 import { db, eq, schema, sql } from '@orbit/db';
-import {
-  addMember,
-  connect,
-  createWorkspace,
-  mintToken,
-  resetDatabase,
-} from '../../src/test-helpers.ts';
+import { addMember, createWorkspace, mintToken, resetDatabase } from '../../src/test-helpers.ts';
+import { connectHuman } from '../human-client.ts';
 
-type TestClient = Awaited<ReturnType<typeof connect>>;
+type TestClient = Awaited<ReturnType<typeof connectHuman>>;
 type TestWorkspace = Awaited<ReturnType<typeof createWorkspace>>;
 
 let workspace: TestWorkspace;
@@ -20,9 +15,9 @@ let issueIdentifier: string;
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
   const member = await addMember(workspace, 'contributor', 'Connie Contributor');
-  contributor = await connect(await mintToken(workspace.organizationId, member.user.id));
+  contributor = await connectHuman(await mintToken(workspace.organizationId, member.user.id));
 
   const created = await admin.result('create_issue', {
     team: workspace.teamKey,

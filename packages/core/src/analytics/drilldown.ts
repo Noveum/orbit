@@ -311,7 +311,9 @@ function otherDimensionPredicate(
 function sliceCohortPredicate(cohort: AnalyticsDrilldownCohort): SQL<unknown> | null {
   if (cohort.cohort.startsWith('assignee:')) {
     const id = cohort.cohort.slice('assignee:'.length);
-    return id === 'none' ? isNull(schema.issue.assigneeId) : eq(schema.issue.assigneeId, id);
+    return id === 'none'
+      ? sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) is null and ${schema.issue.assigneeAgentId} is null`
+      : eq(schema.issue.assigneeId, id);
   }
   if (cohort.cohort.startsWith('label:')) {
     const id = cohort.cohort.slice('label:'.length);
@@ -700,7 +702,7 @@ function personSelection(query: AnalyticsQuery): string | null {
 
 function currentPersonPredicate(personId: string): SQL<unknown> {
   return personId === UNASSIGNED_PERSON_ID
-    ? isNull(schema.issue.assigneeId)
+    ? sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) is null and ${schema.issue.assigneeAgentId} is null`
     : eq(schema.issue.assigneeId, personId);
 }
 
@@ -801,7 +803,8 @@ function personCohortPredicate(
       return sql`exists (
         select 1 from issue_activity person_assignment
         where person_assignment.issue_id = ${schema.issue.id}
-          and person_assignment.field = 'assigneeId'
+          and person_assignment.field in ('assigneeId', 'assignee')
+          and person_assignment.to_value ->> 'type' is distinct from 'agent'
           and person_assignment.created_at >= ${from.toISOString()}::timestamptz
           and person_assignment.created_at < ${to.toISOString()}::timestamptz
           and ${personMatches(person.id, activityPerson)}

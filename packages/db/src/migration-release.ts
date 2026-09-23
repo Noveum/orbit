@@ -1,7 +1,5 @@
 import { fileURLToPath } from 'node:url';
 import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from './check-drift.ts';
 import * as schema from './schema/index.ts';
@@ -18,8 +16,13 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
+const AGENT_SCHEMA_MIGRATION = 1_789_829_081_921;
+const AGENT_SCHEMA_HASH = 'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3';
+const AGENT_BINDING_MIGRATION = 1_789_829_740_142;
+const AGENT_BINDING_HASH = '574585419f185dc95fed54d6db3a54309a7ce17ece1b2c33586fb3a67422f3ef';
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
-  1786217938315, 1786623194883, 1788083189965, 1789829081921,
+  1786217938315, 1786623194883, 1788083189965, 1789829081921, 1789834228668, 1789874131769,
+  1789903534025, 1789980471869,
 ]);
 
 function containsDataChange(migration: MigrationMeta): boolean {
@@ -58,6 +61,51 @@ async function ledgerRows(sql: postgres.Sql): Promise<LedgerRow[]> {
     from drizzle.__drizzle_migrations
     order by created_at, id
   `;
+}
+
+async function applyPendingMigrations(
+  sql: postgres.Sql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`create schema if not exists drizzle`;
+    await tx`create table if not exists drizzle.__drizzle_migrations (
+      id serial primary key, hash text not null, created_at bigint
+    )`;
+    for (const migration of migrations) {
+      const statements = compatibleMigrationStatements(migration);
+      for (const statement of statements) await tx.unsafe(statement);
+      await tx`insert into drizzle.__drizzle_migrations (hash, created_at)
+        values (${migration.hash}, ${migration.folderMillis})`;
+    }
+  });
+}
+
+function dependencyOrderedAgentBinding(migration: MigrationMeta): readonly string[] {
+  if (migration.hash !== AGENT_BINDING_HASH || migration.sql.length !== 2) {
+    throw new Error('The historical agent binding migration does not match its recorded source.');
+  }
+  return [...migration.sql].reverse();
+}
+
+function compatibleMigrationStatements(migration: MigrationMeta): readonly string[] {
+  if (migration.folderMillis === AGENT_BINDING_MIGRATION) {
+    return dependencyOrderedAgentBinding(migration);
+  }
+  if (migration.folderMillis !== AGENT_SCHEMA_MIGRATION) return migration.sql;
+  if (migration.hash !== AGENT_SCHEMA_HASH) {
+    throw new Error('The historical agent schema migration does not match its recorded source.');
+  }
+  const reconcileDeletedPrincipals = ['issue_activity', 'audit_log', 'notification'].map(
+    (table) => `update "${table}" record set principal_user_id = null
+      where principal_user_id is not null
+        and not exists (select 1 from "user" person where person.id = record.principal_user_id)`,
+  );
+  return migration.sql.flatMap((statement) =>
+    statement.trimStart().startsWith('UPDATE "notification"')
+      ? [statement, ...reconcileDeletedPrincipals]
+      : [statement],
+  );
 }
 
 function verifyLedger(rows: readonly LedgerRow[], migrations: readonly MigrationMeta[]): number {
@@ -116,41 +164,7 @@ async function baselineLedger(
         );
       }
     }
-    if (pendingMigrations.some((migration) => migration.folderMillis === 1789829081921)) {
-      await tx`
-        update issue
-        set
-          creator_user_id = creator_id,
-          assignee_user_id = assignee_id,
-          owner_user_id = assignee_id
-      `;
-      await tx`
-        update issue_activity
-        set principal_user_id = actor_id, principal_name = actor_name
-        where actor_type = 'user'
-      `;
-      await tx`
-        update audit_log
-        set principal_user_id = actor_id, principal_name = actor_name
-        where actor_type = 'user'
-      `;
-      await tx`
-        update notification
-        set principal_user_id = actor_id, principal_name = actor_name
-        where actor_type = 'user'
-      `;
-      await tx`
-        update mcp_grant
-        set principal_name_snapshot = coalesce("user".name, 'Former member')
-        from "user"
-        where "user".id = mcp_grant.user_id
-      `;
-      await tx`
-        update mcp_grant
-        set principal_name_snapshot = 'Former member'
-        where principal_name_snapshot is null
-      `;
-    }
+    await reconcileAgentData(tx, pendingMigrations);
     await tx`create schema if not exists drizzle`;
     await tx`
       create table if not exists drizzle.__drizzle_migrations (
@@ -166,6 +180,98 @@ async function baselineLedger(
       `;
     }
   });
+}
+
+async function reconcileAgentData(
+  tx: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  const pending = new Set(migrations.map((migration) => migration.folderMillis));
+  if (pending.has(1789829081921)) {
+    await tx`
+      update issue
+      set
+        creator_user_id = coalesce(creator_user_id, creator_id),
+        assignee_user_id = coalesce(assignee_user_id, assignee_id),
+        owner_user_id = coalesce(owner_user_id, assignee_id)
+    `;
+    for (const table of ['issue_activity', 'audit_log', 'notification'] as const) {
+      await tx.unsafe(`
+        update ${table} record
+        set principal_user_id = (
+              select existing_user.id from "user" existing_user
+              where existing_user.id = record.actor_id
+            ),
+            principal_name = coalesce(record.principal_name, record.actor_name)
+        where record.actor_type = 'user'
+          and (record.principal_user_id is null or record.principal_name is null)
+      `);
+    }
+    await tx`
+      update mcp_grant
+      set principal_name_snapshot = coalesce(existing_user.name, 'Former member')
+      from "user" existing_user
+      where existing_user.id = mcp_grant.user_id
+        and mcp_grant.principal_name_snapshot is null
+    `;
+    await tx`
+      update mcp_grant
+      set principal_name_snapshot = 'Former member'
+      where principal_name_snapshot is null
+    `;
+  }
+  if (pending.has(1789834228668) || pending.has(1789874131769)) {
+    await tx`
+      update mcp_grant
+      set revoked_at = coalesce(revoked_at, now()), revoke_reason = 'agent_identity_required'
+      where agent_identity_id is null
+        and revoke_reason is distinct from 'agent_identity_required'
+    `;
+  }
+  if (pending.has(1789874131769)) {
+    await tx`
+      update mcp_grant grant_row
+      set revoked_at = now(), revoke_reason = 'agent_identity_inactive'
+      where grant_row.revoked_at is null
+        and grant_row.agent_identity_id is not null
+        and (
+          grant_row.user_id is null
+          or not exists (
+            select 1
+            from agent_identity identity_row
+            where identity_row.id = grant_row.agent_identity_id
+              and identity_row.organization_id = grant_row.organization_id
+              and identity_row.owner_user_id = grant_row.user_id
+              and identity_row.client_id = grant_row.client_id
+              and identity_row.deleted_at is null
+              and identity_row.owner_disabled_at is null
+              and identity_row.admin_disabled_at is null
+          )
+        )
+    `;
+    await tx`
+      delete from oauth_access_token token_row
+      where token_row.mcp_grant_id is null
+        or not exists (
+          select 1
+          from mcp_grant grant_row
+          where grant_row.id = token_row.mcp_grant_id
+            and grant_row.revoked_at is null
+            and grant_row.agent_identity_id is not null
+        )
+    `;
+  }
+  if (pending.has(1789980471869)) {
+    await tx`
+      update agent_identity set
+        owner_disabled_actor_id_snapshot = coalesce(owner_disabled_actor_id_snapshot, owner_disabled_by_user_id),
+        owner_resumed_actor_id_snapshot = coalesce(owner_resumed_actor_id_snapshot, owner_resumed_by_user_id),
+        admin_disabled_actor_id_snapshot = coalesce(admin_disabled_actor_id_snapshot, admin_disabled_by_user_id),
+        admin_resumed_actor_id_snapshot = coalesce(admin_resumed_actor_id_snapshot, admin_resumed_by_user_id),
+        connection_revoked_actor_id_snapshot = coalesce(connection_revoked_actor_id_snapshot, connection_revoked_by_user_id),
+        deleted_actor_id_snapshot = coalesce(deleted_actor_id_snapshot, deleted_by_user_id)
+    `;
+  }
 }
 
 function declaredTableCount(live: Awaited<ReturnType<typeof liveCatalog>>): number {
@@ -210,7 +316,7 @@ export async function releaseDatabase(
     const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
       if (isBehind(beforeDrift)) {
-        await migrate(drizzle({ client: sql }), { migrationsFolder });
+        await applyPendingMigrations(sql, migrations.slice(rows.length));
         applied = pending;
         mode = 'migrated';
       } else {

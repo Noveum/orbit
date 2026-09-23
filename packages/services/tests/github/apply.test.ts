@@ -121,6 +121,9 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
     stateId,
     creatorId,
     assigneeId,
+    creatorUserId: creatorId,
+    assigneeUserId: assigneeId,
+    ownerUserId: assigneeId,
   });
   await tx.insert(issueReviewer).values({ issueId, userId: creatorId });
 
@@ -143,6 +146,20 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
 
   return { organizationId, teamId, issueId, creatorId, assigneeId, states };
 }
+
+it('keeps controlled GitHub issue fixtures in the canonical Human model', async () => {
+  await withRollback(async (tx) => {
+    const fixture = await seed(tx);
+    const [row] = await tx.select().from(issue).where(eq(issue.id, fixture.issueId));
+    expect(row).toMatchObject({
+      creatorUserId: fixture.creatorId,
+      assigneeUserId: fixture.assigneeId,
+      ownerUserId: fixture.assigneeId,
+      creatorAgentId: null,
+      assigneeAgentId: null,
+    });
+  });
+});
 
 function prEvent(overrides: {
   action?: string;

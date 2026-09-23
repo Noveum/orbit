@@ -14,11 +14,31 @@ describe('issue actor compatibility view', () => {
     });
 
     expect(view).toEqual({
-      creator: { type: 'user', id: 'canonical-creator' },
-      assignee: { type: 'user', id: 'canonical-assignee' },
-      owner: { type: 'user', id: 'canonical-owner' },
-      creatorId: 'legacy-creator',
-      assigneeId: 'legacy-assignee',
+      creator: {
+        type: 'user',
+        id: 'canonical-creator',
+        name: 'Former member',
+        avatar: null,
+        deleted: true,
+      },
+      assignee: {
+        type: 'user',
+        id: 'canonical-assignee',
+        name: 'Former member',
+        avatar: null,
+        deleted: true,
+      },
+      owner: {
+        type: 'user',
+        id: 'canonical-owner',
+        name: 'Former member',
+        avatar: null,
+        deleted: true,
+      },
+      creatorId: 'canonical-creator',
+      creatorAgentId: null,
+      ownerId: 'canonical-owner',
+      assigneeId: 'canonical-assignee',
       assigneeAgentId: null,
     });
   });
@@ -34,7 +54,13 @@ describe('issue actor compatibility view', () => {
       ownerUserId: null,
     });
 
-    expect(view.creator).toEqual({ type: 'user', id: 'legacy-creator' });
+    expect(view.creator).toEqual({
+      type: 'user',
+      id: 'legacy-creator',
+      name: 'Former member',
+      avatar: null,
+      deleted: true,
+    });
     expect(view.assignee).toBeNull();
     expect(view.owner).toBeNull();
   });
@@ -50,8 +76,26 @@ describe('issue actor compatibility view', () => {
       ownerUserId: 'human-owner',
     });
 
-    expect(view.creator).toEqual({ type: 'agent', id: 'agent-creator' });
-    expect(view.assignee).toEqual({ type: 'agent', id: 'agent-assignee' });
-    expect(view.owner).toEqual({ type: 'user', id: 'human-owner' });
+    expect(view.creator).toEqual({
+      type: 'agent',
+      id: 'agent-creator',
+      name: 'Deleted agent',
+      avatar: null,
+      deleted: true,
+    });
+    expect(view.assignee).toEqual({
+      type: 'agent',
+      id: 'agent-assignee',
+      name: 'Deleted agent',
+      avatar: null,
+      deleted: true,
+    });
+    expect(view.owner).toEqual({
+      type: 'user',
+      id: 'human-owner',
+      name: 'Former member',
+      avatar: null,
+      deleted: true,
+    });
   });
 });

@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
 import {
@@ -11,6 +9,7 @@ import {
   liveCatalog,
   normalizeCatalogExpression,
 } from '../src/check-drift.ts';
+import { releaseDatabase } from '../src/migration-release.ts';
 import * as schema from '../src/schema/index.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
@@ -40,8 +39,8 @@ describe('catalog drift', () => {
     });
     await run(urlFor(SCRATCH), async (sql) => {
       await sql`create extension if not exists pg_trgm`;
-      await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS });
     });
+    await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
   }, 60_000);
 
   afterAll(async () => {
@@ -201,6 +200,22 @@ describe('catalog drift', () => {
     expect(drift.missingChecks).toContainEqual({
       table: 'issue',
       check: 'issue_assignee_actor_check',
+    });
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('detects missing lifecycle functions and triggers', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`drop trigger agent_identity_active_grant_guard_trigger on agent_identity`;
+      await sql`drop trigger mcp_grant_lifecycle_guard_trigger on mcp_grant`;
+      await sql`drop function mcp_grant_lifecycle_guard()`;
+    });
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.missingFunctions).toContain('mcp_grant_lifecycle_guard()');
+    expect(drift.missingTriggers).toContainEqual({
+      table: 'agent_identity',
+      trigger: 'agent_identity_active_grant_guard_trigger',
     });
     expect(isBehind(drift)).toBe(true);
   });

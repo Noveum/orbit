@@ -70,6 +70,19 @@ function setPredicate(column: AnyColumn, values: readonly string[], negate: bool
   return negate ? negateWithNulls(positive, column, matchesUnset) : positive;
 }
 
+function assigneePredicate(values: readonly string[], negate: boolean): SQL | null {
+  if (values.length === 0) return null;
+  const user = sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId})`;
+  const parts: SQL[] = [];
+  const ids = values.filter((value) => value !== UNSET_FILTER_VALUE);
+  if (ids.length > 0) parts.push(sql`coalesce(${user} in ${ids}, false)`);
+  if (values.includes(UNSET_FILTER_VALUE))
+    parts.push(sql`${user} is null and ${schema.issue.assigneeAgentId} is null`);
+  const positive = anyOf(parts);
+  if (positive === null) return null;
+  return negate ? not(positive) : positive;
+}
+
 function numberSetPredicate(
   column: AnyColumn,
   values: readonly string[],
@@ -353,7 +366,7 @@ function setSql(condition: FilterCondition, context: FilterContext): SQL | null 
     case 'state':
       return setPredicate(schema.issue.stateId, values, negate);
     case 'assignee':
-      return setPredicate(schema.issue.assigneeId, values, negate);
+      return assigneePredicate(values, negate);
     case 'creator':
       return setPredicate(schema.issue.creatorId, values, negate);
     case 'project':

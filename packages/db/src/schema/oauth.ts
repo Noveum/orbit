@@ -95,12 +95,30 @@ export const agentIdentity = pgTable(
     ownerDisabledByUserId: text('owner_disabled_by_user_id').references(() => user.id, {
       onDelete: 'set null',
     }),
+    ownerDisabledActorIdSnapshot: text('owner_disabled_actor_id_snapshot'),
+    ownerResumedAt: timestamp('owner_resumed_at', { withTimezone: true }),
+    ownerResumedByUserId: text('owner_resumed_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    ownerResumedActorIdSnapshot: text('owner_resumed_actor_id_snapshot'),
     adminDisabledAt: timestamp('admin_disabled_at', { withTimezone: true }),
     adminDisabledByUserId: text('admin_disabled_by_user_id').references(() => user.id, {
       onDelete: 'set null',
     }),
+    adminDisabledActorIdSnapshot: text('admin_disabled_actor_id_snapshot'),
+    adminResumedAt: timestamp('admin_resumed_at', { withTimezone: true }),
+    adminResumedByUserId: text('admin_resumed_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    adminResumedActorIdSnapshot: text('admin_resumed_actor_id_snapshot'),
+    connectionRevokedAt: timestamp('connection_revoked_at', { withTimezone: true }),
+    connectionRevokedByUserId: text('connection_revoked_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    connectionRevokedActorIdSnapshot: text('connection_revoked_actor_id_snapshot'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     deletedByUserId: text('deleted_by_user_id').references(() => user.id, { onDelete: 'set null' }),
+    deletedActorIdSnapshot: text('deleted_actor_id_snapshot'),
     deletedReason: text('deleted_reason'),
     lastActedAt: timestamp('last_acted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -145,6 +163,10 @@ export const mcpGrant = pgTable(
   },
   (table) => [
     index('mcp_grant_user_idx').on(table.userId),
+    check(
+      'mcp_grant_active_binding_check',
+      sql`(${table.revokedAt} is null and ${table.agentIdentityId} is not null and ${table.userId} is not null) or (${table.revokedAt} is not null and (${table.agentIdentityId} is not null or (${table.revokeReason} is not null and ${table.revokeReason} = 'agent_identity_required')))`,
+    ),
     index('mcp_grant_agent_identity_idx').on(table.agentIdentityId),
     uniqueIndex('mcp_grant_active_agent_unique')
       .on(table.agentIdentityId)

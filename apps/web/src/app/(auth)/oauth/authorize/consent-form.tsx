@@ -38,6 +38,7 @@ export interface ConsentFormProps {
 }
 
 type Pending = 'allow' | 'deny' | null;
+const CREATE_AGENT_CHOICE = '__create_agent__';
 
 interface DecisionResponse {
   readonly status?: string;
@@ -60,16 +61,33 @@ export function ConsentForm({
   userEmail,
 }: ConsentFormProps) {
   const { toast } = useToast();
-  const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
-  const [agentIdentityId, setAgentIdentityId] = useState(agents[0]?.id ?? '');
+  const initialOrganizationId = organizations[0]?.id ?? '';
+  const [organizationId, setOrganizationId] = useState(initialOrganizationId);
+  const [agentIdentityId, setAgentIdentityId] = useState('');
   const [agentName, setAgentName] = useState('');
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
 
   const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
   const selectableAgents = agents.filter((agent) => agent.organizationId === organizationId);
+  const selectedAgent = selectableAgents.find((agent) => agent.id === agentIdentityId);
+  const replacingConnection = selectedAgent?.hasActiveGrant === true;
+
+  function allowSelection():
+    | { createAgent: { name: string; avatar: null } }
+    | { agentIdentityId: string; replaceActiveGrant: boolean } {
+    if (agentIdentityId === CREATE_AGENT_CHOICE && agentName.trim().length > 0) {
+      return { createAgent: { name: agentName.trim(), avatar: null } };
+    }
+    if (selectedAgent !== undefined && (!replacingConnection || replaceConfirmed)) {
+      return { agentIdentityId: selectedAgent.id, replaceActiveGrant: replacingConnection };
+    }
+    throw new Error('Choose an agent identity and confirm any connection replacement.');
+  }
 
   async function post(decision: 'allow' | 'deny'): Promise<DecisionResponse> {
+    const identitySelection = decision === 'allow' ? allowSelection() : null;
     const response = await fetch('/oauth/authorize/decision', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -80,15 +98,7 @@ export function ConsentForm({
               decision,
               consentCode,
               organizationId,
-              identitySelection:
-                agentIdentityId.length > 0
-                  ? {
-                      agentIdentityId,
-                      replaceActiveGrant: selectableAgents.some(
-                        (agent) => agent.id === agentIdentityId && agent.hasActiveGrant,
-                      ),
-                    }
-                  : { createAgent: { name: agentName, avatar: null } },
+              identitySelection,
             },
       ),
     });
@@ -154,9 +164,8 @@ export function ConsentForm({
           onChange={(event) => {
             const nextOrganizationId = event.target.value;
             setOrganizationId(nextOrganizationId);
-            setAgentIdentityId(
-              agents.find((agent) => agent.organizationId === nextOrganizationId)?.id ?? '',
-            );
+            setAgentIdentityId('');
+            setReplaceConfirmed(false);
           }}
           disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
@@ -173,21 +182,27 @@ export function ConsentForm({
         Agent identity
         <select
           value={agentIdentityId}
-          onChange={(event) => setAgentIdentityId(event.target.value)}
+          onChange={(event) => {
+            setAgentIdentityId(event.target.value);
+            setReplaceConfirmed(false);
+          }}
           disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
         >
-          <option value="">Create a new agent</option>
+          <option value="" disabled>
+            Choose an agent identity
+          </option>
+          <option value={CREATE_AGENT_CHOICE}>Create a new agent</option>
           {selectableAgents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name}
-              {agent.hasActiveGrant ? ' (replace connection)' : ''}
+              {agent.hasActiveGrant ? ' (connected)' : ''}
             </option>
           ))}
         </select>
       </label>
 
-      {agentIdentityId.length === 0 ? (
+      {agentIdentityId === CREATE_AGENT_CHOICE ? (
         <label className="flex flex-col gap-1.5 text-2xs text-faint">
           Agent name
           <input
@@ -197,6 +212,18 @@ export function ConsentForm({
             disabled={pending !== null}
             className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
           />
+        </label>
+      ) : null}
+
+      {replacingConnection ? (
+        <label className="flex items-start gap-2 text-dense text-text">
+          <input
+            type="checkbox"
+            checked={replaceConfirmed}
+            onChange={(event) => setReplaceConfirmed(event.target.checked)}
+            disabled={pending !== null}
+          />
+          Replace the existing connection for this agent and revoke its current tokens
         </label>
       ) : null}
 
@@ -231,7 +258,9 @@ export function ConsentForm({
           disabled={
             pending !== null ||
             organizationId === '' ||
-            (agentIdentityId === '' && agentName.trim() === '')
+            agentIdentityId === '' ||
+            (agentIdentityId === CREATE_AGENT_CHOICE && agentName.trim() === '') ||
+            (replacingConnection && !replaceConfirmed)
           }
           onClick={() => run('allow')}
         >

@@ -272,13 +272,13 @@ async function identities(
       select issue_activity.from_value as value
       from issue_activity
       where issue_activity.organization_id = ${principal.organizationId}
-        and issue_activity.field = 'assigneeId'
+        and issue_activity.field in ('assigneeId', 'assignee')
         and issue_activity.from_value is not null
       union all
       select issue_activity.to_value as value
       from issue_activity
       where issue_activity.organization_id = ${principal.organizationId}
-        and issue_activity.field = 'assigneeId'
+        and issue_activity.field in ('assigneeId', 'assignee')
         and issue_activity.to_value is not null
     ), evidence as (
       select member.user_id as id, person.name, person.image, true as current_member,
@@ -286,9 +286,9 @@ async function identities(
       from member join "user" person on person.id = member.user_id
       where member.organization_id = ${principal.organizationId}
       union all
-      select issue.assignee_id, person.name, person.image, false, person.id is not null
-      from issue left join "user" person on person.id = issue.assignee_id
-      where issue.organization_id = ${principal.organizationId} and issue.assignee_id is not null
+      select coalesce(issue.assignee_user_id, issue.assignee_id), person.name, person.image, false, person.id is not null
+      from issue left join "user" person on person.id = coalesce(issue.assignee_user_id, issue.assignee_id)
+      where issue.organization_id = ${principal.organizationId} and coalesce(issue.assignee_user_id, issue.assignee_id) is not null
       union all
       select cycle_issue_membership.assignee_id_at_add, person.name, person.image, false,
         person.id is not null
@@ -311,19 +311,20 @@ async function identities(
         assignment_value.value ->> 'id', assignment_value.value #>> '{}'
       )
       where coalesce(assignment_value.value ->> 'id', assignment_value.value #>> '{}') is not null
+        and assignment_value.value ->> 'type' is distinct from 'agent'
       union all
       select ${UNASSIGNED_PERSON_ID}, 'Unassigned', null, false, false
       where exists (
         select 1 from issue
-        where issue.organization_id = ${principal.organizationId} and issue.assignee_id is null
+        where issue.organization_id = ${principal.organizationId} and coalesce(issue.assignee_user_id, issue.assignee_id) is null and issue.assignee_agent_id is null
       ) or exists (
         select 1 from cycle_issue_outcome
         where cycle_issue_outcome.organization_id = ${principal.organizationId}
-          and cycle_issue_outcome.assignee_id_at_close is null
+          and cycle_issue_outcome.assignee_id_at_close is null and cycle_issue_outcome.assignee_agent_id_at_close is null
       ) or exists (
         select 1 from issue_activity
         where issue_activity.organization_id = ${principal.organizationId}
-          and issue_activity.field = 'assigneeId'
+          and issue_activity.field in ('assigneeId', 'assignee')
           and (issue_activity.from_value is null or issue_activity.to_value is null)
       )
     ), identity as (
@@ -352,7 +353,7 @@ async function focusedIdentity(
 }
 
 function personIdSql(): SQL<unknown> {
-  return sql`coalesce(${schema.issue.assigneeId}, ${UNASSIGNED_PERSON_ID})`;
+  return sql`case when ${schema.issue.assigneeAgentId} is not null then 'agent:' || ${schema.issue.assigneeAgentId} else coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}, ${UNASSIGNED_PERSON_ID}) end`;
 }
 
 async function currentStats(
@@ -389,7 +390,7 @@ async function currentStats(
       count(distinct issue.cycle_id) filter (where ${open}) as current_sprints
     from issue join workflow_state on workflow_state.id = issue.state_id
     where ${base}
-    group by issue.assignee_id
+    group by issue.assignee_agent_id, issue.assignee_user_id, issue.assignee_id
   `);
   return new Map(rows.map((row) => [row.person_id, row]));
 }
@@ -476,16 +477,12 @@ async function activeWeeks(
           issue.canceled_at,
           issue.archived_at
         ) as terminal_at,
-        coalesce(
-          assignment_event.from_value ->> 'id',
-          assignment_event.from_value #>> '{}',
-          ${UNASSIGNED_PERSON_ID}
-        ) as from_person_id,
-        coalesce(
-          assignment_event.to_value ->> 'id',
-          assignment_event.to_value #>> '{}',
-          ${UNASSIGNED_PERSON_ID}
-        ) as to_person_id,
+        case when assignment_event.from_value ->> 'type' = 'agent'
+          then 'agent:' || (assignment_event.from_value ->> 'id')
+          else coalesce(assignment_event.from_value ->> 'id', assignment_event.from_value #>> '{}', ${UNASSIGNED_PERSON_ID}) end as from_person_id,
+        case when assignment_event.to_value ->> 'type' = 'agent'
+          then 'agent:' || (assignment_event.to_value ->> 'id')
+          else coalesce(assignment_event.to_value ->> 'id', assignment_event.to_value #>> '{}', ${UNASSIGNED_PERSON_ID}) end as to_person_id,
         assignment_event.created_at as changed_at,
         lead(assignment_event.created_at) over (
           partition by issue.id order by assignment_event.created_at, assignment_event.id
@@ -495,7 +492,7 @@ async function activeWeeks(
         ) as change_number
       from issue
       join issue_activity assignment_event on assignment_event.issue_id = issue.id
-        and assignment_event.field = 'assigneeId'
+        and assignment_event.field in ('assigneeId', 'assignee')
       where issue.organization_id = ${principal.organizationId}
     ), assignment_episode_raw as (
       select assignment_change.issue_id, assignment_change.from_person_id as person_id,
@@ -513,7 +510,7 @@ async function activeWeeks(
       from assignment_change
       union all
       select issue.id as issue_id,
-        coalesce(issue.assignee_id, ${UNASSIGNED_PERSON_ID}) as person_id,
+        ${personIdSql()} as person_id,
         issue.created_at as active_from,
         least(
           ${new Date(lastTimestamp).toISOString()}::timestamptz,
@@ -525,7 +522,7 @@ async function activeWeeks(
       where issue.organization_id = ${principal.organizationId} and not exists (
         select 1 from issue_activity no_assignment_history
         where no_assignment_history.issue_id = issue.id
-          and no_assignment_history.field = 'assigneeId'
+          and no_assignment_history.field in ('assigneeId', 'assignee')
       )
     ), assignment_episode as (
       select assignment_episode_raw.person_id, assignment_episode_raw.active_from,
@@ -655,8 +652,8 @@ async function focusGroups(
 ): Promise<readonly GroupRow[]> {
   const personPredicate =
     personId === UNASSIGNED_PERSON_ID
-      ? sql`issue.assignee_id is null`
-      : sql`issue.assignee_id = ${personId}`;
+      ? sql`coalesce(issue.assignee_user_id, issue.assignee_id) is null and issue.assignee_agent_id is null`
+      : sql`coalesce(issue.assignee_user_id, issue.assignee_id) = ${personId}`;
   return await db.execute<GroupRow>(sql`
     with current_work as materialized (
       select issue.* from issue join workflow_state on workflow_state.id = issue.state_id
@@ -736,7 +733,7 @@ async function focusTimeline(
       from issue_activity assignment_event
       join issue on issue.id = assignment_event.issue_id
       join workflow_state on workflow_state.id = issue.state_id
-      where ${historicalBase} and assignment_event.field = 'assigneeId' and ${assignmentMatch}
+      where ${historicalBase} and assignment_event.field in ('assigneeId', 'assignee') and ${assignmentMatch}
     ), completions as (
       select issue.id, issue.completed_at, issue.estimate
       from issue join workflow_state on workflow_state.id = issue.state_id

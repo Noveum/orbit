@@ -51,7 +51,7 @@ import {
 import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { type CanonicalIssueRead, canonicalIssueRead } from './issue-actor-view.ts';
+import { type CanonicalIssueRead, canonicalIssueReads } from './issue-actor-view.ts';
 import {
   applyStateTimestamps,
   type IssueRow,
@@ -123,14 +123,16 @@ interface IssueDecorations {
   readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
-function issueAction(
+async function issueAction(
+  tx: Executor,
   row: IssueRow,
   syncId: number,
   actor: Actor,
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive',
   decorations: { readonly labelIds: readonly string[]; readonly reviewerIds: readonly string[] },
   teamChanged = false,
-): SyncAction {
+): Promise<SyncAction> {
+  const [view] = await canonicalIssueReads(tx, [row]);
   return buildSyncAction({
     syncId,
     organizationId: row.organizationId,
@@ -139,7 +141,7 @@ function issueAction(
     model: 'issue',
     modelId: row.id,
     data: {
-      ...row,
+      ...view,
       labelIds: [...decorations.labelIds],
       reviewerIds: [...decorations.reviewerIds],
       ...(teamChanged ? { teamChanged: true } : {}),
@@ -921,7 +923,7 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     return {
       issue,
       actions: [
-        issueAction(issue, syncId, actor, 'insert', {
+        await issueAction(tx, issue, syncId, actor, 'insert', {
           labelIds: parsed.labelIds,
           reviewerIds,
         }),
@@ -1163,7 +1165,14 @@ async function applyIssueUpdates(
     pending.map((entry) => entry.current.id),
   );
 
-  return updateResults(pending, updated, { notifications, ...decorations }, syncId, actor);
+  return await updateResults(
+    tx,
+    pending,
+    updated,
+    { notifications, ...decorations },
+    syncId,
+    actor,
+  );
 }
 
 async function updateNotifications(
@@ -1187,28 +1196,31 @@ interface UpdateDecorations {
   readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
-function updateResults(
+async function updateResults(
+  tx: Executor,
   pending: readonly PendingUpdate[],
   updated: ReadonlyMap<string, IssueRow>,
   decorations: UpdateDecorations,
   syncId: number,
   actor: Actor,
-): UpdatedIssue[] {
-  return pending.map((entry) => {
-    const issue = updated.get(entry.current.id);
-    if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
-    return {
-      issue,
-      changes: entry.changes,
-      actions: [
-        issueAction(issue, syncId, actor, 'update', {
-          labelIds: decorations.labels.get(issue.id) ?? [],
-          reviewerIds: decorations.reviewers.get(issue.id) ?? [],
-        }),
-        ...(decorations.notifications.get(issue.id) ?? []),
-      ],
-    };
-  });
+): Promise<UpdatedIssue[]> {
+  return await Promise.all(
+    pending.map(async (entry) => {
+      const issue = updated.get(entry.current.id);
+      if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
+      return {
+        issue,
+        changes: entry.changes,
+        actions: [
+          await issueAction(tx, issue, syncId, actor, 'update', {
+            labelIds: decorations.labels.get(issue.id) ?? [],
+            reviewerIds: decorations.reviewers.get(issue.id) ?? [],
+          }),
+          ...(decorations.notifications.get(issue.id) ?? []),
+        ],
+      };
+    }),
+  );
 }
 
 async function applyIssueUpdate(
@@ -1550,19 +1562,22 @@ export async function moveIssue(
       rebalanced,
       actions: [
         ...(changingTeam ? [issueDepartureAction(current, syncId, actor)] : []),
-        ...affected.map((row) =>
-          issueAction(
-            row,
-            syncId,
-            actor,
-            'update',
-            {
-              labelIds: decorations.labels.get(row.id) ?? [],
-              reviewerIds: decorations.reviewers.get(row.id) ?? [],
-            },
-            changingTeam && row.id === issue.id,
+        ...(await Promise.all(
+          affected.map((row) =>
+            issueAction(
+              tx,
+              row,
+              syncId,
+              actor,
+              'update',
+              {
+                labelIds: decorations.labels.get(row.id) ?? [],
+                reviewerIds: decorations.reviewers.get(row.id) ?? [],
+              },
+              changingTeam && row.id === issue.id,
+            ),
           ),
-        ),
+        )),
         ...notifications,
       ],
     };
@@ -1649,7 +1664,7 @@ async function setArchived(
     return {
       issue,
       actions: [
-        issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
+        await issueAction(tx, issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
           labelIds: decorations.labels.get(issue.id) ?? [],
           reviewerIds: decorations.reviewers.get(issue.id) ?? [],
         }),
@@ -1721,12 +1736,14 @@ export async function deleteIssue(
         data: { id: issueId, teamId: current.teamId, identifier: current.identifier },
         actor,
       }),
-      ...orphaned.map((child) =>
-        issueAction(child, syncId, actor, 'update', {
-          labelIds: decorations.labels.get(child.id) ?? [],
-          reviewerIds: decorations.reviewers.get(child.id) ?? [],
-        }),
-      ),
+      ...(await Promise.all(
+        orphaned.map((child) =>
+          issueAction(tx, child, syncId, actor, 'update', {
+            labelIds: decorations.labels.get(child.id) ?? [],
+            reviewerIds: decorations.reviewers.get(child.id) ?? [],
+          }),
+        ),
+      )),
     ];
   });
 }
@@ -1855,7 +1872,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
     .limit(filter.limit + 1);
 
-  const page = rows.slice(0, filter.limit).map(canonicalIssueRead);
+  const page = await canonicalIssueReads(db, rows.slice(0, filter.limit));
   const last = page.at(-1);
   const nextCursor =
     rows.length > filter.limit && last !== undefined
@@ -2280,7 +2297,8 @@ export async function getIssue(
   const row = direct ?? aliased;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
-  return canonicalIssueRead(issue);
+  const [view] = await canonicalIssueReads(db, [issue]);
+  return requireRow(view, 'That issue does not exist.');
 }
 
 export async function listIssueLabels(

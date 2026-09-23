@@ -1,7 +1,14 @@
 import { bindMcpCredential, unbindMcpCredential } from '@orbit/core';
 import { and, db, eq, isNull, schema } from '@orbit/db';
+import {
+  type McpTokenRequest,
+  mcpAuthorizationCodeSchema,
+  mcpCodeChallengeSchema,
+  mcpCodeVerifierSchema,
+  mcpTokenRequestSchema,
+  mcpTokenResponseSchema,
+} from '@orbit/shared/validators';
 import { toNextJsHandler } from 'better-auth/next-js';
-import { z } from 'zod';
 import { auth, MCP_TOKEN_RATE_LIMIT_PROBE_HEADER } from '@/lib/auth/server.ts';
 import { withSocketRevocation } from '@/lib/auth/sign-out.ts';
 import { serverEnv } from '@/lib/env.ts';
@@ -10,27 +17,8 @@ const handlers = toNextJsHandler(auth.handler);
 
 const MCP_AUTHORIZE_PATH = '/api/auth/mcp/authorize';
 const MCP_TOKEN_PATH = '/api/auth/mcp/token';
-const mcpCodeChallengeSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-const mcpCodeVerifierSchema = z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/);
-
-const mcpTokenRequestSchema = z
-  .object({
-    grant_type: z.string().min(1),
-    code: z.string().min(1).optional(),
-    code_verifier: z.string().optional(),
-    refresh_token: z.string().min(1).optional(),
-  })
-  .catchall(z.string());
-
-const mcpTokenResponseSchema = z.looseObject({
-  access_token: z.string().min(1),
-  refresh_token: z.string().min(1).optional(),
-});
-
-const mcpAuthorizationCodeSchema = z.object({ mcpGrantId: z.string().min(1) });
-
 interface ParsedMcpTokenRequest {
-  readonly body: z.infer<typeof mcpTokenRequestSchema>;
+  readonly body: McpTokenRequest;
   readonly format: 'form' | 'json';
 }
 
@@ -137,21 +125,41 @@ async function acceptIssuedMcpToken(
   sourceRefreshToken: string | null,
 ): Promise<boolean> {
   return await db.transaction(async (tx) => {
-    const [grant] = await tx
-      .select({ id: schema.mcpGrant.id })
+    const [binding] = await tx
+      .select({
+        identityId: schema.agentIdentity.id,
+        organizationId: schema.agentIdentity.organizationId,
+        ownerUserId: schema.agentIdentity.ownerUserId,
+      })
       .from(schema.mcpGrant)
       .innerJoin(schema.agentIdentity, eq(schema.agentIdentity.id, schema.mcpGrant.agentIdentityId))
-      .innerJoin(
-        schema.member,
-        and(
-          eq(schema.member.organizationId, schema.agentIdentity.organizationId),
-          eq(schema.member.userId, schema.agentIdentity.ownerUserId),
-        ),
-      )
+      .where(eq(schema.mcpGrant.id, grantId))
+      .limit(1);
+    if (binding?.ownerUserId === null || binding === undefined) {
+      await tx
+        .delete(schema.oauthAccessToken)
+        .where(eq(schema.oauthAccessToken.accessToken, accessToken));
+      return false;
+    }
+    const [member] = await tx
+      .select({ id: schema.member.id })
+      .from(schema.member)
       .where(
         and(
-          eq(schema.mcpGrant.id, grantId),
-          isNull(schema.mcpGrant.revokedAt),
+          eq(schema.member.organizationId, binding.organizationId),
+          eq(schema.member.userId, binding.ownerUserId),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    const [identity] = await tx
+      .select({ id: schema.agentIdentity.id })
+      .from(schema.agentIdentity)
+      .where(
+        and(
+          eq(schema.agentIdentity.id, binding.identityId),
+          eq(schema.agentIdentity.organizationId, binding.organizationId),
+          eq(schema.agentIdentity.ownerUserId, binding.ownerUserId),
           isNull(schema.agentIdentity.deletedAt),
           isNull(schema.agentIdentity.ownerDisabledAt),
           isNull(schema.agentIdentity.adminDisabledAt),
@@ -159,35 +167,59 @@ async function acceptIssuedMcpToken(
       )
       .limit(1)
       .for('update');
-    if (grant !== undefined) {
-      if (sourceRefreshToken !== null) {
-        const [consumed] = await tx
-          .delete(schema.oauthAccessToken)
-          .where(
-            and(
-              eq(schema.oauthAccessToken.refreshToken, sourceRefreshToken),
-              eq(schema.oauthAccessToken.mcpGrantId, grantId),
-            ),
-          )
-          .returning({ id: schema.oauthAccessToken.id });
-        if (consumed === undefined) {
-          await tx
-            .delete(schema.oauthAccessToken)
-            .where(eq(schema.oauthAccessToken.accessToken, accessToken));
-          return false;
-        }
+    const [grant] = await tx
+      .select({ id: schema.mcpGrant.id })
+      .from(schema.mcpGrant)
+      .where(
+        and(
+          eq(schema.mcpGrant.id, grantId),
+          eq(schema.mcpGrant.agentIdentityId, binding.identityId),
+          isNull(schema.mcpGrant.revokedAt),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (member === undefined || identity === undefined || grant === undefined) {
+      await tx
+        .delete(schema.oauthAccessToken)
+        .where(eq(schema.oauthAccessToken.accessToken, accessToken));
+      return false;
+    }
+    let sourceTokenId: string | null = null;
+    if (sourceRefreshToken !== null) {
+      const [source] = await tx
+        .select({ id: schema.oauthAccessToken.id })
+        .from(schema.oauthAccessToken)
+        .where(
+          and(
+            eq(schema.oauthAccessToken.refreshToken, sourceRefreshToken),
+            eq(schema.oauthAccessToken.mcpGrantId, grantId),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      sourceTokenId = source?.id ?? null;
+    }
+    const [issued] = await tx
+      .select({ id: schema.oauthAccessToken.id })
+      .from(schema.oauthAccessToken)
+      .where(eq(schema.oauthAccessToken.accessToken, accessToken))
+      .limit(1)
+      .for('update');
+    if (issued === undefined || (sourceRefreshToken !== null && sourceTokenId === null)) {
+      if (issued !== undefined) {
+        await tx.delete(schema.oauthAccessToken).where(eq(schema.oauthAccessToken.id, issued.id));
       }
-      const [bound] = await tx
-        .update(schema.oauthAccessToken)
-        .set({ mcpGrantId: grantId })
-        .where(eq(schema.oauthAccessToken.accessToken, accessToken))
-        .returning({ id: schema.oauthAccessToken.id });
-      if (bound !== undefined) return true;
+      return false;
+    }
+    if (sourceTokenId !== null) {
+      await tx.delete(schema.oauthAccessToken).where(eq(schema.oauthAccessToken.id, sourceTokenId));
     }
     await tx
-      .delete(schema.oauthAccessToken)
-      .where(eq(schema.oauthAccessToken.accessToken, accessToken));
-    return false;
+      .update(schema.oauthAccessToken)
+      .set({ mcpGrantId: grantId })
+      .where(eq(schema.oauthAccessToken.id, issued.id));
+    return true;
   });
 }
 

@@ -4,6 +4,7 @@ import { publishDeltas } from '@orbit/core';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
+import { assertHumanIssueWriter } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { errorFields, logger } from '../logger.ts';
 
@@ -54,11 +55,24 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
 export interface ToolAccess {
   readonly reads: boolean;
   readonly writes: boolean;
+  readonly actorType?: 'user' | 'agent';
 }
 
 const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
 
 const GRANTED = new WeakMap<McpServer, ToolAccess>();
+
+const ISSUE_MUTATION_TOOLS = new Set([
+  'archive_issue',
+  'create_issue',
+  'delete_issue',
+  'move_issue',
+  'move_to_cycle',
+  'remove_relation',
+  'set_relation',
+  'unarchive_issue',
+  'update_issue',
+]);
 
 export function allowTools(server: McpServer, access: ToolAccess): void {
   GRANTED.set(server, access);
@@ -92,6 +106,9 @@ export function defineTool<Shape extends z.ZodRawShape>(
     },
     async (args) => {
       try {
+        if (ISSUE_MUTATION_TOOLS.has(config.name)) {
+          assertHumanIssueWriter(GRANTED.get(server)?.actorType ?? 'user');
+        }
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {
         return failed(config.name, error);

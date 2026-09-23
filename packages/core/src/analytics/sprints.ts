@@ -160,6 +160,7 @@ interface IssueFact {
   readonly completedAt: Date | null;
   readonly estimate: number | null;
   readonly assigneeId: string | null;
+  readonly assigneeAgentId: string | null;
   readonly category: string | null;
   readonly memberships: readonly MembershipRow[];
   readonly outcome: OutcomeRow | null;
@@ -347,30 +348,47 @@ function estimateAt(fact: IssueFact, at: Date): number | null {
   return estimate;
 }
 
+function assigneeReference(value: unknown): string | null {
+  if (typeof value === 'object' && value !== null && 'type' in value && value.type === 'agent') {
+    const id = parseReferenceId(value);
+    return id === null ? null : `agent:${id}`;
+  }
+  return parseReferenceId(value);
+}
+
 function assigneeAt(fact: IssueFact, at: Date, frozen: boolean): string | null {
   const timestamp = at.getTime();
   const membership = [...fact.memberships]
     .filter((entry) => entry.addedAt.getTime() <= timestamp)
     .sort((left, right) => right.addedAt.getTime() - left.addedAt.getTime())[0];
-  const assignmentChanges = fact.activities.filter((activity) => activity.field === 'assigneeId');
+  const assignmentChanges = fact.activities.filter((activity) =>
+    ['assigneeId', 'assignee'].includes(activity.field),
+  );
   const firstChange = assignmentChanges[0];
-  let assigneeId = fact.assigneeId;
-  if (membership !== undefined) assigneeId = membership.assigneeIdAtAdd;
+  let assigneeId =
+    fact.assigneeAgentId === null ? fact.assigneeId : `agent:${fact.assigneeAgentId}`;
+  if (membership !== undefined)
+    assigneeId =
+      membership.assigneeAgentIdAtAdd === null
+        ? membership.assigneeIdAtAdd
+        : `agent:${membership.assigneeAgentIdAtAdd}`;
   if (membership === undefined && frozen) {
-    assigneeId = firstChange === undefined ? null : parseReferenceId(firstChange.fromValue);
+    assigneeId = firstChange === undefined ? null : assigneeReference(firstChange.fromValue);
   }
   for (const activity of fact.activities) {
     if (
-      activity.field !== 'assigneeId' ||
+      !['assigneeId', 'assignee'].includes(activity.field) ||
       activity.createdAt.getTime() >= timestamp ||
       (membership !== undefined && activity.createdAt < membership.addedAt)
     ) {
       continue;
     }
-    assigneeId = parseReferenceId(activity.toValue);
+    assigneeId = assigneeReference(activity.toValue);
   }
   if (frozen && fact.outcome !== null && timestamp >= fact.outcome.closedAt.getTime()) {
-    return fact.outcome.assigneeIdAtClose;
+    return fact.outcome.assigneeAgentIdAtClose === null
+      ? fact.outcome.assigneeIdAtClose
+      : `agent:${fact.outcome.assigneeAgentIdAtClose}`;
   }
   return assigneeId;
 }
@@ -987,7 +1005,8 @@ async function loadFacts(
           completedAt: currentRow?.issue.completedAt ?? null,
           estimate:
             currentRow?.issue.estimate ?? outcome?.estimateAtClose ?? first?.estimateAtAdd ?? null,
-          assigneeId: currentRow?.issue.assigneeId ?? null,
+          assigneeId: currentRow?.issue.assigneeUserId ?? currentRow?.issue.assigneeId ?? null,
+          assigneeAgentId: currentRow?.issue.assigneeAgentId ?? null,
           category: currentRow?.category ?? null,
           memberships: own,
           outcome,
