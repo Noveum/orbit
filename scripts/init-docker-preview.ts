@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 
 export async function initializeDockerPreview(root: string): Promise<void> {
   const values = ['POSTGRES_PASSWORD', 'MINIO_PASSWORD', 'BETTER_AUTH_SECRET', 'CRON_SECRET'].map(
@@ -15,11 +16,9 @@ export async function initializeDockerPreview(root: string): Promise<void> {
 export async function ensureDockerPreviewScheduler(root: string): Promise<void> {
   const path = resolve(root, '.env.docker.local');
   const existing = await readFile(path, 'utf8');
-  if (/^CRON_SECRET=.+$/m.test(existing)) return;
+  if (parseEnv(existing)['CRON_SECRET']?.trim()) return;
   const secret = `CRON_SECRET=${randomBytes(32).toString('hex')}`;
-  const updated = /^CRON_SECRET=$/m.test(existing)
-    ? existing.replace(/^CRON_SECRET=$/m, secret)
-    : `${existing.trimEnd()}\n${secret}\n`;
+  const updated = `${existing.trimEnd()}\n${secret}\n`;
   await writeFile(path, updated, { mode: 0o600 });
 }
 

@@ -2,6 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseEnv } from 'node:util';
 import { exportStandalone } from '../scripts/export-docker-preview';
 import {
   ensureDockerPreviewScheduler,
@@ -28,6 +29,32 @@ test('an older preview gains a scheduler secret without replacing database or au
   expect(upgraded).toMatch(/CRON_SECRET=[a-f0-9]{64}/);
   await ensureDockerPreviewScheduler(root);
   expect(await readFile(path, 'utf8')).toBe(upgraded);
+});
+
+test.each(['', '  ', '""', "''", '"  "', ' # not configured', '"\n\n"'])(
+  'scheduler initialization replaces the empty dotenv value %j',
+  async (value) => {
+    const root = await mkdtemp(join(tmpdir(), 'orbit-docker-empty-cron-'));
+    directories.push(root);
+    const path = join(root, '.env.docker.local');
+    await writeFile(path, `POSTGRES_PASSWORD=preserved\r\nCRON_SECRET=${value}\r\n`);
+    await ensureDockerPreviewScheduler(root);
+    const upgraded = await readFile(path, 'utf8');
+    expect(parseEnv(upgraded)['CRON_SECRET']).toMatch(/^[a-f0-9]{64}$/);
+    expect(parseEnv(upgraded)['POSTGRES_PASSWORD']).toBe('preserved');
+    await ensureDockerPreviewScheduler(root);
+    expect(await readFile(path, 'utf8')).toBe(upgraded);
+  },
+);
+
+test('scheduler initialization preserves a configured quoted credential', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'orbit-docker-existing-cron-'));
+  directories.push(root);
+  const path = join(root, '.env.docker.local');
+  const existing = 'CRON_SECRET="existing-secret" # preserve this credential\r\n';
+  await writeFile(path, existing);
+  await ensureDockerPreviewScheduler(root);
+  expect(await readFile(path, 'utf8')).toBe(existing);
 });
 
 test('exported dependency links resolve after the build directory is removed', async () => {
