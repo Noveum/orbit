@@ -132,7 +132,9 @@ describe('GithubPanel, connecting', () => {
   it('explains that setup is pending rather than offering a link that cannot work', () => {
     renderPanel({ ...DISCONNECTED, connectEnabled: false });
     expect(screen.queryByRole('link', { name: 'Connect GitHub' })).toBeNull();
-    expect(screen.getByText(/finish configuring the GitHub App/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/server operator to finish configuring the GitHub App/),
+    ).toBeInTheDocument();
   });
 });
 

@@ -52,6 +52,9 @@ function rejected(path: string, offeredOrigin?: string): Promise<number | undefi
 }
 try {
   assert.equal((await fetch(`${base}/health`)).status, 200);
+  const publicHealth = await fetch(`${base}/api/realtime/health`);
+  assert.equal(publicHealth.status, 200);
+  assert.deepEqual((await publicHealth.json()).hub, hub.stats());
   assert.equal(await rejected('/api/ws'), 403);
   assert.equal(await rejected('/api/ws', 'https://other.example.com'), 403);
   assert.equal(await rejected('/api/ws', `${origin}.evil.example`), 403);
@@ -60,6 +63,7 @@ try {
   assert.equal(accepted, 0);
   redis = 'reconnecting';
   assert.equal((await fetch(`${base}/health`)).status, 503);
+  assert.equal((await fetch(`${base}/api/realtime/health`)).status, 503);
   assert.equal(await rejected('/api/ws', origin), 503);
   redis = 'ready';
   const client = new WebSocket(`${base}/api/ws`, { origin });

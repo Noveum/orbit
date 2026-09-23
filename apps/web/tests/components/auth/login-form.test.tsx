@@ -7,6 +7,7 @@ const requestPasswordReset = mock();
 const sendVerificationOtp = mock();
 const signInEmailOtp = mock();
 const signInSocial = mock();
+const getSession = mock();
 const toast = mock();
 const originalLocation = window.location;
 const assign = mock();
@@ -20,6 +21,7 @@ Object.defineProperty(window, 'location', {
 
 mock.module('@/lib/auth/client.ts', () => ({
   authClient: {
+    getSession: (...args: unknown[]) => getSession(...args),
     requestPasswordReset: (...args: unknown[]) => requestPasswordReset(...args),
     emailOtp: {
       sendVerificationOtp: (...args: unknown[]) => sendVerificationOtp(...args),
@@ -42,6 +44,8 @@ beforeEach(() => {
   sendVerificationOtp.mockReset();
   signInEmailOtp.mockReset();
   signInSocial.mockReset();
+  getSession.mockReset();
+  getSession.mockResolvedValue({ error: null, data: { user: { emailVerified: true } } });
   toast.mockReset();
   assign.mockReset();
 });
@@ -227,6 +231,22 @@ describe('LoginForm', () => {
       expect(assign).toHaveBeenCalledWith('/my-issues');
     });
     expect(signInEmailOtp).toHaveBeenCalledTimes(1);
+    expect(getSession).toHaveBeenCalledWith({ query: { disableCookieCache: true } });
+  });
+
+  it('does not navigate with an unverified cached session after accepting a code', async () => {
+    sendVerificationOtp.mockResolvedValue({ error: null });
+    signInEmailOtp.mockResolvedValue({ error: null });
+    getSession.mockResolvedValue({ error: null, data: { user: { emailVerified: false } } });
+    const user = userEvent.setup();
+    renderForm(false);
+    await user.type(screen.getByLabelText('Email address'), 'ada@orbit.local');
+    await user.click(screen.getByText('Email me a code'));
+    await user.type(await screen.findByLabelText('Sign in code'), '123456');
+    await user.click(screen.getByText('Verify code'));
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(1));
+    expect(assign).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'danger' }));
   });
 
   it('verifies the code when Enter is pressed with password auth enabled', async () => {

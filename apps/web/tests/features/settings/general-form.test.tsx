@@ -86,6 +86,9 @@ describe('GeneralForm agent instructions', () => {
       'Prefer concise issue titles',
     );
     expect(screen.getByText('27 / 4000 characters')).toBeVisible();
+    expect(
+      screen.getByText(/Joining still requires an invitation and verified email/),
+    ).toBeVisible();
   });
 
   it('submits edited instructions in the workspace update payload', async () => {

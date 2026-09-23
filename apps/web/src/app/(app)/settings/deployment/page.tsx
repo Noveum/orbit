@@ -1,9 +1,12 @@
+import { can } from '@orbit/shared/policy';
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { deploymentStatus } from '@/features/settings/deployment-status.ts';
 import { pageContext } from '@/lib/api/handler.ts';
 
 export default async function DeploymentSettingsPage() {
   const { principal } = await pageContext();
+  if (!can(principal, 'org:manage')) notFound();
   const checks = deploymentStatus(principal, process.env);
 
   return (

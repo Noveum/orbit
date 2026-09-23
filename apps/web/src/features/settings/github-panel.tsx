@@ -134,7 +134,8 @@ function NotConnected({
   if (!connectEnabled) {
     return (
       <p className="rounded-lg border border-border border-dashed bg-surface-2 px-3 py-2 text-faint text-2xs">
-        Ask a workspace admin to finish configuring the GitHub App before connecting.
+        Ask the server operator to finish configuring the GitHub App before a workspace admin
+        connects it.
       </p>
     );
   }

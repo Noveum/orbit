@@ -1,5 +1,6 @@
 :3000 {
-  handle /api/ws {
+  @realtime path /api/ws /api/realtime/health
+  handle @realtime {
     reverse_proxy realtime:3100
   }
   handle {

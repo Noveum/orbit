@@ -17,14 +17,22 @@ export async function createNodeRealtimeServer(hub: RealtimeHub, options: NodeRe
   const allowedOrigin = originUrl.origin;
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 65_536 });
   const server = createServer((request, response) => {
-    const ready = hub.stats().redis === 'ready';
-    const health = request.method === 'GET' && request.url === '/health';
+    const stats = hub.stats();
+    const ready = stats.redis === 'ready';
+    const health =
+      request.method === 'GET' &&
+      (request.url === '/health' || request.url === '/api/realtime/health');
     const healthCode = ready ? 200 : 503;
     const healthStatus = ready ? 'ok' : 'unavailable';
     response.writeHead(health ? healthCode : 404, {
       'content-type': 'application/json',
     });
-    response.end(JSON.stringify({ status: health ? healthStatus : 'not_found' }));
+    response.end(
+      JSON.stringify({
+        status: health ? healthStatus : 'not_found',
+        ...(health ? { hub: stats } : {}),
+      }),
+    );
   });
 
   server.on('upgrade', (request, socket, head) => {

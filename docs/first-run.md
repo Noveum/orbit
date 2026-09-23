@@ -28,6 +28,11 @@ requires a verified address. Sign in using an emailed code or a provider that
 verifies the invited address before accepting. An unverified account cannot
 discover pending invitations during onboarding or accept them through the API.
 
+When an email code first verifies an existing password account, authentication
+revokes its earlier sessions and password so the verified mailbox owner does
+not inherit credentials created before ownership was proven. After verification,
+set a new password in **Settings > Account > Password** or use password recovery.
+
 ## Configure email and integrations
 
 Open **Settings > Deployment setup** as a workspace admin. The page lists
