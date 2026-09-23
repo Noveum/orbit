@@ -67,7 +67,13 @@ export function OnboardingFlow({
         {ONBOARDING_STEPS.map((entry, index) => {
           const state = stepStateFor(index, currentIndex);
           return (
-            <li key={entry} className="flex flex-1 items-center gap-2">
+            <li
+              key={entry}
+              className={cn(
+                'flex min-w-0 items-center gap-2',
+                state === 'current' ? 'flex-auto' : 'flex-none sm:flex-1',
+              )}
+            >
               <span
                 className={cn(
                   'flex size-5 shrink-0 items-center justify-center rounded-full border text-2xs',
@@ -84,7 +90,11 @@ export function OnboardingFlow({
                 )}
               </span>
               <span
-                className={cn('truncate text-2xs', state === 'todo' ? 'text-faint' : 'text-muted')}
+                className={cn(
+                  'truncate text-2xs',
+                  state === 'todo' ? 'text-faint' : 'text-muted',
+                  state === 'current' ? 'inline' : 'hidden sm:inline',
+                )}
               >
                 {STEP_LABELS[entry]}
               </span>

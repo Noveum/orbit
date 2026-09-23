@@ -1,5 +1,6 @@
 'use client';
 
+import { Check, Copy, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -13,6 +14,7 @@ import { cn } from '@/lib/cn.ts';
 import { tabHover } from '@/lib/interaction.ts';
 import { useCopy } from '../settings/integration-card.tsx';
 import {
+  claudePromptHref,
   IMPORT_SOURCE_GUIDES,
   IMPORT_SOURCES,
   type ImportSource,
@@ -20,13 +22,29 @@ import {
   STARTER_LABELS,
   type StarterKind,
   starterPrompt,
+  starterRunsInCodingAgent,
 } from './starter-prompts.ts';
 
-export function StarterPromptPicker({ onError }: { onError: (message: string) => void }) {
+export interface StarterPromptPickerProps {
+  readonly onError: (message: string) => void;
+  readonly clientId?: string;
+  readonly clientName?: string;
+}
+
+function pasteHint(kind: StarterKind, clientName: string | undefined): string {
+  if (starterRunsInCodingAgent(kind)) {
+    return 'Run this in a coding agent such as Claude Code, Cursor or Codex, opened in your repository folder. It shows you a plan and waits for your OK before it creates anything.';
+  }
+  const target = clientName === undefined ? 'the AI tool you connected' : clientName;
+  return `Paste it into ${target}. It shows you a plan and waits for your OK before it creates anything.`;
+}
+
+export function StarterPromptPicker({ onError, clientId, clientName }: StarterPromptPickerProps) {
   const [kind, setKind] = useState<StarterKind>('import');
   const [source, setSource] = useState<ImportSource>('linear');
   const { copied, copy } = useCopy(onError);
   const prompt = starterPrompt(kind, source);
+  const openInClaude = clientId === 'claude' && !starterRunsInCodingAgent(kind);
 
   return (
     <div className="flex flex-col gap-3" data-testid="starter-prompt-picker">
@@ -61,48 +79,62 @@ export function StarterPromptPicker({ onError }: { onError: (message: string) =>
         })}
       </fieldset>
 
-      {kind === 'import' ? (
-        <div className="flex items-center gap-2">
-          <span className="text-2xs text-faint">I use</span>
-          <div className="w-48">
-            <Select value={source} onValueChange={(value) => setSource(value as ImportSource)}>
-              <SelectTrigger aria-label="Tool you use today">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {IMPORT_SOURCES.map((entry) => (
-                  <SelectItem key={entry} value={entry}>
-                    {IMPORT_SOURCE_GUIDES[entry].label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <div className="overflow-hidden rounded-lg border border-border bg-surface-2">
+        <div className="flex flex-wrap items-center gap-2 border-border border-b px-3 py-2">
+          {kind === 'import' ? (
+            <div className="flex items-center gap-2">
+              <span className="text-2xs text-muted">Moving from</span>
+              <div className="w-44">
+                <Select value={source} onValueChange={(value) => setSource(value as ImportSource)}>
+                  <SelectTrigger aria-label="Tool you use today">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IMPORT_SOURCES.map((entry) => (
+                      <SelectItem key={entry} value={entry}>
+                        {IMPORT_SOURCE_GUIDES[entry].label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : (
+            <span className="text-2xs text-muted">Starter prompt</span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {openInClaude ? (
+              <Button asChild variant="secondary" size="sm">
+                <a href={claudePromptHref(prompt)} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="size-3.5" aria-hidden="true" />
+                  Open in Claude
+                </a>
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              aria-label="Copy starter prompt"
+              onClick={() => copy(prompt)}
+            >
+              {copied ? (
+                <Check className="size-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="size-3.5" aria-hidden="true" />
+              )}
+              {copied ? 'Copied' : 'Copy prompt'}
+            </Button>
           </div>
         </div>
-      ) : null}
-
-      <div className="relative">
         <pre
           data-testid="starter-prompt-text"
-          className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2 p-3 pr-20 font-mono text-2xs text-text leading-relaxed"
+          className="max-h-64 overflow-auto whitespace-pre-wrap p-3 font-mono text-2xs text-text leading-relaxed"
         >
           {prompt}
         </pre>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="absolute top-2 right-2"
-          aria-label="Copy starter prompt"
-          onClick={() => copy(prompt)}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
       </div>
-      <p className="text-2xs text-faint">
-        Paste it into the AI tool you connected. It shows you a plan and waits for your OK before it
-        creates anything.
-      </p>
+      <p className="text-2xs text-faint">{pasteHint(kind, clientName)}</p>
     </div>
   );
 }

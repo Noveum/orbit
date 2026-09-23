@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  claudePromptHref,
   IMPORT_SOURCE_GUIDES,
   IMPORT_SOURCES,
   STARTER_KINDS,
@@ -34,6 +35,22 @@ describe('starterPrompt', () => {
       expect(prompt).toMatch(/wait for my OK/i);
       expect(prompt).toMatch(/^1\. /m);
     }
+  });
+
+  it('checks for duplicates and offers, never forces, archiving the onboarding sample issues', () => {
+    for (const kind of STARTER_KINDS) {
+      const prompt = starterPrompt(kind, 'asana');
+      expect(prompt).toContain('never create duplicates');
+      expect(prompt).toContain('archive_issue');
+      expect(prompt).toContain('Only archive them if I say yes.');
+    }
+  });
+
+  it('builds a Claude link that carries the whole prompt', () => {
+    const prompt = starterPrompt('import', 'notion');
+    const href = new URL(claudePromptHref(prompt));
+    expect(href.origin + href.pathname).toBe('https://claude.ai/new');
+    expect(href.searchParams.get('q')).toBe(prompt);
   });
 
   it('interviews the user when brainstorming and reads the code when building a backlog', () => {

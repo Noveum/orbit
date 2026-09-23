@@ -82,7 +82,10 @@ export const IMPORT_SOURCE_GUIDES: Record<ImportSource, SourceGuide> = {
   },
 };
 
-const ORIENT = 'Call get_me, list_teams, list_states and list_labels so you know my workspace.';
+const ORIENT =
+  'Call get_me, list_teams, list_states and list_labels so you know my workspace, and check what already exists so you never create duplicates.';
+const TIDY =
+  'Offer to archive the sample issues Orbit added when I signed up, such as "Welcome to Orbit", with archive_issue. Only archive them if I say yes.';
 
 function numbered(lines: readonly string[]): string {
   return lines.map((line, index) => `${index + 1}. ${line}`).join('\n');
@@ -100,6 +103,7 @@ function importPrompt(source: ImportSource): string {
       'Before creating anything, show me a short plan: the teams, projects, labels and sprints you will create, and how many tasks go where. Wait for my OK.',
       'Create everything in Orbit: projects with create_project, tasks with create_issue (keep the title, description, status, priority, assignee and due date), sprints with create_cycle, and longer notes or specs with create_doc.',
       'Finish with a summary of what you created and anything you could not bring over.',
+      TIDY,
     ]),
   ].join('\n');
 }
@@ -114,6 +118,7 @@ function planPrompt(): string {
       'Propose a plan: a few projects, milestones for the key dates, two week sprints, and a first backlog of small, concrete tasks with priorities. Show it as an outline and wait for my OK.',
       'Create it with create_project, create_milestone, create_cycle and create_issue, and write the goals and scope into a doc with create_doc.',
       'Tell me the first three things to work on.',
+      TIDY,
     ]),
   ].join('\n');
 }
@@ -128,12 +133,21 @@ function repoPrompt(): string {
       'Propose projects for the main areas and 15 to 30 concrete tasks, each with a priority and a short description that names the files involved. Wait for my OK.',
       'Create them with create_project and create_issue, and write a short architecture overview with create_doc.',
       'Summarize what you created.',
+      TIDY,
     ]),
   ].join('\n');
+}
+
+export function starterRunsInCodingAgent(kind: StarterKind): boolean {
+  return kind === 'repo';
 }
 
 export function starterPrompt(kind: StarterKind, source: ImportSource = 'other'): string {
   if (kind === 'import') return importPrompt(source);
   if (kind === 'plan') return planPrompt();
   return repoPrompt();
+}
+
+export function claudePromptHref(prompt: string): string {
+  return `https://claude.ai/new?q=${encodeURIComponent(prompt)}`;
 }
