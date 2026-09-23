@@ -1668,6 +1668,34 @@ describe('DeltaBridge reconnect backfill', () => {
     unsubscribeDetail();
   });
 
+  it('keeps the data of a mounted but disabled issue list through a reconnect', async () => {
+    const client = mount();
+    const listKey = queryKeys.issues(TEAM);
+    const shownList = client.getQueryData<IssuePages>(listKey);
+    const observer = new QueryObserver(client, {
+      queryKey: listKey,
+      queryFn: () => Promise.reject(new Error('disabled lists never fetch')),
+      enabled: false,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    observed.length = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(observed).toEqual([42]));
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(client.getQueryData<IssuePages>(listKey)).toBe(shownList);
+  });
+
   it('never blanks an issue list someone is looking at while it reconnects', async () => {
     const client = mount();
     const listKey = queryKeys.issues(TEAM);

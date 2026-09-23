@@ -688,7 +688,7 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
 const ISSUE_CACHE_ROOTS = [ISSUES_ROOT, ISSUE_ROOT, BOARD_ROOT] as const;
 
 function showsIssueData(query: Query): boolean {
-  return query.isActive() && query.state.data !== undefined;
+  return query.getObserversCount() > 0 && query.state.data !== undefined;
 }
 
 function refreshIssueRoot(client: QueryClient, root: string): Promise<void>[] {
