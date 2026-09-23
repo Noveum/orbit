@@ -33,6 +33,32 @@ describe('DeploymentSettingsPage', () => {
     role = 'admin';
     render(await DeploymentSettingsPage());
     expect(screen.getByRole('heading', { name: 'Deployment setup' })).toBeVisible();
+    expect(
+      screen.getByRole('heading', { name: 'Where to configure your deployment' }),
+    ).toBeVisible();
+    expect(screen.getByText(/This page cannot save server credentials yet/)).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Slack setup' })).toHaveAttribute('href', '#slack');
+    expect(document.getElementById('slack')).not.toBeNull();
+    expect(screen.getByText('Set up the Slack app')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Refresh configuration status' })).toHaveAttribute(
+      'href',
+      '/settings/deployment',
+    );
+  });
+
+  it('renders variable presence without disclosing environment values', async () => {
+    const previous = process.env['SLACK_CLIENT_SECRET'];
+    process.env['SLACK_CLIENT_SECRET'] = 'do-not-render-existing-secret';
+    try {
+      role = 'admin';
+      const { container } = render(await DeploymentSettingsPage());
+      expect(container.textContent).toContain('SLACK_CLIENT_SECRET');
+      expect(container.textContent).toContain('Set in environment');
+      expect(container.innerHTML).not.toContain('do-not-render-existing-secret');
+    } finally {
+      if (previous === undefined) delete process.env['SLACK_CLIENT_SECRET'];
+      else process.env['SLACK_CLIENT_SECRET'] = previous;
+    }
   });
 
   it.each(['member', 'contributor', 'guest'] as const)(

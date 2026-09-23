@@ -1,13 +1,21 @@
 # Integrations
 
 Orbit includes GitHub and Slack as optional external product integrations. Each
-is configured per workspace under **Settings**, **Integrations**. Slack remains
-hidden until the deployment operator completes provider setup and enables its
-global server-side gate.
+is connected per workspace under **Settings**, **Integrations**. Workspace admins
+can see both providers even before the deployment operator configures them.
 
-When an integration is not configured, Orbit hides the affordance rather than
-showing a button that fails. If a connect button is missing, the environment
-variable behind it is unset.
+An unconfigured provider links to **Settings**, **Deployment setup**, which
+shows required variable names, their presence, hosting instructions, provider
+setup steps and manual verification checks. It never displays credential values.
+Slack also provides a manifest and provider URLs generated from
+`NEXT_PUBLIC_APP_URL`, once it is a valid public HTTPS origin with a DNS hostname.
+IP addresses cannot be used as Slack unfurl domains. The connect action
+remains unavailable until the required server configuration is present.
+
+Server credentials are currently managed through the hosting environment.
+Workspace admins can connect providers but cannot edit server credentials in
+Orbit. The proposed instance-administration follow-up is described in
+[Instance administration design](instance-administration-design.md).
 
 For the MCP server, which is how AI assistants connect, see [MCP server](mcp.md).
 
@@ -86,13 +94,18 @@ GITHUB_WEBHOOK_SECRET=<the secret you set>
 The private key is multi-line. Escaped `\n` sequences are handled, so you can
 paste it as one line into a hosting dashboard that will not take newlines.
 
-`GITHUB_APP_SLUG` is what makes the connect button appear.
-`GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are what let it discover
-repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` are what let
+All six variables must be present before Orbit offers a new installation.
+`GITHUB_APP_SLUG` identifies the app. `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`
+let it discover repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` let
 it exchange the callback code and confirm the installation belongs to the person
 connecting, so it refuses to connect anything without them rather than binding an
-installation it cannot attribute. All five need to be set for the flow to
-complete.
+installation it cannot attribute. `GITHUB_WEBHOOK_SECRET` verifies incoming
+updates. In an environment file, keep the PEM inside quotes. In a hosting
+provider's secret field, paste its contents without enclosing quotes.
+
+If configuration is later removed, existing connections remain visible, but new
+installation and Slack reconnect actions link back to setup until their required
+credentials are restored.
 
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.
@@ -101,7 +114,7 @@ repositories to install it on.
 
 Slack has one global, server-side capability gate. When `SLACK_ENABLED=true`,
 Slack becomes available to every current and future Orbit organization. False
-or unset keeps the settings card hidden, makes Slack routes return not found,
+or unset shows setup guidance to admins, makes Slack routes return not found,
 stops inbound event processing, and leaves the scheduled Slack DM worker with
 no eligible work.
 
