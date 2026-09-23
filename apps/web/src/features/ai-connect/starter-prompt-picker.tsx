@@ -111,13 +111,7 @@ export function StarterPromptPicker({ onError, clientId, clientName }: StarterPr
                 </a>
               </Button>
             ) : null}
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              aria-label="Copy starter prompt"
-              onClick={() => copy(prompt)}
-            >
+            <Button type="button" variant="primary" size="sm" onClick={() => copy(prompt)}>
               {copied ? (
                 <Check className="size-3.5" aria-hidden="true" />
               ) : (

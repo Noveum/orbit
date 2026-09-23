@@ -121,22 +121,12 @@ export function ConnectStep({ mcpUrl, onNext }: ConnectStepProps) {
       <div className="flex gap-2">
         <Button
           type="button"
-          variant="primary"
+          variant={connected ? 'primary' : 'secondary'}
           onClick={() => next().catch(() => undefined)}
           disabled={pending}
         >
-          Continue
+          {continueLabel(pending, connected)}
         </Button>
-        {connected ? null : (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => next().catch(() => undefined)}
-            disabled={pending}
-          >
-            Skip for now
-          </Button>
-        )}
       </div>
       {connected ? null : (
         <p className="text-2xs text-faint">
@@ -166,4 +156,9 @@ function ConnectionStatus({ status }: { status: McpConnectionsState }) {
         : `Could not check the connection yet: ${status.error}`}
     </p>
   );
+}
+
+function continueLabel(pending: boolean, connected: boolean): string {
+  if (pending) return 'Saving';
+  return connected ? 'Continue' : 'Continue without connecting';
 }

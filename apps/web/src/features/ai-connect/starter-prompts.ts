@@ -85,7 +85,7 @@ export const IMPORT_SOURCE_GUIDES: Record<ImportSource, SourceGuide> = {
 const ORIENT =
   'Call get_me, list_teams, list_states and list_labels so you know my workspace, and check what already exists so you never create duplicates.';
 const TIDY =
-  'Offer to archive the sample issues Orbit added when I signed up, such as "Welcome to Orbit", with archive_issue. Only archive them if I say yes.';
+  'If the workspace still has the sample issues Orbit adds to a new workspace, such as "Welcome to Orbit", ask whether I want them archived with archive_issue. Only archive them if I say yes.';
 
 function numbered(lines: readonly string[]): string {
   return lines.map((line, index) => `${index + 1}. ${line}`).join('\n');
@@ -100,8 +100,8 @@ function importPrompt(source: ImportSource): string {
     numbered([
       ORIENT,
       guide.reading,
-      'Before creating anything, show me a short plan: the teams, projects, labels and sprints you will create, and how many tasks go where. Wait for my OK.',
-      'Create everything in Orbit: projects with create_project, tasks with create_issue (keep the title, description, status, priority, assignee and due date), sprints with create_cycle, and longer notes or specs with create_doc.',
+      'Before creating anything, show me a short plan: the projects, labels and sprints you will create, which existing team each task goes to, and how many tasks go where. Only propose new teams if get_me shows I am an admin. Wait for my OK.',
+      'Create everything in Orbit: projects with create_project, tasks with create_issue (keep the title, description, status, priority and due date, and the assignee only when that person is already a member of this workspace; otherwise name them in the description), sprints with create_cycle, and longer notes or specs with create_doc.',
       'Finish with a summary of what you created and anything you could not bring over.',
       TIDY,
     ]),
