@@ -82,9 +82,15 @@ describe('useMcpConnections', () => {
     expect(calls).toBe(2);
   });
 
-  it('stops polling and listening once unmounted', () => {
+  it('stops polling and listening once unmounted', async () => {
     jest.useFakeTimers();
     const { unmount } = renderHook(() => useMcpConnections());
+    await act(async () => {
+      respond(0, { connections: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     unmount();
     act(() => {
       jest.advanceTimersByTime(MCP_CONNECTION_POLL_MS * 3);
