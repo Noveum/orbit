@@ -163,7 +163,7 @@ services:
   type: worker
   runtime: image
   image:
-    url: ghcr.io/noveum/orbit-bucket:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+    url: ghcr.io/noveum/orbit-bucket:sha-e219d286638b9479e7946979b4383ea4e99c5bd6
   plan: starter
   numInstances: 1
   envVars:
