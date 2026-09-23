@@ -177,6 +177,50 @@ describe('S3StorageDriver', () => {
 });
 
 describe('createStorageDriver', () => {
+  const storageEnv = {
+    S3_BUCKET: 'orbit-uploads',
+    S3_REGION: 'auto',
+    S3_ACCESS_KEY_ID: 'test-access-key',
+    S3_SECRET_ACCESS_KEY: 'test-secret-key',
+    S3_ENDPOINT: 'https://storage.example.com',
+  };
+
+  it('uses virtual hosted URLs when path style is explicitly disabled', async () => {
+    const driver = createStorageDriver({ ...storageEnv, S3_FORCE_PATH_STYLE: 'false' });
+    const upload = await driver.createUploadTarget('org_1/report.pdf', 'application/pdf', 100);
+    const download = await driver.getUrl('org_1/report.pdf', 120);
+    for (const value of [upload.url, download]) {
+      const url = new URL(value);
+      expect(url.hostname).toBe('orbit-uploads.storage.example.com');
+      expect(url.pathname).toBe('/org_1/report.pdf');
+      expect(url.searchParams.has('X-Amz-Signature')).toBe(true);
+    }
+  });
+
+  it('preserves path style defaults and explicit overrides for custom endpoints', async () => {
+    for (const pathStyle of [undefined, '', 'true', ' true ']) {
+      const driver = createStorageDriver({ ...storageEnv, S3_FORCE_PATH_STYLE: pathStyle });
+      const url = new URL(await driver.getUrl('org_1/report.pdf', 120));
+      expect(url.hostname).toBe('storage.example.com');
+      expect(url.pathname).toBe('/orbit-uploads/org_1/report.pdf');
+    }
+  });
+
+  it('keeps AWS virtual hosted URLs as the default without a custom endpoint', async () => {
+    const driver = createStorageDriver({ ...storageEnv, S3_ENDPOINT: '', S3_REGION: 'us-east-1' });
+    const url = new URL(await driver.getUrl('org_1/report.pdf', 120));
+    expect(url.hostname).toBe('orbit-uploads.s3.us-east-1.amazonaws.com');
+    expect(url.pathname).toBe('/org_1/report.pdf');
+  });
+
+  it('rejects invalid path style configuration instead of treating false-like text as true', () => {
+    for (const pathStyle of ['0', '1', 'FALSE', 'yes', 'disabled']) {
+      expect(() => createStorageDriver({ ...storageEnv, S3_FORCE_PATH_STYLE: pathStyle })).toThrow(
+        /S3_FORCE_PATH_STYLE must be true or false/,
+      );
+    }
+  });
+
   it('builds an s3 driver from explicit keys and endpoint', () => {
     expect(
       createStorageDriver({
