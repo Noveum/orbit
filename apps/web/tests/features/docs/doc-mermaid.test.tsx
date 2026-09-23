@@ -20,7 +20,12 @@ import {
   safeSvg,
 } from '@/features/docs/mermaid.ts';
 
-afterEach(cleanup);
+const diagramHosts: HTMLElement[] = [];
+
+afterEach(() => {
+  cleanup();
+  for (const host of diagramHosts.splice(0)) host.remove();
+});
 
 const DIAGRAM = ['```mermaid', 'graph TD', '  A[Start] --> B[Ship]', '```'].join('\n');
 
@@ -28,6 +33,7 @@ function blockFrom(markdown: string): HTMLElement {
   const host = document.createElement('div');
   host.innerHTML = renderMarkdown(markdown);
   document.body.append(host);
+  diagramHosts.push(host);
   return host;
 }
 
