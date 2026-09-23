@@ -1,0 +1,8 @@
+:3000 {
+  handle /api/ws {
+    reverse_proxy realtime:3100
+  }
+  handle {
+    reverse_proxy web:3000
+  }
+}

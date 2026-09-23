@@ -2,8 +2,8 @@
 
 This template packages Orbit's standalone Node application with Postgres, Redis,
 and MinIO for evaluation on your own computer. It is not a production deployment
-contract. Realtime still requires Vercel, so refresh other clients to see changes.
-Use [the Vercel guide](self-hosting.md#deploy-on-vercel) for realtime deployment.
+contract. A Node realtime service and gateway serve same-origin WebSockets,
+and a maintenance scheduler calls the application's authenticated cron routes.
 
 ## Complete dependency map
 
@@ -15,9 +15,9 @@ Use [the Vercel guide](self-hosting.md#deploy-on-vercel) for realtime deployment
 | Browser uploads and previews | Browser-reachable S3 endpoint and CORS | `http://orbit-storage.localhost:9000`, CORS scoped to `http://127.0.0.1:33170` |
 | First sign-in | Password, Google, GitHub, or configured Resend | Password sign-up enabled; fresh secrets generated locally |
 | Email OTP, invitations, password-reset email, email notifications | Resend and a verified sender domain | Not configured; supply your own credentials to enable |
-| Realtime, presence, live updates | Vercel Node WebSocket upgrade context | Unavailable in standalone Docker |
-| Notification retries and sprint rollover | Scheduled authenticated HTTP requests | Not scheduled in this local preview |
-| Analytics snapshots and retention cleanup | Scheduled authenticated HTTP requests | Not scheduled in this local preview |
+| Realtime, presence, live updates | Node WebSocket host, Redis and gateway | Same-origin `/api/ws`, origin checks and shared ticket authorization |
+| Notification retries and sprint rollover | Scheduled authenticated HTTP requests | Every minute through the scheduler service |
+| Analytics snapshots and retention cleanup | Scheduled authenticated HTTP requests | Every six hours and daily at 04:00 UTC |
 | GitHub integration | GitHub App credentials and webhook secret | Optional, not configured |
 | Slack integration | Slack app credentials and feature flag | Optional, disabled |
 | Remote MCP | This application's `/mcp` route and OAuth | Embedded in web; no additional MCP container or external API key |
@@ -60,10 +60,12 @@ Open `http://127.0.0.1:33170`, create an account with email and password, and
 complete workspace onboarding. No demo users or public passwords are installed.
 This is a separate Compose project from the development stack.
 
-Initialization creates `.env.docker.local` with three independent random secrets
+Initialization creates `.env.docker.local` with four independent random secrets
 and owner-only file permissions. It refuses to overwrite an existing file, because
 changing a database password in an environment file does not rotate an existing
 database. Keep the file private and preserve it across restarts and upgrades.
+`preview:start` adds a missing scheduler secret to older installations without
+rotating their existing credentials.
 
 The tooling image installs with Bun and builds Linux-native dependencies. The
 operator runs migrations explicitly before building. The runtime image contains
@@ -116,15 +118,16 @@ complete real authentication, and provide backups and an upgrade procedure.
 
 Scheduled jobs are declared in `apps/web/vercel.json`: notifications and sprint
 rollover every minute, analytics snapshots every six hours, and pruning daily at
-04:00 UTC. A non-Vercel deployment needs its own scheduler and a fresh `CRON_SECRET`
+04:00 UTC. The Docker scheduler uses the same UTC schedule and a fresh `CRON_SECRET`
 shared with the web service. Each job makes a GET request with
 `Authorization: Bearer <CRON_SECRET>`. Never expose that secret in a public template.
 
 Optional credentials must be supplied to both tooling and web through the shared
 environment mapping when they affect build-time authentication. Keep
-`ORBIT_DEV_LOGIN` and `NEXT_PUBLIC_REALTIME_URL` unset. Adding infrastructure alone
-does not provide Vercel's WebSocket upgrade context; portable realtime remains a
-separate prerequisite for a full production template.
+`ORBIT_DEV_LOGIN` and `NEXT_PUBLIC_REALTIME_URL` unset. Run exactly one scheduler
+per installation. Failed calls are logged and attempted at the next scheduled
+interval; downtime is not replayed. Check scheduler logs and test a change in two
+browser windows before relying on background work and live updates.
 
 ## Public VPS evaluation
 

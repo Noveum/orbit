@@ -152,9 +152,9 @@ domain verified in Resend, otherwise every send fails.
 
 Orbit is one Vercel project. The root directory is `apps/web`, the build runs
 `bun run build` there, and functions serve on the node runtime. The Docker Compose
-template in `deploy/docker` packages standalone Node for local evaluation with
-Postgres, Redis and MinIO. It does not provide realtime or scheduled maintenance
-jobs. See `docs/docker-preview.md`. Nothing runs in Kubernetes.
+template in `deploy/docker` packages standalone Node with Postgres, Redis and
+MinIO, a Node realtime host, an HTTP gateway routing `/api/ws`, and a maintenance
+scheduler. See `docs/docker-preview.md`. Nothing runs in Kubernetes.
 
 The node runtime is not optional. `/api/ws` upgrades through
 `experimental_upgradeWebSocket` from `@vercel/functions`, and Vercel only injects

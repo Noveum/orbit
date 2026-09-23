@@ -72,10 +72,11 @@ DMs. Follow [Configuration](configuration.md) for the variable reference.
 ## Provider limits
 
 Vercel's Node runtime provides the WebSocket upgrade bridge used by `/api/ws`.
-The current standalone Node and Docker preview can serve HTTP routes, but does
-not provide that bridge or schedule maintenance jobs. A RepoCloud VPS must
-install the application, provision dependencies, configure HTTPS and storage,
-and provide a scheduler; a running VPS alone does not deploy Orbit.
+The Docker preview supplies a separate Node realtime host using the same shared
+hub, a gateway routing `/api/ws`, and an authenticated maintenance scheduler.
+A RepoCloud VPS must install the complete stack and configure public HTTPS and
+storage addresses; a running VPS alone does not deploy Orbit. Running only the
+Next standalone HTTP server omits realtime and maintenance.
 
 A Netlify Next.js deployment is not currently an equivalent supported target.
 Its functions do not supply the Vercel-specific WebSocket bridge, and the

@@ -41,6 +41,10 @@ export function deploymentStatus(
   const google = configured(environment, ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']);
   const github = configured(environment, ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET']);
   const vercel = environment['VERCEL'] === '1';
+  const selfHosted = environment['ORBIT_SELF_HOSTED'] === 'true';
+  const realtimeDescription = selfHosted
+    ? 'The Docker gateway routes /api/ws to the Node realtime service. Check its health and Redis, then test changes in two browser windows.'
+    : 'Configure the Vercel Node WebSocket runtime or the Docker realtime service and gateway. An HTTP-only deployment does not provide live updates.';
   const slackEnabled = environment['SLACK_ENABLED']?.trim().toLowerCase() === 'true';
   const slack = check(
     environment,
@@ -132,10 +136,10 @@ export function deploymentStatus(
     {
       id: 'realtime',
       title: 'Live updates',
-      status: vercel ? 'Requires verification' : 'Unavailable',
+      status: vercel || selfHosted ? 'Requires verification' : 'Unavailable',
       description: vercel
         ? 'Test changes in two browser windows. Live updates require the Vercel Node WebSocket runtime and Redis.'
-        : 'This build requires the Vercel Node WebSocket runtime. Standalone Docker, VPS and Netlify deployments do not provide that bridge. Other clients need a refresh.',
+        : realtimeDescription,
       variables: [],
     },
     {
@@ -145,7 +149,7 @@ export function deploymentStatus(
         ? 'Requires verification'
         : 'Needs configuration',
       description:
-        'Schedule authenticated calls for notification retries and sprint rollover every minute, analytics snapshots every six hours, and pruning daily. A configured secret does not prove the scheduler is running. The Docker preview does not schedule these jobs.',
+        'Vercel cron and the Docker scheduler call notification retries and sprint rollover every minute, analytics snapshots every six hours, and pruning daily. Check execution logs. A configured secret does not prove the scheduler is running.',
       variables: ['CRON_SECRET'],
     },
   ];

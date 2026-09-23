@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { initializeDockerPreview } from './init-docker-preview';
+import { ensureDockerPreviewScheduler, initializeDockerPreview } from './init-docker-preview';
 
 type CommandRunner = (command: string[], root: string) => Promise<void>;
 
@@ -25,6 +25,7 @@ export async function startDockerPreview(
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
   }
+  await ensureDockerPreviewScheduler(root);
   for (const step of ['tools', 'infra', 'migrate', 'build', 'up', 'storage-check', 'status']) {
     await run([process.execPath, 'run', `preview:${step}`], root);
   }

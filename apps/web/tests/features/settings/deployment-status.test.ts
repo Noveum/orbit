@@ -14,7 +14,7 @@ describe('deploymentStatus', () => {
     },
   );
 
-  it('reports the actual limits of a fresh password-only Docker deployment', () => {
+  it('reports the actual limits of a password-only HTTP deployment', () => {
     const checks = deploymentStatus(admin, { ORBIT_PASSWORD_AUTH: 'true' });
     expect(checks.find((check) => check.id === 'authentication')?.status).toBe('Configured');
     expect(checks.find((check) => check.id === 'email')?.status).toBe('Needs configuration');
@@ -23,6 +23,18 @@ describe('deploymentStatus', () => {
     expect(checks.find((check) => check.id === 'registration')?.description).toContain(
       'Registration is open',
     );
+  });
+
+  it('requires runtime verification for Docker realtime and maintenance', () => {
+    const checks = deploymentStatus(admin, {
+      ORBIT_SELF_HOSTED: 'true',
+      CRON_SECRET: 'private-cron',
+    });
+    expect(checks.find((check) => check.id === 'realtime')?.status).toBe('Requires verification');
+    expect(checks.find((check) => check.id === 'realtime')?.description).toContain(
+      'Docker gateway',
+    );
+    expect(checks.find((check) => check.id === 'schedules')?.status).toBe('Requires verification');
   });
 
   it('does not claim delivery, live updates or scheduling have been tested', () => {
