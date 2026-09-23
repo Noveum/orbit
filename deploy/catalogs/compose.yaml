@@ -73,9 +73,15 @@ services:
       retries: 30
   web:
     image: ${ORBIT_IMAGE:?required}
+    command:
+    - sh
+    - -ec
+    - |
+      export DATABASE_URL="$$(node -e 'const url = new URL("postgres://orbit@postgres:5432/orbit"); url.password = encodeURIComponent(process.env.POSTGRES_PASSWORD); process.stdout.write(url.href)')"
+      export DIRECT_URL="$$DATABASE_URL"
+      node apps/web/migrate.mjs && exec node apps/web/start.mjs
     environment:
-      DATABASE_URL: postgres://orbit:${POSTGRES_PASSWORD:?required}@postgres:5432/orbit
-      DIRECT_URL: postgres://orbit:${POSTGRES_PASSWORD:?required}@postgres:5432/orbit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
       DATABASE_PREPARED_STATEMENTS: 'true'
       REDIS_URL: redis://redis:6379
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?required}
@@ -129,11 +135,14 @@ services:
   realtime:
     image: ${ORBIT_IMAGE:?required}
     command:
-    - node
-    - apps/web/realtime.mjs
+    - sh
+    - -ec
+    - |
+      export DATABASE_URL="$$(node -e 'const url = new URL("postgres://orbit@postgres:5432/orbit"); url.password = encodeURIComponent(process.env.POSTGRES_PASSWORD); process.stdout.write(url.href)')"
+      export DIRECT_URL="$$DATABASE_URL"
+      exec node apps/web/realtime.mjs
     environment:
-      DATABASE_URL: postgres://orbit:${POSTGRES_PASSWORD:?required}@postgres:5432/orbit
-      DIRECT_URL: postgres://orbit:${POSTGRES_PASSWORD:?required}@postgres:5432/orbit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
       DATABASE_PREPARED_STATEMENTS: 'true'
       REDIS_URL: redis://redis:6379
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?required}

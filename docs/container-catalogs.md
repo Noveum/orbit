@@ -57,7 +57,7 @@ Use the intended HTTPS app and storage origins. Bind those custom domains to
 cost before deployment; persistent services in this Blueprint require paid plans.
 The Blueprint does not provision services until the deploying user approves it.
 
-[Deploy to Render](https://render.com/deploy?repo=https://github.com/Noveum/orbit/tree/codex/deployment-catalogs)
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Noveum/orbit)
 
 ## Zeabur
 
