@@ -7,6 +7,10 @@ preferences and connected integrations. Creating a workspace grants the creator
 the workspace admin role; it never grants access to server secrets or other
 workspaces. There is no shared default admin account or default password.
 
+Workspace creation, membership changes and invitations use Orbit's API and its
+shared authorization policy. The authentication plugin exposes only workspace
+session switching; its parallel organization management endpoints are disabled.
+
 ## Bootstrap an account
 
 Configure at least one complete first-login method before building: password

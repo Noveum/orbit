@@ -10,7 +10,6 @@ import {
 import { db, eq, inArray, schema } from '@orbit/db';
 import {
   assertEmailConfigured,
-  inviteEmail,
   resetPasswordEmail,
   sendEmail,
   signInCodeEmail,
@@ -21,10 +20,11 @@ import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
-import { emailOTP, mcp, organization } from 'better-auth/plugins';
+import { emailOTP, mcp } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { deploymentAuthOptions } from '@/lib/auth/deployment.ts';
+import { organizationSessionPlugin } from '@/lib/auth/organization.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
@@ -278,26 +278,7 @@ export const auth = betterAuth({
         });
       },
     }),
-    organization({
-      requireEmailVerificationOnInvitation: true,
-      sendInvitationEmail: async (data) => {
-        assertEmailConfigured();
-        const content = await inviteEmail({
-          organizationName: data.organization.name,
-          inviterName: data.inviter.user.name,
-          role: data.role,
-          acceptUrl: `${serverEnv().NEXT_PUBLIC_APP_URL}/invite/${data.id}`,
-        });
-        await sendEmail(db, {
-          to: data.email,
-          subject: content.subject,
-          html: content.html,
-          text: content.text,
-          template: 'invite',
-          idempotencyKey: `org-invite:${data.id}`,
-        });
-      },
-    }),
+    organizationSessionPlugin(),
     mcp({
       loginPage: MCP_LOGIN_PATH,
       resource: mcpServerUrl(),

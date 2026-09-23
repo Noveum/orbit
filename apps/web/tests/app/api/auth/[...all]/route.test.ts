@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import {
+  createInvite,
   createOrganization,
   finalizeMcpConsent,
   recordMcpGrant,
@@ -8,7 +9,7 @@ import {
   verifyMcpAccessToken,
 } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, eq, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
 import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
 import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
@@ -18,6 +19,97 @@ import { nativeFetchGlobals } from '../../../../../tests-preload.ts';
 const APP_ORIGIN = 'http://localhost:3000';
 const CALLBACK_URL = 'http://127.0.0.1:9000/callback';
 const VALID_PKCE_CHALLENGE = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+
+describe('organization API boundary', () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  async function sessionFor(workspace: Workspace): Promise<string> {
+    const token = randomUUID();
+    await db.insert(schema.session).values({
+      id: randomUUID(),
+      token,
+      userId: workspace.adminUser.id,
+      activeOrganizationId: workspace.organizationId,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    return signedSessionCookie(token);
+  }
+
+  function request(path: string, cookie: string, body: unknown): Request {
+    return new Request(`${APP_ORIGIN}/api/auth/organization/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: APP_ORIGIN, cookie },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('cannot accept an admin invite through a second API after the inviter is demoted', async () => {
+    const workspace = await createWorkspace('invitation-boundary');
+    const recipient = await createWorkspace('invitation-recipient');
+    const { invitation } = await createInvite(workspace.admin, {
+      email: recipient.adminUser.email,
+      role: 'admin',
+      teamIds: [workspace.teamId],
+    });
+    await db
+      .update(schema.member)
+      .set({ role: 'member' })
+      .where(eq(schema.member.userId, workspace.adminUser.id));
+    const cookie = await sessionFor(recipient);
+    await withNativeFetchGlobals(async () => {
+      const response = await authPost(
+        request('accept-invitation', cookie, { invitationId: invitation.id }),
+      );
+      expect(response.status).toBe(404);
+    });
+    const [stored] = await db
+      .select()
+      .from(schema.invitation)
+      .where(eq(schema.invitation.id, invitation.id));
+    expect(stored?.status).toBe('pending');
+    expect(
+      await db
+        .select()
+        .from(schema.member)
+        .where(
+          and(
+            eq(schema.member.organizationId, workspace.organizationId),
+            eq(schema.member.userId, recipient.adminUser.id),
+          ),
+        ),
+    ).toHaveLength(0);
+  });
+
+  it('rejects alternate workspace creation without producing an owner role or uninitialized workspace', async () => {
+    const workspace = await createWorkspace('creation-boundary');
+    const cookie = await sessionFor(workspace);
+    await withNativeFetchGlobals(async () => {
+      const response = await authPost(
+        request('create', cookie, { name: 'Bypass', slug: 'bypass' }),
+      );
+      expect(response.status).toBe(404);
+    });
+    expect(await db.select().from(schema.organization)).toHaveLength(1);
+  });
+
+  it('preserves workspace switching and checks membership for the target', async () => {
+    const workspace = await createWorkspace('switch-boundary');
+    const other = await createWorkspace('switch-other');
+    const cookie = await sessionFor(workspace);
+    await withNativeFetchGlobals(async () => {
+      const response = await authPost(
+        request('set-active', cookie, { organizationId: workspace.organizationId }),
+      );
+      expect(response.status).toBe(200);
+      const denied = await authPost(
+        request('set-active', cookie, { organizationId: other.organizationId }),
+      );
+      expect(denied.status).toBe(403);
+    });
+  });
+});
 
 function authorizeRequest(search: URLSearchParams, cookie?: string): Request {
   const request = new Request(`${APP_ORIGIN}/api/auth/mcp/authorize?${search.toString()}`);
