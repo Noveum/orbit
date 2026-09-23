@@ -113,8 +113,15 @@ export function githubUserVerificationReady(): boolean {
   return config.clientId.length > 0 && config.clientSecret.length > 0;
 }
 
-export function githubConnectReady(): boolean {
-  return githubAppConfig().slug.length > 0;
+export function githubConnectReady(environment: Environment = process.env): boolean {
+  return [
+    'GITHUB_APP_SLUG',
+    'GITHUB_APP_ID',
+    'GITHUB_APP_PRIVATE_KEY',
+    'GITHUB_APP_CLIENT_ID',
+    'GITHUB_APP_CLIENT_SECRET',
+    'GITHUB_WEBHOOK_SECRET',
+  ].every((key) => configured(environment[key]));
 }
 
 export function githubDiscoveryReady(): boolean {

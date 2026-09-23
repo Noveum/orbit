@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { parseEnv } from 'node:util';
 import { SLACK_BOT_SCOPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { deploymentGuides } from '@/features/settings/deployment-guides.ts';
@@ -44,6 +45,20 @@ describe('deployment setup guides', () => {
     });
   });
 
+  it('normalizes a DNS origin and preserves a non-default HTTPS port', () => {
+    const slack = deploymentGuides(admin, {
+      NEXT_PUBLIC_APP_URL: 'https://Orbit.Example.com:8443/',
+    }).find((guide) => guide.id === 'slack');
+    expect(slack?.values).toContainEqual({
+      label: 'Slack OAuth redirect URL',
+      value: 'https://orbit.example.com:8443/api/integrations/slack/callback',
+    });
+    expect(slack?.values).toContainEqual({
+      label: 'Slack link unfurl domain',
+      value: 'orbit.example.com',
+    });
+  });
+
   it.each([
     '',
     'invalid',
@@ -52,6 +67,13 @@ describe('deployment setup guides', () => {
     'http://localhost:3000',
     'https://localhost',
     'https://127.0.0.1',
+    'https://127.0.0.2',
+    'https://192.168.1.10',
+    'https://203.0.113.10',
+    'https://[::1]',
+    'https://orbit.local',
+    'https://bad_host.example.com',
+    'https://orbit..example.com',
     'https://app.localhost',
     'https://secret:password@orbit.example.com',
     'https://orbit.example.com/path',
@@ -90,5 +112,16 @@ describe('deployment setup guides', () => {
     expect(serialized).toContain('RESEND_API_KEY');
     expect(serialized).toContain('SLACK_SIGNING_SECRET');
     expect(serialized).toContain('GITHUB_WEBHOOK_SECRET');
+  });
+
+  it('preserves multiline private keys when the GitHub template is filled in', () => {
+    const template = deploymentGuides(admin, {})
+      .find((guide) => guide.id === 'github')
+      ?.values.find((value) => value.label === 'GitHub environment template')?.value;
+    if (template === undefined) throw new Error('Missing GitHub template.');
+    const pem = '-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----';
+    expect(parseEnv(template.replace('<private-key-pem>', pem))['GITHUB_APP_PRIVATE_KEY']).toBe(
+      pem,
+    );
   });
 });

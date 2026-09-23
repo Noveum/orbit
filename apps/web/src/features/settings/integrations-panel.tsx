@@ -188,12 +188,14 @@ function ConnectCta({
   href,
   label,
   pendingHint,
+  variant = 'primary',
 }: {
   canManage: boolean;
   enabled: boolean;
   href: string;
   label: string;
   pendingHint: string;
+  variant?: 'primary' | 'secondary';
 }) {
   if (!canManage) return null;
   if (!enabled) {
@@ -203,7 +205,7 @@ function ConnectCta({
       </p>
     );
   }
-  return <ConnectLink href={href} label={label} variant="primary" />;
+  return <ConnectLink href={href} label={label} variant={variant} />;
 }
 
 function LinkedChannelRow({
@@ -375,10 +377,13 @@ function SlackSection({
                   {syncing ? 'Syncing Slack members' : 'Sync Slack members'}
                 </Button>
               ) : null}
-              <ConnectLink
+              <ConnectCta
+                canManage={canManage}
+                enabled={settings.slackConnectEnabled}
                 href="/api/integrations/slack/start"
                 label="Reconnect Slack"
                 variant="secondary"
+                pendingHint="Ask the server operator to finish configuring the Slack app before reconnecting."
               />
             </div>
           ) : null}

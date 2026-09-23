@@ -8,7 +8,8 @@ An unconfigured provider links to **Settings**, **Deployment setup**, which
 shows required variable names, their presence, hosting instructions, provider
 setup steps and manual verification checks. It never displays credential values.
 Slack also provides a manifest and provider URLs generated from
-`NEXT_PUBLIC_APP_URL`, once it is a valid public HTTPS origin. The connect action
+`NEXT_PUBLIC_APP_URL`, once it is a valid public HTTPS origin with a DNS hostname.
+IP addresses cannot be used as Slack unfurl domains. The connect action
 remains unavailable until the required server configuration is present.
 
 Server credentials are currently managed through the hosting environment.
@@ -93,13 +94,18 @@ GITHUB_WEBHOOK_SECRET=<the secret you set>
 The private key is multi-line. Escaped `\n` sequences are handled, so you can
 paste it as one line into a hosting dashboard that will not take newlines.
 
-`GITHUB_APP_SLUG` is what makes the connect button appear.
-`GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are what let it discover
-repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` are what let
+All six variables must be present before Orbit offers a new installation.
+`GITHUB_APP_SLUG` identifies the app. `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`
+let it discover repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` let
 it exchange the callback code and confirm the installation belongs to the person
 connecting, so it refuses to connect anything without them rather than binding an
-installation it cannot attribute. All five need to be set for the flow to
-complete.
+installation it cannot attribute. `GITHUB_WEBHOOK_SECRET` verifies incoming
+updates. In an environment file, keep the PEM inside quotes. In a hosting
+provider's secret field, paste its contents without enclosing quotes.
+
+If configuration is later removed, existing connections remain visible, but new
+installation and Slack reconnect actions link back to setup until their required
+credentials are restored.
 
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.

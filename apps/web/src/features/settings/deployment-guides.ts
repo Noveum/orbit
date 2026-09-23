@@ -1,5 +1,6 @@
 import { SLACK_BOT_SCOPES } from '@orbit/shared/constants';
 import { assertCan, type Principal } from '@orbit/shared/policy';
+import { integrationSetupOriginSchema } from '@orbit/shared/validators';
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -18,25 +19,8 @@ export interface DeploymentGuide {
 }
 
 function deploymentOrigin(environment: Environment): string | null {
-  try {
-    const url = new URL(environment['NEXT_PUBLIC_APP_URL'] ?? '');
-    if (
-      url.protocol !== 'https:' ||
-      url.username.length > 0 ||
-      url.password.length > 0 ||
-      url.search.length > 0 ||
-      url.hash.length > 0 ||
-      url.pathname !== '/' ||
-      !url.hostname.includes('.') ||
-      url.hostname.endsWith('.localhost') ||
-      url.hostname === '127.0.0.1'
-    ) {
-      return null;
-    }
-    return url.origin;
-  } catch {
-    return null;
-  }
+  const result = integrationSetupOriginSchema.safeParse(environment['NEXT_PUBLIC_APP_URL']);
+  return result.success ? result.data : null;
 }
 
 function slackManifest(origin: string): string {
@@ -96,7 +80,7 @@ export function deploymentGuides(
   const addressStep =
     origin === null
       ? [
-          'First set NEXT_PUBLIC_APP_URL and BETTER_AUTH_URL to the public HTTPS origin, without a path, query or credentials, then rebuild and redeploy. Provider URLs appear here after that.',
+          'First set NEXT_PUBLIC_APP_URL and BETTER_AUTH_URL to the public HTTPS origin with a DNS hostname, without a path, query or credentials, then rebuild and redeploy. Provider URLs appear here after that. Slack link previews cannot use an IP address as their domain.',
         ]
       : [];
   return [
@@ -165,7 +149,7 @@ export function deploymentGuides(
         ...addressStep,
         'Create a GitHub App, separate from the GitHub OAuth app used for sign-in. Set its callback and webhook URLs to the values below. Enable Request user authorization (OAuth) during installation. Leave Setup URL empty or use the callback URL.',
         'Use the read-only repository permissions and event subscriptions in the GitHub App permissions guide. Generate a private key, a client secret and a webhook secret. Record the app ID, slug and client ID.',
-        'Set all six GitHub App environment variables below. Preserve the PEM private key, using actual newlines or escaped \\n sequences. Rebuild and redeploy, then connect GitHub from Integrations and select repositories.',
+        'Set all six GitHub App environment variables below. In an environment file, keep the quotes around the PEM private key and preserve its actual newlines or escaped \\n sequences. In a hosting provider secret field, paste the PEM contents without those enclosing quotes. Rebuild and redeploy, then connect GitHub from Integrations and select repositories.',
       ],
       verification: [
         'Confirm the connected installation lists the expected repositories, then associate a repository with an Orbit project or workspace.',
@@ -175,7 +159,7 @@ export function deploymentGuides(
         {
           label: 'GitHub environment template',
           value:
-            'GITHUB_APP_ID=<app-id>\nGITHUB_APP_SLUG=<app-slug>\nGITHUB_APP_PRIVATE_KEY=<private-key-pem>\nGITHUB_APP_CLIENT_ID=<client-id>\nGITHUB_APP_CLIENT_SECRET=<client-secret>\nGITHUB_WEBHOOK_SECRET=<webhook-secret>',
+            'GITHUB_APP_ID=<app-id>\nGITHUB_APP_SLUG=<app-slug>\nGITHUB_APP_PRIVATE_KEY="<private-key-pem>"\nGITHUB_APP_CLIENT_ID=<client-id>\nGITHUB_APP_CLIENT_SECRET=<client-secret>\nGITHUB_WEBHOOK_SECRET=<webhook-secret>',
         },
         ...githubValues,
       ],

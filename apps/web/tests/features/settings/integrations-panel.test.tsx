@@ -148,6 +148,25 @@ afterEach(() => {
 });
 
 describe('IntegrationsPanel', () => {
+  it('keeps existing Slack channels manageable without offering an unconfigured reconnect', () => {
+    const slack = CONNECTED_WITH_SLACK_TOKEN.slack;
+    if (slack === undefined) throw new Error('Missing Slack fixture.');
+    renderPanel(
+      { ...CONNECTED_WITH_SLACK_TOKEN, slack: { ...slack, slackConnectEnabled: false } },
+      true,
+    );
+    expect(screen.queryByRole('link', { name: 'Reconnect Slack' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Slack setup and verification' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#slack',
+    );
+    expect(
+      screen.getByText(/server operator to finish configuring the Slack app/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect a channel' })).toBeInTheDocument();
+    expect(lastRequest).toBeNull();
+  });
+
   it('offers provider links and shows only the selected integration', () => {
     renderPanel(CONNECTED_WITH_SLACK_TOKEN, true, [], 'github');
     const github = screen.getByRole('link', { name: 'GitHub' });
