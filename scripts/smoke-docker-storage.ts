@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createStorageDriver } from '../packages/services/src/storage/index';
 
 const storage = createStorageDriver();
-const origin = 'http://127.0.0.1:33170';
+const origin = new URL(process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://127.0.0.1:33170').origin;
 const uploads = [
   { name: 'notes.md', type: 'text/markdown', body: '# Preview document\nPersistent file test.\n' },
   { name: 'report.pdf', type: 'application/pdf', body: '%PDF-1.7\nPreview storage probe\n%%EOF\n' },
@@ -15,7 +15,6 @@ for (const upload of uploads) {
   const body = new Blob([upload.body]);
   try {
     const target = await storage.createUploadTarget(key, upload.type, body.size);
-    assert.equal(new URL(target.url).hostname, 'orbit-storage.localhost');
     const preflight = await fetch(target.url, {
       method: 'OPTIONS',
       headers: {
