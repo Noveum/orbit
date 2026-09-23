@@ -14,8 +14,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -33,12 +41,30 @@ jobs:
       - name: Publish commit-addressed images
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for component in runtime gateway bucket; do
             image="ghcr.io/noveum/orbit-${component}"
-            docker tag "orbit-${component}:build" "${image}:sha-${GITHUB_SHA}"
-            docker push "${image}:sha-${GITHUB_SHA}"
+            docker tag "orbit-${component}:build" "${image}:sha-${GITHUB_SHA}-${ARCH}"
+            docker push "${image}:sha-${GITHUB_SHA}-${ARCH}"
+          done
+          docker logout ghcr.io
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish multi-platform manifests
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in runtime gateway bucket; do
+            image="ghcr.io/noveum/orbit-${component}:sha-${GITHUB_SHA}"
+            docker manifest create "$image" "${image}-amd64" "${image}-arm64"
+            docker manifest push "$image"
           done
           docker logout ghcr.io
