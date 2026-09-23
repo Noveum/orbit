@@ -267,4 +267,18 @@ describe('LoginForm', () => {
       });
     });
   });
+
+  it('can finish email sign-in after switching from password registration with no name', async () => {
+    sendVerificationOtp.mockResolvedValue({ error: null });
+    signInEmailOtp.mockResolvedValue({ error: null });
+    const user = userEvent.setup();
+    renderForm(true, true);
+    await user.click(screen.getByText('Create an account with a password'));
+    await user.type(screen.getByLabelText('Email address'), 'ada@orbit.local');
+    await user.click(screen.getByText('Email me a code'));
+    await user.type(await screen.findByLabelText('Sign in code'), '123456');
+    await user.click(screen.getByText('Verify code'));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/my-issues'));
+    expect(signInEmailOtp).toHaveBeenCalledWith({ email: 'ada@orbit.local', otp: '123456' });
+  });
 });

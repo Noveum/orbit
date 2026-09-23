@@ -412,7 +412,7 @@ export function LoginForm({
         </div>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-2">
-          <EmailLoginSection enabled={passwordEnabled && creatingAccount}>
+          <EmailLoginSection enabled={passwordEnabled && creatingAccount && !otpSent}>
             <NameField value={name} onChange={setName} />
           </EmailLoginSection>
           <label htmlFor="login-email" className="sr-only">
