@@ -9,7 +9,7 @@ import {
 } from '@orbit/realtime-client/react';
 import type { SyncAction, SyncModel } from '@orbit/shared/events';
 import { scopes, syncCatchupSchema } from '@orbit/shared/events';
-import { type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
+import { type Query, type QueryClient, type QueryKey, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
@@ -685,13 +685,30 @@ function flushRoots(client: QueryClient, roots: RootInvalidations): void {
   }
 }
 
-async function resetIssueCaches(client: QueryClient): Promise<void> {
+const ISSUE_CACHE_ROOTS = [ISSUES_ROOT, ISSUE_ROOT, BOARD_ROOT] as const;
+
+function showsIssueData(query: Query): boolean {
+  return query.isActive() && query.state.data !== undefined;
+}
+
+function refreshIssueRoot(client: QueryClient, root: string): Promise<void>[] {
+  const shown = new Set(
+    client
+      .getQueryCache()
+      .findAll({ queryKey: [root] })
+      .filter(showsIssueData),
+  );
+  const reset = client.resetQueries({ queryKey: [root], predicate: (query) => !shown.has(query) });
+  if (shown.size === 0) return [reset];
+  return [
+    reset,
+    client.invalidateQueries({ queryKey: [root], predicate: (query) => shown.has(query) }),
+  ];
+}
+
+async function refreshIssueCaches(client: QueryClient): Promise<void> {
   recordIssueCacheReset(client);
-  await Promise.allSettled([
-    client.resetQueries({ queryKey: [ISSUES_ROOT] }),
-    client.resetQueries({ queryKey: [ISSUE_ROOT] }),
-    client.resetQueries({ queryKey: [BOARD_ROOT] }),
-  ]);
+  await Promise.allSettled(ISSUE_CACHE_ROOTS.flatMap((root) => refreshIssueRoot(client, root)));
 }
 
 interface IssueDetailRecovery {
@@ -792,7 +809,7 @@ async function reconcileCatchup(
 
 async function reconcileResume(reconciliation: ResumeReconciliation): Promise<void> {
   const { client, since, detailRecoveries, signal, current } = reconciliation;
-  await resetIssueCaches(client);
+  await refreshIssueCaches(client);
   if (!current()) return;
   const recovery = recoverIssueDetails(client, detailRecoveries, signal, current);
   if (since === 0) {
