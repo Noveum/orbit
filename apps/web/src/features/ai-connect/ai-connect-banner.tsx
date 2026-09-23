@@ -2,12 +2,14 @@
 
 import { Sparkles, X } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { CopyRow } from '../settings/integration-card.tsx';
 
 export function AiConnectBanner({ mcpUrl }: { readonly mcpUrl: string }) {
+  const router = useRouter();
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,6 +18,7 @@ export function AiConnectBanner({ mcpUrl }: { readonly mcpUrl: string }) {
     setError(null);
     try {
       await apiRequest('/api/onboarding/ai-connect-hint', { method: 'DELETE', body: {} });
+      router.refresh();
     } catch (caught) {
       setDismissed(false);
       setError(messageOf(caught));

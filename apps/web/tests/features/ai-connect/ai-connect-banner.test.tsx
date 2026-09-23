@@ -3,10 +3,17 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AiConnectBanner } from '@/features/ai-connect/ai-connect-banner.tsx';
 
+const refresh = mock();
+
+mock.module('next/navigation', () => ({
+  useRouter: () => ({ refresh }),
+}));
+
 const realFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  refresh.mockClear();
 });
 
 describe('AiConnectBanner', () => {
@@ -37,6 +44,7 @@ describe('AiConnectBanner', () => {
         expect.objectContaining({ method: 'DELETE' }),
       ),
     );
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
   it('comes back with the error when the dismissal cannot be saved', async () => {
@@ -47,5 +55,6 @@ describe('AiConnectBanner', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(await screen.findByRole('alert')).toBeVisible();
     expect(screen.getByTestId('ai-connect-banner')).toBeVisible();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

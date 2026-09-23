@@ -1,4 +1,4 @@
-import { getOnboardingStatus, listOrganizationsForUser } from '@orbit/core';
+import { listOrganizationsForUser } from '@orbit/core';
 import { HydrationBoundary } from '@tanstack/react-query';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -7,6 +7,7 @@ import { IssueWorkspaceProvider } from '@/features/issues/workspace-provider.tsx
 import { resolveMembership } from '@/lib/auth/principal.ts';
 import { requireSession } from '@/lib/auth/session.ts';
 import type { ShellTeam, ShellWorkspace } from '@/lib/navigation.ts';
+import { onboardingStatusFor } from '@/lib/onboarding-status.ts';
 import { WorkspaceCachePersistence } from '@/lib/query/persistence.tsx';
 import { dehydratedWorkspace } from '@/lib/query/prefetch.ts';
 import { WorkspaceRealtime } from '@/lib/realtime/provider.tsx';
@@ -22,7 +23,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
   const session = await requireSession();
 
   const [onboarding, membership, organizations] = await Promise.all([
-    getOnboardingStatus(session.user.id),
+    onboardingStatusFor(session.user.id),
     resolveMembership(session.user.id, session.session.activeOrganizationId ?? null),
     listOrganizationsForUser(session.user.id, { includeDeletingForAdmins: true }),
   ]);

@@ -91,4 +91,12 @@ describe('advanceOnboarding', () => {
     expect(status.state.profileComplete).toBe(true);
     expect(status.step).toBe('workspace');
   });
+
+  it('dismisses the AI connect hint for that user only', async () => {
+    const dismissing = await createUser('Nia New');
+    const bystander = await createUser('Bo Bystander');
+    await dismissAiConnectHint(dismissing.id);
+    expect((await getOnboardingStatus(dismissing.id)).state.aiConnectHintDismissed).toBe(true);
+    expect((await getOnboardingStatus(bystander.id)).state.aiConnectHintDismissed).toBeUndefined();
+  });
 });

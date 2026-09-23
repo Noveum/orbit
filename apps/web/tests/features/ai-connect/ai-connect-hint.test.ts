@@ -8,6 +8,7 @@ describe('shouldShowAiConnectHint', () => {
 
   it('hides the hint once any AI client is connected', () => {
     expect(shouldShowAiConnectHint({}, 1)).toBe(false);
+    expect(shouldShowAiConnectHint({}, 2)).toBe(false);
   });
 
   it('hides the hint after the user dismisses it', () => {
