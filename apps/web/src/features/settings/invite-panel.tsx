@@ -34,14 +34,14 @@ export function parseEmails(value: string): EmailParseResult {
         .filter((entry) => entry.length > 0),
     ),
   ];
-  const valid: string[] = [];
+  const valid = new Set<string>();
   const invalid: string[] = [];
   for (const entry of entries) {
     const parsed = emailSchema.safeParse(entry);
-    if (parsed.success) valid.push(parsed.data);
+    if (parsed.success) valid.add(parsed.data);
     else invalid.push(entry);
   }
-  return { valid, invalid };
+  return { valid: [...valid], invalid };
 }
 
 const ROLE_LABELS: Record<OrgRole, string> = {
@@ -55,10 +55,17 @@ export interface InvitePanelProps {
   readonly teams: readonly TeamBadge[];
   readonly invites: readonly PendingInviteView[];
   readonly canInvite: boolean;
+  readonly canInviteAdmins?: boolean;
   readonly emailEnabled?: boolean;
 }
 
-export function InvitePanel({ teams, invites, canInvite, emailEnabled = true }: InvitePanelProps) {
+export function InvitePanel({
+  teams,
+  invites,
+  canInvite,
+  canInviteAdmins = false,
+  emailEnabled = true,
+}: InvitePanelProps) {
   const router = useRouter();
   const [emails, setEmails] = useState('');
   const [role, setRole] = useState<OrgRole>('member');
@@ -69,6 +76,7 @@ export function InvitePanel({ teams, invites, canInvite, emailEnabled = true }: 
   const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
 
   const parsed = parseEmails(emails);
+  const permittedRole = role === 'admin' && !canInviteAdmins ? 'member' : role;
 
   function toggleTeam(teamId: string): void {
     setTeamIds((current) =>
@@ -94,7 +102,11 @@ export function InvitePanel({ teams, invites, canInvite, emailEnabled = true }: 
       await apiRequest('/api/invites', {
         method: 'POST',
         body: {
-          invites: parsed.valid.map((email) => ({ email, role, teamIds: [...teamIds] })),
+          invites: parsed.valid.map((email) => ({
+            email,
+            role: permittedRole,
+            teamIds: [...teamIds],
+          })),
         },
       });
       setSent(parsed.valid);
@@ -152,16 +164,18 @@ export function InvitePanel({ teams, invites, canInvite, emailEnabled = true }: 
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-muted text-xs">Role</span>
-              <Select value={role} onValueChange={(next) => setRole(next as OrgRole)}>
+              <Select value={permittedRole} onValueChange={(next) => setRole(next as OrgRole)}>
                 <SelectTrigger className="h-7 w-36 text-xs" aria-label="Invite role">
-                  <SelectValue>{ROLE_LABELS[role]}</SelectValue>
+                  <SelectValue>{ROLE_LABELS[permittedRole]}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {ORG_ROLES.map((entry) => (
-                    <SelectItem key={entry} value={entry}>
-                      {ROLE_LABELS[entry]}
-                    </SelectItem>
-                  ))}
+                  {ORG_ROLES.filter((entry) => entry !== 'admin' || canInviteAdmins).map(
+                    (entry) => (
+                      <SelectItem key={entry} value={entry}>
+                        {ROLE_LABELS[entry]}
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectContent>
               </Select>
             </div>

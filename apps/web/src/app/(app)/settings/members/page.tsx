@@ -1,4 +1,4 @@
-import { can } from '@orbit/shared/policy';
+import { can, canAssignRole } from '@orbit/shared/policy';
 import { emailConfigured } from '@orbit/shared/utils';
 import {
   listMemberViews,
@@ -31,6 +31,7 @@ export default async function MembersSettingsPage() {
         teams={teams}
         invites={invites}
         canInvite={canInvite}
+        canInviteAdmins={canAssignRole(principal.role, 'admin')}
         emailEnabled={emailConfigured(process.env)}
       />
     </section>
