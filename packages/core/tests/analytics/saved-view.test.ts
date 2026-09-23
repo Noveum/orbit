@@ -160,18 +160,10 @@ describe('saved analytics views', () => {
 
 describe('checkpoints', () => {
   it('captures cycle numbers that do not drift when the data changes later', async () => {
-    const capturedAt = new Date();
-    const createdAt = new Date(capturedAt.getTime() - 1_000);
-    await insertIssue(workspace, {
-      number: 1,
-      state: 'Done',
-      cycleId,
-      createdAt,
-      completedAt: createdAt,
-    });
-    await insertIssue(workspace, { number: 2, state: 'In Progress', cycleId, createdAt });
+    await insertIssue(workspace, { number: 1, state: 'Done', cycleId, completedAt: new Date() });
+    await insertIssue(workspace, { number: 2, state: 'In Progress', cycleId });
 
-    await createCheckpoint(workspace.admin, { cycleId, label: 'Mid sprint' }, capturedAt);
+    await createCheckpoint(workspace.admin, { cycleId, label: 'Mid sprint' });
     const [before] = await listCheckpoints(workspace.admin, cycleId);
     expect(before?.label).toBe('Mid sprint');
     expect(before?.scope).toBe(2);
