@@ -14,6 +14,7 @@ Build from the repository root:
 ```sh
 docker build -f deploy/docker/Dockerfile.catalog -t orbit-runtime .
 docker build -f deploy/docker/Dockerfile.gateway -t orbit-gateway .
+docker build -f deploy/docker/Dockerfile.bucket -t orbit-bucket .
 ```
 
 The build uses non-secret placeholders. Supply real settings at runtime. Bind
@@ -24,9 +25,8 @@ The bucket initializer persists the CORS allowlist and waits for it to load.
 
 Generate distinct random `POSTGRES_PASSWORD`, `MINIO_PASSWORD`,
 `BETTER_AUTH_SECRET` and `CRON_SECRET` values. `ORBIT_IMAGE` and
-`ORBIT_GATEWAY_IMAGE` identify the same tested source commit. Catalog infrastructure
-images use immutable digests. Image publication currently targets Linux amd64;
-local source builds also work on Linux arm64.
+`ORBIT_GATEWAY_IMAGE` and `ORBIT_BUCKET_IMAGE` identify the same tested source commit. Catalog infrastructure
+images use immutable digests. Image publication builds Linux amd64 and arm64 on native runners.
 
 Run exactly one scheduler. Configure Resend and a verified `EMAIL_FROM` to enable
 email invitations and recovery. Configure OAuth providers separately if needed.
@@ -44,3 +44,23 @@ Container images are built by the Container images workflow from `containers-*`
 tags and published with immutable source-commit tags. Catalog acceptance and
 public template availability are recorded separately from a submitted pull
 request. Paid infrastructure must be provisioned by the person deploying Orbit.
+
+## Render
+
+The repository includes a [Render Blueprint](../render.yaml) for the gateway,
+web app, realtime, scheduler, storage initializer, MinIO, PostgreSQL and Redis.
+During initial setup, provide `BETTER_AUTH_URL` and `S3_ENDPOINT` on `orbit-web`.
+Use the intended HTTPS app and storage origins. Bind those custom domains to
+`orbit` and `orbit-storage` before signing in. Render displays the infrastructure
+cost before deployment; persistent services in this Blueprint require paid plans.
+The Blueprint does not provision services until the deploying user approves it.
+
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Noveum/orbit/tree/codex/deployment-catalogs)
+
+## Zeabur
+
+[Deploy Orbit on Zeabur](https://zeabur.com/templates/1JSTL8).
+The [template source](../deploy/catalogs/zeabur.yaml) includes all eight services.
+Choose different app and storage domains. Zeabur generates credentials and keeps
+PostgreSQL, Redis and MinIO data in persistent volumes. Deployment requires an
+eligible server or cluster; creating the template listing does not rent a server.

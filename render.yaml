@@ -1,0 +1,189 @@
+envVarGroups:
+- name: orbit-settings
+  envVars:
+  - key: BETTER_AUTH_SECRET
+    generateValue: true
+  - key: CRON_SECRET
+    generateValue: true
+databases:
+- name: orbit-postgres
+  databaseName: orbit
+  user: orbit
+  postgresMajorVersion: '18'
+  plan: basic-256mb
+  ipAllowList: []
+services:
+- name: orbit-web
+  type: pserv
+  runtime: image
+  image:
+    url: ghcr.io/noveum/orbit-runtime:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+  plan: starter
+  numInstances: 1
+  envVars:
+  - fromGroup: orbit-settings
+  - key: DATABASE_URL
+    fromDatabase:
+      name: orbit-postgres
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: orbit-redis
+      property: connectionString
+  - key: ORBIT_PASSWORD_AUTH
+    value: 'true'
+  - key: ORBIT_SELF_HOSTED
+    value: 'true'
+  - key: PORT
+    value: '3000'
+  - key: S3_REGION
+    value: us-east-1
+  - key: S3_BUCKET
+    value: orbit-uploads
+  - key: S3_ACCESS_KEY_ID
+    value: orbit
+  - key: S3_SECRET_ACCESS_KEY
+    fromService:
+      type: web
+      name: orbit-storage
+      envVarKey: MINIO_ROOT_PASSWORD
+  - key: BETTER_AUTH_URL
+    sync: false
+  - key: S3_ENDPOINT
+    sync: false
+  dockerCommand: sh -c 'export NEXT_PUBLIC_APP_URL="$BETTER_AUTH_URL"; node apps/web/migrate.mjs
+    && exec node apps/web/start.mjs'
+  healthCheckPath: /api/health
+- name: orbit-realtime
+  type: pserv
+  runtime: image
+  image:
+    url: ghcr.io/noveum/orbit-runtime:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+  plan: starter
+  numInstances: 1
+  envVars:
+  - fromGroup: orbit-settings
+  - key: DATABASE_URL
+    fromDatabase:
+      name: orbit-postgres
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: orbit-redis
+      property: connectionString
+  - key: ORBIT_PASSWORD_AUTH
+    value: 'true'
+  - key: ORBIT_SELF_HOSTED
+    value: 'true'
+  - key: PORT
+    value: '3100'
+  - key: S3_REGION
+    value: us-east-1
+  - key: S3_BUCKET
+    value: orbit-uploads
+  - key: S3_ACCESS_KEY_ID
+    value: orbit
+  - key: S3_SECRET_ACCESS_KEY
+    fromService:
+      type: web
+      name: orbit-storage
+      envVarKey: MINIO_ROOT_PASSWORD
+  - key: BETTER_AUTH_URL
+    fromService:
+      type: pserv
+      name: orbit-web
+      envVarKey: BETTER_AUTH_URL
+  - key: S3_ENDPOINT
+    fromService:
+      type: pserv
+      name: orbit-web
+      envVarKey: S3_ENDPOINT
+  dockerCommand: node apps/web/realtime.mjs
+- name: orbit
+  type: web
+  runtime: image
+  image:
+    url: ghcr.io/noveum/orbit-gateway:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+  plan: starter
+  numInstances: 1
+  envVars:
+  - key: PORT
+    value: '3000'
+  - key: ORBIT_WEB_UPSTREAM
+    fromService:
+      type: pserv
+      name: orbit-web
+      property: hostport
+  - key: ORBIT_REALTIME_UPSTREAM
+    fromService:
+      type: pserv
+      name: orbit-realtime
+      property: hostport
+  - key: ORBIT_TRUSTED_PROXIES
+    value: private_ranges
+  healthCheckPath: /api/health
+- name: orbit-scheduler
+  type: worker
+  runtime: image
+  image:
+    url: ghcr.io/noveum/orbit-runtime:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+  plan: starter
+  numInstances: 1
+  envVars:
+  - fromGroup: orbit-settings
+  - key: ORBIT_WEB_HOSTPORT
+    fromService:
+      type: pserv
+      name: orbit-web
+      property: hostport
+  dockerCommand: sh -c 'export ORBIT_INTERNAL_URL="http://$ORBIT_WEB_HOSTPORT"; exec
+    node apps/web/scheduler.mjs'
+- name: orbit-storage
+  type: web
+  runtime: image
+  image:
+    url: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+  plan: starter
+  numInstances: 1
+  envVars:
+  - fromGroup: orbit-settings
+  - key: MINIO_ROOT_USER
+    value: orbit
+  - key: MINIO_ROOT_PASSWORD
+    generateValue: true
+  dockerCommand: minio server /data --address :9000
+  disk:
+    name: orbit-files
+    mountPath: /data
+    sizeGB: 10
+  healthCheckPath: /minio/health/ready
+- name: orbit-bucket
+  type: worker
+  runtime: image
+  image:
+    url: ghcr.io/noveum/orbit-bucket:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+  plan: starter
+  numInstances: 1
+  envVars:
+  - key: ORBIT_APP_URL
+    fromService:
+      type: pserv
+      name: orbit-web
+      envVarKey: BETTER_AUTH_URL
+  - key: MINIO_PASSWORD
+    fromService:
+      type: web
+      name: orbit-storage
+      envVarKey: MINIO_ROOT_PASSWORD
+  - key: ORBIT_STORAGE_UPSTREAM
+    fromService:
+      type: web
+      name: orbit-storage
+      property: hostport
+- name: orbit-redis
+  type: keyvalue
+  plan: starter
+  ipAllowList: []
+  maxmemoryPolicy: noeviction
