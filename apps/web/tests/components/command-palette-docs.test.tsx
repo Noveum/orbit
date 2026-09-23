@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { HIGHLIGHT_END, HIGHLIGHT_START } from '@orbit/shared/utils';
 import userEvent from '@testing-library/user-event';
 import * as nextThemes from 'next-themes';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
@@ -50,6 +51,7 @@ function doc(id: string, title: string, snippet: string): DocSummary {
 const results: readonly DocSummary[] = [
   doc('doc_titled', 'Presence protocol', ''),
   doc('doc_body', 'Deploy runbook', '…step four checks presence before the cutover.'),
+  doc('doc_marked', 'Search runbook', `Check ${HIGHLIGHT_START}presence${HIGHLIGHT_END} first.`),
 ];
 
 const realFetch = globalThis.fetch;
@@ -108,6 +110,13 @@ afterEach(() => {
 });
 
 describe('command palette doc results', () => {
+  it('renders database highlight markers without exposing control glyphs', async () => {
+    renderPalette();
+    await search('presence');
+    const snippet = await hit('palette-doc-snippet-doc_marked');
+    expect(snippet.textContent).toBe('Check presence first.');
+    expect(snippet.querySelector('mark')?.textContent).toBe('presence');
+  });
   it('finds a doc from anywhere, not only inside /docs', async () => {
     renderPalette();
     await search('presence');
