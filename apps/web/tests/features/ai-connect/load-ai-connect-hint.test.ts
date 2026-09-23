@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
-import { dismissAiConnectHint } from '@orbit/core';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import * as core from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, schema } from '@orbit/db';
 import { aiConnectHintVisible } from '@/features/ai-connect/load-ai-connect-hint.ts';
@@ -25,7 +25,14 @@ async function grant(userId: string, revoked: boolean): Promise<void> {
   });
 }
 
+afterEach(() => {
+  grantLookups.mockRestore();
+});
+
+let grantLookups: ReturnType<typeof spyOn>;
+
 beforeEach(async () => {
+  grantLookups = spyOn(core, 'listMcpGrants');
   await resetDatabase();
   workspace = await createWorkspace('Nova');
 });
@@ -45,8 +52,9 @@ describe('aiConnectHintVisible', () => {
     expect(await aiConnectHintVisible(workspace.adminUser.id)).toBe(false);
   });
 
-  it('hides it after the user dismissed it', async () => {
-    await dismissAiConnectHint(workspace.adminUser.id);
+  it('hides it after the user dismissed it, without looking up their grants', async () => {
+    await core.dismissAiConnectHint(workspace.adminUser.id);
     expect(await aiConnectHintVisible(workspace.adminUser.id)).toBe(false);
+    expect(grantLookups).not.toHaveBeenCalled();
   });
 });
