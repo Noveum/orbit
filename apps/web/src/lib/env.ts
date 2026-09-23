@@ -113,8 +113,15 @@ export function githubUserVerificationReady(): boolean {
   return config.clientId.length > 0 && config.clientSecret.length > 0;
 }
 
-export function githubConnectReady(): boolean {
-  return githubAppConfig().slug.length > 0;
+export function githubConnectReady(environment: Environment = process.env): boolean {
+  return [
+    'GITHUB_APP_SLUG',
+    'GITHUB_APP_ID',
+    'GITHUB_APP_PRIVATE_KEY',
+    'GITHUB_APP_CLIENT_ID',
+    'GITHUB_APP_CLIENT_SECRET',
+    'GITHUB_WEBHOOK_SECRET',
+  ].every((key) => configured(environment[key]));
 }
 
 export function githubDiscoveryReady(): boolean {
@@ -132,9 +139,10 @@ export function slackAppConfig(): SlackAppConfig {
   return { clientId: env.SLACK_CLIENT_ID ?? '', clientSecret: env.SLACK_CLIENT_SECRET ?? '' };
 }
 
-export function slackConnectReady(): boolean {
-  const config = slackAppConfig();
-  return config.clientId.length > 0 && config.clientSecret.length > 0;
+export function slackConnectReady(environment: Environment = process.env): boolean {
+  return ['SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'].every((key) =>
+    configured(environment[key]),
+  );
 }
 
 const publicAppUrlSchema = z.url().default('http://localhost:3000');
