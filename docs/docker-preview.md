@@ -155,6 +155,27 @@ the storage URL. Terminate HTTPS at a reverse proxy forwarding the app to
 `127.0.0.1:33170` and storage to `127.0.0.1:9000`. Keep the MinIO console,
 Postgres and Redis private. Changing a public URL requires a rebuild.
 
+Configure `ORBIT_TRUSTED_PROXIES` in `.env.docker.local` with the IP addresses or
+CIDR ranges of the HTTPS proxy as seen by the gateway container, separated by
+spaces. A host proxy usually connects from the Compose network's bridge gateway
+address, not `127.0.0.1`. Inspect that network and use the exact address with `/32`
+for IPv4 or `/128` for IPv6. Keep the network address stable or update this setting
+after recreating the network. The default trusts only container loopback.
+
+For example, if the proxy connects from `172.20.0.1`, use
+`ORBIT_TRUSTED_PROXIES=172.20.0.1/32`. Do not copy that example address without
+checking your network. Keep the published port on loopback, and ensure the outer
+proxy replaces client-supplied forwarding headers or appends the actual client IP.
+With additional proxy hops, list only the trusted proxy addresses and ensure each
+hop sanitizes or appends its immediate peer. Never trust all public IP ranges.
+
+The gateway uses Caddy's [strict trusted-proxy parsing](https://caddyserver.com/docs/caddyfile/options#trusted-proxies-strict)
+and forwards one resolved client IP to authentication. This preserves separate
+login rate-limit buckets and the original HTTPS scheme. Without the trusted-proxy
+setting, public users share the outer proxy's IP and can rate-limit each other.
+Run `bun run preview:up` after changing the setting to recreate the gateway.
+The container regression tests run with `bun run test:docker-gateway` and in CI.
+
 The shared environment mapping also forwards Resend, Google sign-in, GitHub
 sign-in, GitHub App, Slack and scheduler configuration from this file. Add
 `RESEND_API_KEY` and `EMAIL_FROM` with a verified sender to enable email codes,
