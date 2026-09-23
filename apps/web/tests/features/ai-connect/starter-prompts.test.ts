@@ -37,6 +37,18 @@ describe('starterPrompt', () => {
     }
   });
 
+  it('only assigns imported tasks to people who are already workspace members', () => {
+    expect(starterPrompt('import', 'asana')).toContain(
+      'the assignee only when that person is already a member of this workspace',
+    );
+  });
+
+  it('only proposes new teams to admins when importing', () => {
+    expect(starterPrompt('import', 'jira')).toContain(
+      'Only propose new teams if get_me shows I am an admin.',
+    );
+  });
+
   it('checks for duplicates and offers, never forces, archiving the onboarding sample issues', () => {
     for (const kind of STARTER_KINDS) {
       const prompt = starterPrompt(kind, 'asana');

@@ -19,39 +19,58 @@ export interface McpConnectionsState {
   readonly error: string | null;
 }
 
+async function fetchConnections(): Promise<McpConnectionsState> {
+  try {
+    const { connections } = connectionsResponseSchema.parse(
+      await apiRequest<unknown>('/api/integrations/mcp'),
+    );
+    return { connections, error: null };
+  } catch (caught) {
+    const error =
+      caught instanceof z.ZodError ? 'Unexpected response from Orbit.' : messageOf(caught);
+    return { connections: [], error };
+  }
+}
+
 export function useMcpConnections(): McpConnectionsState {
   const [state, setState] = useState<McpConnectionsState>({ connections: [], error: null });
 
   useEffect(() => {
     let active = true;
+    let inFlight = false;
+    const timer = window.setInterval(onTrigger, MCP_CONNECTION_POLL_MS);
+
+    function stop(): void {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onTrigger);
+      document.removeEventListener('visibilitychange', onTrigger);
+    }
 
     async function refresh(): Promise<void> {
-      if (document.visibilityState === 'hidden') return;
-      try {
-        const { connections } = connectionsResponseSchema.parse(
-          await apiRequest<unknown>('/api/integrations/mcp'),
-        );
-        if (active) setState({ connections, error: null });
-      } catch (caught) {
-        const message =
-          caught instanceof z.ZodError ? 'Unexpected response from Orbit.' : messageOf(caught);
-        if (active) setState((current) => ({ ...current, error: message }));
+      if (inFlight || document.visibilityState === 'hidden') return;
+      inFlight = true;
+      const result = await fetchConnections();
+      inFlight = false;
+      if (!active) return;
+      if (result.error === null) {
+        setState(result);
+        if (result.connections.length > 0) stop();
+      } else {
+        const { error } = result;
+        setState((previous) => ({ ...previous, error }));
       }
     }
 
-    function onVisible(): void {
+    function onTrigger(): void {
       refresh().catch(() => undefined);
     }
 
-    onVisible();
-    const timer = window.setInterval(onVisible, MCP_CONNECTION_POLL_MS);
-    window.addEventListener('focus', onVisible);
-    document.addEventListener('visibilitychange', onVisible);
+    onTrigger();
+    window.addEventListener('focus', onTrigger);
+    document.addEventListener('visibilitychange', onTrigger);
     return () => {
       active = false;
-      window.clearInterval(timer);
-      window.removeEventListener('focus', onVisible);
-      document.removeEventListener('visibilitychange', onVisible);
+      stop();
     };
   }, []);
 

@@ -66,13 +66,14 @@ describe('onboarding connect step', () => {
     );
   });
 
-  it('waits for a connection, then confirms it and drops the skip option', async () => {
+  it('waits for a connection, then confirms it and stops offering to continue without one', async () => {
     render(<ConnectStep mcpUrl={MCP_URL} onNext={mock()} />);
     expect(await screen.findByText(/Waiting for your AI tool/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Skip for now' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Continue without connecting' })).toBeVisible();
     approveConnectionElsewhere({ id: 'g1', clientName: 'Claude', organizationName: 'Acme' });
     expect(await screen.findByText(/Connected: Claude\./)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Skip for now' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Continue without connecting' })).toBeNull();
   });
 
   it('offers to open Claude with the prompt filled in only when Claude can run it', async () => {
@@ -98,14 +99,28 @@ describe('onboarding connect step', () => {
     installClipboard();
     expect(screen.getByTestId('starter-prompt-text')).toHaveTextContent('from Linear');
     await user.click(screen.getByLabelText(/Plan something new/));
-    await user.click(screen.getByRole('button', { name: 'Copy starter prompt' }));
+    await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeVisible();
     await waitFor(() => expect(clipboard).toEqual([starterPrompt('plan')]));
   });
 
-  it('advances the connect step when the user skips it', async () => {
+  it('copies the prompt for the tool the user is moving from', async () => {
+    render(<ConnectStep mcpUrl={MCP_URL} onNext={mock()} />);
+    const user = userEvent.setup();
+    installClipboard();
+    await user.click(screen.getByRole('combobox', { name: 'Tool you use today' }));
+    await user.click(screen.getByRole('option', { name: 'Trello' }));
+    expect(screen.getByTestId('starter-prompt-text')).toHaveTextContent('from Trello');
+    await user.click(screen.getByRole('button', { name: 'Copy prompt' }));
+    await waitFor(() => expect(clipboard).toEqual([starterPrompt('import', 'trello')]));
+  });
+
+  it('advances the connect step when the user continues without connecting', async () => {
     const onNext = mock();
     render(<ConnectStep mcpUrl={MCP_URL} onNext={onNext} />);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Skip for now' }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Continue without connecting' }));
     await waitFor(() => expect(onNext).toHaveBeenCalledWith({ completed: false, step: 'theme' }));
     expect(requests).toContainEqual({
       url: '/api/onboarding',
@@ -118,10 +133,12 @@ describe('onboarding connect step', () => {
     patchResponse = Response.json({ error: { message: 'Try again' } }, { status: 500 });
     const onNext = mock();
     render(<ConnectStep mcpUrl={MCP_URL} onNext={onNext} />);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Continue' }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Continue without connecting' }));
     expect(await screen.findByRole('alert')).toBeVisible();
     expect(onNext).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Continue without connecting' })).toBeEnabled();
   });
 });
 
