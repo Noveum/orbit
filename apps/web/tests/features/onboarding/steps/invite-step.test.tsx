@@ -10,6 +10,48 @@ afterEach(() => {
 });
 
 describe('onboarding invitations', () => {
+  it('does not discard an invalid teammate while sending the other invitations', async () => {
+    const request = mock(() => Promise.resolve(Response.json({})));
+    globalThis.fetch = request as unknown as typeof fetch;
+    const onNext = mock();
+    render(<InviteStep emailEnabled onNext={onNext} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Teammate 1 email'), 'valid@example.com');
+    await user.type(screen.getByLabelText('Teammate 2 email'), 'invalid');
+    await user.click(screen.getByRole('button', { name: 'Send invites' }));
+    expect(
+      screen.getByText('Correct the invalid email addresses before sending invitations.'),
+    ).toBeVisible();
+    expect(request).not.toHaveBeenCalled();
+    expect(onNext).not.toHaveBeenCalled();
+  });
+
+  it('sends all filled rows and advances after a successful invitation batch', async () => {
+    const onboarding = { completed: false, step: 'theme' };
+    const request = mock(() => Promise.resolve(Response.json({ onboarding })));
+    globalThis.fetch = request as unknown as typeof fetch;
+    const onNext = mock();
+    render(<InviteStep emailEnabled onNext={onNext} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Teammate 1 email'), 'one@example.com');
+    await user.type(screen.getByLabelText('Teammate 3 email'), 'three@example.com');
+    await user.click(screen.getByRole('button', { name: 'Send invites' }));
+    await waitFor(() => expect(onNext).toHaveBeenCalledWith(onboarding));
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledWith(
+      '/api/invites',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          invites: [
+            { email: 'one@example.com', role: 'member' },
+            { email: 'three@example.com', role: 'member' },
+          ],
+        }),
+      }),
+    );
+  });
+
   it('continues onboarding without submitting unavailable email invitations', async () => {
     const onboarding = { completed: false, step: 'theme' };
     const request = mock(() => Promise.resolve(Response.json({ onboarding })));

@@ -64,9 +64,9 @@ export function InviteStep({ onNext, emailEnabled }: InviteStepProps) {
     if (isLast && event.currentTarget.value.trim().length > 0) addRow();
   }
 
-  const validInvites = rows
+  const filledInvites = rows
     .map((row) => ({ email: row.email.trim(), role: row.role }))
-    .filter((row) => emailSchema.safeParse(row.email).success);
+    .filter((row) => row.email.length > 0);
 
   async function skip(): Promise<void> {
     setPending(true);
@@ -81,8 +81,12 @@ export function InviteStep({ onNext, emailEnabled }: InviteStepProps) {
 
   async function send(): Promise<void> {
     if (!emailEnabled) return;
-    if (validInvites.length === 0) {
+    if (filledInvites.length === 0) {
       setError('Add at least one email, or skip this step.');
+      return;
+    }
+    if (filledInvites.some((row) => !emailSchema.safeParse(row.email).success)) {
+      setError('Correct the invalid email addresses before sending invitations.');
       return;
     }
     setPending(true);
@@ -90,7 +94,7 @@ export function InviteStep({ onNext, emailEnabled }: InviteStepProps) {
     try {
       await apiRequest('/api/invites', {
         method: 'POST',
-        body: { invites: validInvites.map((row) => ({ email: row.email, role: row.role })) },
+        body: { invites: filledInvites },
       });
       onNext(await advanceStep({ step: 'invite' }));
     } catch (caught) {

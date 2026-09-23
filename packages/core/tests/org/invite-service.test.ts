@@ -58,6 +58,19 @@ describe('createInvite', () => {
     expect(actions).toHaveLength(2);
     expect(await listPendingInvites(workspace.admin)).toHaveLength(2);
   });
+
+  it('rejects duplicate addresses before replacing an existing invitation', async () => {
+    const email = 'teammate@example.com';
+    const { invitation } = await createInvite(workspace.admin, { email });
+    await expect(
+      createInvites(workspace.admin, {
+        invites: [{ email }, { email: email.toUpperCase() }],
+      }),
+    ).rejects.toThrow('Each email address can only be invited once per batch.');
+    const pending = await listPendingInvites(workspace.admin);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.id).toBe(invitation.id);
+  });
 });
 
 describe('acceptInvite', () => {
