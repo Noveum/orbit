@@ -22,7 +22,7 @@ const { POST: resend } = await import('../../../../src/app/api/invites/[id]/rese
 
 beforeEach(async () => {
   await resetDatabase();
-  workspace = await createWorkspace('Email configuration');
+  workspace = await createWorkspace('email-configuration');
   delete process.env['RESEND_API_KEY'];
   signedIn = true;
 });
