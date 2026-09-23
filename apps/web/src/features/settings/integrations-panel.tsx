@@ -44,10 +44,10 @@ export function IntegrationsPanel({
   mcpConnections,
 }: IntegrationsPanelProps) {
   const router = useRouter();
-  const activeProvider = integrationProvider(provider, canManage, settings.slack !== undefined);
+  const activeProvider = integrationProvider(provider, canManage);
   const providers = [
     ...(canManage ? [{ id: 'github', label: 'GitHub' }] : []),
-    ...(canManage && settings.slack !== undefined ? [{ id: 'slack', label: 'Slack' }] : []),
+    ...(canManage ? [{ id: 'slack', label: 'Slack' }] : []),
     { id: 'mcp', label: 'MCP server' },
   ];
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +103,21 @@ export function IntegrationsPanel({
               status={<ConnectionBadge connected={settings.github.connected} />}
             >
               <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
+            </IntegrationCard>
+          ) : null}
+          {activeProvider === 'slack' && settings.slack === undefined ? (
+            <IntegrationCard
+              title="Slack"
+              description="Send updates to Slack channels, receive personal notifications and preview Orbit links."
+              status={<Badge tone="outline">Disabled on this server</Badge>}
+            >
+              <p className="text-muted text-xs">
+                The server operator needs to configure and enable the Slack app. A workspace admin
+                can then connect a Slack workspace and choose its channels.
+              </p>
+              <Link href="/settings/deployment#slack" className="text-accent text-xs underline">
+                Set up Slack
+              </Link>
             </IntegrationCard>
           ) : null}
           {activeProvider !== 'slack' || settings.slack === undefined ? null : (
@@ -382,9 +397,12 @@ function SlackSection({
           enabled={settings.slackConnectEnabled}
           href="/api/integrations/slack/start"
           label="Add to Slack"
-          pendingHint="Ask a workspace admin to finish configuring the Slack app before connecting."
+          pendingHint="Ask the server operator to finish configuring the Slack app before connecting."
         />
       )}
+      <Link href="/settings/deployment#slack" className="text-accent text-xs underline">
+        Slack setup and verification
+      </Link>
     </IntegrationCard>
   );
 }

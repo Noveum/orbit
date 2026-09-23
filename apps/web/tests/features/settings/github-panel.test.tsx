@@ -135,6 +135,10 @@ describe('GithubPanel, connecting', () => {
     expect(
       screen.getByText(/server operator to finish configuring the GitHub App/),
     ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set up GitHub' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#github',
+    );
   });
 });
 

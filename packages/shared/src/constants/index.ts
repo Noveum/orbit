@@ -10,5 +10,6 @@ export * from './organization.ts';
 export * from './palette.ts';
 export * from './pattern.ts';
 export * from './project.ts';
+export * from './slack.ts';
 export * from './upload.ts';
 export * from './workflow-state.ts';

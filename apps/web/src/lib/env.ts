@@ -132,9 +132,10 @@ export function slackAppConfig(): SlackAppConfig {
   return { clientId: env.SLACK_CLIENT_ID ?? '', clientSecret: env.SLACK_CLIENT_SECRET ?? '' };
 }
 
-export function slackConnectReady(): boolean {
-  const config = slackAppConfig();
-  return config.clientId.length > 0 && config.clientSecret.length > 0;
+export function slackConnectReady(environment: Environment = process.env): boolean {
+  return ['SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'].every((key) =>
+    configured(environment[key]),
+  );
 }
 
 const publicAppUrlSchema = z.url().default('http://localhost:3000');

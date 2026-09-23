@@ -3,12 +3,30 @@ import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from 'next/constants
 import {
   assertProductionAuthenticationConfigured,
   assertProductionStartupAuthenticationConfigured,
+  slackConnectReady,
 } from '@/lib/env';
 import nextConfig from '../../next.config.ts';
 
 const productionEnvironment = {
   NODE_ENV: 'production',
 };
+
+describe('Slack connection readiness', () => {
+  const environment = {
+    SLACK_CLIENT_ID: 'client',
+    SLACK_CLIENT_SECRET: 'secret',
+    SLACK_SIGNING_SECRET: 'signing',
+  };
+
+  it('requires OAuth and request verification credentials', () => {
+    expect(slackConnectReady(environment)).toBe(true);
+    for (const key of Object.keys(environment)) {
+      expect(slackConnectReady({ ...environment, [key]: '' })).toBe(false);
+      expect(slackConnectReady({ ...environment, [key]: '   ' })).toBe(false);
+      expect(slackConnectReady({ ...environment, [key]: undefined })).toBe(false);
+    }
+  });
+});
 
 const authenticationVariables = [
   'ORBIT_PASSWORD_AUTH',

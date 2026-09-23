@@ -196,11 +196,19 @@ describe('IntegrationsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Sync Slack members' })).toBeNull();
   });
 
-  it('does not render Slack when the server withholds Slack settings', () => {
-    renderPanel(CONNECTED, true);
+  it('keeps Slack discoverable with setup guidance while its runtime is disabled', () => {
+    renderPanel(CONNECTED, true, [], 'slack');
 
-    expect(screen.queryByText(/slack/i)).toBeNull();
-    expect(document.querySelector('a[href*="slack"]')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Slack' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Slack' })).toBeInTheDocument();
+    expect(screen.getByText('Disabled on this server')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set up Slack' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#slack',
+    );
+    expect(screen.queryByRole('link', { name: 'Add to Slack' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Connect a channel' })).toBeNull();
+    expect(lastRequest).toBeNull();
   });
 
   it('connects a Slack channel with its id and Orbit team only', async () => {

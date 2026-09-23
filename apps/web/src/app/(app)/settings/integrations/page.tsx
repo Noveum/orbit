@@ -37,7 +37,7 @@ export default async function IntegrationsSettingsPage({
 
   const canManage = can(principal, 'integration:manage');
   const requestedProvider = query['provider'] ?? (slackStatus === null ? 'github' : 'slack');
-  const provider = integrationProvider(requestedProvider, canManage, settings.slack !== undefined);
+  const provider = integrationProvider(requestedProvider, canManage);
 
   return (
     <section className="flex flex-col gap-5">

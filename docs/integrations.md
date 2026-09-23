@@ -1,13 +1,20 @@
 # Integrations
 
 Orbit includes GitHub and Slack as optional external product integrations. Each
-is configured per workspace under **Settings**, **Integrations**. Slack remains
-hidden until the deployment operator completes provider setup and enables its
-global server-side gate.
+is connected per workspace under **Settings**, **Integrations**. Workspace admins
+can see both providers even before the deployment operator configures them.
 
-When an integration is not configured, Orbit hides the affordance rather than
-showing a button that fails. If a connect button is missing, the environment
-variable behind it is unset.
+An unconfigured provider links to **Settings**, **Deployment setup**, which
+shows required variable names, their presence, hosting instructions, provider
+setup steps and manual verification checks. It never displays credential values.
+Slack also provides a manifest and provider URLs generated from
+`NEXT_PUBLIC_APP_URL`, once it is a valid public HTTPS origin. The connect action
+remains unavailable until the required server configuration is present.
+
+Server credentials are currently managed through the hosting environment.
+Workspace admins can connect providers but cannot edit server credentials in
+Orbit. The proposed instance-administration follow-up is described in
+[Instance administration design](instance-administration-design.md).
 
 For the MCP server, which is how AI assistants connect, see [MCP server](mcp.md).
 
@@ -101,7 +108,7 @@ repositories to install it on.
 
 Slack has one global, server-side capability gate. When `SLACK_ENABLED=true`,
 Slack becomes available to every current and future Orbit organization. False
-or unset keeps the settings card hidden, makes Slack routes return not found,
+or unset shows setup guidance to admins, makes Slack routes return not found,
 stops inbound event processing, and leaves the scheduled Slack DM worker with
 no eligible work.
 
