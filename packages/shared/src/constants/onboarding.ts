@@ -15,6 +15,7 @@ export interface OnboardingState {
   readonly workspaceJoin?: boolean;
   readonly workspaceInvite?: boolean;
   readonly aiConnectSeen?: boolean;
+  readonly aiConnectHintDismissed?: boolean;
   readonly themeSet?: boolean;
   readonly theme?: OnboardingTheme;
   readonly orgSize?: OrgSize;
