@@ -30,7 +30,7 @@ import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { UNGROUPED_ID } from '@/features/filters/grouping.ts';
+import { mergedStateKey, UNGROUPED_ID } from '@/features/filters/grouping.ts';
 import type { ViewConfig } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
 import { issueDeletionGeneration } from '@/lib/query/issue-cache-generation.ts';
@@ -1848,7 +1848,7 @@ export function Board({
               groupBy === 'state'
                 ? (stateById.get(group.id) ??
                   [...stateById.values()].find(
-                    (candidate) => candidate.category === group.category,
+                    (candidate) => mergedStateKey(candidate) === group.id,
                   ))
                 : undefined;
             openQuickCreate(state?.teamId, state?.id);

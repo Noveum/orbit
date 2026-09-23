@@ -12,7 +12,7 @@ import {
 } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
-import { groupIssues } from '@/features/filters/grouping.ts';
+import { groupIssues, mergeStatesByName } from '@/features/filters/grouping.ts';
 import type { BoardColumnSource } from '@/features/issues/board.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
@@ -286,12 +286,13 @@ function renderBoard(
   columnSource?: BoardColumnSource,
   showEmptyGroups = false,
   onVisibilityActivityStart?: () => () => void,
+  boardStates: readonly WorkflowState[] = [todo, doing],
 ) {
   const makeGroups = (nextRows: readonly Issue[]) =>
     groupIssues(
       nextRows,
       'state',
-      { states: [todo, doing], members: [], projects: [], cycles: [], labels: [] },
+      { states: boardStates, members: [], projects: [], cycles: [], labels: [] },
       { showEmptyGroups, ordering: 'manual' },
     );
   const client = new QueryClient({
@@ -335,6 +336,25 @@ function renderBoard(
 }
 
 describe('Board card keyboard boundaries', () => {
+  it('matches the named state when merged columns share a category', () => {
+    const previous = workspace;
+    const review: WorkflowState = { ...doing, id: 'state_review', name: 'In Review', position: 3 };
+    const states = [todo, doing, review];
+    workspace = {
+      ...workspace,
+      states,
+      stateById: new Map(states.map((state) => [state.id, state])),
+    };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(false, [], undefined, true, undefined, mergeStatesByName(states).states);
+      fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Review' }));
+      expect(openQuickCreate).toHaveBeenCalledWith(review.teamId, review.id);
+    } finally {
+      workspace = previous;
+    }
+  });
+
   it('disables column creation for a guest', () => {
     const previous = workspace;
     workspace = { ...workspace, role: 'guest' };
