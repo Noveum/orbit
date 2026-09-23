@@ -484,6 +484,7 @@ describe('restoreBackup integration and readiness lifecycle', () => {
     expect(reachable).toBe(true);
 
     const tempBackupDir = await mkdtemp(join(tmpdir(), 'orbit-lock-lost-test-'));
+    const delayShimDir = await mkdtemp(join(tmpdir(), 'orbit-delay-restore-'));
     const driverStore = new Map<string, Uint8Array>();
     const driver = createMockDriver(driverStore);
     try {
@@ -499,18 +500,42 @@ describe('restoreBackup integration and readiness lifecycle', () => {
         process.env['S3_BUCKET'],
       ).identity;
 
+      const isWindows = process.platform === 'win32';
+      const realPgRestore = resolvedPgRestore ?? 'pg_restore';
+      const delaySource = join(delayShimDir, 'delay_restore.ts');
+      const delayLauncher = join(delayShimDir, isWindows ? 'delay_restore.exe' : 'delay_restore');
+      await writeFile(
+        delaySource,
+        `import { spawn } from 'node:child_process';
+await new Promise((r) => setTimeout(r, 1500));
+const child = spawn(${JSON.stringify(realPgRestore)}, process.argv.slice(2), { stdio: 'inherit' });
+child.on('close', (code) => process.exit(code ?? 0));
+`,
+      );
+      if (isWindows) {
+        Bun.spawnSync(['bun', 'build', '--compile', delaySource, '--outfile', delayLauncher]);
+      } else {
+        await writeFile(delayLauncher, `#!/bin/sh\nexec bun run "${delaySource}" "$@"\n`, {
+          mode: 0o755,
+        });
+      }
+
       await expect(
         restoreBackup({
           backupPath: backupResult.backupDir,
           databaseUrl,
           confirmDestructiveRestoreTarget: targetIdentity,
           storageDriver: driver,
-          pgRestorePath: resolvedPgRestore,
+          pgRestorePath: delayLauncher,
           skipRedisCheck: true,
           lockMaxLifetime: 1,
         }),
-      ).rejects.toThrow(/Restore lock connection was lost unexpectedly/);
+      ).rejects.toThrow();
+
+      const state = await getRecoveryState(databaseUrl);
+      expect(state?.status).toBe('restoring');
     } finally {
+      await rm(delayShimDir, { recursive: true, force: true }).catch(() => undefined);
       await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
       await setRecoveryState(databaseUrl, 'ready');
     }

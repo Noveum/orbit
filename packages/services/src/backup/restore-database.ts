@@ -5,6 +5,7 @@ export interface RestoreDatabaseOptions {
   readonly databaseUrl: string;
   readonly dumpFile: string;
   readonly pgRestorePath?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface RestoreDatabaseResult {
@@ -13,7 +14,7 @@ export interface RestoreDatabaseResult {
 }
 
 export function restoreDatabase(options: RestoreDatabaseOptions): Promise<RestoreDatabaseResult> {
-  const { databaseUrl, dumpFile, pgRestorePath } = options;
+  const { databaseUrl, dumpFile, pgRestorePath, signal } = options;
 
   let parsed: URL;
   try {
@@ -54,12 +55,26 @@ export function restoreDatabase(options: RestoreDatabaseOptions): Promise<Restor
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(internal('Database restore was aborted due to lock loss.'));
+      return;
+    }
+
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       reject(internal(`Failed to spawn "${binary}": ${String(error)}`, error));
       return;
+    }
+
+    const onAbort = () => {
+      child.kill('SIGTERM');
+      reject(internal('Database restore was aborted due to lock loss.'));
+    };
+
+    if (signal !== undefined) {
+      signal.addEventListener('abort', onAbort, { once: true });
     }
 
     let stderrText = '';
@@ -71,10 +86,20 @@ export function restoreDatabase(options: RestoreDatabaseOptions): Promise<Restor
     }
 
     child.on('error', (err) => {
+      if (signal !== undefined) {
+        signal.removeEventListener('abort', onAbort);
+      }
       reject(internal(`Failed to execute "${binary}": ${err.message}`, err));
     });
 
     child.on('close', (code) => {
+      if (signal !== undefined) {
+        signal.removeEventListener('abort', onAbort);
+      }
+      if (signal?.aborted) {
+        reject(internal('Database restore was aborted due to lock loss.'));
+        return;
+      }
       const durationMs = Date.now() - startTime;
       if (code === 0) {
         resolve({ success: true, durationMs });

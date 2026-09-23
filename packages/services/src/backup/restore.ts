@@ -69,9 +69,14 @@ async function runDatabaseAndMigrations(
   migrationsFolder: string | undefined,
   pgRestorePath: string | undefined,
   pendingMigrationsCount: number,
+  signal?: AbortSignal | undefined,
 ): Promise<void> {
   const dumpFile = await assertNoSymlinkPath(backupDir, manifest.checksums.databaseDump.file);
-  await restoreDatabase({ databaseUrl, dumpFile, pgRestorePath });
+  await restoreDatabase({ databaseUrl, dumpFile, pgRestorePath, signal });
+
+  if (signal?.aborted) {
+    throw internal('Database restore was aborted due to lock loss.');
+  }
 
   if (pendingMigrationsCount > 0) {
     const folder =
@@ -121,6 +126,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       options.migrationsFolder,
       options.pgRestorePath,
       compatibility.pendingMigrationsCount,
+      lock.signal,
     );
     lock.assertActive();
     await setRecoveryState(databaseUrl, 'restoring');
@@ -132,6 +138,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
         objectsDir: join(backupDir, 'objects'),
         expectedObjects: manifest.checksums.objects,
         driver,
+        signal: lock.signal,
       });
       objectsReconciled = storageResult.uploadedCount + storageResult.verifiedCount;
     }

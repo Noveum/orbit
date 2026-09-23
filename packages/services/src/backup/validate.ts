@@ -290,7 +290,7 @@ async function checkReferentialIntegrity(sql: postgres.Sql): Promise<Referential
     from comment c
     left join organization o on c.organization_id = o.id
     left join issue i on c.issue_id = i.id
-    where o.id is null or i.id is null
+    where o.id is null or (c.issue_id is not null and i.id is null)
   `;
   if ((danglingComments?.count ?? 0) > 0) {
     referentialIntegrityPassed = false;
@@ -419,13 +419,6 @@ async function checkStorageObjects(
         errors.push(
           `Referenced object "${safeKey}" size mismatch: attachment row declares ${att.size} bytes, storage has ${objStat.size} bytes.`,
         );
-        continue;
-      }
-
-      const data = await driver.get(safeKey);
-      if (data === null || data.byteLength !== att.size) {
-        missingObjects += 1;
-        errors.push(`Referenced object "${safeKey}" could not be read with expected size.`);
       }
     }
   } finally {

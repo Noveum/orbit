@@ -84,6 +84,7 @@ export interface RestoreStorageOptions {
   readonly objectsDir: string;
   readonly expectedObjects: readonly RestoreStorageObjectEntry[];
   readonly driver: StorageDriver;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface RestoreStorageResult {
