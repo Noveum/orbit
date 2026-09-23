@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
-import { advanceOnboarding, getOnboardingStatus } from '../../src/org/onboarding-service.ts';
+import {
+  advanceOnboarding,
+  dismissAiConnectHint,
+  getOnboardingStatus,
+} from '../../src/org/onboarding-service.ts';
 import { createOrganization } from '../../src/org/organization-service.ts';
 import { createUser, createWorkspace, resetDatabase } from '../../src/test-support.ts';
 
@@ -75,5 +79,16 @@ describe('advanceOnboarding', () => {
 
     const next = await advanceOnboarding(workspace.adminUser.id, { step: 'profile' });
     expect(next.step).toBe('invite');
+  });
+
+  it('records a dismissed AI connect hint without losing the rest of the onboarding state', async () => {
+    const user = await createUser('Nia New');
+    await advanceOnboarding(user.id, { step: 'profile' });
+    await dismissAiConnectHint(user.id);
+    await dismissAiConnectHint(user.id);
+    const status = await getOnboardingStatus(user.id);
+    expect(status.state.aiConnectHintDismissed).toBe(true);
+    expect(status.state.profileComplete).toBe(true);
+    expect(status.step).toBe('workspace');
   });
 });

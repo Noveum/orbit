@@ -1,4 +1,4 @@
-import { count, db, eq, schema } from '@orbit/db';
+import { count, db, eq, schema, sql } from '@orbit/db';
 import {
   ONBOARDING_DONE,
   type OnboardingState,
@@ -124,4 +124,14 @@ export async function completeOnboarding(userId: string): Promise<OnboardingStat
       .where(eq(schema.user.id, userId));
     return { ...current, completed: true, step: ONBOARDING_DONE };
   });
+}
+
+export async function dismissAiConnectHint(userId: string): Promise<void> {
+  await db
+    .update(schema.user)
+    .set({
+      onboardingState: sql`coalesce(${schema.user.onboardingState}, '{}'::jsonb) || '{"aiConnectHintDismissed":true}'::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.user.id, userId));
 }
