@@ -106,7 +106,7 @@ export function IssueCard({
               {issue.estimate}
             </span>
           ) : null}
-          {dragging || restricted || !editable ? null : (
+          {dragging || restricted ? null : (
             <IssueActionsMenu issue={issue} className={revealOnCardHover} />
           )}
         </span>

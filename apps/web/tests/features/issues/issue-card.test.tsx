@@ -305,7 +305,7 @@ describe('card controls', () => {
     expect(screen.queryByRole('button', { name: 'Priority: Urgent' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Status: In progress' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Change assignee' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Actions for ENG-4' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Actions for ENG-4' })).toBeInTheDocument();
   });
 
   it('offers the priority and status as buttons a facilitator can press', () => {
