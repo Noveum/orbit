@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 
-test.each(['none', 'methods', 'headers', 'put-origin', 'get-origin'])(
+test.each(['none', 'methods', 'lowercase-method', 'headers', 'put-origin', 'get-origin'])(
   'the storage probe validates custom origins with missing CORS field: %s',
   async (missing) => {
     const origin = 'https://orbit.example.com';
@@ -25,7 +25,10 @@ test.each(['none', 'methods', 'headers', 'put-origin', 'get-origin'])(
                     'access-control-allow-origin': origin,
                     ...(missing === 'methods'
                       ? {}
-                      : { 'access-control-allow-methods': 'GET, PUT' }),
+                      : {
+                          'access-control-allow-methods':
+                            missing === 'lowercase-method' ? 'GET, put' : 'GET, PUT',
+                        }),
                     ...(missing === 'headers'
                       ? {}
                       : { 'access-control-allow-headers': 'Content-Type' }),

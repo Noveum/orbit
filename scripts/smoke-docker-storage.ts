@@ -29,7 +29,7 @@ for (const upload of uploads) {
       preflight.headers
         .get('access-control-allow-methods')
         ?.split(',')
-        .map((value) => value.trim().toUpperCase()) ?? [];
+        .map((value) => value.trim()) ?? [];
     assert.ok(methods.includes('PUT'), 'CORS preflight must allow PUT');
     const headers =
       preflight.headers
