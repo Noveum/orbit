@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
+import { ISSUES_ROOT } from '@/lib/query/keys.ts';
 import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { emptyFacets } from '@/lib/query/schemas.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
@@ -228,14 +230,15 @@ function serve(options: { failList?: boolean; failRoster?: boolean } = {}): Serv
   return { listUrls, facetUrls, rosterUrls };
 }
 
-function mountBoard() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function mountBoard(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <HotkeyProvider>
-          <StandupBoard />
-        </HotkeyProvider>
+        <TooltipProvider>
+          <HotkeyProvider>
+            <StandupBoard />
+          </HotkeyProvider>
+        </TooltipProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -368,6 +371,39 @@ describe('StandupBoard', () => {
     await screen.findByTestId('retry-standup');
 
     expect(screen.queryByTestId('standup-kanban')).toBeNull();
+  });
+
+  it('keeps the board and an open peek when a background refresh fails', async () => {
+    workspace = buildWorkspace();
+    serve();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    mountBoard(client);
+
+    const card = await screen.findByTestId('issue-card-ENG-1');
+    const link = card.querySelector('a');
+    if (link === null) throw new Error('ENG-1 card has no link');
+    await user.click(link);
+    expect(await screen.findByTestId('issue-peek')).toHaveAttribute('aria-label', 'Peek ENG-1');
+
+    const failing = serve({ failList: true });
+    await act(async () => {
+      await client.refetchQueries({ queryKey: [ISSUES_ROOT] });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(failing.listUrls.length).toBeGreaterThan(0);
+    expect(
+      client
+        .getQueryCache()
+        .findAll({ queryKey: [ISSUES_ROOT] })
+        .some((query) => query.state.status === 'error'),
+    ).toBe(true);
+    expect(screen.queryByTestId('retry-standup')).toBeNull();
+    expect(screen.getByTestId('standup-kanban')).toBeInTheDocument();
+    expect(screen.getByTestId('issue-peek')).toHaveAttribute('aria-label', 'Peek ENG-1');
   });
 
   it('counts the roster under the filters in force, not the whole workspace', async () => {
