@@ -1,15 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { HIGHLIGHT_END, HIGHLIGHT_START } from '@orbit/shared/utils';
 import userEvent from '@testing-library/user-event';
+import * as nextNavigation from 'next/navigation';
 import * as nextThemes from 'next-themes';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { buildNavigation } from '@/lib/navigation.ts';
 import type { DocSummary } from '@/lib/query/schemas.ts';
 import { fireEvent, render, screen } from '@/test/render.tsx';
+import { restoreModulesAfterThisFile } from '../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['next/navigation', 'next-themes']);
 
 const push = mock();
 
 mock.module('next/navigation', () => ({
+  ...nextNavigation,
   useRouter: () => ({ push, replace: mock(), refresh: mock(), prefetch: mock() }),
   usePathname: () => '/inbox',
   useSearchParams: () => new URLSearchParams(),
