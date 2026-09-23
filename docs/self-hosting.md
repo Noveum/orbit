@@ -17,7 +17,7 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
 | [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
-| [Docker Compose (Preview)](docker-preview.md) | Local image build and setup | Evaluation with bundled Postgres, Redis and MinIO, without realtime |
+| [Docker Compose (Preview)](docker-preview.md) | Local image build and setup | Evaluation with bundled infrastructure, realtime and maintenance |
 
 All routes need the same infrastructure plus one complete first-login method.
 
@@ -190,8 +190,11 @@ wired up correctly. That single test covers more than any health check.
 
 ### 9. Sign in for the first time
 
-The first person to sign in becomes the owner of a new workspace, and onboarding
-walks through naming it and creating the first team.
+Each person who creates a workspace becomes its admin, and onboarding walks
+through naming it and creating the first team. The first account has no special
+server-wide privileges. There is no default administrator account. See the
+[first-run setup guide](first-run.md) for registration, invitation verification,
+email setup and the deployment checks available to workspace admins.
 
 The production preflight has already confirmed that at least one first-login
 method is configured. See [Configuration](configuration.md#authentication) for
@@ -205,11 +208,10 @@ authenticated user registers one; they cannot create the first session.
 
 If you want to evaluate Orbit inside your own network, run the Next.js
 standalone build behind a reverse proxy. This standalone path is Preview only:
-HTTP routes and assets work, but realtime and live updates do not yet work in
-this mode. `/api/ws` relies on Vercel's request context for
-`experimental_upgradeWebSocket`; running the standalone server with Node does
-not provide that context. DEP-002 tracks portable realtime deployment
-separately. Use Vercel for production realtime today.
+Running only the Next HTTP server serves routes and assets. The complete
+[Docker Compose preview](docker-preview.md) also starts a Node WebSocket host,
+a same-origin gateway and a maintenance scheduler. Use that stack to evaluate
+live updates and background work on a VPS.
 
 The packaged start command requires Node.js 22 or newer. Bun remains required
 for installing dependencies, applying the schema, and building the app.
@@ -378,7 +380,7 @@ version:
 
 | Symptom | Cause |
 | --- | --- |
-| Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
+| Endless "Reconnecting to live updates" | Check the Docker realtime service and gateway, or the Vercel websocket route, and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and sign-in codes never arrive | `EMAIL_FROM` is not on a domain verified in Resend |

@@ -1,3 +1,4 @@
+import { emailConfigured } from '@orbit/shared/utils';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
@@ -22,7 +23,7 @@ export default async function LoginPage({
   const callbackUrl = mcpContinueUrl(params) ?? safeCallback(params['next']);
   const errorCode = authErrorCode(params['error']);
   const session = await getSession();
-  if (session !== null) redirect(callbackUrl ?? '/my-issues');
+  if (session !== null && params['reauth'] !== '1') redirect(callbackUrl ?? '/my-issues');
 
   const devUsers = devLoginEnabled() ? await listDevUsers() : [];
 
@@ -32,6 +33,7 @@ export default async function LoginPage({
         <LoginForm
           providers={enabledSocialProviders}
           passwordEnabled={passwordAuthEnabled}
+          emailEnabled={emailConfigured(process.env)}
           openSignUp={signUpIsOpen()}
           {...(callbackUrl === undefined ? {} : { callbackUrl })}
         />

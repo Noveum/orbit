@@ -12,7 +12,7 @@ import {
 } from '@testing-library/react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
-import { groupIssues } from '@/features/filters/grouping.ts';
+import { groupIssues, mergeStatesByName } from '@/features/filters/grouping.ts';
 import type { BoardColumnSource } from '@/features/issues/board.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
@@ -26,6 +26,7 @@ import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 const push = mock();
+const openQuickCreate = mock();
 const nativeFetch = globalThis.fetch;
 const nativeGetBoundingClientRect = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
@@ -151,7 +152,7 @@ function installBoardTestRects(): void {
   };
 }
 
-const workspace: WorkspaceData = {
+let workspace: WorkspaceData = {
   ready: true,
   userId: 'user_1',
   role: 'admin',
@@ -168,7 +169,7 @@ const workspace: WorkspaceData = {
   ]),
   labelById: new Map(),
   memberById: new Map(),
-  openQuickCreate: () => undefined,
+  openQuickCreate,
 };
 
 mock.module('@/features/issues/workspace-provider.tsx', () => ({
@@ -285,12 +286,14 @@ function renderBoard(
   columnSource?: BoardColumnSource,
   showEmptyGroups = false,
   onVisibilityActivityStart?: () => () => void,
+  boardStates: readonly WorkflowState[] = [todo, doing],
+  creationScope?: Readonly<Record<string, string>>,
 ) {
   const makeGroups = (nextRows: readonly Issue[]) =>
     groupIssues(
       nextRows,
       'state',
-      { states: [todo, doing], members: [], projects: [], cycles: [], labels: [] },
+      { states: boardStates, members: [], projects: [], cycles: [], labels: [] },
       { showEmptyGroups, ordering: 'manual' },
     );
   const client = new QueryClient({
@@ -314,6 +317,7 @@ function renderBoard(
             <Board
               groups={makeGroups(nextRows)}
               draggable={nextDraggable}
+              {...(creationScope === undefined ? {} : { creationScope })}
               {...(columnSource === undefined ? {} : { columnSource })}
               {...(onVisibilityActivityStart === undefined ? {} : { onVisibilityActivityStart })}
             />
@@ -334,6 +338,110 @@ function renderBoard(
 }
 
 describe('Board card keyboard boundaries', () => {
+  it.each(['team', 'project'] as const)('creates merged states within the %s scope', (scope) => {
+    const previous = workspace;
+    const other = { ...doing, id: 'state_design_doing', teamId: 'team_2' };
+    const states = [doing, other];
+    workspace = {
+      ...workspace,
+      states,
+      stateById: new Map(states.map((state) => [state.id, state])),
+      projects: [
+        {
+          id: 'project_1',
+          name: 'Design project',
+          status: 'started',
+          slug: 'design',
+          color: '#5a63c8',
+          icon: 'box',
+          teamIds: ['team_2'],
+        },
+      ],
+    };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(
+        false,
+        [],
+        undefined,
+        true,
+        undefined,
+        mergeStatesByName(states).states,
+        scope === 'team' ? { teamId: 'team_2' } : { projectId: 'project_1' },
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Progress' }));
+      expect(openQuickCreate).toHaveBeenCalledWith(other.teamId, other.id);
+    } finally {
+      workspace = previous;
+    }
+  });
+
+  it('requires a team choice when a merged status belongs to multiple teams', () => {
+    const previous = workspace;
+    const other = { ...doing, id: 'state_design_doing', teamId: 'team_2' };
+    const states = [doing, other];
+    workspace = {
+      ...workspace,
+      teams: [
+        ...workspace.teams,
+        { id: 'team_2', name: 'Design', key: 'DES', icon: 'circle', color: '#5a63c8' },
+      ],
+      states,
+      stateById: new Map(states.map((state) => [state.id, state])),
+    };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(false, [], undefined, true, undefined, mergeStatesByName(states).states);
+      fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Progress' }));
+      expect(openQuickCreate).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Design' }));
+      expect(openQuickCreate).toHaveBeenCalledWith(other.teamId, other.id);
+    } finally {
+      workspace = previous;
+    }
+  });
+
+  it('matches the named state when merged columns share a category', () => {
+    const previous = workspace;
+    const review: WorkflowState = { ...doing, id: 'state_review', name: 'In Review', position: 3 };
+    const states = [todo, doing, review];
+    workspace = {
+      ...workspace,
+      states,
+      stateById: new Map(states.map((state) => [state.id, state])),
+    };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(false, [], undefined, true, undefined, mergeStatesByName(states).states);
+      fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Review' }));
+      expect(openQuickCreate).toHaveBeenCalledWith(review.teamId, review.id);
+    } finally {
+      workspace = previous;
+    }
+  });
+
+  it('disables column creation for a guest', () => {
+    const previous = workspace;
+    workspace = { ...workspace, role: 'guest' };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(false, [issue(), third]);
+      const create = screen.getByRole('button', { name: 'Create an issue in In Progress' });
+      expect(create).toBeDisabled();
+      fireEvent.click(create);
+      expect(openQuickCreate).not.toHaveBeenCalled();
+    } finally {
+      workspace = previous;
+    }
+  });
+
+  it('creates an issue with the selected column team and status', () => {
+    openQuickCreate.mockClear();
+    renderBoard(false, [issue(), second], undefined, true);
+    fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Progress' }));
+    expect(openQuickCreate).toHaveBeenCalledWith(doing.teamId, doing.id);
+  });
+
   it('keeps the draggable wrapper a list item around nested controls', () => {
     renderBoard(true);
     const card = screen.getByTestId('issue-card-ENG-1');

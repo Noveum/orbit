@@ -71,6 +71,38 @@ function disabledAfterSave(): string[] {
 }
 
 describe('NotificationChannels', () => {
+  it('keeps unimplemented push delivery off and preserves stored preferences', async () => {
+    renderChannels([channelTypeKey('push', 'mention')]);
+    expect(screen.getByLabelText('Push notifications')).toBeDisabled();
+    expect(screen.getByLabelText('Push notifications')).toHaveAttribute('data-state', 'unchecked');
+    expect(screen.getByLabelText('Customize Push')).toBeDisabled();
+    expect(screen.getByText('Push delivery is not available in this release.')).toBeVisible();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(savedPreferences().some((entry) => entry.channel === 'push')).toBe(false);
+  });
+
+  it('locks unavailable email without overwriting stored email preferences', async () => {
+    render(
+      <NotificationChannels
+        disabledKeys={[]}
+        quietHoursEnabled
+        quietHoursStart="18:00"
+        quietHoursEnd="09:00"
+        urgentBypassEnabled
+        slackDm="disabled"
+        emailEnabled={false}
+      />,
+    );
+    expect(screen.getByLabelText('Email notifications')).toBeDisabled();
+    expect(screen.getByLabelText('Customize Email')).toBeDisabled();
+    expect(
+      screen.getByText('Unavailable until the server operator configures email delivery.'),
+    ).toBeVisible();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(savedPreferences().some((entry) => entry.channel === 'email')).toBe(false);
+  });
   it('shows one master switch per channel and no per type control until a channel is opened', () => {
     renderChannels();
 
@@ -138,14 +170,14 @@ describe('NotificationChannels', () => {
     const user = userEvent.setup();
     renderChannels();
 
-    await user.click(screen.getByLabelText('Push notifications'));
+    await user.click(screen.getByLabelText('Inbox notifications'));
     await user.click(screen.getByRole('button', { name: 'Save preferences' }));
 
     await waitFor(() => {
       expect(sentBody).not.toBeNull();
     });
     expect(disabledAfterSave()).toEqual(
-      NOTIFICATION_TYPES.map((type) => channelTypeKey('push', type)).sort(),
+      NOTIFICATION_TYPES.map((type) => channelTypeKey('inbox', type)).sort(),
     );
   });
 
@@ -198,7 +230,7 @@ describe('NotificationChannels', () => {
     await user.click(screen.getByRole('button', { name: 'Save preferences' }));
     expect(await screen.findByText('Notification preferences saved.')).toBeVisible();
 
-    await user.click(screen.getByLabelText('Push notifications'));
+    await user.click(screen.getByLabelText('Inbox notifications'));
     expect(screen.queryByText('Notification preferences saved.')).toBeNull();
   });
 
@@ -259,7 +291,7 @@ describe('NotificationChannels', () => {
     const user = userEvent.setup();
     renderChannels(
       NOTIFICATION_TYPES.map((type) => channelTypeKey('email', type)).concat(
-        channelTypeKey('push', 'mention'),
+        channelTypeKey('inbox', 'mention'),
       ),
     );
 
@@ -274,7 +306,7 @@ describe('NotificationChannels', () => {
     expect(stillOff.has(channelTypeKey('email', 'invite_accepted'))).toBe(false);
     expect(stillOff.has(channelTypeKey('email', 'member_joined'))).toBe(false);
     expect(stillOff.has(channelTypeKey('email', 'mention'))).toBe(true);
-    expect(stillOff.has(channelTypeKey('push', 'mention'))).toBe(true);
+    expect(stillOff.has(channelTypeKey('inbox', 'mention'))).toBe(true);
   });
 
   it('turns one notification back on inside a channel', async () => {
@@ -384,7 +416,7 @@ describe('NotificationChannels', () => {
       expect(sentBody).not.toBeNull();
     });
 
-    await user.click(screen.getByLabelText('Push notifications'));
+    await user.click(screen.getByLabelText('Inbox notifications'));
     flight.answer?.();
 
     await waitFor(() => {
@@ -463,8 +495,8 @@ describe('NotificationChannels', () => {
     const user = userEvent.setup();
     renderChannels([channelTypeKey('slack', 'reaction')]);
 
-    await user.click(screen.getByLabelText('Customize Push'));
-    await user.click(screen.getByLabelText('Push for Mention'));
+    await user.click(screen.getByLabelText('Customize Inbox'));
+    await user.click(screen.getByLabelText('Inbox for Mention'));
     await user.click(screen.getByLabelText('Quiet hours'));
     await user.click(screen.getByRole('button', { name: 'Save preferences' }));
 
@@ -479,9 +511,11 @@ describe('NotificationChannels', () => {
       urgentBypassEnabled: boolean;
     };
 
-    expect(body.preferences).toHaveLength(VISIBLE_CHANNELS.length * NOTIFICATION_TYPES.length);
+    expect(body.preferences).toHaveLength(
+      (VISIBLE_CHANNELS.length - 1) * NOTIFICATION_TYPES.length,
+    );
     expect(body.preferences.some((entry) => entry.channel === 'slack')).toBe(false);
-    expect(disabledAfterSave()).toEqual([channelTypeKey('push', 'mention')]);
+    expect(disabledAfterSave()).toEqual([channelTypeKey('inbox', 'mention')]);
     expect(body.quietHoursEnabled).toBe(false);
     expect(body.quietHoursStart).toBe('18:00');
     expect(body.quietHoursEnd).toBe('09:00');

@@ -2,8 +2,10 @@
 
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
+import { permissionsFor } from '@orbit/shared/policy';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnCardHover } from '@/lib/interaction.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
@@ -58,6 +60,8 @@ export function IssueCard({
   const shows = (property: DisplayProperty) => properties.includes(property);
   const prefetch = usePrefetchIssueDetail();
   const restricted = issue.canOpen === false;
+  const { role } = useWorkspace();
+  const editable = permissionsFor(role).includes('issue:update');
   const warm = () => {
     if (!restricted) prefetch(issue.identifier);
   };
@@ -82,10 +86,14 @@ export function IssueCard({
     >
       <div className="flex items-center gap-2 text-2xs text-faint">
         {shows('priority') ? (
-          <PriorityControl issue={issue} disabled={dragging || restricted} />
+          <PriorityControl issue={issue} disabled={dragging || restricted || !editable} />
         ) : null}
         {shows('status') ? (
-          <StatusControl issue={issue} state={state} disabled={dragging || restricted} />
+          <StatusControl
+            issue={issue}
+            state={state}
+            disabled={dragging || restricted || !editable}
+          />
         ) : null}
         {shows('identifier') ? (
           <span data-numeric className="truncate whitespace-nowrap font-medium">
@@ -129,7 +137,11 @@ export function IssueCard({
         />
         <ReviewerAvatars reviewers={reviewers} size="sm" />
         {shows('assignee') ? (
-          <CardAssigneeSlot issue={issue} assignee={assignee} dragging={dragging || restricted} />
+          <CardAssigneeSlot
+            issue={issue}
+            assignee={assignee}
+            dragging={dragging || restricted || !editable}
+          />
         ) : null}
       </div>
     </article>

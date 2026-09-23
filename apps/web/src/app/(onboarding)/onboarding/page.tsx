@@ -1,4 +1,5 @@
 import { completeOnboarding, getOnboardingStatus, pendingInvitesForEmail } from '@orbit/core';
+import { emailConfigured } from '@orbit/shared/utils';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { OnboardingFlow } from '@/features/onboarding/onboarding-flow.tsx';
@@ -16,6 +17,7 @@ export default async function OnboardingPage({
   const session = await requireSession();
   const params = await searchParams;
   const landingPath = safeNextPath(params['next']) ?? '/my-issues';
+  const emailEnabled = emailConfigured(process.env);
 
   const status = await getOnboardingStatus(session.user.id);
   if (status.completed) redirect(landingPath);
@@ -24,8 +26,9 @@ export default async function OnboardingPage({
     redirect(landingPath);
   }
 
-  const invites: PendingInviteView[] =
-    status.step === 'workspace' ? await pendingInvitesForEmail(status.email) : [];
+  const invites: PendingInviteView[] = session.user.emailVerified
+    ? await pendingInvitesForEmail(status.email)
+    : [];
 
   const view: OnboardingStatusView = {
     name: status.name,
@@ -44,6 +47,8 @@ export default async function OnboardingPage({
       status={view}
       invites={invites}
       landingPath={landingPath}
+      emailEnabled={emailEnabled}
+      emailVerificationRequired={!session.user.emailVerified}
     />
   );
 }

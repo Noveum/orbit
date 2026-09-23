@@ -3,6 +3,7 @@
 import { ONBOARDING_STEPS, type OnboardingStep } from '@orbit/shared/constants';
 import { Check } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { cn } from '@/lib/cn.ts';
 import { InviteStep } from './steps/invite-step.tsx';
@@ -31,9 +32,18 @@ export interface OnboardingFlowProps {
   readonly status: OnboardingStatusView;
   readonly invites: readonly PendingInviteView[];
   readonly landingPath: string;
+  readonly emailEnabled: boolean;
+  readonly emailVerificationRequired: boolean;
 }
 
-export function OnboardingFlow({ initialStep, status, invites, landingPath }: OnboardingFlowProps) {
+export function OnboardingFlow({
+  initialStep,
+  status,
+  invites,
+  landingPath,
+  emailEnabled,
+  emailVerificationRequired,
+}: OnboardingFlowProps) {
   const [step, setStep] = useState<OnboardingStep>(initialStep);
   const reduceMotion = useReducedMotion();
 
@@ -95,8 +105,21 @@ export function OnboardingFlow({ initialStep, status, invites, landingPath }: On
               onNext={onNext}
             />
           ) : null}
-          {step === 'workspace' ? <WorkspaceStep invites={invites} onNext={onNext} /> : null}
-          {step === 'invite' ? <InviteStep onNext={onNext} /> : null}
+          {step === 'workspace' ? (
+            <>
+              {emailVerificationRequired && emailEnabled ? (
+                <p className="mb-4 text-muted text-xs">
+                  Expecting a workspace invitation?{' '}
+                  <Link className="text-accent underline" href="/login?reauth=1&next=/onboarding">
+                    Sign in with an emailed code
+                  </Link>{' '}
+                  to verify your email and see invitations.
+                </p>
+              ) : null}
+              <WorkspaceStep invites={invites} onNext={onNext} />
+            </>
+          ) : null}
+          {step === 'invite' ? <InviteStep onNext={onNext} emailEnabled={emailEnabled} /> : null}
           {step === 'theme' ? <ThemeStep onNext={onNext} /> : null}
         </motion.div>
       </AnimatePresence>

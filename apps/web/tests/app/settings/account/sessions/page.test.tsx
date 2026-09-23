@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { createHmac, randomUUID } from 'node:crypto';
 import { db, inArray, schema } from '@orbit/db';
+import { emailConfigured } from '@orbit/shared/utils';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { APIError } from 'better-auth/api';
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -74,7 +75,11 @@ describe('SessionsPage', () => {
     expect(screen.getByRole('heading', { name: 'Sessions' })).toBeVisible();
     expect(screen.getByText(/sign in again/i)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Continue with passkey' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Email me a code' })).toBeVisible();
+    if (emailConfigured(process.env)) {
+      expect(screen.getByRole('button', { name: 'Email me a code' })).toBeVisible();
+    } else {
+      expect(screen.queryByRole('button', { name: 'Email me a code' })).toBeNull();
+    }
     expect(screen.queryByTestId('sessions-panel')).toBeNull();
 
     mock.module('@/lib/auth/client.ts', () => ({

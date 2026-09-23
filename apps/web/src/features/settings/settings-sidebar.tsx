@@ -10,14 +10,19 @@ import { useSettingsSidebarNavigation } from './use-settings-sidebar-navigation.
 
 export interface SettingsSidebarProps {
   readonly passwordEnabled?: boolean;
+  readonly canManageDeployment?: boolean;
 }
 
-export function SettingsSidebar({ passwordEnabled = false }: SettingsSidebarProps) {
+export function SettingsSidebar({
+  passwordEnabled = false,
+  canManageDeployment = false,
+}: SettingsSidebarProps) {
   const pathname = usePathname();
   const { open, close } = useSettingsNav();
-  const groups = settingsGroupsFor(passwordEnabled);
+  const groups = settingsGroupsFor(passwordEnabled, canManageDeployment);
   const { sections, focusIndex, onLinkFocus, registerLinkRef } = useSettingsSidebarNavigation({
     passwordEnabled,
+    canManageDeployment,
     pathname,
   });
 

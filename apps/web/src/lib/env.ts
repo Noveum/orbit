@@ -1,4 +1,4 @@
-import { parseDomainList } from '@orbit/shared/utils';
+import { emailConfigured, parseDomainList } from '@orbit/shared/utils';
 import { z } from 'zod';
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -8,14 +8,6 @@ const configured = (value: string | undefined): boolean =>
 
 const configuredPair = (environment: Environment, first: string, second: string): boolean =>
   configured(environment[first]) && configured(environment[second]);
-
-function senderDomainOf(value: string): string | null {
-  const angleAddress = /<([^<>]+)>$/.exec(value)?.[1];
-  const address = (angleAddress ?? value).trim();
-  const parsed = z.email().safeParse(address);
-  if (!parsed.success) return null;
-  return parsed.data.slice(parsed.data.lastIndexOf('@') + 1).toLowerCase();
-}
 
 export function assertProductionAuthenticationConfigured(
   environment: Environment = process.env,
@@ -34,19 +26,13 @@ export function assertProductionAuthenticationConfigured(
     'GITHUB_CLIENT_ID',
     'GITHUB_CLIENT_SECRET',
   );
-  const emailFrom = environment['EMAIL_FROM']?.trim() ?? '';
-  const senderDomain = senderDomainOf(emailFrom);
-  const magicLinkAuthentication =
-    configured(environment['RESEND_API_KEY']) &&
-    senderDomain !== null &&
-    senderDomain !== 'localhost' &&
-    !senderDomain.endsWith('.local');
+  const emailAuthentication = emailConfigured(environment);
 
   if (
     passwordAuthentication ||
     googleAuthentication ||
     githubAuthentication ||
-    magicLinkAuthentication
+    emailAuthentication
   ) {
     return;
   }

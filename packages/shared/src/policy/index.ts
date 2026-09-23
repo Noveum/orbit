@@ -114,6 +114,14 @@ export function assertCan(principal: Principal, permission: Permission): void {
   }
 }
 
+export function assertVerifiedEmailForInvitation(emailVerified: boolean): void {
+  if (!emailVerified) {
+    throw forbidden(
+      'Verify your email before joining a workspace. Sign in with an emailed code, then accept the invitation again.',
+    );
+  }
+}
+
 export interface TeamScope {
   readonly id: string;
   readonly organizationId: string;

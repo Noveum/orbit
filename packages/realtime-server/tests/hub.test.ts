@@ -696,7 +696,14 @@ describe('delta fan out', () => {
         }),
       ]);
       await waitFor(() => oldTeam.socket.frames('delta').length > 0, 'the departure delta');
-      await waitFor(() => admin.socket.frames('delta').length > 0, 'the admin move delta');
+      await waitFor(
+        () =>
+          admin.socket
+            .frames('delta')
+            .flatMap((frame) => frame.actions)
+            .filter((entry) => entry.model === 'issue').length === 2,
+        'the admin move delta',
+      );
 
       await publishDelta(
         action({

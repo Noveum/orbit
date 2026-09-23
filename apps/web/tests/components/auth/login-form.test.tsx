@@ -7,6 +7,7 @@ const requestPasswordReset = mock();
 const sendVerificationOtp = mock();
 const signInEmailOtp = mock();
 const signInSocial = mock();
+const getSession = mock();
 const toast = mock();
 const originalLocation = window.location;
 const assign = mock();
@@ -20,6 +21,7 @@ Object.defineProperty(window, 'location', {
 
 mock.module('@/lib/auth/client.ts', () => ({
   authClient: {
+    getSession: (...args: unknown[]) => getSession(...args),
     requestPasswordReset: (...args: unknown[]) => requestPasswordReset(...args),
     emailOtp: {
       sendVerificationOtp: (...args: unknown[]) => sendVerificationOtp(...args),
@@ -42,6 +44,8 @@ beforeEach(() => {
   sendVerificationOtp.mockReset();
   signInEmailOtp.mockReset();
   signInSocial.mockReset();
+  getSession.mockReset();
+  getSession.mockResolvedValue({ error: null, data: { user: { emailVerified: true } } });
   toast.mockReset();
   assign.mockReset();
 });
@@ -57,6 +61,24 @@ function renderForm(passwordEnabled: boolean, openSignUp = false) {
 const SIGN_UP_NOTE = 'New here? Signing in creates your account, then you set up a workspace.';
 
 describe('LoginForm', () => {
+  it('keeps password registration usable without advertising unavailable email', async () => {
+    render(<LoginForm providers={[]} passwordEnabled emailEnabled={false} openSignUp />);
+    expect(screen.queryByRole('button', { name: 'Email me a code' })).toBeNull();
+    expect(screen.queryByText('Forgot password?')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Sign in with password' })).toBeVisible();
+    await userEvent.setup().click(screen.getByText('Create an account with a password'));
+    expect(screen.getByLabelText('Full name')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeVisible();
+    expect(sendVerificationOtp).not.toHaveBeenCalled();
+  });
+
+  it('offers OAuth without a dead email form when email and passwords are unavailable', () => {
+    render(<LoginForm providers={['github']} emailEnabled={false} />);
+    expect(screen.getByRole('button', { name: 'Continue with GitHub' })).toBeVisible();
+    expect(screen.queryByLabelText('Email address')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Email me a code' })).toBeNull();
+  });
+
   it('keeps successful and failed reauthentication on the requesting page', async () => {
     signInSocial.mockResolvedValue({ error: null });
     render(
@@ -209,6 +231,22 @@ describe('LoginForm', () => {
       expect(assign).toHaveBeenCalledWith('/my-issues');
     });
     expect(signInEmailOtp).toHaveBeenCalledTimes(1);
+    expect(getSession).toHaveBeenCalledWith({ query: { disableCookieCache: true } });
+  });
+
+  it('does not navigate with an unverified cached session after accepting a code', async () => {
+    sendVerificationOtp.mockResolvedValue({ error: null });
+    signInEmailOtp.mockResolvedValue({ error: null });
+    getSession.mockResolvedValue({ error: null, data: { user: { emailVerified: false } } });
+    const user = userEvent.setup();
+    renderForm(false);
+    await user.type(screen.getByLabelText('Email address'), 'ada@orbit.local');
+    await user.click(screen.getByText('Email me a code'));
+    await user.type(await screen.findByLabelText('Sign in code'), '123456');
+    await user.click(screen.getByText('Verify code'));
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(1));
+    expect(assign).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'danger' }));
   });
 
   it('verifies the code when Enter is pressed with password auth enabled', async () => {
@@ -228,5 +266,19 @@ describe('LoginForm', () => {
         otp: '123456',
       });
     });
+  });
+
+  it('can finish email sign-in after switching from password registration with no name', async () => {
+    sendVerificationOtp.mockResolvedValue({ error: null });
+    signInEmailOtp.mockResolvedValue({ error: null });
+    const user = userEvent.setup();
+    renderForm(true, true);
+    await user.click(screen.getByText('Create an account with a password'));
+    await user.type(screen.getByLabelText('Email address'), 'ada@orbit.local');
+    await user.click(screen.getByText('Email me a code'));
+    await user.type(await screen.findByLabelText('Sign in code'), '123456');
+    await user.click(screen.getByText('Verify code'));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/my-issues'));
+    expect(signInEmailOtp).toHaveBeenCalledWith({ email: 'ada@orbit.local', otp: '123456' });
   });
 });

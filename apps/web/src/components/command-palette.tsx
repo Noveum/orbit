@@ -18,7 +18,7 @@ import { useMemo, useState } from 'react';
 import { resolvedHotkeys, SECTION_ORDER } from '@/components/shortcuts-overlay.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
-import { MatchedText } from '@/features/docs/search-highlight.tsx';
+import { MarkedPassage } from '@/features/docs/search-highlight.tsx';
 import { IssueLink, isPlainClick, issueHref } from '@/features/issues/issue-link.tsx';
 import { cn } from '@/lib/cn.ts';
 import {
@@ -279,7 +279,7 @@ export function CommandPalette({
                           data-testid={`palette-doc-snippet-${doc.id}`}
                           className="line-clamp-1 pl-6.5 text-2xs text-faint"
                         >
-                          <MatchedText text={doc.snippet} term={term} />
+                          <MarkedPassage passage={doc.snippet} term={term} />
                         </span>
                       )}
                     </Command.Item>
