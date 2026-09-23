@@ -7,6 +7,7 @@ import {
   isEmptyFilter,
   viewStateDirty,
 } from '@orbit/shared/filters';
+import { permissionsFor } from '@orbit/shared/policy';
 import { Columns3, List, SearchX } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -103,6 +104,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         <div className="ml-auto flex items-center gap-1">
           <ViewToggle teamKey={teamKey} layout={layout} />
           <Button
+            disabled={!permissionsFor(workspace.role).includes('issue:create')}
             size="sm"
             variant="primary"
             onClick={() => workspace.openQuickCreate(teamId)}
@@ -244,7 +246,11 @@ function TeamContent({
       <EmptyState
         icon={<Columns3 strokeWidth={1.75} aria-hidden="true" />}
         title="No issues yet"
-        description="Press C to create the first one."
+        description={
+          permissionsFor(role).includes('issue:create')
+            ? 'Press C to create the first one.'
+            : 'Issues created by your teammates will appear here.'
+        }
         className="flex-1"
       />
     );

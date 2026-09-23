@@ -11,13 +11,18 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import * as nextNavigation from 'next/navigation';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Bootstrap } from '@/lib/query/schemas.ts';
 import { sprintOptions } from '@/lib/sprint-options.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['next/navigation']);
 
 mock.module('next/navigation', () => ({
+  ...nextNavigation,
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), prefetch: mock() }),
   usePathname: () => '/team/eng/issues',
 }));
@@ -63,12 +68,20 @@ function stubBootstrap(): void {
 
 function Probe() {
   const deletion = useIssueDeletion();
-  return <span data-testid="probe">{deletion === null ? 'no provider' : 'provided'}</span>;
+  const workspace = useWorkspace();
+  return (
+    <>
+      <span data-testid="probe">{deletion === null ? 'no provider' : 'provided'}</span>
+      <button type="button" onClick={() => workspace.openQuickCreate()}>
+        Open create
+      </button>
+    </>
+  );
 }
 
-function mountShell(seedBootstrap = false) {
+function mountShell(seedBootstrap = false, role = 'member') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  if (seedBootstrap) client.setQueryData(queryKeys.bootstrap(null), bootstrap('member'));
+  if (seedBootstrap) client.setQueryData(queryKeys.bootstrap(null), bootstrap(role));
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
@@ -103,6 +116,15 @@ function SprintProbe() {
 }
 
 describe('the issue workspace shell', () => {
+  it('does not open quick create for guests through a shortcut or a button', async () => {
+    mountShell(true, 'guest');
+    const user = userEvent.setup();
+    await user.keyboard('c');
+    expect(screen.queryByTestId('quick-create-probe')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Open create' }));
+    expect(screen.queryByTestId('quick-create-probe')).toBeNull();
+  });
+
   it('updates sprint choices on focus after a week changes without changing cached dates', async () => {
     const start = Date.parse('2026-09-10T00:00:00Z');
     setSystemTime(start);

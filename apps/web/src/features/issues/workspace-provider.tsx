@@ -6,6 +6,7 @@ import {
   STATE_CATEGORY_ORDER,
   type StateCategory,
 } from '@orbit/shared/constants';
+import { permissionsFor } from '@orbit/shared/policy';
 import { usePathname } from 'next/navigation';
 import {
   createContext,
@@ -153,35 +154,36 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const data = bootstrap.data;
+  const canCreate = permissionsFor(toOrgRole(data?.role)).includes('issue:create');
   const routeTeamKey = teamKeyFromPath(pathname);
   const routeTeamId = data?.teams.find((team) => team.key === routeTeamKey)?.id ?? null;
 
-  const openQuickCreate = useCallback((teamId?: string, stateId?: string) => {
-    setCreateTeamId(teamId ?? null);
-    setCreateStateId(stateId ?? null);
-    setCreateOpen(true);
-  }, []);
+  const openQuickCreate = useCallback(
+    (teamId?: string, stateId?: string) => {
+      if (!canCreate) return;
+      setCreateTeamId(teamId ?? null);
+      setCreateStateId(stateId ?? null);
+      setCreateOpen(true);
+    },
+    [canCreate],
+  );
 
   const value = useMemo<WorkspaceData>(
     () => workspaceFrom(data, openQuickCreate, now),
     [data, openQuickCreate, now],
   );
 
-  useHotkey(
-    'c',
-    () => {
-      setCreateTeamId(null);
-      setCreateStateId(null);
-      setCreateOpen(true);
-    },
-    { label: 'Create issue', section: 'Issues' },
-  );
+  useHotkey('c', () => openQuickCreate(), {
+    label: 'Create issue',
+    section: 'Issues',
+    enabled: canCreate,
+  });
 
   return (
     <WorkspaceContext.Provider value={value}>
       <IssueDeletionProvider>{children}</IssueDeletionProvider>
       <QuickCreateDialog
-        open={createOpen}
+        open={createOpen && canCreate}
         onOpenChange={setCreateOpen}
         defaultTeamId={createTeamId ?? routeTeamId}
         defaultStateId={createStateId}

@@ -152,7 +152,7 @@ function installBoardTestRects(): void {
   };
 }
 
-const workspace: WorkspaceData = {
+let workspace: WorkspaceData = {
   ready: true,
   userId: 'user_1',
   role: 'admin',
@@ -335,6 +335,21 @@ function renderBoard(
 }
 
 describe('Board card keyboard boundaries', () => {
+  it('disables column creation for a guest', () => {
+    const previous = workspace;
+    workspace = { ...workspace, role: 'guest' };
+    try {
+      openQuickCreate.mockClear();
+      renderBoard(false, [issue(), third]);
+      const create = screen.getByRole('button', { name: 'Create an issue in In Progress' });
+      expect(create).toBeDisabled();
+      fireEvent.click(create);
+      expect(openQuickCreate).not.toHaveBeenCalled();
+    } finally {
+      workspace = previous;
+    }
+  });
+
   it('creates an issue with the selected column team and status', () => {
     openQuickCreate.mockClear();
     renderBoard(false, [issue(), second], undefined, true);

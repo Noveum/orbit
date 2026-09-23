@@ -1,6 +1,7 @@
 'use client';
 
 import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
+import { permissionsFor } from '@orbit/shared/policy';
 import { CircleDot } from 'lucide-react';
 import type { RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -219,7 +220,11 @@ function MyIssuesBody({
       <EmptyState
         icon={<CircleDot strokeWidth={1.75} aria-hidden="true" />}
         title={loading ? 'Loading your issues' : 'Nothing assigned or awaiting your review'}
-        description="Issues you own or review across every team show up here. Press C to create one."
+        description={
+          permissionsFor(workspace.role).includes('issue:create')
+            ? 'Issues you own or review across every team show up here. Press C to create one.'
+            : 'Issues you own or review across every team show up here.'
+        }
         className="flex-1"
       />
     );

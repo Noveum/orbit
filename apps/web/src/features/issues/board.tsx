@@ -1948,7 +1948,7 @@ function BoardColumn({
   onOpen,
   onRows,
 }: BoardColumnProps) {
-  const { stateById } = useWorkspace();
+  const { stateById, role } = useWorkspace();
   const owned = useColumnIssues(
     columnSource ?? EMPTY_COLUMN,
     group.id,
@@ -2074,6 +2074,7 @@ function BoardColumn({
         <button
           type="button"
           onClick={onCreate}
+          disabled={!permissionsFor(role).includes('issue:create')}
           aria-label={`Create an issue in ${group.title}`}
           className={cn(
             'ml-auto rounded-sm p-1 text-faint opacity-0',
