@@ -1,0 +1,44 @@
+name: Container images
+
+on:
+  push:
+    tags: ['containers-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build application and gateway
+        run: |
+          set -euo pipefail
+          docker build -f deploy/docker/Dockerfile.catalog -t orbit-runtime:build .
+          docker build -f deploy/docker/Dockerfile.gateway -t orbit-gateway:build .
+          docker run --rm orbit-runtime:build node --check apps/web/migrate.mjs
+          docker run --rm orbit-runtime:build node --check apps/web/realtime.mjs
+          docker run --rm orbit-runtime:build node --check apps/web/scheduler.mjs
+          docker build -f deploy/docker/Dockerfile.bucket -t orbit-bucket:build .
+          docker run --rm orbit-gateway:build caddy validate --config /etc/caddy/Caddyfile
+      - name: Publish commit-addressed images
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in runtime gateway bucket; do
+            image="ghcr.io/noveum/orbit-${component}"
+            docker tag "orbit-${component}:build" "${image}:sha-${GITHUB_SHA}"
+            docker push "${image}:sha-${GITHUB_SHA}"
+          done
+          docker logout ghcr.io

@@ -1,0 +1,4 @@
+FROM caddy:2.11.4-alpine
+LABEL org.opencontainers.image.source="https://github.com/Noveum/orbit"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+COPY deploy/docker/Caddyfile.catalog /etc/caddy/Caddyfile
