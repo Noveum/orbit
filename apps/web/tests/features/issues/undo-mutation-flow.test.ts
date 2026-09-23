@@ -447,4 +447,145 @@ describe('Issue undo mutation lifecycle and sequencing', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('skips failed records when building currentBase for a subsequent mutation while another is pending', async () => {
+    const originalFetch = globalThis.fetch;
+
+    let resolveA: ((response: Response) => void) | undefined;
+    let resolveB: ((response: Response) => void) | undefined;
+    let resolveC: ((response: Response) => void) | undefined;
+
+    const responseA = new Promise<Response>((resolve) => {
+      resolveA = resolve;
+    });
+
+    const responseB = new Promise<Response>((resolve) => {
+      resolveB = resolve;
+    });
+
+    const responseC = new Promise<Response>((resolve) => {
+      resolveC = resolve;
+    });
+
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body;
+      const body = issueUpdateSchema.parse(raw);
+
+      if (body.priority === 1) {
+        return responseA;
+      }
+
+      if (body.estimate === 8) {
+        return responseB;
+      }
+
+      return responseC;
+    }) as typeof globalThis.fetch;
+
+    try {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          mutations: { retry: false },
+        },
+      });
+
+      const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(ToastProvider, null, children),
+        );
+
+      const { result } = renderHook(() => useUpdateIssue(), { wrapper });
+
+      let promiseA: Promise<unknown> | undefined;
+      let promiseB: Promise<unknown> | undefined;
+
+      act(() => {
+        promiseA = result.current
+          .mutateAsync({
+            issue: mockIssue,
+            patch: { priority: 1 },
+          })
+          .catch(() => undefined);
+
+        promiseB = result.current.mutateAsync({
+          issue: mockIssue,
+          patch: { estimate: 8 },
+        });
+      });
+
+      await act(async () => {
+        if (resolveA !== undefined) {
+          resolveA(
+            new Response(JSON.stringify({ message: 'Mutation A failed' }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          );
+        }
+        await promiseA;
+      });
+
+      let promiseC: Promise<unknown> | undefined;
+
+      act(() => {
+        promiseC = result.current.mutateAsync({
+          issue: mockIssue,
+          patch: { priority: 3 },
+        });
+      });
+
+      await act(async () => {
+        if (resolveB !== undefined) {
+          resolveB(
+            new Response(
+              JSON.stringify({
+                issue: {
+                  ...mockIssue,
+                  estimate: 8,
+                  syncId: 2,
+                },
+              }),
+              {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            ),
+          );
+        }
+
+        if (resolveC !== undefined) {
+          resolveC(
+            new Response(
+              JSON.stringify({
+                issue: {
+                  ...mockIssue,
+                  estimate: 8,
+                  priority: 3,
+                  syncId: 3,
+                },
+              }),
+              {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            ),
+          );
+        }
+
+        await Promise.all([promiseB, promiseC]);
+      });
+
+      const stack = getTabUndoStack();
+      const priorityEntry = stack.find((entry) => entry.propertyLabel === 'Priority');
+
+      expect(priorityEntry).toBeDefined();
+      expect(priorityEntry?.patch['priority']).toBe(3);
+      expect(priorityEntry?.inversePatch['priority']).toBe(2);
+      expect(stack.some((entry) => entry.patch['priority'] === 1)).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

@@ -937,6 +937,9 @@ export function useUpdateIssue() {
 
       let currentBase = tracker.rootBase;
       for (const m of tracker.active) {
+        if (m.status === 'failed') {
+          continue;
+        }
         currentBase = applyPatchToIssue(currentBase, m.patch);
       }
 
