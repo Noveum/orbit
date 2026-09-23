@@ -235,6 +235,75 @@ describe('validateRestore', () => {
     }
   });
 
+  it('fails validation when referenced attachment object exists in stat but cannot be read', async () => {
+    if (!reachable) return;
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const orgId = `org_unread_${stamp}`;
+    const userId = `usr_unread_${stamp}`;
+    const memberId = `mbr_unread_${stamp}`;
+    const attId = `att_unread_${stamp}`;
+    const storageKey = `org_unread_${stamp}/issue/att_unread_${stamp}/unreadable.txt`;
+
+    const store = new Map<string, Uint8Array>();
+    const baseDriver = createMockDriver(store);
+    const unreadableDriver: StorageDriver = {
+      ...baseDriver,
+      stat(key: string): Promise<StoredObject | null> {
+        if (key === storageKey) {
+          return Promise.resolve({
+            key,
+            size: 50,
+            contentType: 'text/plain',
+            updatedAt: new Date(),
+          });
+        }
+        return baseDriver.stat(key);
+      },
+      get(key: string): Promise<Uint8Array | null> {
+        if (key === storageKey) {
+          return Promise.resolve(null);
+        }
+        return baseDriver.get(key);
+      },
+    };
+
+    const sql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    try {
+      await sql`insert into organization (id, name, slug) values (${orgId}, 'Unread Org', ${orgId})`;
+      await sql`insert into "user" (id, name, email, handle) values (${userId}, 'Unread User', ${`${userId}@orbit.test`}, ${userId})`;
+      await sql`insert into member (id, organization_id, user_id, role) values (${memberId}, ${orgId}, ${userId}, 'owner')`;
+      await sql`
+        insert into attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, status, uploaded_by_id)
+        values (${attId}, ${orgId}, 'issue', 'dummy', 'unreadable.txt', 'text/plain', 50, ${storageKey}, 'ready', ${userId})
+      `;
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+
+    try {
+      const result = await validateRestore({
+        databaseUrl,
+        storageDriver: unreadableDriver,
+        migrationsFolder: MIGRATIONS,
+        skipRedisCheck: true,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.storage.missingObjects).toBeGreaterThanOrEqual(1);
+      expect(result.errors.some((e) => e.includes('could not be read'))).toBe(true);
+    } finally {
+      const cleanupSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        await cleanupSql`delete from attachment where id = ${attId}`;
+        await cleanupSql`delete from member where id = ${memberId}`;
+        await cleanupSql`delete from "user" where id = ${userId}`;
+        await cleanupSql`delete from organization where id = ${orgId}`;
+      } finally {
+        await cleanupSql.end({ timeout: 5 });
+      }
+    }
+  });
+
   it('fails validation when an organization has no members', async () => {
     expect(reachable).toBe(true);
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

@@ -419,6 +419,21 @@ async function checkStorageObjects(
         errors.push(
           `Referenced object "${safeKey}" size mismatch: attachment row declares ${att.size} bytes, storage has ${objStat.size} bytes.`,
         );
+        continue;
+      }
+
+      const data = await driver.get(safeKey);
+      if (data === null) {
+        missingObjects += 1;
+        errors.push(`Referenced object "${safeKey}" could not be read from storage.`);
+        continue;
+      }
+
+      if (data.byteLength !== att.size) {
+        sizeMismatches += 1;
+        errors.push(
+          `Referenced object "${safeKey}" read size mismatch: attachment row declares ${att.size} bytes, storage returned ${data.byteLength} bytes.`,
+        );
       }
     }
   } finally {
