@@ -24,9 +24,11 @@ Do not expose PostgreSQL, Redis, the web service or the realtime service directl
 The bucket initializer persists the CORS allowlist and waits for it to load.
 
 Generate distinct random `POSTGRES_PASSWORD`, `MINIO_PASSWORD`,
-`BETTER_AUTH_SECRET` and `CRON_SECRET` values. `ORBIT_IMAGE` and
-`ORBIT_GATEWAY_IMAGE` and `ORBIT_BUCKET_IMAGE` identify the same tested source commit. Catalog infrastructure
-images use immutable digests. Image publication builds Linux amd64 and arm64 on native runners.
+`BETTER_AUTH_SECRET` and `CRON_SECRET` values. `ORBIT_IMAGE`,
+`ORBIT_GATEWAY_IMAGE` and `ORBIT_BUCKET_IMAGE` pin each component to its tested
+source commit. The storage initializer can be updated independently of the
+application and gateway. Catalog infrastructure images use immutable digests.
+Image publication builds Linux amd64 and arm64 on native runners.
 
 Run exactly one scheduler. Configure Resend and a verified `EMAIL_FROM` to enable
 email invitations and recovery. Configure OAuth providers separately if needed.
