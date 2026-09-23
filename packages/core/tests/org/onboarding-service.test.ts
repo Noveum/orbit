@@ -47,7 +47,11 @@ describe('advanceOnboarding', () => {
     await advanceOnboarding(user.id, { step: 'profile' });
     await createOrganization(user.id, { name: 'Nia Co', slug: 'nia-co' });
     await advanceOnboarding(user.id, { step: 'workspace', via: 'create' });
-    await advanceOnboarding(user.id, { step: 'invite' });
+    const afterInvite = await advanceOnboarding(user.id, { step: 'invite' });
+    expect(afterInvite.step).toBe('connect');
+    const afterConnect = await advanceOnboarding(user.id, { step: 'connect' });
+    expect(afterConnect.step).toBe('theme');
+    expect(afterConnect.state.aiConnectSeen).toBe(true);
     const done = await advanceOnboarding(user.id, { step: 'theme', theme: 'dark' });
 
     expect(done.step).toBe('done');

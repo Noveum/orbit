@@ -71,6 +71,7 @@ function applyStep(state: OnboardingState, input: OnboardingAdvanceInput): Recor
     if (input.orgSize !== undefined) next['orgSize'] = input.orgSize;
   }
   if (input.step === 'invite') next['workspaceInvite'] = true;
+  if (input.step === 'connect') next['aiConnectSeen'] = true;
   if (input.step === 'theme') {
     next['themeSet'] = true;
     if (input.theme !== undefined) next['theme'] = input.theme;
