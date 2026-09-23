@@ -1,4 +1,5 @@
 import { can } from '@orbit/shared/policy';
+import { emailConfigured } from '@orbit/shared/utils';
 import {
   listMemberViews,
   listPendingInviteViews,
@@ -26,7 +27,12 @@ export default async function MembersSettingsPage() {
         </p>
       </div>
       <MembersTable members={members} canManage={can(principal, 'member:manage')} />
-      <InvitePanel teams={teams} invites={invites} canInvite={canInvite} />
+      <InvitePanel
+        teams={teams}
+        invites={invites}
+        canInvite={canInvite}
+        emailEnabled={emailConfigured(process.env)}
+      />
     </section>
   );
 }

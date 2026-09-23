@@ -1,5 +1,7 @@
 import { completeOnboarding, getOnboardingStatus, pendingInvitesForEmail } from '@orbit/core';
+import { emailConfigured } from '@orbit/shared/utils';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { OnboardingFlow } from '@/features/onboarding/onboarding-flow.tsx';
 import type { OnboardingStatusView, PendingInviteView } from '@/features/onboarding/types.ts';
@@ -16,6 +18,7 @@ export default async function OnboardingPage({
   const session = await requireSession();
   const params = await searchParams;
   const landingPath = safeNextPath(params['next']) ?? '/my-issues';
+  const emailEnabled = emailConfigured(process.env);
 
   const status = await getOnboardingStatus(session.user.id);
   if (status.completed) redirect(landingPath);
@@ -25,7 +28,9 @@ export default async function OnboardingPage({
   }
 
   const invites: PendingInviteView[] =
-    status.step === 'workspace' ? await pendingInvitesForEmail(status.email) : [];
+    status.step === 'workspace' && session.user.emailVerified
+      ? await pendingInvitesForEmail(status.email)
+      : [];
 
   const view: OnboardingStatusView = {
     name: status.name,
@@ -39,11 +44,23 @@ export default async function OnboardingPage({
   };
 
   return (
-    <OnboardingFlow
-      initialStep={status.step}
-      status={view}
-      invites={invites}
-      landingPath={landingPath}
-    />
+    <>
+      {status.step === 'workspace' && !session.user.emailVerified && emailEnabled ? (
+        <p className="mb-4 max-w-xl text-muted text-xs">
+          Expecting a workspace invitation?{' '}
+          <Link className="text-accent underline" href="/login?reauth=1&next=/onboarding">
+            Sign in with an emailed code
+          </Link>{' '}
+          to verify your email and see invitations.
+        </p>
+      ) : null}
+      <OnboardingFlow
+        initialStep={status.step}
+        status={view}
+        invites={invites}
+        landingPath={landingPath}
+        emailEnabled={emailEnabled}
+      />
+    </>
   );
 }

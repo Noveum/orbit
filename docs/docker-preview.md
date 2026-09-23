@@ -125,3 +125,33 @@ environment mapping when they affect build-time authentication. Keep
 `ORBIT_DEV_LOGIN` and `NEXT_PUBLIC_REALTIME_URL` unset. Adding infrastructure alone
 does not provide Vercel's WebSocket upgrade context; portable realtime remains a
 separate prerequisite for a full production template.
+
+## Public VPS evaluation
+
+Run `bun run preview:init` first, then add these values to the private
+`.env.docker.local` before building:
+
+```dotenv
+ORBIT_APP_URL=https://orbit.example.com
+ORBIT_STORAGE_URL=https://files.example.com
+ORBIT_PASSWORD_AUTH=true
+```
+
+The Compose template forwards the app URL to authentication and the web app,
+and scopes MinIO CORS to that origin. Both the browser and containers must reach
+the storage URL. Terminate HTTPS at a reverse proxy forwarding the app to
+`127.0.0.1:33170` and storage to `127.0.0.1:9000`. Keep the MinIO console,
+Postgres and Redis private. Changing a public URL requires a rebuild.
+
+The shared environment mapping also forwards Resend, Google sign-in, GitHub
+sign-in, GitHub App, Slack and scheduler configuration from this file. Add
+`RESEND_API_KEY` and `EMAIL_FROM` with a verified sender to enable email codes,
+invites, password resets and email notifications. Configure the provider's
+callback and webhook URLs for this installation, not another Orbit deployment.
+Slack additionally requires `SLACK_ENABLED=true`.
+
+After sign-up and workspace creation, open **Settings > Deployment setup** as a
+workspace admin. It reports configuration presence without displaying secrets.
+It does not test external credentials or turn this preview into a production
+deployment. Follow the [first-run checklist](first-run.md) and verify each
+capability against the running installation.

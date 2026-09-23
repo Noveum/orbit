@@ -1,4 +1,5 @@
 import { internal, validationFailed } from '@orbit/shared';
+import { emailConfigured } from '@orbit/shared/utils';
 import { Resend } from 'resend';
 import { z } from 'zod';
 
@@ -21,6 +22,14 @@ export interface EmailTransport {
 }
 
 export const DEFAULT_FROM = 'Orbit <auth@orbit.local>';
+
+export function assertEmailConfigured(environment: NodeJS.ProcessEnv = process.env): void {
+  if (!emailConfigured(environment)) {
+    throw validationFailed(
+      'Email delivery is unavailable. Ask the server operator to configure RESEND_API_KEY and EMAIL_FROM with a verified sender domain.',
+    );
+  }
+}
 
 export class ResendTransport implements EmailTransport {
   private readonly client: Resend;

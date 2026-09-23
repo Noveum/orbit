@@ -45,7 +45,7 @@ export interface WorkspaceData {
   readonly stateById: ReadonlyMap<string, WorkflowState>;
   readonly labelById: ReadonlyMap<string, Label>;
   readonly memberById: ReadonlyMap<string, Member>;
-  readonly openQuickCreate: (teamId?: string) => void;
+  readonly openQuickCreate: (teamId?: string, stateId?: string) => void;
 }
 
 const EMPTY_MAP = new Map<string, never>();
@@ -109,7 +109,7 @@ export function teamKeyFromPath(pathname: string): string | null {
 
 export function workspaceFrom(
   data: Bootstrap | undefined,
-  openQuickCreate: (teamId?: string) => void,
+  openQuickCreate: (teamId?: string, stateId?: string) => void,
   now = Date.now(),
 ): WorkspaceData {
   const states = data?.states ?? [];
@@ -138,6 +138,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const bootstrap = useBootstrap(null);
   const pathname = usePathname();
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
+  const [createStateId, setCreateStateId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   const [now, setNow] = useState(Date.now);
@@ -155,8 +156,9 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const routeTeamKey = teamKeyFromPath(pathname);
   const routeTeamId = data?.teams.find((team) => team.key === routeTeamKey)?.id ?? null;
 
-  const openQuickCreate = useCallback((teamId?: string) => {
+  const openQuickCreate = useCallback((teamId?: string, stateId?: string) => {
     setCreateTeamId(teamId ?? null);
+    setCreateStateId(stateId ?? null);
     setCreateOpen(true);
   }, []);
 
@@ -169,6 +171,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
     'c',
     () => {
       setCreateTeamId(null);
+      setCreateStateId(null);
       setCreateOpen(true);
     },
     { label: 'Create issue', section: 'Issues' },
@@ -181,6 +184,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
         open={createOpen}
         onOpenChange={setCreateOpen}
         defaultTeamId={createTeamId ?? routeTeamId}
+        defaultStateId={createStateId}
       />
     </WorkspaceContext.Provider>
   );

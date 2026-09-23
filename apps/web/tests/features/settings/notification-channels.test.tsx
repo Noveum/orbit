@@ -71,6 +71,27 @@ function disabledAfterSave(): string[] {
 }
 
 describe('NotificationChannels', () => {
+  it('locks unavailable email without overwriting stored email preferences', async () => {
+    render(
+      <NotificationChannels
+        disabledKeys={[]}
+        quietHoursEnabled
+        quietHoursStart="18:00"
+        quietHoursEnd="09:00"
+        urgentBypassEnabled
+        slackDm="disabled"
+        emailEnabled={false}
+      />,
+    );
+    expect(screen.getByLabelText('Email notifications')).toBeDisabled();
+    expect(screen.getByLabelText('Customize Email')).toBeDisabled();
+    expect(
+      screen.getByText('Unavailable until the server operator configures email delivery.'),
+    ).toBeVisible();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Save preferences' }));
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(savedPreferences().some((entry) => entry.channel === 'email')).toBe(false);
+  });
   it('shows one master switch per channel and no per type control until a channel is opened', () => {
     renderChannels();
 

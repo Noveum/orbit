@@ -31,9 +31,16 @@ export interface OnboardingFlowProps {
   readonly status: OnboardingStatusView;
   readonly invites: readonly PendingInviteView[];
   readonly landingPath: string;
+  readonly emailEnabled: boolean;
 }
 
-export function OnboardingFlow({ initialStep, status, invites, landingPath }: OnboardingFlowProps) {
+export function OnboardingFlow({
+  initialStep,
+  status,
+  invites,
+  landingPath,
+  emailEnabled,
+}: OnboardingFlowProps) {
   const [step, setStep] = useState<OnboardingStep>(initialStep);
   const reduceMotion = useReducedMotion();
 
@@ -96,7 +103,7 @@ export function OnboardingFlow({ initialStep, status, invites, landingPath }: On
             />
           ) : null}
           {step === 'workspace' ? <WorkspaceStep invites={invites} onNext={onNext} /> : null}
-          {step === 'invite' ? <InviteStep onNext={onNext} /> : null}
+          {step === 'invite' ? <InviteStep onNext={onNext} emailEnabled={emailEnabled} /> : null}
           {step === 'theme' ? <ThemeStep onNext={onNext} /> : null}
         </motion.div>
       </AnimatePresence>

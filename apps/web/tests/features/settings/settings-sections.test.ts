@@ -6,6 +6,15 @@ import {
 } from '@/features/settings/settings-sections.ts';
 
 describe('settings sections', () => {
+  it('only includes deployment setup for workspace administrators', () => {
+    expect(
+      settingsSectionsFlat(false, false).some((section) => section.href === '/settings/deployment'),
+    ).toBe(false);
+    expect(settingsSectionsFlat(false, true)).toContainEqual({
+      href: '/settings/deployment',
+      label: 'Deployment setup',
+    });
+  });
   it('links the workspace settings to the MCP server', () => {
     const workspace = SETTINGS_GROUPS.find((group) => group.id === 'workspace');
 

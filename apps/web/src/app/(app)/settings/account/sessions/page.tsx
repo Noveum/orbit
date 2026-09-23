@@ -1,3 +1,4 @@
+import { emailConfigured } from '@orbit/shared/utils';
 import { APIError } from 'better-auth/api';
 import { AuthErrorNotice } from '@/components/auth/auth-error-notice.tsx';
 import { LoginForm } from '@/components/auth/login-form.tsx';
@@ -41,6 +42,7 @@ export default async function SessionsPage({
           <LoginForm
             providers={enabledSocialProviders}
             passwordEnabled={passwordAuthEnabled}
+            emailEnabled={emailConfigured(process.env)}
             callbackUrl="/settings/account/sessions"
             errorCallbackUrl="/settings/account/sessions"
           />

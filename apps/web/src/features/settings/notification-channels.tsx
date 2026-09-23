@@ -94,6 +94,7 @@ export interface NotificationChannelsProps {
   readonly quietHoursEnd: string;
   readonly urgentBypassEnabled: boolean;
   readonly slackDm: SlackDmAvailability;
+  readonly emailEnabled?: boolean;
 }
 
 export function NotificationChannels(props: NotificationChannelsProps) {
@@ -113,7 +114,16 @@ export function NotificationChannels(props: NotificationChannelsProps) {
   const editRevision = useRef(0);
   const slackDmNotice = slackDmNoticeFor(props.slackDm);
 
+  function summaryFor(channel: NotificationChannel, enabled: number): string {
+    if (channel === 'email' && props.emailEnabled === false) {
+      return 'Unavailable until the server operator configures email delivery.';
+    }
+    if (isLocked(channel) && slackDmNotice !== null) return slackDmNotice;
+    return channelSummary(enabled);
+  }
+
   function isLocked(channel: NotificationChannel): boolean {
+    if (channel === 'email' && props.emailEnabled === false) return true;
     return channel === 'slack_dm' && props.slackDm !== 'available';
   }
 
@@ -189,7 +199,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
     try {
       const preferences = visibleNotificationChannels.flatMap((channel) =>
         NOTIFICATION_TYPES.flatMap((type) => {
-          if (channel === 'slack_dm' && props.slackDm !== 'available') return [];
+          if (isLocked(channel)) return [];
           return {
             channel,
             type,
@@ -224,8 +234,7 @@ export function NotificationChannels(props: NotificationChannelsProps) {
           const locked = isLocked(channel);
           const enabled = locked ? 0 : enabledTypeCount(disabled, channel);
           const open = openChannel === channel;
-          const summary =
-            locked && slackDmNotice !== null ? slackDmNotice : channelSummary(enabled);
+          const summary = summaryFor(channel, enabled);
           return (
             <div
               key={channel}

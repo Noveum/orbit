@@ -20,16 +20,21 @@ function focusedLinkIndex(linkRefs: readonly (HTMLAnchorElement | null)[]): numb
 export interface UseSettingsSidebarNavigationOptions {
   readonly passwordEnabled: boolean;
   readonly pathname: string;
+  readonly canManageDeployment?: boolean;
 }
 
 export function useSettingsSidebarNavigation({
   passwordEnabled,
+  canManageDeployment = false,
   pathname,
 }: UseSettingsSidebarNavigationOptions) {
   const { open } = useSettingsNav();
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const sidebarInteractive = open || isDesktop;
-  const sections = useMemo(() => settingsSectionsFlat(passwordEnabled), [passwordEnabled]);
+  const sections = useMemo(
+    () => settingsSectionsFlat(passwordEnabled, canManageDeployment),
+    [passwordEnabled, canManageDeployment],
+  );
   const linkRefs = useRef<(HTMLAnchorElement | null)[]>([]);
   const shouldFocusRef = useRef(false);
   const routeIndex = sectionIndex(sections, pathname);

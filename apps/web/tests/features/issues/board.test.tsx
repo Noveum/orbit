@@ -26,6 +26,7 @@ import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 const push = mock();
+const openQuickCreate = mock();
 const nativeFetch = globalThis.fetch;
 const nativeGetBoundingClientRect = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
@@ -168,7 +169,7 @@ const workspace: WorkspaceData = {
   ]),
   labelById: new Map(),
   memberById: new Map(),
-  openQuickCreate: () => undefined,
+  openQuickCreate,
 };
 
 mock.module('@/features/issues/workspace-provider.tsx', () => ({
@@ -334,6 +335,13 @@ function renderBoard(
 }
 
 describe('Board card keyboard boundaries', () => {
+  it('creates an issue with the selected column team and status', () => {
+    openQuickCreate.mockClear();
+    renderBoard(false, [issue(), second], undefined, true);
+    fireEvent.click(screen.getByRole('button', { name: 'Create an issue in In Progress' }));
+    expect(openQuickCreate).toHaveBeenCalledWith(doing.teamId, doing.id);
+  });
+
   it('keeps the draggable wrapper a list item around nested controls', () => {
     renderBoard(true);
     const card = screen.getByTestId('issue-card-ENG-1');

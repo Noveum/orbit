@@ -1843,7 +1843,16 @@ export function Board({
           columnSource={columnSource}
           columnsReady={columnsReady}
           pendingIssueIds={pendingIds}
-          onCreate={() => openQuickCreate()}
+          onCreate={() => {
+            const state =
+              groupBy === 'state'
+                ? (stateById.get(group.id) ??
+                  [...stateById.values()].find(
+                    (candidate) => candidate.category === group.category,
+                  ))
+                : undefined;
+            openQuickCreate(state?.teamId, state?.id);
+          }}
           onCardNode={registerCardNode}
           onColumnNode={registerColumnNode}
           onOpen={setPeekId}

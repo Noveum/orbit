@@ -61,6 +61,28 @@ describe('createInvite', () => {
 });
 
 describe('acceptInvite', () => {
+  it('requires verified email ownership before an invited password account can join', async () => {
+    const invited = await createUser('Unverified Invitee');
+    await db
+      .update(schema.user)
+      .set({ emailVerified: false })
+      .where(eq(schema.user.id, invited.id));
+    const { token } = await createInvite(workspace.admin, { email: invited.email, role: 'admin' });
+
+    await expect(acceptInvite(token, invited.id)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(
+      await db.select().from(schema.member).where(eq(schema.member.userId, invited.id)),
+    ).toEqual([]);
+    const [pending] = await db
+      .select()
+      .from(schema.invitation)
+      .where(eq(schema.invitation.id, token));
+    expect(pending?.status).toBe('pending');
+
+    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.id, invited.id));
+    expect((await acceptInvite(token, invited.id)).member.role).toBe('admin');
+  });
+
   it('creates the member row and the team memberships', async () => {
     const invited = await createUser('Ivy Invitee');
     const { token } = await createInvite(workspace.admin, {

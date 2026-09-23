@@ -50,6 +50,13 @@ describe('parseEmails', () => {
 });
 
 describe('InvitePanel', () => {
+  it('disables send and resend without email while retaining revocation', () => {
+    render(<InvitePanel teams={TEAMS} invites={INVITES} canInvite emailEnabled={false} />);
+    expect(screen.getByRole('button', { name: 'Send invites' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Resend' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Revoke' })).toBeEnabled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('rejects an invalid address before sending anything', async () => {
     const user = userEvent.setup();
     render(<InvitePanel teams={TEAMS} invites={[]} canInvite />);

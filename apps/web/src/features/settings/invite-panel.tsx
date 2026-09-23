@@ -55,9 +55,10 @@ export interface InvitePanelProps {
   readonly teams: readonly TeamBadge[];
   readonly invites: readonly PendingInviteView[];
   readonly canInvite: boolean;
+  readonly emailEnabled?: boolean;
 }
 
-export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
+export function InvitePanel({ teams, invites, canInvite, emailEnabled = true }: InvitePanelProps) {
   const router = useRouter();
   const [emails, setEmails] = useState('');
   const [role, setRole] = useState<OrgRole>('member');
@@ -77,6 +78,7 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (!emailEnabled) return;
     setError(null);
     setSent([]);
     if (parsed.invalid.length > 0) {
@@ -123,12 +125,17 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
       <header className="flex flex-col gap-1">
         <h3 className="font-medium text-dense text-text">Invite people</h3>
         <p className="text-muted text-xs">
-          One email per line, or separated by commas. They get a link that expires in 14 days.
+          {emailEnabled
+            ? 'One email per line, or separated by commas. They get a link that expires in 14 days.'
+            : 'Email invitations are unavailable. Ask the server operator to configure email delivery, then return here to invite teammates.'}
         </p>
       </header>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <fieldset disabled={!canInvite || pending} className="flex flex-col gap-3">
+        <fieldset
+          disabled={!(canInvite && emailEnabled) || pending}
+          className="flex flex-col gap-3"
+        >
           <label htmlFor="invite-emails" className="flex flex-col gap-1.5">
             <span className="sr-only">Email addresses</span>
             <Textarea
@@ -202,7 +209,12 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
         )}
 
         <div>
-          <Button type="submit" variant="primary" size="sm" disabled={!canInvite || pending}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={!(canInvite && emailEnabled) || pending}
+          >
             {pending ? 'Sending' : 'Send invites'}
           </Button>
         </div>
@@ -230,7 +242,7 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={!canInvite || busyInviteId === invite.id}
+                    disabled={!(canInvite && emailEnabled) || busyInviteId === invite.id}
                     onClick={() =>
                       inviteAction(invite.id, 'POST', `/api/invites/${invite.id}/resend`)
                     }

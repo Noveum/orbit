@@ -190,8 +190,11 @@ wired up correctly. That single test covers more than any health check.
 
 ### 9. Sign in for the first time
 
-The first person to sign in becomes the owner of a new workspace, and onboarding
-walks through naming it and creating the first team.
+Each person who creates a workspace becomes its admin, and onboarding walks
+through naming it and creating the first team. The first account has no special
+server-wide privileges. There is no default administrator account. See the
+[first-run setup guide](first-run.md) for registration, invitation verification,
+email setup and the deployment checks available to workspace admins.
 
 The production preflight has already confirmed that at least one first-login
 method is configured. See [Configuration](configuration.md#authentication) for

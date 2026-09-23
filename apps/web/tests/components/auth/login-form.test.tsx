@@ -57,6 +57,24 @@ function renderForm(passwordEnabled: boolean, openSignUp = false) {
 const SIGN_UP_NOTE = 'New here? Signing in creates your account, then you set up a workspace.';
 
 describe('LoginForm', () => {
+  it('keeps password registration usable without advertising unavailable email', async () => {
+    render(<LoginForm providers={[]} passwordEnabled emailEnabled={false} openSignUp />);
+    expect(screen.queryByRole('button', { name: 'Email me a code' })).toBeNull();
+    expect(screen.queryByText('Forgot password?')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Sign in with password' })).toBeVisible();
+    await userEvent.setup().click(screen.getByText('Create an account with a password'));
+    expect(screen.getByLabelText('Full name')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeVisible();
+    expect(sendVerificationOtp).not.toHaveBeenCalled();
+  });
+
+  it('offers OAuth without a dead email form when email and passwords are unavailable', () => {
+    render(<LoginForm providers={['github']} emailEnabled={false} />);
+    expect(screen.getByRole('button', { name: 'Continue with GitHub' })).toBeVisible();
+    expect(screen.queryByLabelText('Email address')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Email me a code' })).toBeNull();
+  });
+
   it('keeps successful and failed reauthentication on the requesting page', async () => {
     signInSocial.mockResolvedValue({ error: null });
     render(

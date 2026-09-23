@@ -20,6 +20,12 @@ describe('password authentication', () => {
     expect(plugin.options).toMatchObject({ storeOTP: 'hashed' });
   });
 
+  it('requires verified email on the authentication invitation endpoints too', () => {
+    const plugin = auth.options.plugins?.find((candidate) => candidate.id === 'organization');
+    if (!(plugin && 'options' in plugin)) throw new Error('Organization plugin is missing');
+    expect(plugin.options).toMatchObject({ requireEmailVerificationOnInvitation: true });
+  });
+
   it('exposes the MCP OAuth provider for one-click clients', () => {
     expect(auth.options.plugins?.map((plugin) => plugin.id)).toEqual(
       expect.arrayContaining(['mcp']),

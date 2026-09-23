@@ -22,7 +22,10 @@ export default async function NotificationSettingsPage() {
         quietHoursEnd={state.settings.quietHoursEnd}
         urgentBypassEnabled={state.settings.urgentBypassEnabled}
         slackDm={state.slackDm}
+        emailEnabled={emailConfigured(process.env)}
       />
     </section>
   );
 }
+
+import { emailConfigured } from '@orbit/shared/utils';

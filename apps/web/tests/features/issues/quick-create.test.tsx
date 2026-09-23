@@ -287,6 +287,48 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
+describe('creating from a board column', () => {
+  it('submits the supplied status for its team', async () => {
+    workspace = buildWorkspace();
+    render(
+      <ToastProvider>
+        <QuickCreateDialog
+          open
+          onOpenChange={() => undefined}
+          defaultTeamId="team_eng"
+          defaultStateId="state_todo"
+        />
+      </ToastProvider>,
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Issue title' }), {
+      target: { value: 'Created in Todo' },
+    });
+    fireEvent.click(screen.getByTestId('quick-create-submit'));
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    expect(created.mock.calls[0]?.[0]).toMatchObject({ stateId: 'state_todo' });
+  });
+
+  it('ignores a supplied status from an unavailable team', async () => {
+    workspace = buildWorkspace();
+    render(
+      <ToastProvider>
+        <QuickCreateDialog
+          open
+          onOpenChange={() => undefined}
+          defaultTeamId="team_eng"
+          defaultStateId="foreign_state"
+        />
+      </ToastProvider>,
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Issue title' }), {
+      target: { value: 'Uses the team default' },
+    });
+    fireEvent.click(screen.getByTestId('quick-create-submit'));
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    expect(created.mock.calls[0]?.[0]).not.toHaveProperty('stateId');
+  });
+});
+
 describe('attaching a file from the create dialog', () => {
   it('offers the file picker even though the issue does not exist yet', () => {
     workspace = buildWorkspace();

@@ -8,7 +8,13 @@ import {
   redisRateLimitStorage,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
-import { inviteEmail, resetPasswordEmail, sendEmail, signInCodeEmail } from '@orbit/services/email';
+import {
+  assertEmailConfigured,
+  inviteEmail,
+  resetPasswordEmail,
+  sendEmail,
+  signInCodeEmail,
+} from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
 import { signInCodeRequestSchema } from '@orbit/shared/validators';
 import { type BetterAuthPlugin, betterAuth } from 'better-auth';
@@ -141,6 +147,7 @@ function emailAndPassword() {
       request?: Request,
     ) => {
       if (isDevLoginRequest(request)) return;
+      assertEmailConfigured();
       const content = await resetPasswordEmail({ url, email: user.email });
       await sendEmail(db, {
         to: user.email,
@@ -258,6 +265,7 @@ export const auth = betterAuth({
       sendVerificationOTP: async ({ email, otp, type }, context) => {
         if (isDevLoginRequest(context)) return;
         if (type !== 'sign-in') return;
+        assertEmailConfigured();
         assertSignUpAllowed(email);
         const content = await signInCodeEmail({ code: otp, email });
         await sendEmail(db, {
@@ -271,7 +279,9 @@ export const auth = betterAuth({
       },
     }),
     organization({
+      requireEmailVerificationOnInvitation: true,
       sendInvitationEmail: async (data) => {
+        assertEmailConfigured();
         const content = await inviteEmail({
           organizationName: data.organization.name,
           inviterName: data.inviter.user.name,
