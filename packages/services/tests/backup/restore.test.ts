@@ -479,4 +479,40 @@ describe('restoreBackup integration and readiness lifecycle', () => {
       }
     }
   }, 30_000);
+
+  it('fails restore safely and rejects when lock is lost mid-restore', async () => {
+    expect(reachable).toBe(true);
+
+    const tempBackupDir = await mkdtemp(join(tmpdir(), 'orbit-lock-lost-test-'));
+    const driverStore = new Map<string, Uint8Array>();
+    const driver = createMockDriver(driverStore);
+    try {
+      const backupResult = await createBackup({
+        destinationDir: tempBackupDir,
+        databaseUrl,
+        storageDriver: driver,
+        pgDumpPath: resolvedPgDump,
+      });
+
+      const targetIdentity = computeRestoreTargetIdentity(
+        databaseUrl,
+        process.env['S3_BUCKET'],
+      ).identity;
+
+      await expect(
+        restoreBackup({
+          backupPath: backupResult.backupDir,
+          databaseUrl,
+          confirmDestructiveRestoreTarget: targetIdentity,
+          storageDriver: driver,
+          pgRestorePath: resolvedPgRestore,
+          skipRedisCheck: true,
+          lockMaxLifetime: 1,
+        }),
+      ).rejects.toThrow(/Restore lock connection was lost unexpectedly/);
+    } finally {
+      await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
+      await setRecoveryState(databaseUrl, 'ready');
+    }
+  }, 30_000);
 });

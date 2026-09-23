@@ -1,4 +1,5 @@
 import {
+  internal,
   type RestoreRecoveryState,
   restoreRecoveryStateSchema,
   validationFailed,
@@ -7,18 +8,40 @@ import postgres from 'postgres';
 
 export const RESTORE_ADVISORY_LOCK_ID = 5_715_707_767_355_208;
 
-export interface RestoreLock {
-  readonly release: () => Promise<void>;
+export interface AcquireRestoreLockOptions {
+  readonly maxLifetime?: number | null | undefined;
 }
 
-export async function acquireRestoreLock(databaseUrl: string): Promise<RestoreLock> {
+export interface RestoreLock {
+  readonly release: () => Promise<void>;
+  readonly isLost: () => boolean;
+  readonly assertActive: () => void;
+  readonly signal: AbortSignal;
+}
+
+export async function acquireRestoreLock(
+  databaseUrl: string,
+  options?: AcquireRestoreLockOptions | undefined,
+): Promise<RestoreLock> {
+  let released = false;
+  let lost = false;
+  const abortController = new AbortController();
+
   const sql = postgres(databaseUrl, {
     max: 1,
     connect_timeout: 5,
-    idle_timeout: 0,
+    max_lifetime: options?.maxLifetime ?? null,
+    keep_alive: 10,
     prepare: false,
     onnotice: (_notice) => undefined,
+    onclose: () => {
+      if (!released) {
+        lost = true;
+        abortController.abort(new Error('Restore lock connection was lost unexpectedly.'));
+      }
+    },
   });
+
   try {
     const [lockRow] = await sql<{ locked: boolean }[]>`
       select pg_try_advisory_lock(${RESTORE_ADVISORY_LOCK_ID}) as locked
@@ -45,14 +68,28 @@ export async function acquireRestoreLock(databaseUrl: string): Promise<RestoreLo
     `;
     return {
       release: async () => {
+        if (released) return;
+        released = true;
         try {
-          await sql`select pg_advisory_unlock(${RESTORE_ADVISORY_LOCK_ID})`.catch(() => undefined);
+          if (!lost) {
+            await sql`select pg_advisory_unlock(${RESTORE_ADVISORY_LOCK_ID})`.catch(
+              () => undefined,
+            );
+          }
         } finally {
           await sql.end({ timeout: 5 });
         }
       },
+      isLost: () => lost,
+      assertActive: () => {
+        if (lost) {
+          throw internal('Restore lock connection was lost unexpectedly during restore.');
+        }
+      },
+      signal: abortController.signal,
     };
   } catch (error) {
+    released = true;
     await sql.end({ timeout: 5 }).catch(() => undefined);
     throw error;
   }

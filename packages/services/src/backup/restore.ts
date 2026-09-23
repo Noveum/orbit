@@ -108,9 +108,12 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
 
   const driver = resolveStorageDriver(options, env);
 
-  const lock = await acquireRestoreLock(databaseUrl);
+  const lock = await acquireRestoreLock(databaseUrl, {
+    maxLifetime: options.lockMaxLifetime,
+  });
 
   try {
+    lock.assertActive();
     await runDatabaseAndMigrations(
       databaseUrl,
       backupDir,
@@ -119,10 +122,12 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       options.pgRestorePath,
       compatibility.pendingMigrationsCount,
     );
+    lock.assertActive();
     await setRecoveryState(databaseUrl, 'restoring');
 
     let objectsReconciled = 0;
     if (driver !== undefined) {
+      lock.assertActive();
       const storageResult = await restoreStorageObjects({
         objectsDir: join(backupDir, 'objects'),
         expectedObjects: manifest.checksums.objects,
@@ -131,6 +136,7 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       objectsReconciled = storageResult.uploadedCount + storageResult.verifiedCount;
     }
 
+    lock.assertActive();
     const validation = await validateRestore({
       databaseUrl,
       storageDriver: driver,
@@ -139,12 +145,14 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       skipRedisCheck: options.skipRedisCheck,
     });
 
+    lock.assertActive();
     if (!validation.valid) {
       const errorSummary = validation.errors.join('; ');
       await setRecoveryState(databaseUrl, 'validation_failed', errorSummary);
       throw internal(`Restore validation failed: ${errorSummary}`);
     }
 
+    lock.assertActive();
     await setRecoveryState(databaseUrl, 'ready');
 
     return {
@@ -155,8 +163,10 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
       validation,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    await setRecoveryState(databaseUrl, 'validation_failed', errorMessage).catch(() => undefined);
+    if (!lock.isLost()) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await setRecoveryState(databaseUrl, 'validation_failed', errorMessage).catch(() => undefined);
+    }
     throw error;
   } finally {
     await lock.release().catch(() => undefined);

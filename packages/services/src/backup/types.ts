@@ -62,6 +62,7 @@ export interface BackupRestoreOptions {
   readonly skipObjectRestore?: boolean | undefined;
   readonly skipRedisCheck?: boolean | undefined;
   readonly redisUrl?: string | undefined;
+  readonly lockMaxLifetime?: number | null | undefined;
 }
 
 export interface BackupRestoreResult {

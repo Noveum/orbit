@@ -91,4 +91,31 @@ describe('readiness state management', () => {
       await setRecoveryState(databaseUrl, 'ready');
     }
   });
+
+  it('detects unexpected lock loss when lifetime timer closes the connection', async () => {
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const reachable = await isDatabaseReachable(databaseUrl);
+    expect(reachable).toBe(true);
+
+    const lock = await acquireRestoreLock(databaseUrl, { maxLifetime: 1 });
+    try {
+      expect(lock.isLost()).toBe(false);
+      expect(() => lock.assertActive()).not.toThrow();
+
+      await new Promise((r) => setTimeout(r, 1600));
+
+      expect(lock.isLost()).toBe(true);
+      expect(() => lock.assertActive()).toThrow(/lost unexpectedly/);
+
+      const secondLock = await acquireRestoreLock(databaseUrl);
+      try {
+        expect(secondLock.isLost()).toBe(false);
+      } finally {
+        await secondLock.release();
+      }
+    } finally {
+      await lock.release();
+      await setRecoveryState(databaseUrl, 'ready');
+    }
+  });
 });
