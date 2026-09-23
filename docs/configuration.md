@@ -228,7 +228,7 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | --- | --- |
 | `GITHUB_APP_ID` | GitHub App, for linking pull requests to issues |
 | `GITHUB_APP_PRIVATE_KEY` | The PEM. Escaped newlines as `\n` are handled |
-| `GITHUB_APP_SLUG` | The app's URL slug. Without it, the connect button hides |
+| `GITHUB_APP_SLUG` | The app's URL slug, required along with the other five GitHub App variables before connecting |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
 | `SLACK_CLIENT_ID` | Slack OAuth client ID. It is not secret |
@@ -237,10 +237,13 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | `SLACK_SIGNING_SECRET` | Verifies Slack webhook signatures. Mark it Sensitive in Vercel |
 | `SLACK_ENABLED` | Global server-side Slack gate. `true` enables Slack for every current and future Orbit organization. False or unset keeps Slack dark |
 
-All are optional. Orbit hides the GitHub affordance when it is not configured.
-Slack requires all three Slack OAuth and webhook variables. Keep
+Both integrations are optional. Their setup cards remain visible to workspace
+admins when they are unconfigured. **Settings**, **Deployment setup** provides
+the variable checklist and configuration instructions. GitHub requires all six
+GitHub App variables before offering installation. Slack requires all three
+Slack OAuth and webhook variables before offering installation or reconnection. Keep
 `SLACK_ENABLED=false` or leave it unset while preparing a deployment. Setting
-it to `true` is a global release action: the Slack settings surface, routes,
+it to `true` is a global release action: Slack connection and channel controls, routes,
 webhook processing, and notification worker become available to every current
 and future Orbit organization. It does not connect an organization
 automatically. An authorized manager must complete a separate OAuth connection
