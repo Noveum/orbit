@@ -385,6 +385,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Edit a document comment',
       description: 'Rewrite the body of a comment this user wrote on a document.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         commentId: z.string().min(1).describe('The comment id.'),
         body: z.string().min(1).max(50_000).describe('Replacement Markdown body.'),

@@ -970,6 +970,8 @@ describe('what a token is allowed to do', () => {
       'delete_sprint',
       'delete_state',
       'delete_view',
+      'edit_comment',
+      'edit_doc_comment',
       'mark_issue_duplicate',
       'remove_member',
       'remove_relation',
