@@ -5,6 +5,7 @@ import {
   misroutedGithubInstall,
 } from '@/features/settings/github-connect-notice.tsx';
 import { GithubDeliveries } from '@/features/settings/github-deliveries.tsx';
+import { integrationProvider } from '@/features/settings/integration-provider.ts';
 import {
   loadGithubDeliveries,
   loadIntegrationSettings,
@@ -34,24 +35,27 @@ export default async function IntegrationsSettingsPage({
     loadGithubDeliveries(principal),
   ]);
 
+  const canManage = can(principal, 'integration:manage');
+  const requestedProvider = query['provider'] ?? (slackStatus === null ? 'github' : 'slack');
+  const provider = integrationProvider(requestedProvider, canManage);
+
   return (
     <section className="flex flex-col gap-5">
       <div className="flex flex-col gap-1">
         <h2 className="font-medium text-lg text-text">Integrations</h2>
-        <p className="text-muted text-xs">
-          Connect GitHub and compatible MCP clients. Orbit verifies GitHub webhooks, links pull
-          requests to issues, and keeps both sides in sync in realtime.
-        </p>
+        <p className="text-muted text-xs">Manage your GitHub, Slack, and MCP connections.</p>
       </div>
       {githubStatus === null ? null : <GithubConnectNotice status={githubStatus} />}
       {slackStatus === null ? null : <SlackConnectNotice status={slackStatus} />}
       <IntegrationsPanel
+        key={provider}
         settings={settings}
-        canManage={can(principal, 'integration:manage')}
+        canManage={canManage}
+        provider={provider}
         mcpUrl={mcpServerUrl()}
         mcpConnections={mcpConnections}
       />
-      <GithubDeliveries deliveries={deliveries} />
+      {provider === 'github' ? <GithubDeliveries deliveries={deliveries} /> : null}
     </section>
   );
 }

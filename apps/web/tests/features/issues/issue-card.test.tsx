@@ -25,7 +25,13 @@ function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrap = (node: ReactElement) => (
     <QueryClientProvider client={client}>
-      <ToastProvider>{node}</ToastProvider>
+      <ToastProvider>
+        <workspaceProvider.WorkspaceDataProvider
+          value={{ ...workspaceProvider.workspaceFrom(undefined, () => undefined), role: 'member' }}
+        >
+          {node}
+        </workspaceProvider.WorkspaceDataProvider>
+      </ToastProvider>
     </QueryClientProvider>
   );
   const result = renderRaw(wrap(ui));
@@ -284,6 +290,24 @@ describe('board placement', () => {
 });
 
 describe('card controls', () => {
+  it('keeps guest cards readable without offering mutations', () => {
+    render(
+      <workspaceProvider.WorkspaceDataProvider
+        value={{ ...workspaceProvider.workspaceFrom(undefined, () => undefined), role: 'guest' }}
+      >
+        <IssueCard issue={issue()} labels={[]} assignee={member} state={state} />
+      </workspaceProvider.WorkspaceDataProvider>,
+    );
+
+    expect(screen.getByRole('link', { name: issue().title })).toBeInTheDocument();
+    expect(screen.getByLabelText('Urgent')).toBeInTheDocument();
+    expect(screen.getByLabelText('In progress')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Priority: Urgent' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Status: In progress' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Change assignee' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Actions for ENG-4' })).toBeInTheDocument();
+  });
+
   it('offers the priority and status as buttons a facilitator can press', () => {
     render(<IssueCard issue={issue()} labels={[]} assignee={undefined} state={state} />);
 

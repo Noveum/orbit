@@ -1,0 +1,20 @@
+{
+  servers {
+    trusted_proxies static {$ORBIT_TRUSTED_PROXIES:127.0.0.1/32 ::1/128}
+    trusted_proxies_strict
+  }
+}
+
+:3000 {
+  @realtime path /api/ws /api/realtime/health
+  handle @realtime {
+    reverse_proxy realtime:3100 {
+      header_up X-Forwarded-For {client_ip}
+    }
+  }
+  handle {
+    reverse_proxy web:3000 {
+      header_up X-Forwarded-For {client_ip}
+    }
+  }
+}

@@ -102,6 +102,8 @@ jobs:
           done
       - name: Run tests
         run: bun run test
+      - name: Docker gateway forwarding and spoof resistance
+        run: bun run test:docker-gateway
 
   schema:
     name: Migrations match the schema

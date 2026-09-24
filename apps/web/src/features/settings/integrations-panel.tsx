@@ -1,14 +1,18 @@
 'use client';
 
 import { slackMemberSyncResultSchema } from '@orbit/shared/validators';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
+import { cn } from '@/lib/cn.ts';
+import { tabHover } from '@/lib/interaction.ts';
 import { GithubPanel } from './github-panel.tsx';
 import { IntegrationCard } from './integration-card.tsx';
 import { IntegrationPicker, type PickerItem } from './integration-picker.tsx';
+import { type IntegrationProvider, integrationProvider } from './integration-provider.ts';
 import type {
   ConnectedChannel,
   IntegrationSettings,
@@ -25,6 +29,7 @@ function teamName(teams: readonly IntegrationTeam[], teamId: string | null): str
 }
 
 export interface IntegrationsPanelProps {
+  readonly provider?: IntegrationProvider;
   readonly settings: IntegrationSettings;
   readonly canManage: boolean;
   readonly mcpUrl: string;
@@ -32,12 +37,19 @@ export interface IntegrationsPanelProps {
 }
 
 export function IntegrationsPanel({
+  provider = 'github',
   settings,
   canManage,
   mcpUrl,
   mcpConnections,
 }: IntegrationsPanelProps) {
   const router = useRouter();
+  const activeProvider = integrationProvider(provider, canManage);
+  const providers = [
+    ...(canManage ? [{ id: 'github', label: 'GitHub' }] : []),
+    ...(canManage ? [{ id: 'slack', label: 'Slack' }] : []),
+    { id: 'mcp', label: 'MCP server' },
+  ];
   const [error, setError] = useState<string | null>(null);
 
   async function call(
@@ -58,6 +70,24 @@ export function IntegrationsPanel({
 
   return (
     <div className="flex flex-col gap-6">
+      <nav aria-label="Integration providers" className="flex gap-1 border-b border-border">
+        {providers.map((entry) => (
+          <Link
+            key={entry.id}
+            href={`/settings/integrations?provider=${entry.id}`}
+            aria-current={activeProvider === entry.id ? 'page' : undefined}
+            className={cn(
+              '-mb-px border-b-2 px-4 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2',
+              tabHover,
+              activeProvider === entry.id
+                ? 'border-accent text-accent'
+                : 'border-transparent text-muted hover:text-text',
+            )}
+          >
+            {entry.label}
+          </Link>
+        ))}
+      </nav>
       {error === null ? null : (
         <p role="alert" className="text-danger text-xs">
           {error}
@@ -66,27 +96,46 @@ export function IntegrationsPanel({
 
       {canManage ? (
         <>
-          <IntegrationCard
-            title="GitHub"
-            description="Install the Orbit GitHub App on every organisation you work in, then associate each repository with a project, or with the workspace when no project owns it yet."
-            status={<ConnectionBadge connected={settings.github.connected} />}
-          >
-            <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
-          </IntegrationCard>
-          {settings.slack === undefined ? null : (
+          {activeProvider === 'github' ? (
+            <IntegrationCard
+              title="GitHub"
+              description="Install the Orbit GitHub App on every organisation you work in, then associate each repository with a project, or with the workspace when no project owns it yet."
+              status={<ConnectionBadge connected={settings.github.connected} />}
+            >
+              <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
+            </IntegrationCard>
+          ) : null}
+          {activeProvider === 'slack' && settings.slack === undefined ? (
+            <IntegrationCard
+              title="Slack"
+              description="Send updates to Slack channels, receive personal notifications and preview Orbit links."
+              status={<Badge tone="outline">Disabled on this server</Badge>}
+            >
+              <p className="text-muted text-xs">
+                The server operator needs to configure and enable the Slack app. A workspace admin
+                can then connect a Slack workspace and choose its channels.
+              </p>
+              <Link href="/settings/deployment#slack" className="text-accent text-xs underline">
+                Set up Slack
+              </Link>
+            </IntegrationCard>
+          ) : null}
+          {activeProvider !== 'slack' || settings.slack === undefined ? null : (
             <SlackSection
               settings={settings.slack}
               canManage={canManage}
               onCall={call}
               onError={setError}
-              onSyncSuccess={() => router.replace('/settings/integrations', { scroll: false })}
+              onSyncSuccess={() =>
+                router.replace('/settings/integrations?provider=slack', { scroll: false })
+              }
             />
           )}
         </>
       ) : (
         <WorkspaceIntegrationsWithheld />
       )}
-      <McpPanel mcpUrl={mcpUrl} connections={mcpConnections} />
+      {activeProvider === 'mcp' ? <McpPanel mcpUrl={mcpUrl} connections={mcpConnections} /> : null}
     </div>
   );
 }
@@ -96,8 +145,8 @@ function WorkspaceIntegrationsWithheld() {
     <section className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface p-4 sm:p-5">
       <h3 className="font-medium text-dense text-text">Workspace integrations</h3>
       <p className="text-muted text-xs" data-testid="integrations-withheld">
-        Only workspace admins can see and manage connected providers. Your own MCP client
-        connections are below.
+        Only workspace admins can see and manage connected providers. You can manage your own MCP
+        client connections here.
       </p>
     </section>
   );
@@ -139,12 +188,14 @@ function ConnectCta({
   href,
   label,
   pendingHint,
+  variant = 'primary',
 }: {
   canManage: boolean;
   enabled: boolean;
   href: string;
   label: string;
   pendingHint: string;
+  variant?: 'primary' | 'secondary';
 }) {
   if (!canManage) return null;
   if (!enabled) {
@@ -154,7 +205,7 @@ function ConnectCta({
       </p>
     );
   }
-  return <ConnectLink href={href} label={label} variant="primary" />;
+  return <ConnectLink href={href} label={label} variant={variant} />;
 }
 
 function LinkedChannelRow({
@@ -326,10 +377,13 @@ function SlackSection({
                   {syncing ? 'Syncing Slack members' : 'Sync Slack members'}
                 </Button>
               ) : null}
-              <ConnectLink
+              <ConnectCta
+                canManage={canManage}
+                enabled={settings.slackConnectEnabled}
                 href="/api/integrations/slack/start"
                 label="Reconnect Slack"
                 variant="secondary"
+                pendingHint="Ask the server operator to finish configuring the Slack app before reconnecting."
               />
             </div>
           ) : null}
@@ -348,9 +402,12 @@ function SlackSection({
           enabled={settings.slackConnectEnabled}
           href="/api/integrations/slack/start"
           label="Add to Slack"
-          pendingHint="Ask a workspace admin to finish configuring the Slack app before connecting."
+          pendingHint="Ask the server operator to finish configuring the Slack app before connecting."
         />
       )}
+      <Link href="/settings/deployment#slack" className="text-accent text-xs underline">
+        Slack setup and verification
+      </Link>
     </IntegrationCard>
   );
 }

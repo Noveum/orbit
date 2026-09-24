@@ -6,8 +6,8 @@
 > [readiness tracker](open-source-readiness.md) before deploying important data.
 
 Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
-and that is the whole architecture. There is nothing to containerise and nothing
-to orchestrate.
+plus a usable sign-in method. A Docker Compose preview packages the standalone
+application and those dependencies for local evaluation.
 
 Everything below has a free tier, so a small team can run Orbit for nothing.
 
@@ -17,8 +17,9 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
 | [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
+| [Docker Compose (Preview)](docker-preview.md) | Local image build and setup | Evaluation with bundled infrastructure, realtime and maintenance |
 
-Both need the same infrastructure plus one complete first-login method.
+All routes need the same infrastructure plus one complete first-login method.
 
 ## What Orbit needs
 
@@ -189,8 +190,11 @@ wired up correctly. That single test covers more than any health check.
 
 ### 9. Sign in for the first time
 
-The first person to sign in becomes the owner of a new workspace, and onboarding
-walks through naming it and creating the first team.
+Each person who creates a workspace becomes its admin, and onboarding walks
+through naming it and creating the first team. The first account has no special
+server-wide privileges. There is no default administrator account. See the
+[first-run setup guide](first-run.md) for registration, invitation verification,
+email setup and the deployment checks available to workspace admins.
 
 The production preflight has already confirmed that at least one first-login
 method is configured. See [Configuration](configuration.md#authentication) for
@@ -204,11 +208,10 @@ authenticated user registers one; they cannot create the first session.
 
 If you want to evaluate Orbit inside your own network, run the Next.js
 standalone build behind a reverse proxy. This standalone path is Preview only:
-HTTP routes and assets work, but realtime and live updates do not yet work in
-this mode. `/api/ws` relies on Vercel's request context for
-`experimental_upgradeWebSocket`; running the standalone server with Node does
-not provide that context. DEP-002 tracks portable realtime deployment
-separately. Use Vercel for production realtime today.
+Running only the Next HTTP server serves routes and assets. The complete
+[Docker Compose preview](docker-preview.md) also starts a Node WebSocket host,
+a same-origin gateway and a maintenance scheduler. Use that stack to evaluate
+live updates and background work on a VPS.
 
 The packaged start command requires Node.js 22 or newer. Bun remains required
 for installing dependencies, applying the schema, and building the app.
@@ -242,9 +245,10 @@ location / {
 }
 ```
 
-You can run Postgres, Redis and MinIO from the bundled `docker-compose.yml`, but
-change every credential in it first. It is written for local development and its
-passwords are in this repository.
+For a complete evaluation stack, use the [Docker Compose preview](docker-preview.md).
+It supplies Postgres, Redis and MinIO with generated private credentials and
+persistent volumes. The root `docker-compose.yml` is for local development only;
+its published passwords must never be used for a deployed installation.
 
 ## Keeping it running
 
@@ -376,7 +380,7 @@ version:
 
 | Symptom | Cause |
 | --- | --- |
-| Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
+| Endless "Reconnecting to live updates" | Check the Docker realtime service and gateway, or the Vercel websocket route, and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and sign-in codes never arrive | `EMAIL_FROM` is not on a domain verified in Resend |

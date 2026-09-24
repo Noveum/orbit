@@ -23,11 +23,13 @@ export async function prepareStandalone(root: string, vercel: string | undefined
     recursive: true,
   });
   const result = await Bun.build({
-    entrypoints: [join(root, 'src', 'start.ts')],
+    entrypoints: ['start', 'realtime', 'scheduler'].map((entry) =>
+      join(root, 'src', `${entry}.ts`),
+    ),
     target: 'node',
     format: 'esm',
     outdir: standalone,
-    naming: 'start.mjs',
+    naming: '[name].mjs',
   });
   if (!result.success)
     throw new AggregateError(result.logs, 'Failed to build standalone entrypoint');

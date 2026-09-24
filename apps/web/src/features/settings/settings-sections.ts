@@ -41,10 +41,18 @@ const PASSWORD_SECTION: SettingsSection = {
   label: 'Password',
 };
 
-export function settingsGroupsFor(passwordEnabled: boolean): readonly SettingsGroup[] {
-  if (!passwordEnabled) return SETTINGS_GROUPS;
+export function settingsGroupsFor(
+  passwordEnabled: boolean,
+  canManageDeployment = false,
+): readonly SettingsGroup[] {
   return SETTINGS_GROUPS.map((group) => {
-    if (group.id !== 'account') return group;
+    if (group.id === 'workspace' && canManageDeployment) {
+      return {
+        ...group,
+        sections: [...group.sections, { href: '/settings/deployment', label: 'Deployment setup' }],
+      };
+    }
+    if (group.id !== 'account' || !passwordEnabled) return group;
     const at = group.sections.findIndex((section) => section.href === '/settings/account/passkeys');
     const insertAt = at === -1 ? group.sections.length : at + 1;
     return {
@@ -58,6 +66,9 @@ export function settingsGroupsFor(passwordEnabled: boolean): readonly SettingsGr
   });
 }
 
-export function settingsSectionsFlat(passwordEnabled: boolean): readonly SettingsSection[] {
-  return settingsGroupsFor(passwordEnabled).flatMap((group) => group.sections);
+export function settingsSectionsFlat(
+  passwordEnabled: boolean,
+  canManageDeployment = false,
+): readonly SettingsSection[] {
+  return settingsGroupsFor(passwordEnabled, canManageDeployment).flatMap((group) => group.sections);
 }

@@ -40,6 +40,7 @@ export interface IssueDetailViewProps {
   readonly known?: Issue;
   readonly onDeleted?: (() => void) | undefined;
   readonly focusCommentId?: string | null;
+  readonly focusActivity?: boolean;
 }
 
 export function teamIssuesPath(teams: readonly Team[], teamId: string): string {
@@ -195,6 +196,7 @@ export function IssueDetailView({
   known,
   onDeleted,
   focusCommentId = null,
+  focusActivity = false,
 }: IssueDetailViewProps) {
   const { toast } = useToast();
   const router = useRouter();
@@ -203,6 +205,17 @@ export function IssueDetailView({
   const issue = detail.data?.issue;
   const redirectedIdentifier = useRef<string | null>(null);
   const comments = useComments(issue?.id ?? null);
+  const activityEnd = useRef<HTMLDivElement>(null);
+  const landedActivity = useRef(false);
+  const activityReady = !detail.isPlaceholderData && comments.isSuccess;
+
+  useEffect(() => {
+    if (!(focusActivity && activityReady) || landedActivity.current) return;
+    const hasFocusedComment = comments.data?.some((entry) => entry.comment.id === focusCommentId);
+    if (!hasFocusedComment) activityEnd.current?.scrollIntoView({ block: 'end' });
+    landedActivity.current = true;
+  }, [focusActivity, activityReady, comments.data, focusCommentId]);
+
   const update = useUpdateIssue();
   const deletion = useIssueDeletion();
 
@@ -393,6 +406,7 @@ export function IssueDetailView({
                 members={workspace.members}
                 focusCommentId={focusCommentId}
               />
+              <div ref={activityEnd} data-testid="issue-activity-end" />
             </>
           )}
         </div>

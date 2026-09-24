@@ -1,9 +1,11 @@
 import { completeOnboarding, getOnboardingStatus, pendingInvitesForEmail } from '@orbit/core';
+import { emailConfigured } from '@orbit/shared/utils';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { OnboardingFlow } from '@/features/onboarding/onboarding-flow.tsx';
 import type { OnboardingStatusView, PendingInviteView } from '@/features/onboarding/types.ts';
 import { requireSession } from '@/lib/auth/session.ts';
+import { mcpServerUrl } from '@/lib/env.ts';
 import { safeNextPath } from '@/lib/next-path.ts';
 
 export const metadata: Metadata = { title: 'Get started' };
@@ -16,6 +18,7 @@ export default async function OnboardingPage({
   const session = await requireSession();
   const params = await searchParams;
   const landingPath = safeNextPath(params['next']) ?? '/my-issues';
+  const emailEnabled = emailConfigured(process.env);
 
   const status = await getOnboardingStatus(session.user.id);
   if (status.completed) redirect(landingPath);
@@ -24,8 +27,9 @@ export default async function OnboardingPage({
     redirect(landingPath);
   }
 
-  const invites: PendingInviteView[] =
-    status.step === 'workspace' ? await pendingInvitesForEmail(status.email) : [];
+  const invites: PendingInviteView[] = session.user.emailVerified
+    ? await pendingInvitesForEmail(status.email)
+    : [];
 
   const view: OnboardingStatusView = {
     name: status.name,
@@ -44,6 +48,9 @@ export default async function OnboardingPage({
       status={view}
       invites={invites}
       landingPath={landingPath}
+      mcpUrl={mcpServerUrl()}
+      emailEnabled={emailEnabled}
+      emailVerificationRequired={!session.user.emailVerified}
     />
   );
 }

@@ -1,4 +1,4 @@
-import { validationFailed } from '@orbit/shared';
+import { storagePathStyleSchema, validationFailed } from '@orbit/shared';
 import { S3StorageDriver } from './s3.ts';
 import type { StorageDriver } from './types.ts';
 
@@ -71,6 +71,11 @@ export function createStorageDriver(env: NodeJS.ProcessEnv = process.env): Stora
   }
   const endpoint = readEnv(env, 'S3_ENDPOINT');
   const sessionToken = readEnv(env, 'S3_SESSION_TOKEN');
+  const pathStyle = readEnv(env, 'S3_FORCE_PATH_STYLE');
+  const parsedPathStyle = storagePathStyleSchema.optional().safeParse(pathStyle);
+  if (!parsedPathStyle.success) {
+    throw validationFailed('S3_FORCE_PATH_STYLE must be true or false.');
+  }
   return new S3StorageDriver({
     bucket: requireEnv(env, 'S3_BUCKET'),
     region: readEnv(env, 'S3_REGION') ?? 'us-east-1',
@@ -78,6 +83,7 @@ export function createStorageDriver(env: NodeJS.ProcessEnv = process.env): Stora
     ...(secretAccessKey === undefined ? {} : { secretAccessKey }),
     ...(sessionToken === undefined ? {} : { sessionToken }),
     ...(endpoint === undefined ? {} : { endpoint }),
+    ...(parsedPathStyle.data === undefined ? {} : { forcePathStyle: parsedPathStyle.data }),
   });
 }
 
