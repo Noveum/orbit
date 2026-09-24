@@ -12,6 +12,21 @@ https://orbit.example.com/mcp
 
 There is nothing extra to run. The MCP server is part of the app.
 
+The hosted Orbit connection is `https://orbit.noveum.ai/mcp`. You can also find
+its client setup in the [Claude Code Marketplace Orbit listing](https://www.claudemarketplace.net/mcp/orbit).
+
+## Directory discovery
+
+`/.well-known/mcp.json` publishes the deployment's remote endpoint and OAuth
+requirement for directories such as MCPub. It follows `NEXT_PUBLIC_APP_URL` and
+the optional `NEXT_PUBLIC_MCP_URL` override. It is discovery metadata, not a
+connection endpoint or an authorization grant.
+
+The hosted Noveum origin also serves `/.well-known/glama.json` as public
+ownership proof. Self-hosted deployments and preview hosts return 404 for that
+claim, so they do not advertise Noveum's directory ownership. Glama still needs
+a separate authenticated test profile to check an OAuth-protected workspace.
+
 ## How access works
 
 **OAuth only. There are no API keys**, and there will not be.
