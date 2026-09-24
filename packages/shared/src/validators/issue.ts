@@ -66,7 +66,7 @@ export const issueExpectedPropertiesSchema = z
 export const issueUpdateSchema = z
   .object({
     title: titleSchema.optional(),
-    description: z.string().max(ISSUE_DESCRIPTION_MAX_LENGTH).optional(),
+    description: issueDescriptionSchema.optional(),
     stateId: idSchema.optional(),
     assigneeId: idSchema.nullable().optional(),
     priority: prioritySchema.optional(),
