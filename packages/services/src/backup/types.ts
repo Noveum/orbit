@@ -49,3 +49,45 @@ export interface AttachmentRecord {
   readonly size: number;
   readonly content_type: string;
 }
+
+export interface BackupRestoreOptions {
+  readonly backupPath: string;
+  readonly confirmDestructiveRestoreTarget: string;
+  readonly databaseUrl?: string | undefined;
+  readonly migrationsFolder?: string | undefined;
+  readonly pgRestorePath?: string | undefined;
+  readonly currentOrbitVersion?: string | undefined;
+  readonly env?: Record<string, string | undefined> | undefined;
+  readonly storageDriver?: StorageDriver | undefined;
+  readonly skipObjectRestore?: boolean | undefined;
+  readonly skipRedisCheck?: boolean | undefined;
+  readonly redisUrl?: string | undefined;
+  readonly lockMaxLifetime?: number | null | undefined;
+}
+
+export interface BackupRestoreResult {
+  readonly manifest: BackupManifest;
+  readonly targetIdentity: string;
+  readonly databaseRestored: boolean;
+  readonly objectsReconciled: number;
+  readonly validation: import('@orbit/shared').RestoreValidationResult;
+}
+
+export interface RestoreStorageObjectEntry {
+  readonly key: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly contentType?: string | undefined;
+}
+
+export interface RestoreStorageOptions {
+  readonly objectsDir: string;
+  readonly expectedObjects: readonly RestoreStorageObjectEntry[];
+  readonly driver: StorageDriver;
+  readonly signal?: AbortSignal | undefined;
+}
+
+export interface RestoreStorageResult {
+  readonly uploadedCount: number;
+  readonly verifiedCount: number;
+}

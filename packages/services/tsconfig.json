@@ -3,7 +3,11 @@
   "compilerOptions": {
     "lib": ["ES2023", "DOM"],
     "jsx": "react-jsx",
-    "types": ["bun"]
+    "types": ["bun"],
+    "paths": {
+      "drizzle-orm": ["../db/node_modules/drizzle-orm"],
+      "drizzle-orm/*": ["../db/node_modules/drizzle-orm/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "tests-preload.ts", "tests/**/*.ts", "tests/**/*.tsx"]
 }

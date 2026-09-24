@@ -81,7 +81,7 @@ async function setupPgDump(databaseUrl: string): Promise<string | undefined> {
     const shimDir = await mkdtemp(join(tmpdir(), 'orbit-pg-dump-shim-'));
     temporaryShimDir = shimDir;
     const isWindows = process.platform === 'win32';
-    const shimExe = join(shimDir, isWindows ? 'pg_dump.exe' : 'pg_dump');
+    const dumpLauncher = join(shimDir, isWindows ? 'pg_dump.exe' : 'pg_dump');
     const shimSource = join(shimDir, 'shim.ts');
     await writeFile(
       shimSource,
@@ -94,9 +94,14 @@ child.stdout.pipe(process.stdout);
 child.on('close', (code) => process.exit(code ?? 0));
 `,
     );
-    Bun.spawnSync(['bun', 'build', '--compile', shimSource, '--outfile', shimExe]);
-    await rm(shimSource, { force: true }).catch(() => undefined);
-    return shimExe;
+    if (isWindows) {
+      Bun.spawnSync(['bun', 'build', '--compile', shimSource, '--outfile', dumpLauncher]);
+    } else {
+      await writeFile(dumpLauncher, `#!/bin/sh\nexec bun run "${shimSource}" "$@"\n`, {
+        mode: 0o755,
+      });
+    }
+    return dumpLauncher;
   }
 
   return undefined;
@@ -197,7 +202,7 @@ function createMockDriver(store: Map<string, Uint8Array>): StorageDriver {
 
 describe('createBackup', () => {
   beforeAll(async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     resolvedPgDump = await setupPgDump(databaseUrl);
   });
 
@@ -226,7 +231,7 @@ describe('createBackup', () => {
   });
 
   it('marks incomplete backup atomically when pg_dump fails or is missing', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
@@ -257,7 +262,7 @@ describe('createBackup', () => {
   });
 
   it('marks incomplete backup atomically when object capture fails', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
     const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -314,7 +319,7 @@ describe('createBackup', () => {
   });
 
   it('exercises a complete successful backup with database dump and storage capture', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
     const testBytes = new TextEncoder().encode('successful backup integration test payload');
