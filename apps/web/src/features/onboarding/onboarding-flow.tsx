@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { ConnectStep } from './steps/connect-step.tsx';
 import { InviteStep } from './steps/invite-step.tsx';
 import { ProfileStep } from './steps/profile-step.tsx';
 import { ThemeStep } from './steps/theme-step.tsx';
@@ -16,6 +17,7 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   profile: 'Your profile',
   workspace: 'Workspace',
   invite: 'Teammates',
+  connect: 'AI tool',
   theme: 'Preferences',
 };
 
@@ -32,6 +34,7 @@ export interface OnboardingFlowProps {
   readonly status: OnboardingStatusView;
   readonly invites: readonly PendingInviteView[];
   readonly landingPath: string;
+  readonly mcpUrl: string;
   readonly emailEnabled: boolean;
   readonly emailVerificationRequired: boolean;
 }
@@ -41,6 +44,7 @@ export function OnboardingFlow({
   status,
   invites,
   landingPath,
+  mcpUrl,
   emailEnabled,
   emailVerificationRequired,
 }: OnboardingFlowProps) {
@@ -63,7 +67,13 @@ export function OnboardingFlow({
         {ONBOARDING_STEPS.map((entry, index) => {
           const state = stepStateFor(index, currentIndex);
           return (
-            <li key={entry} className="flex flex-1 items-center gap-2">
+            <li
+              key={entry}
+              className={cn(
+                'flex min-w-0 items-center gap-2',
+                state === 'current' ? 'flex-auto' : 'flex-none sm:flex-1',
+              )}
+            >
               <span
                 className={cn(
                   'flex size-5 shrink-0 items-center justify-center rounded-full border text-2xs',
@@ -80,7 +90,11 @@ export function OnboardingFlow({
                 )}
               </span>
               <span
-                className={cn('truncate text-2xs', state === 'todo' ? 'text-faint' : 'text-muted')}
+                className={cn(
+                  'truncate text-2xs',
+                  state === 'todo' ? 'text-faint' : 'text-muted',
+                  state === 'current' ? 'inline' : 'hidden sm:inline',
+                )}
               >
                 {STEP_LABELS[entry]}
               </span>
@@ -120,6 +134,7 @@ export function OnboardingFlow({
             </>
           ) : null}
           {step === 'invite' ? <InviteStep onNext={onNext} emailEnabled={emailEnabled} /> : null}
+          {step === 'connect' ? <ConnectStep mcpUrl={mcpUrl} onNext={onNext} /> : null}
           {step === 'theme' ? <ThemeStep onNext={onNext} /> : null}
         </motion.div>
       </AnimatePresence>

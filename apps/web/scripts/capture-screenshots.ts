@@ -57,6 +57,15 @@ async function signIn(page: Page): Promise<void> {
       `Dev sign-in answered ${result}. Is ORBIT_DEV_LOGIN=1 set and the database seeded?`,
     );
   }
+  await dismissAiConnectHint(page);
+}
+
+async function dismissAiConnectHint(page: Page): Promise<void> {
+  const status = await page.evaluate(
+    async (url) => (await fetch(url, { method: 'DELETE' })).status,
+    `${BASE}/api/onboarding/ai-connect-hint`,
+  );
+  if (status !== 200) throw new Error(`Dismissing the AI connect hint answered ${status}.`);
 }
 
 async function firstHtmlDocId(page: Page): Promise<string | null> {
