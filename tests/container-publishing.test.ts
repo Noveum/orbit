@@ -93,6 +93,29 @@ if (args[0] === 'manifest' && args[1] === 'inspect') console.log(JSON.stringify(
           ])
         : [],
     );
+    if (fixture.ok) {
+      const creates = calls.filter((args) => args[0] === 'manifest' && args[1] === 'create');
+      const components = ['runtime', 'gateway', 'bucket'];
+      const expectedCreates = components.map((component) => {
+        const image = `ghcr.io/noveum/orbit-${component}:sha-test-commit`;
+        return ['manifest', 'create', image, `${image}-amd64`, `${image}-arm64`];
+      });
+      if (fixture.release) {
+        expectedCreates.push(
+          ...components.map((component) => {
+            const image = `ghcr.io/noveum/orbit-${component}`;
+            return [
+              'manifest',
+              'create',
+              `${image}:${fixture.release}`,
+              `${image}:sha-test-commit-amd64`,
+              `${image}:sha-test-commit-arm64`,
+            ];
+          }),
+        );
+      }
+      expect(creates).toEqual(expectedCreates);
+    }
     if (fixture.release) {
       const firstRelease = calls.findIndex((args) => args[2]?.endsWith(`:${fixture.release}`));
       expect(calls.slice(0, firstRelease).filter((args) => args[1] === 'inspect')).toHaveLength(3);
