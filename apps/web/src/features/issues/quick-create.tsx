@@ -417,7 +417,7 @@ export function QuickCreateDialog({
                 if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey)
                   event.preventDefault();
               }}
-              className="h-9 shrink-0 border-0 px-0 font-medium text-base shadow-none"
+              className="h-9 shrink-0 border-0 bg-transparent px-0 font-medium text-base shadow-none outline-none focus-visible:border-0 focus-visible:outline-none"
             />
             {!dismissedDuplicates && duplicates.length > 0 ? (
               <DuplicateSuggestions
