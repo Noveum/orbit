@@ -1,4 +1,4 @@
-export const ONBOARDING_STEPS = ['profile', 'workspace', 'invite', 'theme'] as const;
+export const ONBOARDING_STEPS = ['profile', 'workspace', 'invite', 'connect', 'theme'] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
 export const ONBOARDING_DONE = 'done' as const;
@@ -14,6 +14,8 @@ export interface OnboardingState {
   readonly workspaceCreate?: boolean;
   readonly workspaceJoin?: boolean;
   readonly workspaceInvite?: boolean;
+  readonly aiConnectSeen?: boolean;
+  readonly aiConnectHintDismissed?: boolean;
   readonly themeSet?: boolean;
   readonly theme?: OnboardingTheme;
   readonly orgSize?: OrgSize;
@@ -87,6 +89,7 @@ export function resolveOnboardingStep(
   if (state.profileComplete !== true) return 'profile';
   if (!workspaceReady(options)) return 'workspace';
   if (state.workspaceInvite !== true) return 'invite';
+  if (state.aiConnectSeen !== true) return 'connect';
   if (state.themeSet !== true) return 'theme';
   return ONBOARDING_DONE;
 }

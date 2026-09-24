@@ -108,7 +108,7 @@ export function McpPanel({ mcpUrl, connections }: McpPanelProps) {
   );
 }
 
-function McpClientTile({
+export function McpClientTile({
   client,
   mcpUrl,
   onError,
