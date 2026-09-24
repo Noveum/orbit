@@ -1,0 +1,343 @@
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: Orbit by Noveum
+spec:
+  description: Open-source task management with issues, projects, sprints, docs, files,
+    realtime collaboration and an OAuth MCP endpoint.
+  icon: https://raw.githubusercontent.com/Noveum/orbit/main/apps/web/public/logo.png
+  tags:
+  - Productivity
+  - Tool
+  variables:
+  - key: PUBLIC_DOMAIN
+    type: DOMAIN
+    name: Orbit domain
+    description: HTTPS domain for the Orbit app and its MCP endpoint.
+  - key: STORAGE_DOMAIN
+    type: DOMAIN
+    name: File storage domain
+    description: Separate HTTPS domain reachable by browsers for private file uploads.
+  readme: '# Orbit by Noveum
+
+
+    Create your account and workspace after deployment. PostgreSQL, Redis and MinIO
+    have persistent volumes. The web service applies database migrations automatically.
+    The storage initializer creates a private bucket and configures the app CORS origin.
+    Run one scheduler. Configure Resend and EMAIL_FROM for invitations and password
+    recovery. Preserve generated secrets and back up PostgreSQL and MinIO before upgrades.
+    Requires a server or eligible cluster.
+
+
+    Hosted MCP: https://orbit.noveum.ai/mcp
+
+
+    Self-hosted MCP: your Orbit HTTPS origin plus /mcp.
+
+
+    Source and docs: https://github.com/Noveum/orbit'
+  services:
+  - name: postgres
+    template: PREBUILT
+    spec:
+      source:
+        image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+      portForwarding:
+        enabled: false
+      env:
+        POSTGRES_USER:
+          default: orbit
+        POSTGRES_PASSWORD:
+          default: ${ORBIT_POSTGRES_PASSWORD}
+        POSTGRES_DB:
+          default: orbit
+        ORBIT_POSTGRES_PASSWORD:
+          default: ${PASSWORD}
+          expose: true
+      ports:
+      - id: main
+        port: 5432
+        type: TCP
+      volumes:
+      - id: postgres
+        dir: /var/lib/postgresql
+  - name: redis
+    template: PREBUILT
+    spec:
+      source:
+        image: redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
+        command:
+        - redis-server
+        - --appendonly
+        - 'yes'
+      portForwarding:
+        enabled: false
+      env: {}
+      ports:
+      - id: main
+        port: 6379
+        type: TCP
+      volumes:
+      - id: redis
+        dir: /data
+  - name: storage
+    template: PREBUILT
+    spec:
+      source:
+        image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+        command:
+        - minio
+        - server
+        - /data
+      portForwarding:
+        enabled: false
+      env:
+        MINIO_ROOT_USER:
+          default: orbit
+        MINIO_ROOT_PASSWORD:
+          default: ${ORBIT_MINIO_PASSWORD}
+        MINIO_API_CORS_ALLOW_ORIGIN:
+          default: https://${PUBLIC_DOMAIN}
+        ORBIT_MINIO_PASSWORD:
+          default: ${PASSWORD}
+          expose: true
+      ports:
+      - id: main
+        port: 9000
+        type: HTTP
+      volumes:
+      - id: storage
+        dir: /data
+    domainKey: STORAGE_DOMAIN
+  - name: bucket
+    template: PREBUILT
+    spec:
+      source:
+        image: ghcr.io/noveum/orbit-bucket:2026.09.24
+      portForwarding:
+        enabled: false
+      env:
+        MINIO_PASSWORD:
+          default: ${ORBIT_MINIO_PASSWORD}
+        ORBIT_APP_URL:
+          default: https://${PUBLIC_DOMAIN}
+        ORBIT_STORAGE_UPSTREAM:
+          default: storage.zeabur.internal:9000
+        ORBIT_CRON_SECRET:
+          default: ${PASSWORD}
+          expose: true
+    dependencies:
+    - storage
+  - name: web
+    template: PREBUILT
+    spec:
+      source:
+        image: ghcr.io/noveum/orbit-runtime:2026.09.24
+      portForwarding:
+        enabled: false
+      env:
+        DATABASE_URL:
+          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
+        DIRECT_URL:
+          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
+        DATABASE_PREPARED_STATEMENTS:
+          default: 'true'
+        REDIS_URL:
+          default: redis://redis.zeabur.internal:6379
+        BETTER_AUTH_SECRET:
+          default: ${ORBIT_AUTH_SECRET}
+        BETTER_AUTH_URL:
+          default: https://${PUBLIC_DOMAIN}
+        NEXT_PUBLIC_APP_URL:
+          default: https://${PUBLIC_DOMAIN}
+        ORBIT_PASSWORD_AUTH:
+          default: 'true'
+        ALLOWED_EMAIL_DOMAINS:
+          default: ''
+        RESEND_API_KEY:
+          default: ''
+        EMAIL_FROM:
+          default: Orbit <auth@orbit.local>
+        GOOGLE_CLIENT_ID:
+          default: ''
+        GOOGLE_CLIENT_SECRET:
+          default: ''
+        GITHUB_CLIENT_ID:
+          default: ''
+        GITHUB_CLIENT_SECRET:
+          default: ''
+        GITHUB_APP_SLUG:
+          default: ''
+        GITHUB_APP_ID:
+          default: ''
+        GITHUB_APP_PRIVATE_KEY:
+          default: ''
+        GITHUB_APP_CLIENT_ID:
+          default: ''
+        GITHUB_APP_CLIENT_SECRET:
+          default: ''
+        GITHUB_WEBHOOK_SECRET:
+          default: ''
+        SLACK_ENABLED:
+          default: 'false'
+        SLACK_CLIENT_ID:
+          default: ''
+        SLACK_CLIENT_SECRET:
+          default: ''
+        SLACK_SIGNING_SECRET:
+          default: ''
+        SLACK_APP_ID:
+          default: ''
+        CRON_SECRET:
+          default: ${ORBIT_CRON_SECRET}
+        ORBIT_SELF_HOSTED:
+          default: 'true'
+        S3_ENDPOINT:
+          default: https://${STORAGE_DOMAIN}
+        S3_REGION:
+          default: us-east-1
+        S3_BUCKET:
+          default: orbit-uploads
+        S3_ACCESS_KEY_ID:
+          default: orbit
+        S3_SECRET_ACCESS_KEY:
+          default: ${ORBIT_MINIO_PASSWORD}
+        NEXT_TELEMETRY_DISABLED:
+          default: '1'
+        ORBIT_AUTH_SECRET:
+          default: ${PASSWORD}
+          expose: true
+      ports:
+      - id: main
+        port: 3000
+        type: TCP
+    dependencies:
+    - postgres
+    - redis
+    - bucket
+  - name: realtime
+    template: PREBUILT
+    spec:
+      source:
+        image: ghcr.io/noveum/orbit-runtime:2026.09.24
+        command:
+        - node
+        - apps/web/realtime.mjs
+      portForwarding:
+        enabled: false
+      env:
+        DATABASE_URL:
+          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
+        DIRECT_URL:
+          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
+        DATABASE_PREPARED_STATEMENTS:
+          default: 'true'
+        REDIS_URL:
+          default: redis://redis.zeabur.internal:6379
+        BETTER_AUTH_SECRET:
+          default: ${ORBIT_AUTH_SECRET}
+        BETTER_AUTH_URL:
+          default: https://${PUBLIC_DOMAIN}
+        NEXT_PUBLIC_APP_URL:
+          default: https://${PUBLIC_DOMAIN}
+        ORBIT_PASSWORD_AUTH:
+          default: 'true'
+        ALLOWED_EMAIL_DOMAINS:
+          default: ''
+        RESEND_API_KEY:
+          default: ''
+        EMAIL_FROM:
+          default: Orbit <auth@orbit.local>
+        GOOGLE_CLIENT_ID:
+          default: ''
+        GOOGLE_CLIENT_SECRET:
+          default: ''
+        GITHUB_CLIENT_ID:
+          default: ''
+        GITHUB_CLIENT_SECRET:
+          default: ''
+        GITHUB_APP_SLUG:
+          default: ''
+        GITHUB_APP_ID:
+          default: ''
+        GITHUB_APP_PRIVATE_KEY:
+          default: ''
+        GITHUB_APP_CLIENT_ID:
+          default: ''
+        GITHUB_APP_CLIENT_SECRET:
+          default: ''
+        GITHUB_WEBHOOK_SECRET:
+          default: ''
+        SLACK_ENABLED:
+          default: 'false'
+        SLACK_CLIENT_ID:
+          default: ''
+        SLACK_CLIENT_SECRET:
+          default: ''
+        SLACK_SIGNING_SECRET:
+          default: ''
+        SLACK_APP_ID:
+          default: ''
+        CRON_SECRET:
+          default: ${ORBIT_CRON_SECRET}
+        ORBIT_SELF_HOSTED:
+          default: 'true'
+        S3_ENDPOINT:
+          default: https://${STORAGE_DOMAIN}
+        S3_REGION:
+          default: us-east-1
+        S3_BUCKET:
+          default: orbit-uploads
+        S3_ACCESS_KEY_ID:
+          default: orbit
+        S3_SECRET_ACCESS_KEY:
+          default: ${ORBIT_MINIO_PASSWORD}
+        NEXT_TELEMETRY_DISABLED:
+          default: '1'
+      ports:
+      - id: main
+        port: 3100
+        type: TCP
+    dependencies:
+    - web
+    - bucket
+  - name: scheduler
+    template: PREBUILT
+    spec:
+      source:
+        image: ghcr.io/noveum/orbit-runtime:2026.09.24
+        command:
+        - node
+        - apps/web/scheduler.mjs
+      portForwarding:
+        enabled: false
+      env:
+        CRON_SECRET:
+          default: ${ORBIT_CRON_SECRET}
+        ORBIT_INTERNAL_URL:
+          default: http://web.zeabur.internal:3000
+    dependencies:
+    - web
+  - name: orbit
+    template: PREBUILT
+    spec:
+      source:
+        image: ghcr.io/noveum/orbit-gateway:2026.09.24
+      portForwarding:
+        enabled: false
+      env:
+        ORBIT_TRUSTED_PROXIES:
+          default: private_ranges
+        ORBIT_WEB_UPSTREAM:
+          default: web.zeabur.internal:3000
+        ORBIT_REALTIME_UPSTREAM:
+          default: realtime.zeabur.internal:3100
+      ports:
+      - id: main
+        port: 3000
+        type: HTTP
+    domainKey: PUBLIC_DOMAIN
+    dependencies:
+    - web
+    - realtime
+    - scheduler
