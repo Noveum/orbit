@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   index,
+  integer,
   jsonb,
   pgSequence,
   pgTable,
@@ -27,6 +28,7 @@ export const organization = pgTable('organization', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   deletionRequestedAt: timestamp('deletion_requested_at', { withTimezone: true }),
   agentInstructions: text('agent_instructions').notNull().default(''),
+  projectStalenessDays: integer('project_staleness_days').notNull().default(14),
 });
 
 export const member = pgTable(

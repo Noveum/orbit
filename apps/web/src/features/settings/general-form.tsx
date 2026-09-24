@@ -21,11 +21,25 @@ export function parseDomains(value: string): string[] {
   ];
 }
 
+function stalenessBodyValue(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function applyStalenessField(
+  body: { projectStalenessDays?: number },
+  dirty: boolean,
+  value: string,
+): void {
+  if (dirty) body.projectStalenessDays = stalenessBodyValue(value);
+}
+
 export interface GeneralFormProps {
   readonly name: string;
   readonly logo: string | null;
   readonly allowedEmailDomains: readonly string[];
   readonly agentInstructions: string;
+  readonly projectStalenessDays: number;
   readonly canManage: boolean;
 }
 
@@ -34,6 +48,7 @@ export function GeneralForm({
   logo,
   allowedEmailDomains,
   agentInstructions,
+  projectStalenessDays,
   canManage,
 }: GeneralFormProps) {
   const router = useRouter();
@@ -42,6 +57,7 @@ export function GeneralForm({
   const [logoUrl, setLogoUrl] = useState(logo ?? '');
   const [domains, setDomains] = useState(allowedEmailDomains.join(', '));
   const [instructions, setInstructions] = useState(agentInstructions);
+  const [stalenessDays, setStalenessDays] = useState(String(projectStalenessDays));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,11 +66,13 @@ export function GeneralForm({
     logo: false,
     allowedEmailDomains: false,
     agentInstructions: false,
+    projectStalenessDays: false,
   });
   const nameBaseline = useRef(name);
   const logoBaseline = useRef(logo ?? '');
   const domainsBaseline = useRef(parseDomains(allowedEmailDomains.join(', ')));
   const instructionsBaseline = useRef(agentInstructions);
+  const stalenessBaseline = useRef(String(projectStalenessDays));
 
   useEffect(() => {
     nameBaseline.current = name;
@@ -80,6 +98,13 @@ export function GeneralForm({
     }
   }, [agentInstructions]);
 
+  useEffect(() => {
+    stalenessBaseline.current = String(projectStalenessDays);
+    if (!dirtyFields.current.projectStalenessDays) {
+      setStalenessDays(String(projectStalenessDays));
+    }
+  }, [projectStalenessDays]);
+
   const parsedDomains = parseDomains(domains);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -93,6 +118,7 @@ export function GeneralForm({
         allowedEmailDomains?: string[];
         agentInstructions?: string;
         expectedAgentInstructions?: string;
+        projectStalenessDays?: number;
       } = {};
       if (dirtyFields.current.name) body.name = workspaceName;
       if (dirtyFields.current.logo) {
@@ -103,6 +129,7 @@ export function GeneralForm({
         body.agentInstructions = instructions;
         body.expectedAgentInstructions = instructionsBaseline.current;
       }
+      applyStalenessField(body, dirtyFields.current.projectStalenessDays, stalenessDays);
 
       await apiRequest('/api/organizations/current', {
         method: 'PATCH',
@@ -112,10 +139,12 @@ export function GeneralForm({
       logoBaseline.current = logoUrl;
       domainsBaseline.current = parsedDomains;
       instructionsBaseline.current = instructions;
+      stalenessBaseline.current = stalenessDays;
       dirtyFields.current.name = false;
       dirtyFields.current.logo = false;
       dirtyFields.current.allowedEmailDomains = false;
       dirtyFields.current.agentInstructions = false;
+      dirtyFields.current.projectStalenessDays = false;
       toast({ title: 'Workspace updated', tone: 'success' });
       router.refresh();
     } catch (caught) {
@@ -198,6 +227,26 @@ export function GeneralForm({
               ))}
             </span>
           ) : null}
+        </label>
+
+        <label htmlFor="settings-staleness" className="flex flex-col gap-1.5">
+          <span className="font-medium text-dense text-text">Project staleness window</span>
+          <Input
+            id="settings-staleness"
+            value={stalenessDays}
+            onChange={(event) => {
+              const value = event.target.value;
+              setStalenessDays(value);
+              dirtyFields.current.projectStalenessDays = value !== stalenessBaseline.current;
+            }}
+            type="number"
+            min={0}
+            max={365}
+            name="projectStalenessDays"
+          />
+          <span className="text-faint text-xs">
+            Days without a project update before the lead is nudged. Zero turns the nudge off.
+          </span>
         </label>
 
         <label htmlFor="settings-agent-instructions" className="flex flex-col gap-1.5">

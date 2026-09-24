@@ -45,7 +45,7 @@ export function ProjectUpdatesFeed({
               >
                 {update.projectName}
               </Link>
-              <HealthChip health={update.health} />
+              <HealthChip health={update.health} staleDays={update.staleDays} />
             </div>
             <time className="text-2xs text-faint tabular" dateTime={update.createdAt}>
               {formatDate(update.createdAt)}

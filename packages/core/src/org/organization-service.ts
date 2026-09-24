@@ -39,6 +39,9 @@ function organizationUpdateValues(
     ...(parsed.agentInstructions === undefined
       ? {}
       : { agentInstructions: parsed.agentInstructions }),
+    ...(parsed.projectStalenessDays === undefined
+      ? {}
+      : { projectStalenessDays: parsed.projectStalenessDays }),
   };
 }
 
