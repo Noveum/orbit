@@ -1,0 +1,19 @@
+FROM oven/bun:1.3.14-slim AS bun
+FROM node:22-bookworm-slim AS build
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+WORKDIR /workspace
+COPY . .
+RUN bun install --frozen-lockfile --network-concurrency 16
+RUN ORBIT_PASSWORD_AUTH=true ORBIT_PREVIEW_BUILD=1 NEXT_TELEMETRY_DISABLED=1 BETTER_AUTH_SECRET=build-only-not-a-runtime-credential DATABASE_URL=postgres://build:build@127.0.0.1:1/orbit_build REDIS_URL=redis://127.0.0.1:1 bun run --filter @orbit/web build
+RUN bun build scripts/container-migrate.ts --target=node --format=esm --outfile=apps/web/.next/standalone/apps/web/migrate.mjs
+RUN cp -R packages/db/drizzle apps/web/.next/standalone/apps/web/migrations
+
+FROM node:22-bookworm-slim AS runtime
+LABEL org.opencontainers.image.source="https://github.com/Noveum/orbit"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+COPY --from=build --chown=node:node /workspace/apps/web/.next/standalone/ ./
+USER node
+EXPOSE 3000
+CMD ["sh", "-c", "node apps/web/migrate.mjs && exec node apps/web/start.mjs"]
