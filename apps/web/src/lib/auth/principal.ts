@@ -13,6 +13,7 @@ export interface MembershipContext {
   readonly memberId: string;
   readonly organizationName: string;
   readonly organizationSlug: string;
+  readonly organizationLogo?: string | null | undefined;
   readonly deletionRequestedAt: Date | null;
 }
 
@@ -28,6 +29,7 @@ export async function resolveMembership(
       organizationId: schema.organization.id,
       organizationName: schema.organization.name,
       organizationSlug: schema.organization.slug,
+      organizationLogo: schema.organization.logo,
       deletionRequestedAt: schema.organization.deletionRequestedAt,
     })
     .from(schema.member)
@@ -49,6 +51,7 @@ export async function resolveMembership(
     memberId: row.memberId,
     organizationName: row.organizationName,
     organizationSlug: row.organizationSlug,
+    organizationLogo: row.organizationLogo,
     deletionRequestedAt: row.deletionRequestedAt,
     principal: {
       userId,
