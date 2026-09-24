@@ -44,6 +44,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     id: row.organization.id,
     name: row.organization.name,
     slug: row.organization.slug,
+    logo: row.organization.logo,
   }));
 
   const shell = (
@@ -52,6 +53,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
         id: membership?.principal.organizationId ?? '',
         name: membership?.organizationName ?? 'Orbit',
         slug: membership?.organizationSlug ?? 'orbit',
+        logo: membership?.organizationLogo ?? null,
       }}
       workspaces={workspaces}
       user={{

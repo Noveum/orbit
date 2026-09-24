@@ -108,7 +108,24 @@ describe('resolveMembership', () => {
     expect(resolved?.memberId.length ?? 0).toBeGreaterThan(0);
     expect(resolved?.organizationName).toBe('Nova');
     expect(resolved?.organizationSlug.startsWith('nova-')).toBe(true);
+    expect(resolved?.organizationLogo).toBeNull();
     expect(resolved?.deletionRequestedAt).toBeNull();
+  });
+
+  it('carries the workspace logo when configured', async () => {
+    await db
+      .update(schema.organization)
+      .set({ logo: 'https://example.com/logo.png' })
+      .where(eq(schema.organization.id, nova.organizationId));
+    try {
+      const resolved = await resolveMembership(nova.adminUser.id, nova.organizationId);
+      expect(resolved?.organizationLogo).toBe('https://example.com/logo.png');
+    } finally {
+      await db
+        .update(schema.organization)
+        .set({ logo: null })
+        .where(eq(schema.organization.id, nova.organizationId));
+    }
   });
 
   it('exposes a pending deletion so the app can limit the workspace to retry', async () => {

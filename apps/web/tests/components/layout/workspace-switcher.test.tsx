@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher.tsx';
 import type { ShellWorkspace } from '@/lib/navigation.ts';
@@ -170,5 +170,79 @@ describe('WorkspaceSwitcher', () => {
     await user.click(screen.getByTestId('mcp-link'));
 
     expect(push).toHaveBeenCalledWith('/settings/mcp');
+  });
+
+  it('renders the workspace logo in the switcher trigger when configured', () => {
+    const workspaceWithLogo: ShellWorkspace = {
+      ...NOVEUM,
+      logo: 'https://example.com/noveum.png',
+    };
+    render(
+      <WorkspaceSwitcher
+        workspace={workspaceWithLogo}
+        workspaces={[workspaceWithLogo, COMET]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+
+    const trigger = screen.getByTestId('workspace-switcher');
+    const img = trigger.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img).toHaveAttribute('src', 'https://example.com/noveum.png');
+    expect(img).toHaveAttribute('alt', 'Noveum');
+  });
+
+  it('falls back to the text initial in the switcher trigger when logo fails to load', () => {
+    const workspaceWithBrokenLogo: ShellWorkspace = {
+      ...NOVEUM,
+      logo: 'https://example.com/broken.png',
+    };
+    render(
+      <WorkspaceSwitcher
+        workspace={workspaceWithBrokenLogo}
+        workspaces={[workspaceWithBrokenLogo, COMET]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+
+    const trigger = screen.getByTestId('workspace-switcher');
+    const img = trigger.querySelector('img');
+    expect(img).not.toBeNull();
+    fireEvent.error(img as Element);
+
+    expect(trigger.querySelector('img')).toBeNull();
+    expect(trigger).toHaveTextContent('N');
+  });
+
+  it('renders logos for workspaces in the switcher dropdown menu', async () => {
+    const workspaceWithLogo: ShellWorkspace = {
+      ...NOVEUM,
+      logo: 'https://example.com/noveum.png',
+    };
+    const cometWithLogo: ShellWorkspace = {
+      ...COMET,
+      logo: 'https://example.com/comet.png',
+    };
+    render(
+      <WorkspaceSwitcher
+        workspace={workspaceWithLogo}
+        workspaces={[workspaceWithLogo, cometWithLogo]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+    await openMenu();
+
+    const noveumOption = screen.getByTestId('workspace-option-noveum');
+    const noveumImg = noveumOption.querySelector('img');
+    expect(noveumImg).not.toBeNull();
+    expect(noveumImg).toHaveAttribute('src', 'https://example.com/noveum.png');
+
+    const cometOption = screen.getByTestId('workspace-option-comet');
+    const cometImg = cometOption.querySelector('img');
+    expect(cometImg).not.toBeNull();
+    expect(cometImg).toHaveAttribute('src', 'https://example.com/comet.png');
   });
 });
