@@ -133,13 +133,18 @@ spec:
     spec:
       source:
         image: ghcr.io/noveum/orbit-runtime:2026.09.24
+        command:
+        - sh
+        - -ec
+        - |
+          export DATABASE_URL="$(node -e 'const url = new URL("postgres://orbit@postgres.zeabur.internal:5432/orbit"); url.password = encodeURIComponent(process.env.POSTGRES_PASSWORD); process.stdout.write(url.href)')"
+          export DIRECT_URL="$DATABASE_URL"
+          node apps/web/migrate.mjs && exec node apps/web/start.mjs
       portForwarding:
         enabled: false
       env:
-        DATABASE_URL:
-          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
-        DIRECT_URL:
-          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
+        POSTGRES_PASSWORD:
+          default: ${ORBIT_POSTGRES_PASSWORD}
         DATABASE_PREPARED_STATEMENTS:
           default: 'true'
         REDIS_URL:
@@ -221,15 +226,17 @@ spec:
       source:
         image: ghcr.io/noveum/orbit-runtime:2026.09.24
         command:
-        - node
-        - apps/web/realtime.mjs
+        - sh
+        - -ec
+        - |
+          export DATABASE_URL="$(node -e 'const url = new URL("postgres://orbit@postgres.zeabur.internal:5432/orbit"); url.password = encodeURIComponent(process.env.POSTGRES_PASSWORD); process.stdout.write(url.href)')"
+          export DIRECT_URL="$DATABASE_URL"
+          exec node apps/web/realtime.mjs
       portForwarding:
         enabled: false
       env:
-        DATABASE_URL:
-          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
-        DIRECT_URL:
-          default: postgres://orbit:${ORBIT_POSTGRES_PASSWORD}@postgres.zeabur.internal:5432/orbit
+        POSTGRES_PASSWORD:
+          default: ${ORBIT_POSTGRES_PASSWORD}
         DATABASE_PREPARED_STATEMENTS:
           default: 'true'
         REDIS_URL:
