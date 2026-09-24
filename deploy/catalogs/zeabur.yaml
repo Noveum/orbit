@@ -113,7 +113,7 @@ spec:
     template: PREBUILT
     spec:
       source:
-        image: ghcr.io/noveum/orbit-bucket:sha-e219d286638b9479e7946979b4383ea4e99c5bd6
+        image: ghcr.io/noveum/orbit-bucket:2026.09.24
       portForwarding:
         enabled: false
       env:
@@ -132,7 +132,7 @@ spec:
     template: PREBUILT
     spec:
       source:
-        image: ghcr.io/noveum/orbit-runtime:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+        image: ghcr.io/noveum/orbit-runtime:2026.09.24
       portForwarding:
         enabled: false
       env:
@@ -219,7 +219,7 @@ spec:
     template: PREBUILT
     spec:
       source:
-        image: ghcr.io/noveum/orbit-runtime:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+        image: ghcr.io/noveum/orbit-runtime:2026.09.24
         command:
         - node
         - apps/web/realtime.mjs
@@ -305,7 +305,7 @@ spec:
     template: PREBUILT
     spec:
       source:
-        image: ghcr.io/noveum/orbit-runtime:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+        image: ghcr.io/noveum/orbit-runtime:2026.09.24
         command:
         - node
         - apps/web/scheduler.mjs
@@ -322,7 +322,7 @@ spec:
     template: PREBUILT
     spec:
       source:
-        image: ghcr.io/noveum/orbit-gateway:sha-7da6cdb83550c4e597800b2788c4ce534d1af669
+        image: ghcr.io/noveum/orbit-gateway:2026.09.24
       portForwarding:
         enabled: false
       env:
