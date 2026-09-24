@@ -959,6 +959,7 @@ describe('what a token is allowed to do', () => {
       'archive_doc',
       'archive_issue',
       'archive_project',
+      'complete_cycle',
       'delete_comment',
       'delete_doc',
       'delete_doc_collection',
@@ -977,6 +978,8 @@ describe('what a token is allowed to do', () => {
       'remove_relation',
       'remove_team_member',
       'unlink_github_repository',
+      'update_state',
+      'update_view',
     ];
 
     const actualDestructive = tools
@@ -984,6 +987,20 @@ describe('what a token is allowed to do', () => {
       .map((tool) => tool.name)
       .sort();
     expect(actualDestructive).toEqual(expectedDestructive);
+
+    const actualOpenWorld = tools
+      .filter((tool) => tool.annotations?.openWorldHint === true)
+      .map((tool) => tool.name)
+      .sort();
+    expect(actualOpenWorld).toEqual([
+      'archive_doc',
+      'attach_file',
+      'create_doc',
+      'delete_doc',
+      'invite_member',
+      'unarchive_doc',
+      'update_doc',
+    ]);
 
     const nonDestructive = ['create_issue', 'create_cycle', 'add_comment'];
     for (const name of nonDestructive) {

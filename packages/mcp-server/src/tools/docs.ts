@@ -218,6 +218,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Create a document with a Markdown body or a self-contained HTML page. File it under a collection, attach it to a project, or nest it under a parent document. A document lives in a collection or in a project, never both.',
       readOnly: false,
+      openWorld: true,
       inputSchema: {
         title: z.string().trim().min(1).max(200).describe('Document title.'),
         content: z
@@ -270,6 +271,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Change a document title, body, collection, parent, project or visibility. Only the fields you pass are touched. Filing a document under a collection detaches it from any project, and attaching it to a project unfiles it.',
       readOnly: false,
+      openWorld: true,
       inputSchema: {
         doc: docRef,
         title: z.string().trim().min(1).max(200).optional(),
@@ -327,6 +329,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         'Archive a document so it leaves the sidebar and the default listings. The content is kept.',
       readOnly: false,
       destructive: true,
+      openWorld: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
@@ -594,6 +597,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Restore an archived document',
       description: 'Bring an archived document back into the sidebar and the default listings.',
       readOnly: false,
+      openWorld: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
@@ -613,6 +617,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         'Delete a document permanently. Pages nested under it are lifted to its own place rather than deleted. Use archive_doc to hide a document instead of destroying it.',
       readOnly: false,
       destructive: true,
+      openWorld: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
