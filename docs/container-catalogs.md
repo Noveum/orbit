@@ -42,8 +42,13 @@ The hosted Orbit MCP URL is **https://orbit.noveum.ai/mcp**. A self-hosted
 installation provides its own MCP endpoint at its HTTPS app origin plus `/mcp`.
 The GitHub repository is application source, not an MCP connection URL.
 
-Container images are built by the Container images workflow from `containers-*`
-tags and published with immutable source-commit tags. Catalog acceptance and
+Container images are built by the Container images workflow from dated tags such
+as `containers-2026.09.24` or `containers-2026.09.24-rc.4`. It publishes both
+source-commit tags and matching readable image tags, such as `2026.09.24`.
+Release aliases are published only after all three component manifests contain
+Linux amd64 and arm64 images. Never reuse a release tag for different code.
+Update provider templates to the tested release together; publishing an image
+does not update existing deployments. Catalog acceptance and
 public template availability are recorded separately from a submitted pull
 request. Paid infrastructure must be provisioned by the person deploying Orbit.
 

@@ -61,10 +61,23 @@ jobs:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          release=""
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            release="${GITHUB_REF_NAME#containers-}"
+            [[ "$GITHUB_REF_NAME" == containers-* && "$release" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-rc\.[1-9][0-9]*)?$ ]] || { echo 'Invalid container release tag' >&2; exit 1; }
+          fi
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for component in runtime gateway bucket; do
             image="ghcr.io/noveum/orbit-${component}:sha-${GITHUB_SHA}"
             docker manifest create "$image" "${image}-amd64" "${image}-arm64"
             docker manifest push "$image"
+            docker manifest inspect "$image" | jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
           done
+          if [[ -n "$release" ]]; then
+            for component in runtime gateway bucket; do
+              image="ghcr.io/noveum/orbit-${component}"
+              docker manifest create "${image}:${release}" "${image}:sha-${GITHUB_SHA}-amd64" "${image}:sha-${GITHUB_SHA}-arm64"
+              docker manifest push "${image}:${release}"
+            done
+          fi
           docker logout ghcr.io
