@@ -19,6 +19,7 @@ import { authClient } from '@/lib/auth/client.ts';
 import { cn } from '@/lib/cn.ts';
 import type { ShellUser, ShellWorkspace } from '@/lib/navigation.ts';
 import { forgetPersistedCache } from '@/lib/query/persist.ts';
+import { WorkspaceLogo } from './workspace-logo.tsx';
 
 export const WORKSPACE_LANDING = '/my-issues';
 
@@ -77,6 +78,7 @@ export function WorkspaceSwitcher({
     <DropdownMenu>
       <DropdownMenuTrigger
         data-testid="workspace-switcher"
+        aria-label={collapsed ? workspace.name : undefined}
         className={cn(
           'flex w-full items-center gap-2 rounded-md px-2 text-left text-dense',
           'transition-colors duration-[var(--duration-fast)] hover:bg-surface-2',
@@ -84,9 +86,7 @@ export function WorkspaceSwitcher({
           collapsed && 'justify-center px-0',
         )}
       >
-        <span className="flex size-5 shrink-0 items-center justify-center rounded-sm bg-accent font-semibold text-2xs text-accent-contrast">
-          {workspace.name.slice(0, 1).toUpperCase()}
-        </span>
+        <WorkspaceLogo name={workspace.name} logo={workspace.logo} size="md" />
         {collapsed ? null : (
           <>
             <span className="min-w-0 flex-1 truncate font-medium text-text">{workspace.name}</span>
@@ -117,9 +117,7 @@ export function WorkspaceSwitcher({
                 switchTo(option);
               }}
             >
-              <span className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-surface-2 font-semibold text-[9px] text-muted">
-                {option.name.slice(0, 1).toUpperCase()}
-              </span>
+              <WorkspaceLogo name={option.name} logo={option.logo} size="sm" />
               <span className="min-w-0 flex-1 truncate">{option.name}</span>
               {active ? <Check className="size-3.5 shrink-0" aria-hidden="true" /> : null}
             </DropdownMenuItem>
