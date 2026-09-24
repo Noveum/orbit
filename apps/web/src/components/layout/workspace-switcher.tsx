@@ -4,6 +4,7 @@ import { Check, ChevronsUpDown, Home, LogOut, Plug, Plus, Settings, SunMoon } fr
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useState } from 'react';
+import { WorkspaceLogo } from '@/components/layout/workspace-logo.tsx';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import {
   DropdownMenu,
@@ -19,7 +20,6 @@ import { authClient } from '@/lib/auth/client.ts';
 import { cn } from '@/lib/cn.ts';
 import type { ShellUser, ShellWorkspace } from '@/lib/navigation.ts';
 import { forgetPersistedCache } from '@/lib/query/persist.ts';
-import { WorkspaceLogo } from './workspace-logo.tsx';
 
 export const WORKSPACE_LANDING = '/my-issues';
 
