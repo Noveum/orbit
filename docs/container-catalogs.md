@@ -1,0 +1,73 @@
+# Container catalogs
+
+Orbit's catalog deployment runs the Node web application, realtime service and
+scheduler behind a Caddy gateway. PostgreSQL, Redis and private MinIO storage
+have persistent volumes. Password signup is enabled; no demo users are seeded.
+
+The runtime image applies the committed database migrations before starting the
+web server. A failed migration prevents startup. Back up PostgreSQL and object
+storage before upgrading. Keep the authentication, database and storage secrets
+stable across upgrades.
+
+Build from the repository root:
+
+```sh
+docker build -f deploy/docker/Dockerfile.catalog -t orbit-runtime .
+docker build -f deploy/docker/Dockerfile.gateway -t orbit-gateway .
+docker build -f deploy/docker/Dockerfile.bucket -t orbit-bucket .
+```
+
+The build uses non-secret placeholders. Supply real settings at runtime. Bind
+one HTTPS domain to the gateway's port 3000 and a separate HTTPS storage domain
+to MinIO's port 9000. Set `ORBIT_APP_URL` and `ORBIT_STORAGE_URL` to these origins.
+Do not expose PostgreSQL, Redis, the web service or the realtime service directly.
+The bucket initializer persists the CORS allowlist and waits for it to load.
+
+Generate distinct random `POSTGRES_PASSWORD`, `MINIO_PASSWORD`,
+`BETTER_AUTH_SECRET` and `CRON_SECRET` values. `ORBIT_IMAGE`,
+`ORBIT_GATEWAY_IMAGE` and `ORBIT_BUCKET_IMAGE` pin each component to its tested
+source commit. The storage initializer can be updated independently of the
+application and gateway. Catalog infrastructure images use immutable digests.
+Image publication builds Linux amd64 and arm64 on native runners.
+
+Run exactly one scheduler. Configure Resend and a verified `EMAIL_FROM` to enable
+email invitations and recovery. Configure OAuth providers separately if needed.
+Restrict signup with `ALLOWED_EMAIL_DOMAINS` before opening a private installation.
+
+The gateway trusts private proxy addresses in the platform templates. Deploy it
+behind the platform's isolated ingress network, and narrow `ORBIT_TRUSTED_PROXIES`
+to the actual ingress addresses when the network contains untrusted tenants.
+
+The hosted Orbit MCP URL is **https://orbit.noveum.ai/mcp**. A self-hosted
+installation provides its own MCP endpoint at its HTTPS app origin plus `/mcp`.
+The GitHub repository is application source, not an MCP connection URL.
+
+Container images are built by the Container images workflow from dated tags such
+as `containers-2026.09.24` or `containers-2026.09.24-rc.4`. It publishes both
+source-commit tags and matching readable image tags, such as `2026.09.24`.
+Release aliases are published only after all three component manifests contain
+Linux amd64 and arm64 images. Never reuse a release tag for different code.
+Update provider templates to the tested release together; publishing an image
+does not update existing deployments. Catalog acceptance and
+public template availability are recorded separately from a submitted pull
+request. Paid infrastructure must be provisioned by the person deploying Orbit.
+
+## Render
+
+The repository includes a [Render Blueprint](../render.yaml) for the gateway,
+web app, realtime, scheduler, storage initializer, MinIO, PostgreSQL and Redis.
+During initial setup, provide `BETTER_AUTH_URL` and `S3_ENDPOINT` on `orbit-web`.
+Use the intended HTTPS app and storage origins. Bind those custom domains to
+`orbit` and `orbit-storage` before signing in. Render displays the infrastructure
+cost before deployment; persistent services in this Blueprint require paid plans.
+The Blueprint does not provision services until the deploying user approves it.
+
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Noveum/orbit)
+
+## Zeabur
+
+[Deploy Orbit on Zeabur](https://zeabur.com/templates/1JSTL8).
+The [template source](../deploy/catalogs/zeabur.yaml) includes all eight services.
+Choose different app and storage domains. Zeabur generates credentials and keeps
+PostgreSQL, Redis and MinIO data in persistent volumes. Deployment requires an
+eligible server or cluster; creating the template listing does not rent a server.

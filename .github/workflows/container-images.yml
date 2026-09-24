@@ -1,0 +1,83 @@
+name: Container images
+
+on:
+  push:
+    tags: ['containers-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build application and gateway
+        run: |
+          set -euo pipefail
+          docker build -f deploy/docker/Dockerfile.catalog -t orbit-runtime:build .
+          docker build -f deploy/docker/Dockerfile.gateway -t orbit-gateway:build .
+          docker run --rm orbit-runtime:build node --check apps/web/migrate.mjs
+          docker run --rm orbit-runtime:build node --check apps/web/realtime.mjs
+          docker run --rm orbit-runtime:build node --check apps/web/scheduler.mjs
+          docker build -f deploy/docker/Dockerfile.bucket -t orbit-bucket:build .
+          docker run --rm orbit-gateway:build caddy validate --config /etc/caddy/Caddyfile
+      - name: Publish commit-addressed images
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in runtime gateway bucket; do
+            image="ghcr.io/noveum/orbit-${component}"
+            docker tag "orbit-${component}:build" "${image}:sha-${GITHUB_SHA}-${ARCH}"
+            docker push "${image}:sha-${GITHUB_SHA}-${ARCH}"
+          done
+          docker logout ghcr.io
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish multi-platform manifests
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release=""
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            release="${GITHUB_REF_NAME#containers-}"
+            [[ "$GITHUB_REF_NAME" == containers-* && "$release" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-rc\.[1-9][0-9]*)?$ ]] || { echo 'Invalid container release tag' >&2; exit 1; }
+          fi
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in runtime gateway bucket; do
+            image="ghcr.io/noveum/orbit-${component}:sha-${GITHUB_SHA}"
+            docker manifest create "$image" "${image}-amd64" "${image}-arm64"
+            docker manifest push "$image"
+            docker manifest inspect "$image" | jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
+          done
+          if [[ -n "$release" ]]; then
+            for component in runtime gateway bucket; do
+              image="ghcr.io/noveum/orbit-${component}"
+              docker manifest create "${image}:${release}" "${image}:sha-${GITHUB_SHA}-amd64" "${image}:sha-${GITHUB_SHA}-arm64"
+              docker manifest push "${image}:${release}"
+            done
+          fi
+          docker logout ghcr.io
