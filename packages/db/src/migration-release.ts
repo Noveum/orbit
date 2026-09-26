@@ -18,7 +18,10 @@ export interface ReleaseResult {
 
 const LOCK_KEY = 4_611_358_438_132_153;
 const AGENT_SCHEMA_MIGRATION = 1_789_829_081_921;
-const AGENT_SCHEMA_HASH = 'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3';
+const AGENT_SCHEMA_HASH = '8d410a4698cc081dfbfc80eb723daf843f3035c41414fdeb2863d4f704855471';
+const AGENT_SCHEMA_BATCH_SIZE = 1_000;
+const PRE_BATCH_AGENT_SCHEMA_HASH =
+  'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3';
 const AGENT_BINDING_MIGRATION = 1_789_829_740_142;
 const AGENT_BINDING_HASH = '574585419f185dc95fed54d6db3a54309a7ce17ece1b2c33586fb3a67422f3ef';
 const HISTORICAL_AGENT_INSTRUCTIONS_MIGRATION = 1_787_562_015_902;
@@ -37,6 +40,9 @@ function containsDataChange(migration: MigrationMeta): boolean {
 
 function migrationHashMatches(hash: string, migration: MigrationMeta): boolean {
   if (hash === migration.hash) return true;
+  if (migration.folderMillis === AGENT_SCHEMA_MIGRATION && hash === PRE_BATCH_AGENT_SCHEMA_HASH) {
+    return true;
+  }
   const source = migration.sql.join('--> statement-breakpoint');
   const lineEndingHashes = ['\n', '\r\n'].map((lineEnding) =>
     createHash('sha256').update(source.replace(/\r?\n/gu, lineEnding)).digest('hex'),
@@ -106,6 +112,20 @@ async function applyPendingMigrations(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
 ): Promise<void> {
+  const agentSchemaIndex = migrations.findIndex(
+    (migration) => migration.folderMillis === AGENT_SCHEMA_MIGRATION,
+  );
+  if (agentSchemaIndex >= 0) {
+    await applyPendingMigrationsWithAgentSchema(sql, migrations, agentSchemaIndex);
+    return;
+  }
+  await applyMigrationTransaction(sql, migrations);
+}
+
+async function applyMigrationTransaction(
+  sql: postgres.Sql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
   await sql.begin(async (tx) => {
     await tx`create schema if not exists drizzle`;
     await tx`create table if not exists drizzle.__drizzle_migrations (
@@ -118,6 +138,155 @@ async function applyPendingMigrations(
         values (${migration.hash}, ${migration.folderMillis})`;
     }
   });
+}
+
+async function applyPendingMigrationsWithAgentSchema(
+  sql: postgres.Sql,
+  migrations: readonly MigrationMeta[],
+  agentSchemaIndex: number,
+): Promise<void> {
+  const agentSchemaMigration = migrations[agentSchemaIndex];
+  if (agentSchemaMigration === undefined) throw new Error('The agent schema migration is missing.');
+  const { preparation, backfills, finalization } = splitAgentSchemaMigration(agentSchemaMigration);
+  await applyMigrationTransaction(sql, migrations.slice(0, agentSchemaIndex));
+  await prepareAgentSchemaMigration(sql, agentSchemaMigration, preparation);
+  await runAgentSchemaBackfills(sql, backfills);
+  await sql.begin(async (tx) => {
+    await lockAgentSchemaTables(tx);
+    await runAgentSchemaBackfillsInTransaction(tx, backfills);
+    for (const statement of finalization) await tx.unsafe(statement);
+    await tx`insert into drizzle.__drizzle_migrations (hash, created_at)
+      values (${agentSchemaMigration.hash}, ${agentSchemaMigration.folderMillis})`;
+    for (const migration of migrations.slice(agentSchemaIndex + 1)) {
+      for (const statement of compatibleMigrationStatements(migration)) await tx.unsafe(statement);
+      await tx`insert into drizzle.__drizzle_migrations (hash, created_at)
+        values (${migration.hash}, ${migration.folderMillis})`;
+    }
+    await tx`delete from drizzle.__drizzle_migration_state
+      where migration_id = ${agentSchemaMigration.folderMillis}`;
+  });
+}
+
+interface AgentSchemaMigrationParts {
+  readonly preparation: readonly string[];
+  readonly backfills: readonly string[];
+  readonly finalization: readonly string[];
+}
+
+function splitAgentSchemaMigration(migration: MigrationMeta): AgentSchemaMigrationParts {
+  if (migration.hash !== AGENT_SCHEMA_HASH) {
+    throw new Error('The historical agent schema migration does not match its recorded source.');
+  }
+  const backfillStatements = migration.sql.filter((statement) => /^\s*DO\b/iu.test(statement));
+  const migrationBackfills = backfillStatements.map((statement) => {
+    const update = statement.match(
+      /\b(UPDATE\s+"[^"]+"[\s\S]*?);\s*GET DIAGNOSTICS\s+affected\s*=\s*ROW_COUNT\s*;/iu,
+    )?.[1];
+    if (
+      update === undefined ||
+      !/\bORDER BY\b[\s\S]*?\bLIMIT\s+1000\b/iu.test(update) ||
+      !/^\s*UPDATE\s+"(?:issue|issue_activity|audit_log|notification|mcp_grant)"(?:\s|$)/iu.test(
+        update,
+      )
+    ) {
+      throw new Error('The agent schema migration contains an unexpected backfill batch.');
+    }
+    return `${update} RETURNING id`;
+  });
+  if (migrationBackfills.length !== 6) {
+    throw new Error('The agent schema migration must contain six ordered backfill batches.');
+  }
+  const firstBackfill = migration.sql.findIndex((statement) => /^\s*DO\b/iu.test(statement));
+  const lastBackfill = migration.sql.findLastIndex((statement) => /^\s*DO\b/iu.test(statement));
+  if (firstBackfill < 0 || lastBackfill < firstBackfill) {
+    throw new Error('The agent schema migration backfill batches are missing.');
+  }
+  const orphanedPrincipalBackfills = ['issue_activity', 'audit_log', 'notification'].map(
+    (table) => `UPDATE "${table}" record
+      SET principal_user_id = null
+      WHERE record.id IN (
+        SELECT candidate.id
+        FROM "${table}" candidate
+        WHERE candidate.principal_user_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "user" person WHERE person.id = candidate.principal_user_id
+          )
+        ORDER BY candidate.id LIMIT ${AGENT_SCHEMA_BATCH_SIZE}
+      )
+      RETURNING record.id`,
+  );
+  return {
+    preparation: migration.sql.slice(0, firstBackfill),
+    backfills: [...migrationBackfills, ...orphanedPrincipalBackfills],
+    finalization: migration.sql.slice(lastBackfill + 1),
+  };
+}
+
+async function prepareAgentSchemaMigration(
+  sql: postgres.Sql,
+  migration: MigrationMeta,
+  preparation: readonly string[],
+): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`create schema if not exists drizzle`;
+    await tx`create table if not exists drizzle.__drizzle_migrations (
+      id serial primary key, hash text not null, created_at bigint
+    )`;
+    await tx`create table if not exists drizzle.__drizzle_migration_state (
+      migration_id bigint primary key, hash text not null
+    )`;
+    const [state] = await tx<{ hash: string }[]>`
+      select hash from drizzle.__drizzle_migration_state
+      where migration_id = ${migration.folderMillis} for update
+    `;
+    if (state !== undefined) {
+      if (!migrationHashMatches(state.hash, migration)) {
+        throw new Error('The pending agent schema migration does not match its recorded source.');
+      }
+      return;
+    }
+    for (const statement of preparation) await tx.unsafe(statement);
+    await tx`insert into drizzle.__drizzle_migration_state (migration_id, hash)
+      values (${migration.folderMillis}, ${migration.hash})`;
+  });
+}
+
+async function runAgentSchemaBackfills(
+  sql: postgres.Sql,
+  backfills: readonly string[],
+): Promise<void> {
+  for (const statement of backfills) {
+    while (true) {
+      const affected = await sql.begin(async (tx) => (await tx.unsafe(statement)).length);
+      if (affected === 0) break;
+    }
+  }
+}
+
+async function runAgentSchemaBackfillsInTransaction(
+  tx: postgres.TransactionSql,
+  backfills: readonly string[],
+): Promise<void> {
+  for (const statement of backfills) {
+    while (true) {
+      const affected = await tx.unsafe(statement);
+      if (affected.length === 0) break;
+    }
+  }
+}
+
+async function lockAgentSchemaTables(tx: postgres.TransactionSql): Promise<void> {
+  await tx.unsafe(`lock table
+    public."user",
+    public.organization,
+    public.oauth_application,
+    public.agent_identity,
+    public.issue,
+    public.issue_activity,
+    public.audit_log,
+    public.notification,
+    public.mcp_grant
+    in share row exclusive mode`);
 }
 
 function dependencyOrderedAgentBinding(migration: MigrationMeta): readonly string[] {
@@ -135,16 +304,7 @@ function compatibleMigrationStatements(migration: MigrationMeta): readonly strin
   if (migration.hash !== AGENT_SCHEMA_HASH) {
     throw new Error('The historical agent schema migration does not match its recorded source.');
   }
-  const reconcileDeletedPrincipals = ['issue_activity', 'audit_log', 'notification'].map(
-    (table) => `update "${table}" record set principal_user_id = null
-      where principal_user_id is not null
-        and not exists (select 1 from "user" person where person.id = record.principal_user_id)`,
-  );
-  return migration.sql.flatMap((statement) =>
-    statement.trimStart().startsWith('UPDATE "notification"')
-      ? [statement, ...reconcileDeletedPrincipals]
-      : [statement],
-  );
+  return migration.sql;
 }
 
 function verifyLedger(rows: readonly LedgerRow[], migrations: readonly MigrationMeta[]): number {
@@ -173,6 +333,18 @@ async function baselineLedger(
 ): Promise<void> {
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
+  const agentSchemaMigration = pendingMigrations.find(
+    (migration) => migration.folderMillis === AGENT_SCHEMA_MIGRATION,
+  );
+  if (agentSchemaMigration !== undefined) {
+    await baselineLedgerWithAgentSchema(
+      sql,
+      pendingMigrations,
+      agentSchemaMigration,
+      replaceExisting,
+    );
+    return;
+  }
   await sql.begin(async (tx) => {
     if (replaceExisting) await tx`delete from drizzle.__drizzle_migrations`;
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
@@ -220,6 +392,72 @@ async function baselineLedger(
         values (${migration.hash}, ${migration.folderMillis})
       `;
     }
+  });
+}
+
+async function baselineLedgerWithAgentSchema(
+  sql: postgres.Sql,
+  pendingMigrations: readonly MigrationMeta[],
+  agentSchemaMigration: MigrationMeta,
+  replaceExisting: boolean,
+): Promise<void> {
+  const { backfills } = splitAgentSchemaMigration(agentSchemaMigration);
+  const reconciliations = pendingMigrations.filter(
+    (migration) => migration.folderMillis !== AGENT_SCHEMA_MIGRATION,
+  );
+  await prepareAgentSchemaMigration(sql, agentSchemaMigration, []);
+  await runAgentSchemaBackfills(sql, backfills);
+  await sql.begin(async (tx) => {
+    await lockAgentSchemaTables(tx);
+    await runAgentSchemaBackfillsInTransaction(tx, backfills);
+    if (replaceExisting) await tx`delete from drizzle.__drizzle_migrations`;
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
+      await tx`
+        update attachment
+        set upload_expires_at = created_at + interval '900 seconds'
+      `;
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1786623194883)) {
+      const [cycleNumbering] = await tx<{ mismatched: boolean }[]>`
+        with expected as (
+          select
+            id,
+            row_number() over (
+              partition by organization_id
+              order by starts_at, created_at, id
+            ) as number
+          from cycle
+        )
+        select exists (
+          select 1
+          from cycle
+          inner join expected on expected.id = cycle.id
+          where cycle.number is distinct from expected.number
+        ) as mismatched
+      `;
+      if (cycleNumbering?.mismatched === true) {
+        throw new Error(
+          'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
+        );
+      }
+    }
+    await reconcileAgentData(tx, reconciliations);
+    await tx`create schema if not exists drizzle`;
+    await tx`
+      create table if not exists drizzle.__drizzle_migrations (
+        id serial primary key,
+        hash text not null,
+        created_at bigint
+      )
+    `;
+    for (const migration of pendingMigrations) {
+      await tx`
+        insert into drizzle.__drizzle_migrations (hash, created_at)
+        values (${migration.hash}, ${migration.folderMillis})
+      `;
+    }
+    await tx`delete from drizzle.__drizzle_migration_state
+      where migration_id = ${agentSchemaMigration.folderMillis}`;
   });
 }
 

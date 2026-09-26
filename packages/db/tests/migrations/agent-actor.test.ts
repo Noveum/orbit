@@ -87,25 +87,29 @@ async function seedLegacyData(): Promise<void> {
     `;
     await sql`
       insert into issue
-        (id, organization_id, team_id, number, identifier, title, state_id, creator_id, assignee_id)
+        (id, organization_id, team_id, number, identifier, title, state_id, creator_id, assignee_id, created_at, updated_at)
       values
-        ('assigned-issue', 'agent-org', 'agent-team', 1, 'AGENT-1', 'Assigned', 'agent-state', 'agent-owner', 'agent-owner'),
-        ('unassigned-issue', 'agent-org', 'agent-team', 2, 'AGENT-2', 'Unassigned', 'agent-state', 'agent-owner', null)
+        ('assigned-issue', 'agent-org', 'agent-team', 1, 'AGENT-1', 'Assigned', 'agent-state', 'agent-owner', 'agent-owner', '2020-01-02T03:04:05Z', '2020-02-03T04:05:06Z'),
+        ('unassigned-issue', 'agent-org', 'agent-team', 2, 'AGENT-2', 'Unassigned', 'agent-state', 'agent-owner', null, '2020-03-04T05:06:07Z', '2020-04-05T06:07:08Z')
     `;
     await sql`
       insert into issue_activity
-        (id, organization_id, issue_id, actor_type, actor_id, actor_name, field)
-      values ('legacy-activity', 'agent-org', 'assigned-issue', 'user', 'agent-owner', 'Agent Owner', 'title')
+        (id, organization_id, issue_id, actor_type, actor_id, actor_name, field, created_at)
+      values ('legacy-activity', 'agent-org', 'assigned-issue', 'user', 'agent-owner', 'Agent Owner', 'title', '2020-05-06T07:08:09Z')
     `;
     await sql`
       insert into audit_log
-        (id, organization_id, actor_type, actor_id, actor_name, action, entity_type, entity_id)
-      values ('legacy-audit', 'agent-org', 'user', 'agent-owner', 'Agent Owner', 'issue.updated', 'issue', 'assigned-issue')
+        (id, organization_id, actor_type, actor_id, actor_name, action, entity_type, entity_id, created_at)
+      values ('legacy-audit', 'agent-org', 'user', 'agent-owner', 'Agent Owner', 'issue.updated', 'issue', 'assigned-issue', '2020-06-07T08:09:10Z')
     `;
     await sql`
       insert into notification
-        (id, organization_id, user_id, type, actor_type, actor_id, actor_name, entity_type, entity_id, title, url)
-      values ('legacy-notification', 'agent-org', 'agent-owner', 'issue', 'user', 'agent-owner', 'Agent Owner', 'issue', 'assigned-issue', 'Assigned', '/issue/AGENT-1')
+        (id, organization_id, user_id, type, actor_type, actor_id, actor_name, entity_type, entity_id, title, url, created_at)
+      values ('legacy-notification', 'agent-org', 'agent-owner', 'issue', 'user', 'agent-owner', 'Agent Owner', 'issue', 'assigned-issue', 'Assigned', '/issue/AGENT-1', '2020-07-08T09:10:11Z')
+    `;
+    await sql`
+      insert into issue_subscription (id, issue_id, user_id, created_at)
+      values ('legacy-subscription', 'assigned-issue', 'agent-owner', '2020-08-09T10:11:12Z')
     `;
   });
 }
@@ -131,6 +135,7 @@ describe('agent actor migration', () => {
         union all select 'issue_activity', count(*)::integer from issue_activity
         union all select 'audit_log', count(*)::integer from audit_log
         union all select 'notification', count(*)::integer from notification
+        union all select 'issue_subscription', count(*)::integer from issue_subscription
         union all select 'mcp_grant', count(*)::integer from mcp_grant
         union all select 'oauth_access_token', count(*)::integer from oauth_access_token
         order by table_name
@@ -144,7 +149,9 @@ describe('agent actor migration', () => {
         union all select 'issue_activity', count(*)::integer from issue_activity
         union all select 'audit_log', count(*)::integer from audit_log
         union all select 'notification', count(*)::integer from notification
+        union all select 'issue_subscription', count(*)::integer from issue_subscription
         union all select 'mcp_grant', count(*)::integer from mcp_grant
+        union all select 'issue_outbox', count(*)::integer from issue_outbox
         union all select 'oauth_access_token', count(*)::integer from oauth_access_token
         order by table_name
       `,
@@ -153,6 +160,7 @@ describe('agent actor migration', () => {
       { table_name: 'audit_log', total: 1 },
       { table_name: 'issue', total: 2 },
       { table_name: 'issue_activity', total: 1 },
+      { table_name: 'issue_subscription', total: 1 },
       { table_name: 'mcp_grant', total: 1 },
       { table_name: 'notification', total: 1 },
       { table_name: 'oauth_access_token', total: 1 },
@@ -161,6 +169,8 @@ describe('agent actor migration', () => {
       { table_name: 'audit_log', total: 1 },
       { table_name: 'issue', total: 2 },
       { table_name: 'issue_activity', total: 1 },
+      { table_name: 'issue_outbox', total: 0 },
+      { table_name: 'issue_subscription', total: 1 },
       { table_name: 'mcp_grant', total: 1 },
       { table_name: 'notification', total: 1 },
       { table_name: 'oauth_access_token', total: 0 },
@@ -255,6 +265,62 @@ describe('agent actor migration', () => {
     expect(notification).toEqual(activity);
   });
 
+  it('preserves historical timestamps and creates no activity, notification, subscription, or outbox rows', async () => {
+    const timestamps = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<
+        {
+          row_key: string;
+          created_at_seconds: number;
+          updated_at_seconds: number | null;
+        }[]
+      >`
+        select 'issue' as row_key, extract(epoch from created_at)::integer as created_at_seconds,
+          extract(epoch from updated_at)::integer as updated_at_seconds
+        from issue where id = 'assigned-issue'
+        union all
+        select 'activity', extract(epoch from created_at)::integer, null::integer
+        from issue_activity where id = 'legacy-activity'
+        union all
+        select 'audit', extract(epoch from created_at)::integer, null::integer
+        from audit_log where id = 'legacy-audit'
+        union all
+        select 'notification', extract(epoch from created_at)::integer, null::integer
+        from notification where id = 'legacy-notification'
+        union all
+        select 'subscription', extract(epoch from created_at)::integer, null::integer
+        from issue_subscription where id = 'legacy-subscription'
+        order by row_key
+      `,
+    );
+    const counts = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ table_name: string; total: number }[]>`
+        select 'issue_activity' as table_name, count(*)::integer as total from issue_activity
+        union all select 'audit_log', count(*)::integer from audit_log
+        union all select 'notification', count(*)::integer from notification
+        union all select 'issue_subscription', count(*)::integer from issue_subscription
+        union all select 'issue_outbox', count(*)::integer from issue_outbox
+        order by table_name
+      `,
+    );
+
+    expect([...timestamps]).toEqual([
+      { row_key: 'activity', created_at_seconds: 1588748889, updated_at_seconds: null },
+      { row_key: 'audit', created_at_seconds: 1591517350, updated_at_seconds: null },
+      { row_key: 'issue', created_at_seconds: 1577934245, updated_at_seconds: 1580702706 },
+      { row_key: 'notification', created_at_seconds: 1594199411, updated_at_seconds: null },
+      { row_key: 'subscription', created_at_seconds: 1596967872, updated_at_seconds: null },
+    ]);
+    expect([...counts]).toEqual([
+      { table_name: 'audit_log', total: 1 },
+      { table_name: 'issue_activity', total: 1 },
+      { table_name: 'issue_outbox', total: 0 },
+      { table_name: 'issue_subscription', total: 1 },
+      { table_name: 'notification', total: 1 },
+    ]);
+  });
+
   it('installs issue actor checks, workspace bindings, and the active-grant uniqueness rule', async () => {
     const legacyAvatars = await run(
       urlFor(SCRATCH),
@@ -344,6 +410,85 @@ describe('agent actor migration', () => {
     );
     expect(oldUnique?.exists).toBe(false);
   });
+
+  it('backfills more than one batch of legacy actors in the original migration', async () => {
+    const fresh = `${SCRATCH}_batches`;
+    await run(urlFor('postgres'), async (sql) => {
+      await sql.unsafe(`drop database if exists "${fresh}"`);
+      await sql.unsafe(`create database "${fresh}"`);
+    });
+    try {
+      await run(urlFor(fresh), async (sql) => {
+        await sql`create extension if not exists pg_trgm`;
+        await migrate(drizzle({ client: sql }), { migrationsFolder: legacyDirectory });
+        await sql`insert into "user" (id, name, email, handle) values ('batch-owner', 'Batch Owner', 'batch-owner@example.com', 'batch-owner')`;
+        await sql`insert into organization (id, name, slug) values ('batch-org', 'Batch workspace', 'batch-workspace')`;
+        await sql`insert into oauth_application (id, name, client_id, redirect_urls, type) values ('batch-client', 'Batch client', 'batch-client', 'https://example.com/callback', 'web')`;
+        await sql`insert into team (id, organization_id, name, key) values ('batch-team', 'batch-org', 'Batch team', 'BATCH')`;
+        await sql`insert into workflow_state (id, organization_id, team_id, name, category, color) values ('batch-state', 'batch-org', 'batch-team', 'Todo', 'backlog', '#000000')`;
+        await sql.unsafe(`
+          insert into issue (id, organization_id, team_id, number, identifier, title, state_id, creator_id, assignee_id)
+          select 'batch-issue-' || n, 'batch-org', 'batch-team', n, 'BATCH-' || n, 'Batch issue', 'batch-state', 'batch-owner', 'batch-owner'
+          from generate_series(1, 1005) n
+        `);
+        await sql.unsafe(`
+          insert into issue_activity (id, organization_id, issue_id, actor_type, actor_id, actor_name, field)
+          select 'batch-activity-' || n, 'batch-org', 'batch-issue-' || n, 'user', 'batch-owner', 'Batch Owner', 'title'
+          from generate_series(1, 1005) n
+        `);
+        await sql.unsafe(`
+          insert into audit_log (id, organization_id, actor_type, actor_id, actor_name, action, entity_type, entity_id)
+          select 'batch-audit-' || n, 'batch-org', 'user', 'batch-owner', 'Batch Owner', 'issue.updated', 'issue', 'batch-issue-' || n
+          from generate_series(1, 1005) n
+        `);
+        await sql.unsafe(`
+          insert into notification (id, organization_id, user_id, type, actor_type, actor_id, actor_name, entity_type, entity_id, title, url)
+          select 'batch-notification-' || n, 'batch-org', 'batch-owner', 'issue', 'user', 'batch-owner', 'Batch Owner', 'issue', 'batch-issue-' || n, 'Batch issue', '/issue/BATCH-' || n
+          from generate_series(1, 1005) n
+        `);
+        await sql.unsafe(`
+          insert into oauth_application (id, name, client_id, redirect_urls, type)
+          select 'batch-app-' || n, 'Batch client', 'batch-app-client-' || n, 'https://example.com/callback', 'web'
+          from generate_series(1, 1005) n
+        `);
+        await sql.unsafe(`
+          insert into mcp_grant (id, client_id, user_id, organization_id, scopes)
+          select 'batch-grant-' || n, 'batch-app-client-' || n, 'batch-owner', 'batch-org', 'orbit.read'
+          from generate_series(1, 1005) n
+        `);
+      });
+
+      expect((await releaseDatabase(urlFor(fresh), MIGRATIONS)).mode).toBe('migrated');
+      const counts = await run(
+        urlFor(fresh),
+        (sql) => sql<
+          {
+            table_name: string;
+            total: number;
+            backfilled: number;
+          }[]
+        >`
+          select 'issue' as table_name, count(*)::integer as total, count(creator_user_id)::integer as backfilled from issue
+          union all select 'issue_activity', count(*)::integer, count(principal_user_id)::integer from issue_activity
+          union all select 'audit_log', count(*)::integer, count(principal_user_id)::integer from audit_log
+          union all select 'notification', count(*)::integer, count(principal_user_id)::integer from notification
+          union all select 'mcp_grant', count(*)::integer, count(principal_name_snapshot)::integer from mcp_grant
+          order by table_name
+        `,
+      );
+
+      expect([...counts]).toEqual([
+        { table_name: 'audit_log', total: 1005, backfilled: 1005 },
+        { table_name: 'issue', total: 1005, backfilled: 1005 },
+        { table_name: 'issue_activity', total: 1005, backfilled: 1005 },
+        { table_name: 'mcp_grant', total: 1005, backfilled: 1005 },
+        { table_name: 'notification', total: 1005, backfilled: 1005 },
+      ]);
+      expect(await run(urlFor(fresh), (sql) => sql`select id from issue_outbox`)).toHaveLength(0);
+    } finally {
+      await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${fresh}"`));
+    }
+  }, 60_000);
 
   it('releases the complete migration chain into a fresh database', async () => {
     const fresh = `${SCRATCH}_fresh`;

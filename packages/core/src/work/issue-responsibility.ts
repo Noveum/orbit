@@ -123,7 +123,7 @@ export async function assertAgentAssignable(
     )
     .limit(1);
   const [activeGrant] = await tx
-    .select({ id: schema.mcpGrant.id })
+    .select({ id: schema.mcpGrant.id, scopes: schema.mcpGrant.scopes })
     .from(schema.mcpGrant)
     .where(and(eq(schema.mcpGrant.agentIdentityId, identityId), isNull(schema.mcpGrant.revokedAt)))
     .limit(1);
@@ -134,6 +134,7 @@ export async function assertAgentAssignable(
     identity.ownerDisabledAt !== null ||
     identity.adminDisabledAt !== null ||
     activeGrant === undefined ||
+    !activeGrant.scopes.split(/\s+/).includes('orbit.read') ||
     (agent !== null && agent.agentIdentityId !== identityId)
   ) {
     throw forbidden('This agent cannot be assigned to the issue.', {
@@ -149,8 +150,9 @@ export async function clearAgentIssueResponsibility(
   syncId: number,
   attribution: ResponsibilityClearAttribution,
   now: Date = new Date(),
+  teamIds?: readonly string[],
 ): Promise<Issue[]> {
-  if (identityIds.length === 0) return [];
+  if (identityIds.length === 0 || (teamIds !== undefined && teamIds.length === 0)) return [];
   const openStates = tx
     .select({ id: schema.workflowState.id })
     .from(schema.workflowState)
@@ -163,6 +165,7 @@ export async function clearAgentIssueResponsibility(
         eq(schema.issue.organizationId, organizationId),
         inArray(schema.issue.assigneeAgentId, [...identityIds]),
         inArray(schema.issue.stateId, openStates),
+        teamIds === undefined ? undefined : inArray(schema.issue.teamId, [...teamIds]),
       ),
     )
     .orderBy(asc(schema.issue.id))
@@ -198,6 +201,35 @@ export async function clearAgentIssueResponsibility(
     changed.push(updated);
   }
   return changed;
+}
+
+export async function clearAgentIssuesForOwnerAccessLoss(
+  tx: Executor,
+  organizationId: string,
+  ownerUserId: string,
+  teamIds: readonly string[],
+  syncId: number,
+  causeActorId: string,
+): Promise<Issue[]> {
+  if (teamIds.length === 0) return [];
+  const identities = await tx
+    .select({ id: schema.agentIdentity.id })
+    .from(schema.agentIdentity)
+    .where(
+      and(
+        eq(schema.agentIdentity.organizationId, organizationId),
+        eq(schema.agentIdentity.ownerUserId, ownerUserId),
+      ),
+    );
+  return await clearAgentIssueResponsibility(
+    tx,
+    organizationId,
+    identities.map((identity) => identity.id),
+    syncId,
+    { actor: SYSTEM_ACTOR, cause: 'team_access_lost', causeActorId },
+    new Date(),
+    teamIds,
+  );
 }
 
 function clearedResponsibility(

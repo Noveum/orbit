@@ -215,7 +215,11 @@ describe('issue agent actor schema', () => {
   });
 
   it('P0-DB-1 admits a same workspace agent creator and a same workspace agent assignee with an owner', async () => {
-    await insertIssue('creator_id, creator_agent_id', "'actor-owner', 'actor-agent'");
+    await insertIssue('creator_id, creator_user_id, creator_agent_id', "null, null, 'actor-agent'");
+    await insertIssue(
+      'creator_id, creator_user_id, creator_agent_id',
+      "'actor-owner', null, 'actor-agent'",
+    );
     await insertIssue(
       'creator_id, creator_user_id, assignee_agent_id, owner_user_id',
       "'actor-owner', 'actor-owner', 'actor-agent', 'actor-owner'",
@@ -224,7 +228,7 @@ describe('issue agent actor schema', () => {
       urlFor(SCRATCH),
       (sql) => sql<{ count: string }[]>`select count(*)::text as count from issue`,
     );
-    expect(rows[0]?.count).toBe('2');
+    expect(rows[0]?.count).toBe('3');
   });
 
   it('P0-DB-1 adds nullable actor snapshot columns without defaults', async () => {

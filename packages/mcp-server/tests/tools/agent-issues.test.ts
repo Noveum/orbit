@@ -127,6 +127,25 @@ describe('agent issue tools', () => {
     expect(await counts()).toEqual(after);
   });
 
+  it('P0-MCP-1 creates an unassigned issue when assignee is null', async () => {
+    const { workspace, agent } = await harness();
+    const created = await agent.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Leave this unassigned',
+      assignee: null,
+    });
+    const issue = created['issue'] as { id: string };
+    const [stored] = await db
+      .select({
+        assigneeId: schema.issue.assigneeId,
+        assigneeAgentId: schema.issue.assigneeAgentId,
+      })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, issue.id));
+
+    expect(stored).toEqual({ assigneeId: null, assigneeAgentId: null });
+  });
+
   it('P0-IDEM-1 serializes two concurrent creates that share one idempotency key', async () => {
     const { workspace, token, agent } = await harness();
     const second = await connect(token);

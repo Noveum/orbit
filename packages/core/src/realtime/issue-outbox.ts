@@ -2,6 +2,8 @@ import { and, db, eq, inArray, isNull, schema, sql, type Transaction } from '@or
 import { type SyncAction, syncActionSchema } from '@orbit/shared/events';
 import { newId } from '../internal.ts';
 
+class OutboxRedactionFailure extends Error {}
+
 export function redactPublicPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactPublicPayload);
   if (value === null || typeof value !== 'object') return value;
@@ -50,6 +52,7 @@ export interface IssueOutboxStats {
   readonly backlog: number;
   readonly retrying: number;
   readonly overThreshold: number;
+  readonly redactionFailures: number;
   readonly oldestAvailableAt: string | null;
   readonly maxAttempts: number;
 }
@@ -59,12 +62,14 @@ export async function issueOutboxStats(): Promise<IssueOutboxStats> {
     backlog: number;
     retrying: number;
     over_threshold: number;
+    redaction_failures: number;
     oldest_available_at: Date | string | null;
     max_attempts: number;
   }>(sql`
     select count(*)::int as backlog,
       count(*) filter (where attempts > 0)::int as retrying,
       count(*) filter (where attempts >= 10)::int as over_threshold,
+      count(*) filter (where last_error like 'redaction failure:%')::int as redaction_failures,
       min(available_at) as oldest_available_at,
       coalesce(max(attempts), 0)::int as max_attempts
     from issue_outbox where delivered_at is null
@@ -75,6 +80,7 @@ export async function issueOutboxStats(): Promise<IssueOutboxStats> {
     backlog: row?.backlog ?? 0,
     retrying: row?.retrying ?? 0,
     overThreshold: row?.over_threshold ?? 0,
+    redactionFailures: row?.redaction_failures ?? 0,
     oldestAvailableAt:
       oldestAvailableAt == null
         ? null
@@ -84,6 +90,81 @@ export async function issueOutboxStats(): Promise<IssueOutboxStats> {
           ).toISOString(),
     maxAttempts: row?.max_attempts ?? 0,
   };
+}
+
+function publicAction(payload: unknown): SyncAction {
+  try {
+    return syncActionSchema.parse(redactPublicPayload(payload));
+  } catch {
+    throw new OutboxRedactionFailure('The event could not be safely redacted.');
+  }
+}
+
+async function recordIssueOutboxFailure(
+  row: typeof schema.issueOutbox.$inferSelect,
+  leaseOwner: string,
+  now: Date,
+  error: unknown,
+): Promise<void> {
+  const attempts = row.attempts + 1;
+  const redactionFailure = error instanceof OutboxRedactionFailure;
+  if (redactionFailure) {
+    console.error('[orbit] issue outbox redaction failure', { eventId: row.id, attempts });
+  }
+  if (attempts >= 10) {
+    console.error('[orbit] issue outbox event exceeded retry threshold', {
+      eventId: row.id,
+      attempts,
+    });
+  }
+  const retryMs = Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
+  let lastError: string;
+  if (redactionFailure) {
+    lastError = 'redaction failure: the event could not be safely redacted';
+  } else if (error instanceof Error) {
+    lastError = error.message.slice(0, 1000);
+  } else {
+    lastError = String(error).slice(0, 1000);
+  }
+  await db
+    .update(schema.issueOutbox)
+    .set({
+      attempts,
+      lastError,
+      availableAt: new Date(now.getTime() + retryMs),
+      leaseUntil: null,
+      leaseOwner: null,
+    })
+    .where(
+      and(
+        eq(schema.issueOutbox.id, row.id),
+        eq(schema.issueOutbox.leaseOwner, leaseOwner),
+        isNull(schema.issueOutbox.deliveredAt),
+      ),
+    );
+}
+
+async function deliverIssueOutboxRow(
+  row: typeof schema.issueOutbox.$inferSelect,
+  options: IssueOutboxDrainOptions,
+  leaseOwner: string,
+  now: Date,
+): Promise<void> {
+  try {
+    await options.publish([publicAction(row.payload)]);
+    await db
+      .update(schema.issueOutbox)
+      .set({ deliveredAt: new Date(), leaseUntil: null, leaseOwner: null, lastError: null })
+      .where(
+        and(
+          eq(schema.issueOutbox.id, row.id),
+          eq(schema.issueOutbox.leaseOwner, leaseOwner),
+          isNull(schema.issueOutbox.deliveredAt),
+        ),
+      );
+  } catch (error: unknown) {
+    await recordIssueOutboxFailure(row, leaseOwner, now, error);
+  }
 }
 
 export async function drainIssueOutbox(options: IssueOutboxDrainOptions): Promise<number> {
@@ -118,45 +199,7 @@ export async function drainIssueOutbox(options: IssueOutboxDrainOptions): Promis
     return await tx.select().from(schema.issueOutbox).where(inArray(schema.issueOutbox.id, ids));
   });
   for (const row of claimed) {
-    try {
-      const action = syncActionSchema.parse(redactPublicPayload(row.payload));
-      await options.publish([action]);
-      await db
-        .update(schema.issueOutbox)
-        .set({ deliveredAt: new Date(), leaseUntil: null, leaseOwner: null, lastError: null })
-        .where(
-          and(
-            eq(schema.issueOutbox.id, row.id),
-            eq(schema.issueOutbox.leaseOwner, leaseOwner),
-            isNull(schema.issueOutbox.deliveredAt),
-          ),
-        );
-    } catch (error: unknown) {
-      const attempts = row.attempts + 1;
-      if (attempts >= 10)
-        console.error('[orbit] issue outbox event exceeded retry threshold', {
-          eventId: row.id,
-          attempts,
-        });
-      const retryMs = Math.min(60_000, 1_000 * 2 ** Math.min(attempts, 6));
-      await db
-        .update(schema.issueOutbox)
-        .set({
-          attempts,
-          lastError:
-            error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
-          availableAt: new Date(now.getTime() + retryMs),
-          leaseUntil: null,
-          leaseOwner: null,
-        })
-        .where(
-          and(
-            eq(schema.issueOutbox.id, row.id),
-            eq(schema.issueOutbox.leaseOwner, leaseOwner),
-            isNull(schema.issueOutbox.deliveredAt),
-          ),
-        );
-    }
+    await deliverIssueOutboxRow(row, options, leaseOwner, now);
   }
   return claimed.length;
 }

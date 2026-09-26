@@ -20,14 +20,15 @@ how it reaches only the people entitled to see it.
                        └─────────┘ └─────────┘ └────────┘
 ```
 
-Everything ships as a single Vercel project. Nothing is containerised, and
-nothing runs in Kubernetes.
+The web app ships as one Vercel project. Agent issue outbox delivery also needs
+a persistent worker process, built from `apps/realtime/Dockerfile`; Vercel Cron
+only recovers delayed events.
 
 ## The workspace
 
 ```
 apps/web                  Next.js app: UI, REST handlers, auth, /api/ws, /mcp
-apps/realtime             Bun.serve websocket host, local development only
+apps/realtime             Local websocket host and persistent issue outbox worker
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/realtime-client   Browser client: subscribe, patch, reconnect
 packages/mcp-server       MCP tools and the fetch handler behind /mcp

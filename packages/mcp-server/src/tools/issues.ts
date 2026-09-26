@@ -114,8 +114,9 @@ function registerCreateIssue(
         assignee: z
           .string()
           .min(1)
+          .nullable()
           .optional()
-          .describe('Assignee name, handle, email, id, or "me".'),
+          .describe('Assignee name, handle, email, id, "me", or null for Unassigned.'),
         reviewers: reviewersRef.optional(),
         project: z.string().min(1).optional().describe('Project name, slug or id.'),
         cycle: z

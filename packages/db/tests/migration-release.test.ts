@@ -164,6 +164,89 @@ describe('database release', () => {
     expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('current');
   }, 60_000);
 
+  it('commits 0017 backfill batches and resumes after an interrupted batch', async () => {
+    await resetScratch();
+    const prefixDirectory = await migrationPrefixDirectory('0016_secure_slack_team');
+    try {
+      await expect(releaseDatabase(urlFor(SCRATCH), prefixDirectory)).rejects.toThrow(
+        'Migrations completed, but the database is still incompatible with the schema.',
+      );
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`insert into "user" (id, name, email, handle)
+          values ('batch-owner', 'Batch owner', 'batch@example.com', 'batch-owner')`;
+        await sql`insert into organization (id, name, slug)
+          values ('batch-org', 'Batch org', 'batch-org')`;
+        await sql`insert into team (id, organization_id, name, key)
+          values ('batch-team', 'batch-org', 'Batch team', 'BAT')`;
+        await sql`insert into workflow_state (id, organization_id, team_id, name, category, color)
+          values ('batch-state', 'batch-org', 'batch-team', 'Todo', 'unstarted', '#000')`;
+        await sql`insert into issue (
+          id, organization_id, team_id, number, identifier, title, state_id, creator_id, assignee_id
+        )
+        select
+          'batch-issue-' || lpad(number::text, 4, '0'),
+          'batch-org', 'batch-team', number, 'BAT-' || number::text, 'Batch issue',
+          'batch-state', 'batch-owner', 'batch-owner'
+        from generate_series(1, 1005) as generated(number)`;
+        await sql`create function reject_second_agent_schema_batch() returns trigger as $$
+          begin
+            if new.id = 'batch-issue-1001' then raise exception 'agent batch interrupted'; end if;
+            return new;
+          end;
+        $$ language plpgsql`;
+        await sql`create trigger reject_second_agent_schema_batch_trigger
+          before update on issue for each row execute function reject_second_agent_schema_batch()`;
+      });
+
+      await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+        'agent batch interrupted',
+      );
+      const [afterFailure] = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<{ backfilled: number; migration_rows: number; pending_markers: number }[]>`
+          select
+            (select count(*)::integer from issue where creator_user_id is not null) as backfilled,
+            (select count(*)::integer from drizzle.__drizzle_migrations where created_at = 1789829081921) as migration_rows,
+            (select count(*)::integer from drizzle.__drizzle_migration_state where migration_id = 1789829081921) as pending_markers
+        `,
+      );
+      expect(afterFailure).toEqual({ backfilled: 1000, migration_rows: 0, pending_markers: 1 });
+
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`drop trigger reject_second_agent_schema_batch_trigger on issue`;
+        await sql`drop function reject_second_agent_schema_batch()`;
+      });
+      const retried = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      const [afterRetry] = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<
+          {
+            backfilled: number;
+            complete: number;
+            migration_rows: number;
+            pending_markers: number;
+          }[]
+        >`
+          select
+            (select count(*)::integer from issue where creator_user_id is not null) as backfilled,
+            (select count(*)::integer from issue where creator_user_id = 'batch-owner'
+              and assignee_user_id = 'batch-owner' and owner_user_id = 'batch-owner') as complete,
+            (select count(*)::integer from drizzle.__drizzle_migrations where created_at = 1789829081921) as migration_rows,
+            (select count(*)::integer from drizzle.__drizzle_migration_state where migration_id = 1789829081921) as pending_markers
+        `,
+      );
+      expect(retried.mode).toBe('migrated');
+      expect(afterRetry).toEqual({
+        backfilled: 1005,
+        complete: 1005,
+        migration_rows: 1,
+        pending_markers: 0,
+      });
+    } finally {
+      await rm(prefixDirectory, { recursive: true });
+    }
+  }, 120_000);
+
   it('P0-MIG-1 rolls back partial P3 DDL and the migration ledger after interruption', async () => {
     const target = `${SCRATCH}_p3_interrupt`;
     const prefixDirectory = await migrationPrefixDirectory('0024_preserve_agent_identity_history');
@@ -492,10 +575,21 @@ describe('database release', () => {
     expect(ledger?.count).toBe(migrations.length);
   }, 60_000);
 
-  it('keeps the original historical migration ledger without inserting compatibility records', async () => {
+  it('accepts the pre-batch 0017 hash without inserting compatibility records', async () => {
     await resetScratch();
     await migrateScratch();
+    await run(
+      urlFor(SCRATCH),
+      (sql) => sql`
+        update drizzle.__drizzle_migrations
+        set hash = 'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3'
+        where created_at = 1789829081921
+      `,
+    );
     const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const agentSchemaMigration = readMigrationFiles({ migrationsFolder: MIGRATIONS }).find(
+      (migration) => migration.folderMillis === 1789829081921,
+    );
     const [recorded] = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ count: number }[]>`
@@ -504,9 +598,28 @@ describe('database release', () => {
         where created_at = 1789829500000
       `,
     );
+    const [agentMigration] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ hash: string }[]>`
+        select hash from drizzle.__drizzle_migrations where created_at = 1789829081921
+      `,
+    );
 
     expect(result.mode).toBe('current');
+    if (agentSchemaMigration === undefined)
+      throw new Error('The agent schema migration is missing.');
+    expect(agentSchemaMigration.hash).toBe(
+      '8d410a4698cc081dfbfc80eb723daf843f3035c41414fdeb2863d4f704855471',
+    );
+    expect(
+      createHash('sha256')
+        .update(agentSchemaMigration?.sql.join('--> statement-breakpoint') ?? '')
+        .digest('hex'),
+    ).toBe(agentSchemaMigration.hash);
     expect(recorded?.count).toBe(0);
+    expect(agentMigration?.hash).toBe(
+      'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3',
+    );
   }, 60_000);
 
   it('refuses a missing historical constraint without inventing a ledger repair', async () => {

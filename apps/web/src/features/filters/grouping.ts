@@ -59,12 +59,16 @@ export function groupDefinitions(groupBy: GroupByField, context: GroupContext): 
         unassigned('No assignee'),
       ];
     case 'creator':
-      return context.members.map((member) => ({
-        id: member.id,
-        title: member.name,
-        color: null,
-        category: null,
-      }));
+      return [
+        ...context.members.map((member) => ({
+          id: member.id,
+          title: member.name,
+          color: null,
+          category: null,
+        })),
+        { id: 'agent', title: 'Agent', color: null, category: null },
+        unassigned('No creator'),
+      ];
     case 'priority':
       return PRIORITY_ORDER.map((priority) => ({
         id: String(priority),
@@ -124,7 +128,12 @@ export function groupKeysOf(issue: Issue, groupBy: GroupByField): readonly strin
     case 'assignee':
       return [issue.assigneeId ?? UNGROUPED_ID];
     case 'creator':
-      return [issue.creatorId];
+      return [
+        issue.creatorId ??
+          (issue.creatorAgentId === undefined || issue.creatorAgentId === null
+            ? UNGROUPED_ID
+            : 'agent'),
+      ];
     case 'priority':
       return [String(issue.priority)];
     case 'estimate':

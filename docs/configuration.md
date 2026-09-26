@@ -68,12 +68,19 @@ explicitly so it cannot block other snapshots or prevent the sprint from closing
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | **Local development only.** Set it to `ws://localhost:3100` locally; the app connects to `/api/ws` under it |
-| `REALTIME_PORT` | `3100` | Port for `apps/realtime`, which is never deployed |
+| `REALTIME_PORT` | `3100` | Port for the local development websocket host |
+| `ORBIT_ISSUE_OUTBOX_DISPATCH` | `false` | Set to `true` on the persistent `apps/realtime` outbox worker and the web app when Agent issue delivery is enabled |
 
 `NEXT_PUBLIC_REALTIME_URL` is ignored whenever `NODE_ENV` is `production`, where
 the socket is always served from the page's own origin at `/api/ws`. Setting it
 on a deployed environment does nothing useful and risks confusing whoever reads
 the config next, so leave it unset there.
+
+Agent issue delivery requires a persistent worker built from
+`apps/realtime/Dockerfile`. Give it the production `DATABASE_URL` and `REDIS_URL`,
+and set `ORBIT_ISSUE_OUTBOX_DISPATCH=true` on both the worker and web app. The
+Vercel issue-outbox Cron remains a recovery path; it does not replace the
+persistent worker. See [Outbox worker deployment](outbox-worker-deployment.md).
 
 ## Authentication
 

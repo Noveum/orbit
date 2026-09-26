@@ -10,6 +10,7 @@ import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { AssigneeControl, PriorityControl, StatusControl } from './card-controls.tsx';
 import { IssueActionsMenu } from './issue-actions.tsx';
+import { IssueCreatorMeta } from './issue-creator-meta.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { ReviewerAvatars } from './reviewer-avatars.tsx';
@@ -200,9 +201,11 @@ function CardMeta({ issue, creator, project, cycle, subIssueCount, properties }:
       {shows('completed') ? <MetaDate value={issue.completedAt} title="Completed" /> : null}
       {shows('created') ? <MetaDate value={issue.createdAt} title="Created" /> : null}
       {shows('updated') ? <MetaDate value={issue.updatedAt} title="Updated" /> : null}
-      {shows('creator') && creator !== undefined ? (
-        <Avatar name={creator.name} src={creator.image} size="xs" />
-      ) : null}
+      <IssueCreatorMeta
+        creator={creator}
+        creatorAgentId={issue.creatorAgentId}
+        showCreator={shows('creator')}
+      />
     </>
   );
 }

@@ -1,4 +1,6 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { db, schema } from '@orbit/db';
 import { addMember, createWorkspace, mintToken, resetDatabase } from '../../src/test-helpers.ts';
 import { connectHuman } from '../human-client.ts';
 
@@ -9,6 +11,7 @@ let workspace: TestWorkspace;
 let admin: TestClient;
 let agent: TestClient;
 let agentHandle: string;
+let issueId: string;
 let issueIdentifier: string;
 
 beforeAll(async () => {
@@ -24,7 +27,9 @@ beforeAll(async () => {
     team: workspace.teamKey,
     title: 'Billing webhook drops retries',
   });
-  issueIdentifier = (created['issue'] as { identifier: string }).identifier;
+  const issue = created['issue'] as { id: string; identifier: string };
+  issueId = issue.id;
+  issueIdentifier = issue.identifier;
 
   await admin.result('add_comment', {
     issue: issueIdentifier,
@@ -37,6 +42,9 @@ describe('list_notifications', () => {
     const result = await agent.result('list_notifications', { unreadOnly: true });
     const rows = result['notifications'] as {
       type: string;
+      actorType: string;
+      actorAvatar: string | null;
+      principalName: string | null;
       read: boolean;
       issue: { identifier: string; title: string; teamKey: string } | null;
     }[];
@@ -44,6 +52,9 @@ describe('list_notifications', () => {
     const mention = rows.find((row) => row.type === 'mention');
     expect(mention).toBeDefined();
     expect(mention?.read).toBe(false);
+    expect(mention?.actorType).toBe('user');
+    expect(mention?.actorAvatar).toBeNull();
+    expect(mention?.principalName).toBeNull();
     expect(mention?.issue?.identifier).toBe(issueIdentifier);
     expect(mention?.issue?.title).toBe('Billing webhook drops retries');
     expect(mention?.issue?.teamKey).toBe(workspace.teamKey);
@@ -54,6 +65,47 @@ describe('list_notifications', () => {
     const result = await agent.result('list_notifications', {});
     const rows = result['notifications'] as { title: string }[];
     expect(rows.every((row) => !row.title.includes('Replying to myself'))).toBe(true);
+  });
+
+  it('returns Agent type and principal attribution for Agent notifications', async () => {
+    await db.insert(schema.notification).values({
+      id: randomUUID(),
+      organizationId: workspace.organizationId,
+      userId: workspace.adminUser.id,
+      type: 'comment_created',
+      reason: 'commented',
+      actorType: 'agent',
+      actorId: randomUUID(),
+      actorName: 'Researcher',
+      principalUserId: workspace.adminUser.id,
+      principalName: workspace.adminUser.name,
+      actorAvatar: null,
+      principalAvatar: null,
+      grantId: null,
+      entityType: 'issue',
+      entityId: issueId,
+      title: 'Agent commented on an issue',
+      body: '',
+      url: '/issue/ENG-900',
+      deliveredChannels: ['inbox'],
+    });
+
+    const result = await admin.result('list_notifications', {});
+    const rows = result['notifications'] as {
+      actorType: string;
+      actorName: string;
+      actorAvatar: string | null;
+      principalName: string | null;
+      title: string;
+    }[];
+    const notification = rows.find((row) => row.title === 'Agent commented on an issue');
+
+    expect(notification).toMatchObject({
+      actorType: 'agent',
+      actorName: 'Researcher',
+      actorAvatar: null,
+      principalName: workspace.adminUser.name,
+    });
   });
 
   it('filters by type, returning that type and withholding the others', async () => {

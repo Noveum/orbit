@@ -174,6 +174,9 @@ describe('sub grouping', () => {
 
   it('groups by creator and by estimate', () => {
     expect(groupKeysOf(issue({ creatorId: 'user_9' }), 'creator')).toEqual(['user_9']);
+    expect(groupKeysOf(issue({ creatorId: null, creatorAgentId: 'agent_1' }), 'creator')).toEqual([
+      'agent',
+    ]);
     expect(groupKeysOf(issue({ estimate: 5 }), 'estimate')).toEqual(['5']);
     expect(groupKeysOf(issue({ estimate: null }), 'estimate')).toEqual(['none']);
   });

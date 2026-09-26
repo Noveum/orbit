@@ -110,15 +110,17 @@ Things worth trying first:
 | Service | Port | Notes |
 | --- | --- | --- |
 | Web | 3000 | The app |
-| Realtime | 3100 | Local development only, never deployed |
+| Realtime | 3100 | Local development websocket host |
 | Postgres | 5434 | |
 | Redis | 6380 | |
 | MinIO (S3 API) | 9010 | |
 | MinIO console | 9011 | Sign in with `orbitminio` and `orbitminio` |
 
-The realtime server only exists locally, because a Vercel function cannot
-upgrade a websocket under `next dev`. In production the socket is served from
-the app itself at `/api/ws`. See [Architecture](architecture.md).
+The local realtime server exists because a Vercel function cannot upgrade a
+websocket under `next dev`. In production the socket is served from the app
+itself at `/api/ws`. Agent issue delivery also needs the persistent outbox
+worker described in [Outbox worker deployment](outbox-worker-deployment.md).
+See [Architecture](architecture.md).
 
 ## Day to day commands
 

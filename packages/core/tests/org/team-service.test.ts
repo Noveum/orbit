@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { and, db, eq, schema } from '@orbit/db';
+import { preparePersonalAgentConsent } from '../../src/auth/agent-identity-service.ts';
+import { recordMcpGrant } from '../../src/auth/mcp-token.ts';
+import { newId } from '../../src/internal.ts';
 import {
   addTeamMember,
   archiveTeam,
@@ -16,7 +19,7 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createIssue } from '../../src/work/issue-service.ts';
+import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
 
 let nova: Workspace;
 let vega: Workspace;
@@ -33,6 +36,33 @@ async function teamMemberCount(teamId: string, userId: string): Promise<number> 
     .from(schema.teamMember)
     .where(and(eq(schema.teamMember.teamId, teamId), eq(schema.teamMember.userId, userId)));
   return rows.length;
+}
+
+async function agentFor(ownerUserId: string): Promise<string> {
+  const clientId = newId();
+  await db.insert(schema.oauthApplication).values({
+    id: newId(),
+    clientId,
+    name: 'Team service test client',
+    redirectUrls: 'https://example.com/callback',
+    type: 'public',
+  });
+  const { identity } = await db.transaction((tx) =>
+    preparePersonalAgentConsent(tx, {
+      userId: ownerUserId,
+      organizationId: nova.organizationId,
+      clientId,
+      selection: { createAgent: { name: 'Researcher', avatar: null } },
+    }),
+  );
+  await recordMcpGrant({
+    clientId,
+    userId: ownerUserId,
+    organizationId: nova.organizationId,
+    scopes: 'orbit.read',
+    agentIdentityId: identity.id,
+  });
+  return identity.id;
 }
 
 describe('cross tenant team access', () => {
@@ -93,6 +123,56 @@ describe('team membership boundary inside one workspace', () => {
         .where(eq(schema.issueReviewer.issueId, issue.id)),
     ).toHaveLength(0);
     expect(await teamMemberCount(nova.teamId, reviewer.user.id)).toBe(0);
+  });
+
+  it('clears Agent assignments only in a team its owner leaves', async () => {
+    const { team: otherTeam } = await createTeam(nova.admin, {
+      name: 'Research',
+      key: 'RES',
+    });
+    const owner = await addMember(nova, 'member', { teamIds: [nova.teamId, otherTeam.id] });
+    const agentId = await agentFor(owner.user.id);
+    const { issue: removedTeamIssue } = await createIssue(owner.principal, {
+      teamId: nova.teamId,
+      title: 'Agent assignment in removed team',
+      assigneeAgentId: agentId,
+    });
+    const { issue: retainedTeamIssue } = await createIssue(owner.principal, {
+      teamId: otherTeam.id,
+      title: 'Agent assignment in retained team',
+      assigneeAgentId: agentId,
+    });
+    await updateIssue(nova.admin, removedTeamIssue.id, { ownerUserId: nova.adminUser.id });
+    await updateIssue(nova.admin, retainedTeamIssue.id, { ownerUserId: nova.adminUser.id });
+
+    const actions = await removeTeamMember(nova.admin, nova.teamId, owner.user.id);
+    const [cleared] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.id, removedTeamIssue.id));
+    const [retained] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.id, retainedTeamIssue.id));
+    const issueAction = actions.find((action) => action.modelId === removedTeamIssue.id);
+    const activity = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.issueId, removedTeamIssue.id));
+
+    expect(cleared?.assigneeAgentId).toBeNull();
+    expect(cleared?.ownerUserId).toBe(nova.adminUser.id);
+    expect(retained?.assigneeAgentId).toBe(agentId);
+    expect(retained?.ownerUserId).toBe(nova.adminUser.id);
+    expect(issueAction?.data['assigneeAgentId']).toBeNull();
+    expect(activity.at(-1)).toMatchObject({
+      actorType: 'system',
+      cause: 'team_access_lost',
+      causeActorId: nova.adminUser.id,
+      fromValue: { type: 'agent', id: agentId },
+      toValue: null,
+      syncId: cleared?.syncId,
+    });
   });
 });
 

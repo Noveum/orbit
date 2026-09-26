@@ -219,3 +219,39 @@ it('P0-RT-1 keeps an event retryable after it crosses the alert threshold', asyn
   expect(delivered.map((entry) => entry.eventId)).toEqual([action.eventId]);
   expect((await issueOutboxStats()).backlog).toBe(0);
 });
+
+it('P1 exposes failed outbox redaction as a separate operational signal', async () => {
+  const workspace = await createWorkspace('Redaction-signal');
+  const issueId = newId();
+  const [action] = await db.transaction(
+    async (tx) =>
+      await stageIssueActions(tx, issueId, [
+        {
+          syncId: 1,
+          organizationId: workspace.organizationId,
+          scopes: [`team:${workspace.teamId}`],
+          action: 'insert',
+          model: 'issue',
+          modelId: issueId,
+          data: { id: issueId },
+          actor: { type: 'user', id: workspace.admin.userId },
+          at: new Date().toISOString(),
+        },
+      ]),
+  );
+  if (action?.eventId === undefined) throw new Error('staging produced no event id');
+  await db
+    .update(schema.issueOutbox)
+    .set({ payload: { ...action, action: 'invalid' } })
+    .where(eq(schema.issueOutbox.id, action.eventId));
+
+  await drainIssueOutbox({ publish: () => Promise.resolve() });
+
+  const [failed] = await db
+    .select()
+    .from(schema.issueOutbox)
+    .where(eq(schema.issueOutbox.id, action.eventId));
+  expect(failed?.attempts).toBe(1);
+  expect(failed?.lastError).toStartWith('redaction failure:');
+  expect((await issueOutboxStats()).redactionFailures).toBe(1);
+});

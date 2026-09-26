@@ -38,33 +38,129 @@ ALTER TABLE "issue" ADD COLUMN "owner_user_id" text;--> statement-breakpoint
 ALTER TABLE "issue_activity" ADD COLUMN "principal_user_id" text;--> statement-breakpoint
 ALTER TABLE "issue_activity" ADD COLUMN "principal_name" text;--> statement-breakpoint
 ALTER TABLE "issue_activity" ADD COLUMN "grant_id" text;--> statement-breakpoint
-UPDATE "issue"
-SET
-  "creator_user_id" = "creator_id",
-  "assignee_user_id" = "assignee_id",
-  "owner_user_id" = "assignee_id";--> statement-breakpoint
-UPDATE "issue_activity"
-SET
-  "principal_user_id" = "actor_id",
-  "principal_name" = "actor_name"
-WHERE "actor_type" = 'user';--> statement-breakpoint
-UPDATE "audit_log"
-SET
-  "principal_user_id" = "actor_id",
-  "principal_name" = "actor_name"
-WHERE "actor_type" = 'user';--> statement-breakpoint
-UPDATE "notification"
-SET
-  "principal_user_id" = "actor_id",
-  "principal_name" = "actor_name"
-WHERE "actor_type" = 'user';--> statement-breakpoint
-UPDATE "mcp_grant"
-SET "principal_name_snapshot" = coalesce("user"."name", 'Former member')
-FROM "user"
-WHERE "user"."id" = "mcp_grant"."user_id";--> statement-breakpoint
-UPDATE "mcp_grant"
-SET "principal_name_snapshot" = 'Former member'
-WHERE "principal_name_snapshot" IS NULL;--> statement-breakpoint
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "issue"
+    SET
+      "creator_user_id" = "creator_id",
+      "assignee_user_id" = "assignee_id",
+      "owner_user_id" = "assignee_id"
+    WHERE id IN (
+      SELECT id
+      FROM "issue"
+      WHERE "creator_user_id" IS DISTINCT FROM "creator_id"
+        OR "assignee_user_id" IS DISTINCT FROM "assignee_id"
+        OR "owner_user_id" IS DISTINCT FROM "assignee_id"
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;--> statement-breakpoint
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "issue_activity"
+    SET
+      "principal_user_id" = (SELECT id FROM "user" WHERE id = "issue_activity"."actor_id"),
+      "principal_name" = "actor_name"
+    WHERE id IN (
+      SELECT id
+      FROM "issue_activity"
+      WHERE "actor_type" = 'user'
+        AND ("principal_name" IS DISTINCT FROM "actor_name"
+          OR ("principal_user_id" IS DISTINCT FROM "actor_id"
+            AND EXISTS (SELECT 1 FROM "user" WHERE "user"."id" = "issue_activity"."actor_id")))
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;--> statement-breakpoint
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "audit_log"
+    SET
+      "principal_user_id" = (SELECT id FROM "user" WHERE id = "audit_log"."actor_id"),
+      "principal_name" = "actor_name"
+    WHERE id IN (
+      SELECT id
+      FROM "audit_log"
+      WHERE "actor_type" = 'user'
+        AND ("principal_name" IS DISTINCT FROM "actor_name"
+          OR ("principal_user_id" IS DISTINCT FROM "actor_id"
+            AND EXISTS (SELECT 1 FROM "user" WHERE "user"."id" = "audit_log"."actor_id")))
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;--> statement-breakpoint
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "notification"
+    SET
+      "principal_user_id" = (SELECT id FROM "user" WHERE id = "notification"."actor_id"),
+      "principal_name" = "actor_name"
+    WHERE id IN (
+      SELECT id
+      FROM "notification"
+      WHERE "actor_type" = 'user'
+        AND ("principal_name" IS DISTINCT FROM "actor_name"
+          OR ("principal_user_id" IS DISTINCT FROM "actor_id"
+            AND EXISTS (SELECT 1 FROM "user" WHERE "user"."id" = "notification"."actor_id")))
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;--> statement-breakpoint
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "mcp_grant"
+    SET "principal_name_snapshot" = (SELECT coalesce("user"."name", 'Former member') FROM "user" WHERE "user"."id" = "mcp_grant"."user_id")
+    WHERE id IN (
+      SELECT grant_row.id
+      FROM "mcp_grant" grant_row
+      INNER JOIN "user" ON "user"."id" = grant_row."user_id"
+      WHERE grant_row."principal_name_snapshot" IS NULL
+      ORDER BY grant_row.id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;--> statement-breakpoint
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "mcp_grant"
+    SET "principal_name_snapshot" = 'Former member'
+    WHERE id IN (
+      SELECT id
+      FROM "mcp_grant"
+      WHERE "principal_name_snapshot" IS NULL
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;--> statement-breakpoint
 ALTER TABLE "mcp_grant" ALTER COLUMN "principal_name_snapshot" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "agent_identity" ADD CONSTRAINT "agent_identity_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agent_identity" ADD CONSTRAINT "agent_identity_owner_user_id_user_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint

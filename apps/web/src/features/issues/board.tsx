@@ -759,7 +759,7 @@ function IssueCardView({
         return reviewer === undefined ? [] : [reviewer];
       })}
       state={lookups.stateById.get(issue.stateId)}
-      creator={lookups.memberById.get(issue.creatorId)}
+      creator={issue.creatorId === null ? undefined : lookups.memberById.get(issue.creatorId)}
       project={issue.projectId === null ? undefined : lookups.projectById.get(issue.projectId)}
       cycle={issue.cycleId === null ? undefined : lookups.cycleById.get(issue.cycleId)}
       subIssueCount={lookups.childCounts.get(issue.id) ?? 0}

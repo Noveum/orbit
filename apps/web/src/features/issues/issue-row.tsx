@@ -10,6 +10,7 @@ import { revealOnHover } from '@/lib/interaction.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { IssueActionsMenu } from './issue-actions.tsx';
+import { IssueCreatorMeta } from './issue-creator-meta.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -192,9 +193,11 @@ function RowMeta({ issue, creator, project, cycle, subIssueCount, properties }: 
           {issue.estimate}
         </span>
       ) : null}
-      {shows('creator') && creator !== undefined ? (
-        <Avatar name={creator.name} src={creator.image} size="xs" />
-      ) : null}
+      <IssueCreatorMeta
+        creator={creator}
+        creatorAgentId={issue.creatorAgentId}
+        showCreator={shows('creator')}
+      />
     </>
   );
 }

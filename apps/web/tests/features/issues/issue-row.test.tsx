@@ -94,6 +94,24 @@ const groupContext: GroupContext = {
 };
 
 describe('IssueRow', () => {
+  it('labels an agent creator when the issue has no human creator id', () => {
+    render(
+      <IssueRow
+        issue={issue({ creatorId: null, creatorAgentId: 'agent_1' })}
+        state={todo}
+        labels={[]}
+        assignee={undefined}
+        active={false}
+        selected={false}
+        onOpen={mock()}
+        onToggleSelected={mock()}
+        onFocus={mock()}
+      />,
+    );
+
+    expect(screen.getByTestId('issue-creator-agent')).toHaveTextContent('Agent');
+  });
+
   it('opens on click and toggles selection from the checkbox', async () => {
     const user = userEvent.setup();
     const onOpen = mock();

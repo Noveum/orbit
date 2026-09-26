@@ -127,6 +127,21 @@ describe('the Activity tab', () => {
     expect(titles.some((text) => text.includes('moved to In Progress'))).toBe(false);
     expect(titles.some((text) => text.includes('assigned to you'))).toBe(false);
   });
+
+  it('labels Agent and Human actors explicitly', () => {
+    renderInbox([
+      comment,
+      item({
+        id: 'notification_agent',
+        actorType: 'agent',
+        actorName: 'Researcher',
+        title: 'Agent updated ENG-3',
+      }),
+    ]);
+
+    expect(screen.getByRole('button', { name: /Agent · Researcher/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Human · Ada/ })).toBeInTheDocument();
+  });
 });
 
 describe('the Status tab', () => {

@@ -121,6 +121,27 @@ async function assertCleared(
   }
 }
 
+it('requires orbit.read on an active grant before assigning its Agent', async () => {
+  const { workspace, owner, identity, grantId } = await fixture();
+  await db
+    .update(schema.mcpGrant)
+    .set({ scopes: 'orbit.write' })
+    .where(eq(schema.mcpGrant.id, grantId));
+  const issueCount = (await db.select().from(schema.issue)).length;
+  const activityCount = (await db.select().from(schema.issueActivity)).length;
+
+  await expect(
+    createIssue(owner.principal, {
+      teamId: workspace.teamId,
+      title: 'Write-only Agent assignment',
+      assigneeAgentId: identity.id,
+    }),
+  ).rejects.toMatchObject({ code: 'forbidden' });
+
+  expect((await db.select().from(schema.issue)).length).toBe(issueCount);
+  expect((await db.select().from(schema.issueActivity)).length).toBe(activityCount);
+});
+
 describe('Agent responsibility lifecycle cleanup', () => {
   it('keeps a second identity for the same owner and client assigned and connected', async () => {
     const { workspace, owner, identity } = await fixture();

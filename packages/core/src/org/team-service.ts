@@ -11,7 +11,10 @@ import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
 import { canonicalIssueReads } from '../work/issue-actor-view.ts';
-import { clearHumanIssueResponsibility } from '../work/issue-responsibility.ts';
+import {
+  clearAgentIssuesForOwnerAccessLoss,
+  clearHumanIssueResponsibility,
+} from '../work/issue-responsibility.ts';
 import { issueScopes } from '../work/issue-service.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
@@ -398,7 +401,7 @@ export async function removeTeamMember(
     const current = requireRow(teamMember, 'That person is not on this team.');
 
     const syncId = await nextSyncId(tx);
-    const responsibility =
+    const humanResponsibility =
       membership.role === 'admin'
         ? { changed: [] }
         : await clearHumanIssueResponsibility(tx, principal.organizationId, userId, syncId, {
@@ -406,13 +409,25 @@ export async function removeTeamMember(
             cause: 'team_access_lost',
             causeActorId: principal.userId,
           });
+    const agentIssues =
+      membership.role === 'admin'
+        ? []
+        : await clearAgentIssuesForOwnerAccessLoss(
+            tx,
+            principal.organizationId,
+            userId,
+            [teamId],
+            syncId,
+            principal.userId,
+          );
+    const changedIssues = [...humanResponsibility.changed, ...agentIssues];
     const actor = await principalActor(tx, principal);
     const [removed] = await tx
       .delete(schema.teamMember)
       .where(eq(schema.teamMember.id, current.id))
       .returning();
     const row = requireRow(removed, 'That person is not on this team.');
-    const views = await canonicalIssueReads(tx, responsibility.changed);
+    const views = await canonicalIssueReads(tx, changedIssues);
     const issueIds = views.map((issue) => issue.id);
     const [labels, reviewers] = await Promise.all([
       labelIdsByIssue(tx, issueIds),

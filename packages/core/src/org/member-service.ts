@@ -12,7 +12,10 @@ import { type Executor, requireRow } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { canonicalIssueReads } from '../work/issue-actor-view.ts';
-import { clearHumanIssueResponsibility } from '../work/issue-responsibility.ts';
+import {
+  clearAgentIssuesForOwnerAccessLoss,
+  clearHumanIssueResponsibility,
+} from '../work/issue-responsibility.ts';
 import { issueScopes } from '../work/issue-service.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
@@ -189,6 +192,42 @@ export async function updateMemberRole(
       .where(eq(schema.member.id, memberId))
       .returning();
     const member = requireRow(updated, 'That member does not exist.');
+    let changedAgentIssues: (typeof schema.issue.$inferSelect)[] = [];
+    if (current.role === 'admin' && member.role !== 'admin') {
+      const inaccessibleTeams = await tx
+        .select({ id: schema.team.id })
+        .from(schema.team)
+        .where(
+          and(
+            eq(schema.team.organizationId, principal.organizationId),
+            notExists(
+              tx
+                .select({ teamId: schema.teamMember.teamId })
+                .from(schema.teamMember)
+                .where(
+                  and(
+                    eq(schema.teamMember.userId, current.userId),
+                    eq(schema.teamMember.teamId, schema.team.id),
+                  ),
+                ),
+            ),
+          ),
+        );
+      changedAgentIssues = await clearAgentIssuesForOwnerAccessLoss(
+        tx,
+        principal.organizationId,
+        current.userId,
+        inaccessibleTeams.map((team) => team.id),
+        syncId,
+        principal.userId,
+      );
+    }
+    const issueViews = await canonicalIssueReads(tx, changedAgentIssues);
+    const changedIssueIds = issueViews.map((row) => row.id);
+    const [labels, reviewers] = await Promise.all([
+      labelIdsByIssue(tx, changedIssueIds),
+      reviewerIdsByIssue(tx, changedIssueIds),
+    ]);
 
     return {
       member,
@@ -203,6 +242,22 @@ export async function updateMemberRole(
           data: member,
           actor,
         }),
+        ...issueViews.map((row) =>
+          buildSyncAction({
+            syncId,
+            organizationId: principal.organizationId,
+            scopes: issueScopes(row),
+            action: 'update',
+            model: 'issue',
+            modelId: row.id,
+            data: {
+              ...row,
+              labelIds: labels.get(row.id) ?? [],
+              reviewerIds: reviewers.get(row.id) ?? [],
+            },
+            actor: { type: 'system', id: 'system', name: 'System' },
+          }),
+        ),
       ],
     };
   });

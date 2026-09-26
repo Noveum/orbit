@@ -157,6 +157,23 @@ describe('applyIssueDelta', () => {
     expect(next[1]?.identifier).toBe('ENG-4');
   });
 
+  it('inserts a full issue created by an agent with no human creator id', () => {
+    const agentIssue = issue({
+      id: 'issue_agent',
+      identifier: 'ENG-4',
+      creatorId: null,
+      creatorAgentId: 'agent_1',
+    });
+    const next = applyIssueDelta(
+      [issue()],
+      action({ action: 'insert', modelId: agentIssue.id, data: agentIssue }),
+      TEAM,
+    );
+
+    expect(next).toHaveLength(2);
+    expect(next[1]).toMatchObject({ creatorId: null, creatorAgentId: 'agent_1' });
+  });
+
   it('ignores an insert for another team', () => {
     const incoming = issue({ id: 'issue_2', teamId: 'team_des' });
     const list = [issue()];
