@@ -691,15 +691,25 @@ function showsIssueData(query: Query): boolean {
   return query.getObserversCount() > 0 && query.state.data !== undefined;
 }
 
-function refreshIssueRoot(client: QueryClient, root: string): Promise<void>[] {
-  const shown = new Set(
-    client
-      .getQueryCache()
-      .findAll({ queryKey: [root] })
-      .filter(showsIssueData),
+function shownIssueQueries(client: QueryClient): ReadonlySet<Query> {
+  return new Set(
+    ISSUE_CACHE_ROOTS.flatMap((root) =>
+      client
+        .getQueryCache()
+        .findAll({ queryKey: [root] })
+        .filter(showsIssueData),
+    ),
   );
+}
+
+function refreshIssueRoot(
+  client: QueryClient,
+  root: string,
+  shown: ReadonlySet<Query>,
+): Promise<void>[] {
   const reset = client.resetQueries({ queryKey: [root], predicate: (query) => !shown.has(query) });
-  if (shown.size === 0) return [reset];
+  const shownInRoot = [...shown].some((query) => query.queryKey[0] === root);
+  if (!shownInRoot) return [reset];
   return [
     reset,
     client.invalidateQueries({ queryKey: [root], predicate: (query) => shown.has(query) }),
@@ -707,8 +717,14 @@ function refreshIssueRoot(client: QueryClient, root: string): Promise<void>[] {
 }
 
 async function refreshIssueCaches(client: QueryClient): Promise<void> {
-  recordIssueCacheReset(client);
-  await Promise.allSettled(ISSUE_CACHE_ROOTS.flatMap((root) => refreshIssueRoot(client, root)));
+  const shown = shownIssueQueries(client);
+  recordIssueCacheReset(
+    client,
+    [...shown].map((query) => query.queryKey),
+  );
+  await Promise.allSettled(
+    ISSUE_CACHE_ROOTS.flatMap((root) => refreshIssueRoot(client, root, shown)),
+  );
 }
 
 interface IssueDetailRecovery {

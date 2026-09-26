@@ -8,6 +8,7 @@ import {
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
+  issueQueryResetGeneration,
   issueRevisionGeneration,
 } from '@/lib/query/issue-cache-generation.ts';
 import {
@@ -1694,6 +1695,40 @@ describe('DeltaBridge reconnect backfill', () => {
     }
 
     expect(client.getQueryData<IssuePages>(listKey)).toBe(shownList);
+  });
+
+  it('marks only the issue queries it wiped as reset, not the ones kept on screen', async () => {
+    const client = mount();
+    const shownKey = queryKeys.issues(TEAM);
+    const hiddenKey = queryKeys.issues(TEAM, 'orderBy=updated');
+    client.setQueryData(hiddenKey, client.getQueryData<IssuePages>(shownKey));
+    const observer = new QueryObserver(client, {
+      queryKey: shownKey,
+      queryFn: () => Promise.reject(new Error('still offline')),
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const shownBefore = issueQueryResetGeneration(client, shownKey);
+    const hiddenBefore = issueQueryResetGeneration(client, hiddenKey);
+    observed.length = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(observed).toEqual([42]));
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(issueQueryResetGeneration(client, shownKey)).toBe(shownBefore);
+    expect(issueQueryResetGeneration(client, hiddenKey)).toBe(hiddenBefore + 1);
+    expect(client.getQueryData(hiddenKey)).toBeUndefined();
   });
 
   it('never blanks an issue list someone is looking at while it reconnects', async () => {
