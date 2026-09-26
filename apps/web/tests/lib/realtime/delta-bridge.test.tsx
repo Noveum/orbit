@@ -8,6 +8,7 @@ import {
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
+  issueQueryResetGeneration,
   issueRevisionGeneration,
 } from '@/lib/query/issue-cache-generation.ts';
 import {
@@ -1610,10 +1611,11 @@ describe('DeltaBridge reconnect backfill', () => {
     }
   });
 
-  it('clears issue caches before refreshing all queries when no watermark exists', async () => {
+  it('keeps shown issue data while refreshing all queries when no watermark exists', async () => {
     const client = mount();
     const listKey = queryKeys.issues(TEAM);
     const detailKey = queryKeys.issue('ENG-3');
+    const shownList = client.getQueryData<IssuePages>(listKey);
     client.setQueryData(detailKey, detailFor(issue(), []));
     const failedRefetches: string[] = [];
     const listObserver = new QueryObserver(client, {
@@ -1640,7 +1642,7 @@ describe('DeltaBridge reconnect backfill', () => {
     const originalInvalidate = client.invalidateQueries.bind(client);
     client.invalidateQueries = (filters?: Parameters<typeof originalInvalidate>[0]) => {
       invalidations.push(filters?.queryKey === undefined ? null : [...filters.queryKey]);
-      return Promise.resolve();
+      return originalInvalidate(filters);
     };
     const requested: string[] = [];
     const originalFetch = globalThis.fetch;
@@ -1651,17 +1653,119 @@ describe('DeltaBridge reconnect backfill', () => {
 
     try {
       act(() => capturedResume?.(0));
-      await waitFor(() => expect(invalidations).toEqual([null]));
+      await waitFor(() => expect(invalidations).toContain(null));
+      await waitFor(() => expect(failedRefetches.sort()).toEqual(['detail', 'list']));
     } finally {
       globalThis.fetch = originalFetch;
     }
 
     expect(requested).toEqual(['/api/issues/issue_1']);
-    expect(client.getQueryData(listKey)).toBeUndefined();
-    expect(client.getQueryData(detailKey)).toBeUndefined();
-    expect(failedRefetches.sort()).toEqual(['detail', 'list']);
+    expect(invalidations).toEqual([[ISSUES_ROOT], [ISSUE_ROOT], null]);
+    expect(client.getQueryData<IssuePages>(listKey)).toBe(shownList);
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)).toEqual(
+      detailFor(issue(), []),
+    );
     unsubscribeList();
     unsubscribeDetail();
+  });
+
+  it('keeps the data of a mounted but disabled issue list through a reconnect', async () => {
+    const client = mount();
+    const listKey = queryKeys.issues(TEAM);
+    const shownList = client.getQueryData<IssuePages>(listKey);
+    const observer = new QueryObserver(client, {
+      queryKey: listKey,
+      queryFn: () => Promise.reject(new Error('disabled lists never fetch')),
+      enabled: false,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    observed.length = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(observed).toEqual([42]));
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(client.getQueryData<IssuePages>(listKey)).toBe(shownList);
+  });
+
+  it('marks only the issue queries it wiped as reset, not the ones kept on screen', async () => {
+    const client = mount();
+    const shownKey = queryKeys.issues(TEAM);
+    const hiddenKey = queryKeys.issues(TEAM, 'orderBy=updated');
+    client.setQueryData(hiddenKey, client.getQueryData<IssuePages>(shownKey));
+    const observer = new QueryObserver(client, {
+      queryKey: shownKey,
+      queryFn: () => Promise.reject(new Error('still offline')),
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const shownBefore = issueQueryResetGeneration(client, shownKey);
+    const hiddenBefore = issueQueryResetGeneration(client, hiddenKey);
+    observed.length = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(observed).toEqual([42]));
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(issueQueryResetGeneration(client, shownKey)).toBe(shownBefore);
+    expect(issueQueryResetGeneration(client, hiddenKey)).toBe(hiddenBefore + 1);
+    expect(client.getQueryData(hiddenKey)).toBeUndefined();
+  });
+
+  it('never blanks an issue list someone is looking at while it reconnects', async () => {
+    const client = mount();
+    const listKey = queryKeys.issues(TEAM);
+    const refreshed = issue({ title: 'Refreshed after reconnect', syncId: 42 });
+    const response = deferred<IssuePages>();
+    const observer = new QueryObserver(client, {
+      queryKey: listKey,
+      queryFn: () => response.promise,
+      retry: false,
+      staleTime: Number.POSITIVE_INFINITY,
+    });
+    const shown: (string | undefined)[] = [];
+    const unsubscribe = observer.subscribe((result) => {
+      shown.push(result.data?.pages[0]?.issues[0]?.title);
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        Response.json({ syncId: 42, truncated: false, actions: [] }),
+      )) as unknown as typeof fetch;
+
+    try {
+      act(() => capturedResume?.(17));
+      await waitFor(() => expect(observer.getCurrentResult().isFetching).toBe(true));
+      expect(observer.getCurrentResult().isPending).toBe(false);
+      expect(titleIn(client)).toBe('Ship the board');
+
+      response.resolve({ pages: [{ issues: [refreshed], nextCursor: null }], pageParams: [null] });
+      await waitFor(() => expect(titleIn(client)).toBe('Refreshed after reconnect'));
+    } finally {
+      globalThis.fetch = originalFetch;
+      unsubscribe();
+    }
+
+    expect(shown).not.toContain(undefined);
   });
 
   it('clears issue caches before applying reconnect catch up', async () => {

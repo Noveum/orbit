@@ -123,7 +123,7 @@ export function MyIssuesView({ banner = null }: { readonly banner?: ReactNode } 
       <MyIssuesBody
         boardVisibilityKey={boardVisibility.key}
         loading={loading}
-        failed={assigned.isError}
+        failed={assigned.isLoadingError}
         onRetry={() => {
           assigned.refetch().catch(() => undefined);
         }}

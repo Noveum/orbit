@@ -31,7 +31,7 @@ export function StandupWorkspace() {
     }),
     [workspace, metadata.data],
   );
-  if (metadata.isError)
+  if (metadata.isLoadingError)
     return (
       <LoadFailed
         subject="the standup board"

@@ -5,6 +5,7 @@ const revisionGenerations = new WeakMap<QueryClient, Map<string, number>>();
 const listRevisionGenerations = new WeakMap<QueryClient, Map<string, number>>();
 const cacheRevisionGenerations = new WeakMap<QueryClient, number>();
 const cacheResetGenerations = new WeakMap<QueryClient, number>();
+const preservedResetGenerations = new WeakMap<QueryClient, Map<string, number>>();
 const syncWatermarks = new WeakMap<QueryClient, Map<string, number>>();
 const survivalSyncWatermarks = new WeakMap<QueryClient, Map<string, number>>();
 
@@ -108,7 +109,45 @@ export function recordIssueSurvivalSyncWatermark(
   watermarks.set(issueId, Math.max(watermarks.get(issueId) ?? Number.NEGATIVE_INFINITY, syncId));
 }
 
-export function recordIssueCacheReset(client: QueryClient): void {
+export function issueQueryResetGeneration(client: QueryClient, queryKey: QueryKey): number {
+  const preserved = preservedResetGenerations.get(client)?.get(issueListRevisionKey(queryKey)) ?? 0;
+  return issueCacheResetGeneration(client) - preserved;
+}
+
+export function issueQueryResetMarks(
+  client: QueryClient,
+  queryKeys: readonly QueryKey[],
+): ReadonlyMap<string, number> {
+  return new Map(
+    queryKeys.map((queryKey) => [
+      issueListRevisionKey(queryKey),
+      issueQueryResetGeneration(client, queryKey),
+    ]),
+  );
+}
+
+export function issueQueryWasReset(
+  client: QueryClient,
+  marks: ReadonlyMap<string, number>,
+  queryKey: QueryKey,
+): boolean {
+  const mark = marks.get(issueListRevisionKey(queryKey));
+  return mark !== undefined && issueQueryResetGeneration(client, queryKey) !== mark;
+}
+
+export function recordIssueCacheReset(
+  client: QueryClient,
+  preservedQueryKeys: readonly QueryKey[] = [],
+): void {
   cacheRevisionGenerations.set(client, issueCacheRevisionGeneration(client) + 1);
   cacheResetGenerations.set(client, issueCacheResetGeneration(client) + 1);
+  if (preservedQueryKeys.length === 0) return;
+  let preserved = preservedResetGenerations.get(client);
+  if (preserved === undefined) {
+    preserved = new Map();
+    preservedResetGenerations.set(client, preserved);
+  }
+  for (const queryKey of new Set(preservedQueryKeys.map(issueListRevisionKey))) {
+    preserved.set(queryKey, (preserved.get(queryKey) ?? 0) + 1);
+  }
 }

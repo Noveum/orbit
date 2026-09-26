@@ -228,6 +228,89 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     await waitFor(() => expect(update.result.current.isError).toBe(true));
   });
 
+  it('rolls back a failed update whose list and detail a reconnect kept on screen', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH' ? pending.promise : Promise.reject(new Error('still offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = update.result.current
+        .mutateAsync({ issue: issue(), patch: { title: 'Optimistic title' } })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing update promise');
+    await waitFor(() => expect(cachedIssue(client)?.title).toBe('Optimistic title'));
+    act(() => recordIssueCacheReset(client, [listKey, detailKey]));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'The update failed.' } },
+          { status: 403 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)?.title).toBe('Ship the board');
+    expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue.title).toBe(
+      'Ship the board',
+    );
+  });
+
+  it('rolls back the list of a failed update even when a reconnect wiped its hidden detail', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH' ? pending.promise : Promise.reject(new Error('still offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = update.result.current
+        .mutateAsync({ issue: issue(), patch: { title: 'Optimistic title' } })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing update promise');
+    await waitFor(() => expect(cachedIssue(client)?.title).toBe('Optimistic title'));
+    act(() => recordIssueCacheReset(client, [listKey]));
+    await client.resetQueries({ queryKey: detailKey, exact: true });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'The update failed.' } },
+          { status: 403 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)?.title).toBe('Ship the board');
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+  });
+
   it('does not roll back an update after its committed echo arrives', async () => {
     const pending = deferred<Response>();
     globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
@@ -940,6 +1023,58 @@ describe('issue mutations patch the cache without a refetch drain', () => {
 
     expect(cachedIssue(client)).toBeUndefined();
     await waitFor(() => expect(move.result.current.isError).toBe(true));
+  });
+
+  it('rolls back a failed move whose list a reconnect kept on screen', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST' ? pending.promise : Promise.reject(new Error('still offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const shownKey = queryKeys.issues(TEAM);
+    const hiddenKey = queryKeys.issues(TEAM, 'orderBy=updated');
+    client.setQueryData(shownKey, issuePages([issue()]));
+    client.setQueryData(hiddenKey, issuePages([issue()]));
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing move promise');
+    await waitFor(() => expect(cachedIssue(client)?.stateId).toBe('state_doing'));
+    act(() => recordIssueCacheReset(client, [shownKey]));
+    await client.resetQueries({ queryKey: hiddenKey, exact: true });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    await waitFor(() =>
+      expect(
+        issueFromPagesForTest(client.getQueryData<IssuePages>(shownKey), 'issue_1')?.stateId,
+      ).toBe('state_todo'),
+    );
+    expect(client.getQueryData(hiddenKey)).toBeUndefined();
   });
 
   it('does not let a failed move roll back a newer cached issue', async () => {
@@ -2052,6 +2187,41 @@ describe('deleting an issue', () => {
 
     expect(cachedIssue(client)).toBeUndefined();
     await waitFor(() => expect(remove.result.current.isError).toBe(true));
+  });
+
+  it('restores a refused delete whose list a reconnect kept on screen', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'DELETE' ? pending.promise : Promise.reject(new Error('still offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const key = queryKeys.issues(TEAM);
+    client.setQueryData(key, issuePages([issue()]));
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = remove.result.current.mutateAsync([issue()]).then(
+        () => 'success' as const,
+        () => 'error' as const,
+      );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing delete promise');
+    await waitFor(() => expect(cachedIssue(client)).toBeUndefined());
+    act(() => recordIssueCacheReset(client, [key]));
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'The delete failed.' } },
+          { status: 403 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)).toEqual(issue());
   });
 
   it('restores a refused delete without overwriting a realtime sibling update', async () => {
