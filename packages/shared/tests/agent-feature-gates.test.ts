@@ -1,32 +1,35 @@
-import { afterEach, describe, expect, it } from 'bun:test';
-import { type AgentFeatureGate, agentFeatureEnabled } from '../src/agent-feature-gates.ts';
+import { afterEach, expect, it } from 'bun:test';
+import { agentFeatureEnabled, agentIssueWritesEnabled } from '../src/index.ts';
 
-const gates: readonly AgentFeatureGate[] = [
-  'agent_identity_read',
-  'agent_consent',
-  'agent_issue_write',
-  'issue_outbox_dispatch',
-];
-const initial = new Map(
-  gates.map((gate) => [`ORBIT_${gate.toUpperCase()}`, process.env[`ORBIT_${gate.toUpperCase()}`]]),
-);
+const GATES = [
+  'ORBIT_AGENT_IDENTITY_READ',
+  'ORBIT_AGENT_CONSENT',
+  'ORBIT_AGENT_ISSUE_WRITE',
+  'ORBIT_ISSUE_OUTBOX_DISPATCH',
+] as const;
+const originalGates = new Map(GATES.map((gate) => [gate, process.env[gate]]));
 
 afterEach(() => {
-  for (const [key, value] of initial) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
+  for (const gate of GATES) {
+    const original = originalGates.get(gate);
+    if (original === undefined) delete process.env[gate];
+    else process.env[gate] = original;
   }
 });
 
-describe('agent feature gates', () => {
-  it('keeps every agent capability disabled unless explicitly enabled', () => {
-    for (const gate of gates) {
-      delete process.env[`ORBIT_${gate.toUpperCase()}`];
-      expect(agentFeatureEnabled(gate)).toBe(false);
-    }
-    process.env['ORBIT_AGENT_CONSENT'] = 'false';
-    expect(agentFeatureEnabled('agent_consent')).toBe(false);
-    process.env['ORBIT_AGENT_CONSENT'] = 'true';
-    expect(agentFeatureEnabled('agent_consent')).toBe(true);
-  });
+it('keeps each Agent feature gate closed unless its exact value is true', () => {
+  for (const gate of GATES) delete process.env[gate];
+  expect(agentFeatureEnabled('agent_issue_write')).toBe(false);
+  process.env['ORBIT_AGENT_ISSUE_WRITE'] = '1';
+  expect(agentFeatureEnabled('agent_issue_write')).toBe(false);
+});
+
+it('requires every rollout dependency before allowing Agent issue writes', () => {
+  for (const gate of GATES) process.env[gate] = 'true';
+  expect(agentIssueWritesEnabled()).toBe(true);
+  for (const gate of GATES) {
+    process.env[gate] = 'false';
+    expect(agentIssueWritesEnabled()).toBe(false);
+    process.env[gate] = 'true';
+  }
 });

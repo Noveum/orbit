@@ -1,8 +1,13 @@
 import { afterAll, describe, expect, it } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
+import { applyCatchup } from '../src/apply-catchup.ts';
 import { releaseDatabase } from '../src/migration-release.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
@@ -34,6 +39,54 @@ async function resetScratch(): Promise<void> {
 
 async function migrateScratch(): Promise<void> {
   await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+}
+
+async function useHistoricalAgentInstructionsLedger(): Promise<void> {
+  const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+  await run(urlFor(SCRATCH), async (sql) => {
+    await sql`delete from drizzle.__drizzle_migrations where created_at > 1787233740635`;
+    for (const migration of migrations.slice(0, 13)) {
+      const source = migration.sql.join('--> statement-breakpoint');
+      const alternateHash = ['\n', '\r\n']
+        .map((lineEnding) =>
+          createHash('sha256').update(source.replace(/\r?\n/gu, lineEnding)).digest('hex'),
+        )
+        .find((hash) => hash !== migration.hash);
+      if (alternateHash !== undefined) {
+        await sql`
+          update drizzle.__drizzle_migrations set hash = ${alternateHash}
+          where created_at = ${migration.folderMillis}
+        `;
+      }
+    }
+    await sql`
+      insert into drizzle.__drizzle_migrations (hash, created_at)
+      values (
+        '53266292651bb8f1368abee0336030f12a780e2086f7d7cbbf49142b4550faeb',
+        1787562015902
+      )
+    `;
+  });
+}
+
+async function migrationPrefixDirectory(throughTag: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'orbit-p3-migration-prefix-'));
+  const metaDirectory = join(MIGRATIONS, 'meta');
+  const journal = JSON.parse(await readFile(join(metaDirectory, '_journal.json'), 'utf8')) as {
+    entries: { tag: string }[];
+  };
+  const entries = journal.entries.filter((entry) => entry.tag <= throughTag);
+  await cp(metaDirectory, join(directory, 'meta'), { recursive: true });
+  await writeFile(
+    join(directory, 'meta', '_journal.json'),
+    JSON.stringify({ ...journal, entries }),
+  );
+  await Promise.all(
+    entries.map(async ({ tag }) => {
+      await cp(join(MIGRATIONS, `${tag}.sql`), join(directory, `${tag}.sql`));
+    }),
+  );
+  return directory;
 }
 
 describe('database release', () => {
@@ -88,7 +141,9 @@ describe('database release', () => {
       await sql`drop trigger reject_upgrade_trigger on mcp_grant`;
       await sql`drop function reject_upgrade()`;
     });
-    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).applied).toBe(3);
+    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).applied).toBe(
+      readMigrationFiles({ migrationsFolder: MIGRATIONS }).length - historical.length,
+    );
     expect([
       ...(await run(
         urlFor(SCRATCH),
@@ -108,6 +163,54 @@ describe('database release', () => {
     ).toBe('agent_identity_required');
     expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('current');
   }, 60_000);
+
+  it('P0-MIG-1 rolls back partial P3 DDL and the migration ledger after interruption', async () => {
+    const target = `${SCRATCH}_p3_interrupt`;
+    const prefixDirectory = await migrationPrefixDirectory('0024_preserve_agent_identity_history');
+    await run(urlFor('postgres'), async (sql) => {
+      await sql.unsafe(`drop database if exists "${target}"`);
+      await sql.unsafe(`create database "${target}"`);
+    });
+    try {
+      await expect(releaseDatabase(urlFor(target), prefixDirectory)).rejects.toThrow(
+        'Migrations completed, but the database is still incompatible with the schema.',
+      );
+      await run(
+        urlFor(target),
+        (sql) => sql`create table public.mcp_idempotency (id text primary key)`,
+      );
+
+      await expect(releaseDatabase(urlFor(target), MIGRATIONS)).rejects.toThrow();
+      const [afterFailure] = await run(
+        urlFor(target),
+        (sql) => sql<{ outbox: string | null; ledger_count: number }[]>`
+          select
+            to_regclass('public.issue_outbox')::text as outbox,
+            (select count(*)::integer from drizzle.__drizzle_migrations) as ledger_count
+        `,
+      );
+      expect(afterFailure).toEqual({ outbox: null, ledger_count: 25 });
+
+      await run(urlFor(target), (sql) => sql`drop table public.mcp_idempotency`);
+      const retried = await releaseDatabase(urlFor(target), MIGRATIONS);
+      expect(retried.mode).toBe('migrated');
+      expect(retried.applied).toBe(5);
+      const [afterRetry] = await run(
+        urlFor(target),
+        (sql) => sql<{ outbox: string | null; ledger_count: number }[]>`
+          select
+            to_regclass('public.issue_outbox')::text as outbox,
+            (select count(*)::integer from drizzle.__drizzle_migrations) as ledger_count
+        `,
+      );
+      expect(afterRetry).toEqual({ outbox: 'issue_outbox', ledger_count: 30 });
+    } finally {
+      await Promise.all([
+        run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${target}"`)),
+        rm(prefixDirectory, { recursive: true }),
+      ]);
+    }
+  }, 120_000);
 
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
@@ -211,6 +314,18 @@ describe('database release', () => {
     await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
       'historical cycle numbering backfill',
     );
+    await applyCatchup(urlFor(SCRATCH), 'cycle-numbering-baseline.sql');
+    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('baselined');
+    const cycles = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ id: string; number: number }[]>`
+        select id, number from cycle where organization_id = 'numbering-org' order by number
+      `,
+    );
+    expect([...cycles]).toEqual([
+      { id: 'earlier-cycle', number: 1 },
+      { id: 'later-cycle', number: 2 },
+    ]);
   }, 60_000);
 
   it('rejects a changed hash in an applied migration', async () => {
@@ -228,6 +343,52 @@ describe('database release', () => {
     await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
       'does not match the committed migration',
     );
+  }, 60_000);
+
+  it('rebaselines the recognized historical ledger after the full schema is verified', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await useHistoricalAgentInstructionsLedger();
+
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const ledger = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ hash: string; created_at: string }[]>`
+        select hash, created_at from drizzle.__drizzle_migrations order by created_at, id
+      `,
+    );
+
+    expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
+    expect([...ledger]).toEqual(
+      migrations.map((migration) => ({
+        hash: migration.hash,
+        created_at: String(migration.folderMillis),
+      })),
+    );
+  }, 60_000);
+
+  it('keeps the historical ledger unchanged when its schema is incomplete', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await useHistoricalAgentInstructionsLedger();
+    await run(urlFor(SCRATCH), (sql) => sql`drop table issue_outbox`);
+    const originalLedger = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at, id`,
+    );
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'not a contiguous prefix',
+    );
+    expect([
+      ...(await run(
+        urlFor(SCRATCH),
+        (sql) =>
+          sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at, id`,
+      )),
+    ]).toEqual([...originalLedger]);
   }, 60_000);
 
   it('fails promptly when another database release holds the advisory lock', async () => {

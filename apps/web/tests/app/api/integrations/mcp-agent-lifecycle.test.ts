@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { preparePersonalAgentConsent } from '@orbit/core';
+import { createIssue, preparePersonalAgentConsent, recordMcpGrant } from '@orbit/core';
 import {
   addMember,
   createWorkspace,
   resetDatabase,
   type Workspace,
 } from '@orbit/core/test-support';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
+import { syncActionSchema } from '@orbit/shared/events';
 import { mockSession } from '../../../../tests-support.ts';
 
 let workspace: Workspace;
@@ -68,6 +69,35 @@ afterEach(() => {
 });
 
 describe('MCP agent lifecycle API', () => {
+  it('dispatches responsibility cleanup from the production route', async () => {
+    const id = await identityId();
+    const [identity] = await db
+      .select()
+      .from(schema.agentIdentity)
+      .where(eq(schema.agentIdentity.id, id));
+    if (identity === undefined) throw new Error('Agent identity was not created');
+    await recordMcpGrant({
+      clientId: identity.clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: 'orbit.read',
+      agentIdentityId: id,
+    });
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Delegated',
+      assigneeAgentId: id,
+    });
+    process.env['ORBIT_AGENT_IDENTITY_READ'] = 'true';
+    expect((await patch(id, { action: 'pause' })).status).toBe(200);
+    const events = await db
+      .select()
+      .from(schema.issueOutbox)
+      .where(eq(schema.issueOutbox.aggregateId, created.issue.id));
+    const cleanup = events.find((row) => syncActionSchema.parse(row.payload).action === 'update');
+    expect(cleanup?.deliveredAt).not.toBeNull();
+  });
+
   it('stays closed by default and exposes pause, resume and delete through the shared policy', async () => {
     const id = await identityId();
     expect((await patch(id, { action: 'pause' })).status).toBe(404);

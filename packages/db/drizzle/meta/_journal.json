@@ -176,6 +176,41 @@
       "when": 1789980471869,
       "tag": "0024_preserve_agent_identity_history",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790178834499,
+      "tag": "0025_whole_lethal_legion",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790178940023,
+      "tag": "0026_cynical_shadow_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790179081232,
+      "tag": "0027_groovy_chronomancer",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790241389688,
+      "tag": "0028_cynical_longshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790250706447,
+      "tag": "0029_nebulous_zarek",
+      "breakpoints": true
     }
   ]
 }

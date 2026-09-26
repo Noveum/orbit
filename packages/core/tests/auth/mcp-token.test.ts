@@ -206,6 +206,24 @@ describe('recordMcpGrant', () => {
     expect(grants[0]?.organizationId).toBe(workspace.organizationId);
   });
 
+  it('lists a frozen legacy connection for renewed consent', async () => {
+    const clientId = await createClient();
+    const grantId = randomUUID();
+    await db.insert(schema.mcpGrant).values({
+      id: grantId,
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: SCOPES,
+      principalNameSnapshot: workspace.adminUser.name,
+      agentIdentityId: null,
+      revokedAt: new Date(),
+      revokeReason: 'agent_identity_required',
+    });
+    const grants = await listMcpGrants(workspace.adminUser.id);
+    expect(grants).toContainEqual(expect.objectContaining({ id: grantId, agentIdentityId: null }));
+  });
+
   it('keeps another workspace identity connected when the same client re-consents', async () => {
     const clientId = await createClient();
     const other = await createOrganizationFor(workspace.adminUser.id);

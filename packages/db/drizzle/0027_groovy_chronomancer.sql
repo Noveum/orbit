@@ -1,0 +1,1 @@
+ALTER TABLE "issue" ALTER COLUMN "creator_id" DROP NOT NULL;

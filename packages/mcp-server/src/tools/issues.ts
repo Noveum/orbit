@@ -1,6 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AgentIssueBinding } from '@orbit/core';
 import {
   attachFile,
+  createAgentIssue,
   createComment,
   createIssue,
   getIssue,
@@ -11,10 +13,14 @@ import {
   listIssues,
   listLabels,
   listRelatedIssues,
+  moveAgentIssue,
   moveIssue,
   readAttachment,
+  removeAgentRelation,
   removeRelation,
+  setAgentRelation,
   setRelation,
+  updateAgentIssue,
   updateIssue,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
@@ -82,7 +88,11 @@ async function issueRelationViews(
   }));
 }
 
-function registerCreateIssue(server: McpServer, principal: Principal): void {
+function registerCreateIssue(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -117,16 +127,33 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
         labels: labelsRef.optional(),
         estimate: z.number().int().min(0).max(100).optional().describe('Estimate points.'),
         dueDate: dueDateRef.optional(),
+        idempotencyKey: z.string().trim().min(1).max(128).optional(),
       },
     },
     async (args) => {
       const team = await resolveTeam(principal, args.team);
-      const patch = await buildIssuePatch(principal, team.id, args);
-      const created = await createIssue(principal, {
+      if (args.assignee === 'agent' && agentIssueBinding === undefined) {
+        throw validationFailed('The agent reference requires an agent session.', {
+          details: { reason: 'agent_ref_in_human_session' },
+        });
+      }
+      const patch = await buildIssuePatch(
+        principal,
+        team.id,
+        args.assignee === 'agent' ? { ...args, assignee: undefined } : args,
+      );
+      const input = {
         ...patch,
         teamId: team.id,
         title: args.title,
-      });
+        ...(args.assignee === 'agent'
+          ? { assigneeAgentId: agentIssueBinding?.agentIdentityId }
+          : {}),
+      };
+      const created =
+        agentIssueBinding === undefined
+          ? await createIssue(principal, input)
+          : await createAgentIssue(agentIssueBinding, input, args.idempotencyKey);
       await publish(created.actions);
       return {
         issue: await describeIssue(principal, created.issue),
@@ -136,7 +163,11 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
   );
 }
 
-function registerUpdateIssue(server: McpServer, principal: Principal): void {
+function registerUpdateIssue(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -192,8 +223,22 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const patch = await buildIssuePatch(principal, issue.teamId, args, issue.projectId);
-      const updated = await updateIssue(principal, issue.id, patch);
+      if (args.assignee === 'agent' && agentIssueBinding === undefined) {
+        throw validationFailed('The agent reference requires an agent session.', {
+          details: { reason: 'agent_ref_in_human_session' },
+        });
+      }
+      const patch = await buildIssuePatch(
+        principal,
+        issue.teamId,
+        args.assignee === 'agent' ? { ...args, assignee: undefined } : args,
+        issue.projectId,
+      );
+      if (args.assignee === 'agent') patch['assigneeAgentId'] = agentIssueBinding?.agentIdentityId;
+      const updated =
+        agentIssueBinding === undefined
+          ? await updateIssue(principal, issue.id, patch)
+          : await updateAgentIssue(agentIssueBinding, issue.id, patch);
       await publish(updated.actions);
       return {
         issue: await describeIssue(principal, updated.issue),
@@ -308,7 +353,11 @@ function registerGetIssue(server: McpServer, principal: Principal): void {
   );
 }
 
-function registerSearchIssues(server: McpServer, principal: Principal): void {
+function registerSearchIssues(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -334,7 +383,7 @@ function registerSearchIssues(server: McpServer, principal: Principal): void {
           .string()
           .min(1)
           .optional()
-          .describe('Assignee name, handle, email, id, or "me".'),
+          .describe('Assignee name, handle, email, id, "me", or "agent".'),
         participant: z
           .string()
           .min(1)
@@ -354,7 +403,7 @@ function registerSearchIssues(server: McpServer, principal: Principal): void {
     async (args) => {
       const teamId =
         args.team === undefined ? undefined : (await resolveTeam(principal, args.team)).id;
-      const filter = await buildIssueFilter(principal, teamId, args);
+      const filter = await buildIssueFilter(principal, teamId, args, agentIssueBinding);
       const page = await listIssues(principal, filter);
       return {
         issues: await describeIssues(principal, page.issues),
@@ -385,6 +434,7 @@ async function buildIssueFilter(
   principal: Principal,
   teamId: string | undefined,
   args: IssueFilterArgs,
+  agentIssueBinding?: AgentIssueBinding,
 ): Promise<Record<string, unknown>> {
   const filter: Record<string, unknown> = {
     includeArchived: args.includeArchived,
@@ -398,8 +448,16 @@ async function buildIssueFilter(
   if (args.stateCategory !== undefined) filter['stateCategory'] = args.stateCategory;
   if (args.project !== undefined)
     filter['projectId'] = (await resolveProject(principal, args.project)).id;
-  if (args.assignee !== undefined)
+  if (args.assignee === 'agent') {
+    if (agentIssueBinding === undefined) {
+      throw validationFailed('Agent is available only in an agent session.', {
+        details: { reason: 'agent_ref_in_human_session' },
+      });
+    }
+    filter['assigneeAgentId'] = agentIssueBinding.agentIdentityId;
+  } else if (args.assignee !== undefined) {
     filter['assigneeId'] = await resolveUserId(principal, args.assignee);
+  }
   if (args.participant !== undefined)
     filter['participantId'] = await resolveUserId(principal, args.participant);
   if (args.parent !== undefined) filter['parentId'] = (await getIssue(principal, args.parent)).id;
@@ -449,7 +507,48 @@ function registerListMyIssues(server: McpServer, principal: Principal): void {
   );
 }
 
-function registerMoveIssue(server: McpServer, principal: Principal): void {
+function registerListAgentIssues(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
+  defineTool(
+    server,
+    {
+      name: 'list_agent_issues',
+      title: 'List agent issues',
+      description: 'List issues assigned to the current agent, most recently updated first.',
+      readOnly: true,
+      inputSchema: {
+        stateCategory: z.enum(STATE_CATEGORIES).optional(),
+        limit: z.number().int().min(1).max(200).default(25),
+      },
+    },
+    async (args) => {
+      if (agentIssueBinding === undefined) {
+        throw validationFailed('Agent issues require an agent session.', {
+          details: { reason: 'agent_ref_in_human_session' },
+        });
+      }
+      const page = await listIssues(principal, {
+        assigneeAgentId: agentIssueBinding.agentIdentityId,
+        orderBy: 'updated',
+        limit: args.limit,
+        ...(args.stateCategory === undefined ? {} : { stateCategory: args.stateCategory }),
+      });
+      return {
+        issues: await describeIssues(principal, page.issues),
+        nextCursor: page.nextCursor,
+      };
+    },
+  );
+}
+
+function registerMoveIssue(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -470,7 +569,7 @@ function registerMoveIssue(server: McpServer, principal: Principal): void {
       const issue = await getIssue(principal, args.issue);
       const teamId =
         args.team === undefined ? issue.teamId : (await resolveTeam(principal, args.team)).id;
-      const moved = await moveIssue(principal, issue.id, {
+      const input = {
         ...(args.team === undefined ? {} : { teamId }),
         ...(args.state === undefined
           ? {}
@@ -481,7 +580,11 @@ function registerMoveIssue(server: McpServer, principal: Principal): void {
         ...(args.afterIssue === undefined
           ? {}
           : { afterId: (await getIssue(principal, args.afterIssue)).id }),
-      });
+      };
+      const moved =
+        agentIssueBinding === undefined
+          ? await moveIssue(principal, issue.id, input)
+          : await moveAgentIssue(agentIssueBinding, issue.id, input);
       await publish(moved.actions);
       return {
         issue: await describeIssue(principal, moved.issue),
@@ -574,7 +677,11 @@ function registerListIssueComments(server: McpServer, principal: Principal): voi
   );
 }
 
-function registerSetRelation(server: McpServer, principal: Principal): void {
+function registerSetRelation(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -592,10 +699,14 @@ function registerSetRelation(server: McpServer, principal: Principal): void {
     async (args) => {
       const issue = await getIssue(principal, args.issue);
       const related = await getIssue(principal, args.relatedIssue);
-      const result = await setRelation(principal, issue.id, {
+      const input = {
         relatedIssueId: related.id,
         type: args.type,
-      });
+      };
+      const result =
+        agentIssueBinding === undefined
+          ? await setRelation(principal, issue.id, input)
+          : await setAgentRelation(agentIssueBinding, issue.id, input);
       await publish(result.actions);
       return {
         issue: issue.identifier,
@@ -607,7 +718,11 @@ function registerSetRelation(server: McpServer, principal: Principal): void {
   );
 }
 
-function registerRemoveRelation(server: McpServer, principal: Principal): void {
+function registerRemoveRelation(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -625,10 +740,14 @@ function registerRemoveRelation(server: McpServer, principal: Principal): void {
     async (args) => {
       const issue = await getIssue(principal, args.issue);
       const related = await getIssue(principal, args.relatedIssue);
-      const actions = await removeRelation(principal, issue.id, {
+      const input = {
         relatedIssueId: related.id,
         type: args.type,
-      });
+      };
+      const actions =
+        agentIssueBinding === undefined
+          ? await removeRelation(principal, issue.id, input)
+          : await removeAgentRelation(agentIssueBinding, issue.id, input);
       await publish(actions);
       return {
         issue: issue.identifier,
@@ -826,17 +945,22 @@ function registerCopyBranchName(server: McpServer, principal: Principal): void {
   );
 }
 
-export function registerIssueTools(server: McpServer, principal: Principal): void {
-  registerCreateIssue(server, principal);
-  registerUpdateIssue(server, principal);
+export function registerIssueTools(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
+  registerCreateIssue(server, principal, agentIssueBinding);
+  registerUpdateIssue(server, principal, agentIssueBinding);
   registerGetIssue(server, principal);
-  registerSearchIssues(server, principal);
+  registerSearchIssues(server, principal, agentIssueBinding);
   registerListMyIssues(server, principal);
-  registerMoveIssue(server, principal);
+  registerListAgentIssues(server, principal, agentIssueBinding);
+  registerMoveIssue(server, principal, agentIssueBinding);
   registerAddComment(server, principal);
   registerListIssueComments(server, principal);
-  registerSetRelation(server, principal);
-  registerRemoveRelation(server, principal);
+  registerSetRelation(server, principal, agentIssueBinding);
+  registerRemoveRelation(server, principal, agentIssueBinding);
   registerAttachFile(server, principal);
   registerListIssueAttachments(server, principal);
   registerReadAttachment(server, principal);

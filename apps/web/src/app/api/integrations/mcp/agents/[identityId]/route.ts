@@ -2,7 +2,13 @@ import { manageAgentIdentity } from '@orbit/core';
 import { agentFeatureEnabled } from '@orbit/shared';
 import { notFound } from '@orbit/shared/errors';
 import { agentIdentityActionSchema } from '@orbit/shared/validators';
-import { apiContext, handleRoute, readJson, routeId } from '@/lib/api/handler.ts';
+import {
+  apiContext,
+  dispatchIssueOutbox,
+  handleRoute,
+  readJson,
+  routeId,
+} from '@/lib/api/handler.ts';
 
 interface RouteContext {
   readonly params: Promise<{ identityId: string }>;
@@ -16,6 +22,8 @@ export async function PATCH(request: Request, { params }: RouteContext): Promise
     const { principal } = await apiContext();
     const identityId = routeId((await params).identityId, 'agent identity');
     const action = agentIdentityActionSchema.parse(await readJson(request));
-    return { identity: await manageAgentIdentity(principal, identityId, action) };
+    const identity = await manageAgentIdentity(principal, identityId, action);
+    await dispatchIssueOutbox();
+    return { identity };
   });
 }

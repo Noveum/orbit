@@ -74,8 +74,18 @@ function assigneePredicate(values: readonly string[], negate: boolean): SQL | nu
   if (values.length === 0) return null;
   const user = sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId})`;
   const parts: SQL[] = [];
-  const ids = values.filter((value) => value !== UNSET_FILTER_VALUE);
-  if (ids.length > 0) parts.push(sql`coalesce(${user} in ${ids}, false)`);
+  const userIds = values.filter(
+    (value) => value !== UNSET_FILTER_VALUE && !value.startsWith('agent:'),
+  );
+  const agentIds = values
+    .filter((value) => value.startsWith('agent:'))
+    .map((value) => value.slice(6));
+  if (userIds.length > 0)
+    parts.push(
+      sql`coalesce(${user} in ${userIds}, false) and ${schema.issue.assigneeAgentId} is null`,
+    );
+  if (agentIds.length > 0)
+    parts.push(sql`coalesce(${schema.issue.assigneeAgentId} in ${agentIds}, false)`);
   if (values.includes(UNSET_FILTER_VALUE))
     parts.push(sql`${user} is null and ${schema.issue.assigneeAgentId} is null`);
   const positive = anyOf(parts);

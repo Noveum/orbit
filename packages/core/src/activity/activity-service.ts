@@ -38,6 +38,13 @@ export interface AppendActivityInput extends ActivityChange {
   readonly issueId: string;
   readonly actor: Actor;
   readonly syncId: number;
+  readonly principalUserId?: string | null;
+  readonly principalName?: string | null;
+  readonly principalAvatar?: string | null;
+  readonly grantId?: string | null;
+  readonly actorAvatar?: string | null;
+  readonly cause?: string | null;
+  readonly causeActorId?: string | null;
 }
 
 export async function principalActor(executor: Executor, principal: Principal): Promise<Actor> {
@@ -47,6 +54,70 @@ export async function principalActor(executor: Executor, principal: Principal): 
     .where(eq(schema.user.id, principal.userId))
     .limit(1);
   return { type: 'user', id: principal.userId, name: row?.name ?? 'Someone' };
+}
+
+export interface PrincipalActorProfile {
+  readonly actor: Actor;
+  readonly avatar: string | null;
+}
+
+export interface ActivityAgentActor {
+  readonly actor: Actor;
+  readonly avatar: string | null;
+  readonly principal: Principal;
+  readonly principalName: string;
+  readonly principalAvatar: string | null;
+  readonly grantId: string;
+}
+
+export interface ActivityActorSnapshot {
+  readonly actor: Actor;
+  readonly actorAvatar: string | null;
+  readonly principalUserId: string;
+  readonly principalName: string | null;
+  readonly principalAvatar: string | null;
+  readonly grantId: string | null;
+}
+
+export async function resolveActivityActor(
+  executor: Executor,
+  principal: Principal,
+  agent: ActivityAgentActor | null = null,
+): Promise<ActivityActorSnapshot> {
+  if (agent !== null) {
+    return {
+      actor: agent.actor,
+      actorAvatar: agent.avatar,
+      principalUserId: agent.principal.userId,
+      principalName: agent.principalName,
+      principalAvatar: agent.principalAvatar,
+      grantId: agent.grantId,
+    };
+  }
+  const profile = await principalActorProfile(executor, principal);
+  return {
+    actor: profile.actor,
+    actorAvatar: profile.avatar,
+    principalUserId: principal.userId,
+    principalName: profile.actor.name ?? null,
+    principalAvatar: profile.avatar,
+    grantId: null,
+  };
+}
+
+export async function principalActorProfile(
+  executor: Executor,
+  principal: Principal,
+): Promise<PrincipalActorProfile> {
+  const [row] = await executor
+    .select({ name: schema.user.name, image: schema.user.image })
+    .from(schema.user)
+    .where(eq(schema.user.id, principal.userId))
+    .limit(1);
+  return {
+    actor: { type: 'user', id: principal.userId, name: row?.name ?? 'Someone' },
+    avatar: row?.image ?? null,
+  };
 }
 
 export async function appendActivities(
@@ -64,9 +135,18 @@ export async function appendActivities(
         actorType: input.actor.type,
         actorId: input.actor.id,
         actorName: input.actor.name ?? 'Someone',
+        principalUserId:
+          input.principalUserId ?? (input.actor.type === 'user' ? input.actor.id : null),
+        principalName:
+          input.principalName ?? (input.actor.type === 'user' ? (input.actor.name ?? null) : null),
+        actorAvatar: input.actorAvatar ?? null,
+        principalAvatar: input.principalAvatar ?? null,
+        grantId: input.grantId ?? null,
         field: input.field,
         fromValue: input.from ?? null,
         toValue: input.to ?? null,
+        cause: input.cause ?? null,
+        causeActorId: input.causeActorId ?? null,
         syncId: input.syncId,
       })),
     )
@@ -150,6 +230,16 @@ function nameOf(value: unknown): string | null {
   return null;
 }
 
+function assigneeNameOf(value: unknown): string | null {
+  const name = nameOf(value);
+  if (name !== null) return name;
+  if (value !== null && typeof value === 'object' && 'type' in value) {
+    if (value.type === 'agent') return 'an agent';
+    if (value.type === 'user') return 'a member';
+  }
+  return null;
+}
+
 function describePriority(value: unknown): string {
   const numeric = typeof value === 'number' ? value : Number(nameOf(value) ?? Number.NaN);
   const label = PRIORITY_LABELS[numeric as Priority];
@@ -202,6 +292,13 @@ export function describeActivity(
   const simple = SIMPLE_FIELD_COPY[row.field];
   if (simple !== undefined) return simple;
   if (row.field === 'priority') return `set priority to ${describePriority(row.toValue)}`;
+  if (row.field === 'assignee')
+    return (
+      FIELD_RENDERERS['assignee']?.({
+        from: assigneeNameOf(row.fromValue),
+        to: assigneeNameOf(row.toValue),
+      }) ?? 'changed the assignee'
+    );
 
   const change: RenderedChange = { from: nameOf(row.fromValue), to: nameOf(row.toValue) };
   const render = FIELD_RENDERERS[row.field];

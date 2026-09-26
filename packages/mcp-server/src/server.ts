@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { AgentIssueBinding } from '@orbit/core';
 import { getOrganization, verifyMcpAccessToken } from '@orbit/core';
 import { forbidden, toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
@@ -17,7 +18,7 @@ const JSONRPC_SERVER_ERROR = -32000;
 const INSTRUCTIONS = [
   'Orbit is a task manager. Issues live on teams and carry identifiers such as ENG-42.',
   'Call get_me first to learn the caller role and teams, then list_teams, list_states and list_labels before writing.',
-  'Every tool acts as the user who owns the API key, so a request can fail with a forbidden error when their role does not allow it.',
+  "Issue tools act as the connected agent within the owner's current permissions. Other tools use the owner as principal.",
 ].join(' ');
 
 export function wwwAuthenticate(publicUrl: string): string {
@@ -46,6 +47,7 @@ export function createOrbitMcpServer(
   scopes = EVERY_ORBIT_SCOPE,
   workspaceInstructions = '',
   actorType: 'user' | 'agent' = 'user',
+  agentIssueBinding?: AgentIssueBinding,
 ): McpServer {
   const instructions = [INSTRUCTIONS, workspaceInstructions]
     .filter((entry) => entry.length > 0)
@@ -54,8 +56,13 @@ export function createOrbitMcpServer(
     { name: 'orbit', version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions },
   );
-  allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes), actorType });
-  registerTools(server, principal);
+  allowTools(server, {
+    reads: grantsReads(scopes),
+    writes: grantsWrites(scopes),
+    actorType,
+    agentIssueWrite: agentIssueBinding !== undefined,
+  });
+  registerTools(server, principal, agentIssueBinding);
   return server;
 }
 
@@ -113,6 +120,13 @@ async function dispatch(
     identity.scopes,
     workspaceInstructions,
     'agent',
+    {
+      principal: identity.principal,
+      grantId: identity.grantId,
+      agentIdentityId: identity.agentIdentityId,
+      clientId: identity.clientId,
+      scopes: identity.scopes,
+    },
   );
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);

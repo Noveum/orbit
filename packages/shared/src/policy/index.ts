@@ -106,6 +106,17 @@ export function agentIdentityAuthority(
   return principal.role === 'admin' ? 'admin' : null;
 }
 
+export function assertIssueOwnerTransfer(
+  principal: Principal,
+  issue: { readonly organizationId: string; readonly ownerUserId: string | null },
+): void {
+  if (
+    issue.organizationId !== principal.organizationId ||
+    (principal.role !== 'admin' && issue.ownerUserId !== principal.userId)
+  )
+    throw forbidden('Only the issue owner or a workspace admin can transfer ownership.');
+}
+
 const NO_PERMISSIONS: readonly Permission[] = [];
 
 export function permissionsFor(role: OrgRole): readonly Permission[] {
@@ -206,4 +217,5 @@ export function canReadView(principal: Principal, view: ReadableViewRow): boolea
   return isInTeam(principal, { id: view.teamId, organizationId: view.organizationId });
 }
 
+export { type AgentIssueAuthority, authorizeIssueAction } from './agent-issue.ts';
 export { assertHumanIssueWriter } from './issue-writer.ts';

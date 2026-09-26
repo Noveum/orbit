@@ -403,6 +403,8 @@ export async function removeTeamMember(
         ? { changed: [] }
         : await clearHumanIssueResponsibility(tx, principal.organizationId, userId, syncId, {
             teamId,
+            cause: 'team_access_lost',
+            causeActorId: principal.userId,
           });
     const actor = await principalActor(tx, principal);
     const [removed] = await tx

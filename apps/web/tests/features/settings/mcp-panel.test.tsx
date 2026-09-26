@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { AgentSettingsView } from '@orbit/core';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -24,11 +25,30 @@ const CONNECTED: readonly McpConnection[] = [
   },
 ];
 
+const AGENT: AgentSettingsView = {
+  id: 'agent-1',
+  name: 'Researcher',
+  avatar: null,
+  lifecycle: 'active',
+  connection: 'connected',
+  owner: { id: 'owner-1', name: 'Ari', avatar: null },
+  client: { id: 'client-1', name: 'Claude' },
+  grant: { id: 'grant-1', scopes: ['orbit.read', 'orbit.write'] },
+  effectivePermissions: ['issue:read', 'issue:create'],
+  ownerLocked: false,
+  adminLocked: false,
+  lastUsedAt: null,
+  lastActedAt: null,
+  openIssueCount: 2,
+  recentActivity: [],
+  viewerAuthority: 'owner',
+};
+
 const realFetch = globalThis.fetch;
 const realOpen = globalThis.window.open;
 const realClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard');
 
-let lastRequest: { url: string; method: string } | null = null;
+let lastRequest: { url: string; method: string; body: string | null } | null = null;
 let opened: string[] = [];
 let clipboard: string[] = [];
 
@@ -38,8 +58,8 @@ beforeEach(() => {
   opened = [];
   clipboard = [];
 
-  globalThis.fetch = mock((url: string, init?: { method?: string }) => {
-    lastRequest = { url, method: init?.method ?? 'GET' };
+  globalThis.fetch = mock((url: string, init?: { method?: string; body?: string }) => {
+    lastRequest = { url, method: init?.method ?? 'GET', body: init?.body ?? null };
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
   }) as unknown as typeof fetch;
 
@@ -141,6 +161,84 @@ describe('McpPanel', () => {
     render(<McpPanel mcpUrl={MCP_URL} connections={[]} />);
 
     expect(screen.getByText('No clients connected yet.')).toBeDefined();
+  });
+
+  it('marks an unbound legacy connection as requiring renewed consent', () => {
+    const connected = CONNECTED[0];
+    if (connected === undefined) throw new Error('Missing connection fixture.');
+    render(<McpPanel mcpUrl={MCP_URL} connections={[{ ...connected, agentIdentityId: null }]} />);
+    expect(
+      screen.getByText('Action required: reconnect and choose an agent identity.'),
+    ).toBeDefined();
+  });
+
+  it('shows separate agent states and lets its owner update the name', async () => {
+    const user = userEvent.setup();
+    render(
+      <McpPanel
+        mcpUrl={MCP_URL}
+        connections={CONNECTED}
+        agents={{
+          yourAgents: [AGENT],
+          workspaceAgents: [],
+          activeQuotaUsed: 1,
+          activeQuotaLimit: 2,
+        }}
+      />,
+    );
+    const card = screen.getByTestId('mcp-agent-agent-1');
+    expect(card.textContent).toContain('Lifecycle: active. Connection: connected.');
+    expect(card.textContent).toContain('Granted scopes: orbit.read, orbit.write.');
+    await user.clear(screen.getByRole('textbox', { name: 'Name for Researcher' }));
+    await user.type(screen.getByRole('textbox', { name: 'Name for Researcher' }), 'Planner');
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(lastRequest?.method).toBe('PATCH'));
+    expect(lastRequest?.url).toContain('/api/integrations/mcp/agents/agent-1');
+    expect(JSON.parse(lastRequest?.body ?? '{}')).toEqual({
+      action: 'update_profile',
+      profile: { name: 'Planner', avatar: null },
+    });
+  });
+
+  it('shows workspace agents to an admin without offering owner profile changes', () => {
+    render(
+      <McpPanel
+        mcpUrl={MCP_URL}
+        connections={[]}
+        agents={{
+          yourAgents: [],
+          workspaceAgents: [{ ...AGENT, viewerAuthority: 'admin' }],
+          activeQuotaUsed: 0,
+          activeQuotaLimit: 2,
+        }}
+      />,
+    );
+    expect(screen.getByTestId('mcp-agent-agent-1')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Save name' })).toBeNull();
+  });
+
+  it('uses only an Orbit uploaded owner avatar for profile changes', async () => {
+    const user = userEvent.setup();
+    render(
+      <McpPanel
+        mcpUrl={MCP_URL}
+        connections={[]}
+        agents={{
+          yourAgents: [
+            { ...AGENT, owner: { ...AGENT.owner, avatar: '/api/avatars/avatar-1?v=1' } },
+          ],
+          workspaceAgents: [],
+          activeQuotaUsed: 1,
+          activeQuotaLimit: 2,
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Use profile avatar' }));
+    await waitFor(() => expect(lastRequest?.method).toBe('PATCH'));
+    expect(JSON.parse(lastRequest?.body ?? '{}')).toEqual({
+      action: 'update_profile',
+      profile: { name: 'Researcher', avatar: '/api/avatars/avatar-1?v=1' },
+    });
   });
 
   it('disconnects a connected client through the grant api', async () => {

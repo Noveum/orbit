@@ -1,20 +1,168 @@
-import { and, count, db, eq, inArray, isNull, schema } from '@orbit/db';
+import { and, count, db, eq, inArray, isNull, schema, type Transaction } from '@orbit/db';
 import { conflict, forbidden, notFound } from '@orbit/shared/errors';
+import { type Actor, scopes } from '@orbit/shared/events';
 import { agentIdentityAuthority, type Principal } from '@orbit/shared/policy';
 import {
   type AgentIdentityAction,
   type AgentIdentitySelection,
   agentIdentityProfileSchema,
 } from '@orbit/shared/validators';
-import { principalActor } from '../activity/activity-service.ts';
+import { principalActor, principalActorProfile } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
+import { stageIssueActions } from '../realtime/issue-outbox.ts';
+import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
-import { clearAgentIssueResponsibility } from '../work/issue-responsibility.ts';
+import { canonicalIssueReads } from '../work/issue-actor-view.ts';
+import { issueScopes } from '../work/issue-fields.ts';
+import {
+  clearAgentIssueResponsibility,
+  type ResponsibilityClearCause,
+} from '../work/issue-responsibility.ts';
+import { labelIdsByIssue } from '../work/label-service.ts';
+import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 
 const ACTIVE_AGENT_LIMIT = 2;
 
 type AgentIdentityRow = typeof schema.agentIdentity.$inferSelect;
+
+function agentLifecycleClearCause(action: AgentIdentityAction): ResponsibilityClearCause | null {
+  switch (action.action) {
+    case 'pause':
+      return 'agent_paused';
+    case 'revoke_connection':
+      return 'connection_revoked';
+    case 'delete':
+      return 'agent_deleted';
+    default:
+      return null;
+  }
+}
+
+async function stageClearedAgentAssignments(
+  tx: Transaction,
+  changed: readonly (typeof schema.issue.$inferSelect)[],
+  syncId: number,
+  actor: Actor,
+): Promise<void> {
+  if (changed.length === 0) return;
+  const ids = changed.map((issue) => issue.id);
+  const [views, labels, reviewers] = await Promise.all([
+    canonicalIssueReads(tx, changed),
+    labelIdsByIssue(tx, ids),
+    reviewerIdsByIssue(tx, ids),
+  ]);
+  for (const issue of views) {
+    await stageIssueActions(tx, issue.id, [
+      buildSyncAction({
+        syncId,
+        organizationId: issue.organizationId,
+        scopes: issueScopes(issue),
+        action: 'update',
+        model: 'issue',
+        modelId: issue.id,
+        data: {
+          ...issue,
+          labelIds: labels.get(issue.id) ?? [],
+          reviewerIds: reviewers.get(issue.id) ?? [],
+        },
+        actor,
+      }),
+    ]);
+  }
+}
+
+async function recordAgentManagementAction(
+  tx: Transaction,
+  principal: Principal,
+  before: AgentIdentityRow,
+  after: AgentIdentityRow,
+  action: AgentIdentityAction['action'],
+  syncId: number,
+  now: Date,
+): Promise<AgentIdentityRow> {
+  const [synced] = await tx
+    .update(schema.agentIdentity)
+    .set({ syncId })
+    .where(eq(schema.agentIdentity.id, after.id))
+    .returning();
+  if (synced === undefined) throw new Error('The agent identity was not found.');
+  const actor = await principalActor(tx, principal);
+  const [actorProfile] = await tx
+    .select({ avatar: schema.user.image })
+    .from(schema.user)
+    .where(eq(schema.user.id, principal.userId))
+    .limit(1);
+  const [activeGrant] = await tx
+    .select({ id: schema.mcpGrant.id })
+    .from(schema.mcpGrant)
+    .where(and(eq(schema.mcpGrant.agentIdentityId, after.id), isNull(schema.mcpGrant.revokedAt)))
+    .limit(1);
+  const snapshot = (identity: AgentIdentityRow) => ({
+    name: identity.name,
+    avatar: identity.avatar,
+    lifecycle: agentLifecycle(identity),
+    ownerLocked: identity.ownerDisabledAt !== null,
+    adminLocked: identity.adminDisabledAt !== null,
+  });
+  const current = {
+    ...snapshot(after),
+    connection: agentConnection(activeGrant?.id ?? null),
+  };
+  await tx.insert(schema.auditLog).values({
+    id: newId(),
+    organizationId: after.organizationId,
+    actorType: 'user',
+    actorId: principal.userId,
+    actorName: actor.name ?? 'Someone',
+    actorAvatar: actorProfile?.avatar ?? null,
+    principalUserId: principal.userId,
+    principalName: actor.name ?? 'Someone',
+    principalAvatar: actorProfile?.avatar ?? null,
+    action: `agent.${action}`,
+    entityType: 'agent_identity',
+    entityId: after.id,
+    before: snapshot(before),
+    after: current,
+    createdAt: now,
+  });
+  const publicActor = {
+    type: 'user' as const,
+    id: principal.userId,
+    name: actor.name ?? 'Someone',
+    avatar: actorProfile?.avatar ?? null,
+    deleted: false,
+  };
+  await stageIssueActions(
+    tx,
+    after.id,
+    [
+      buildSyncAction({
+        syncId,
+        organizationId: after.organizationId,
+        scopes: [scopes.organization(after.organizationId)],
+        action: 'update',
+        model: 'agent_identity',
+        modelId: after.id,
+        data: {
+          id: after.id,
+          name: after.name,
+          avatar: after.avatar,
+          lifecycle: current.lifecycle,
+        },
+        actor,
+        at: now,
+      }),
+    ],
+    {
+      attribution: {
+        actor: publicActor,
+        principal: { ...publicActor, id: principal.userId },
+      },
+    },
+  );
+  return synced;
+}
 
 export interface ConsentIdentityInput {
   readonly userId: string;
@@ -143,6 +291,7 @@ export async function preparePersonalAgentConsent(
         clientNameSnapshot: names.clientName,
         name: profile.name,
         avatar: profile.avatar,
+        syncId: await nextSyncId(executor),
       })
       .returning();
     return {
@@ -320,21 +469,52 @@ export async function manageAgentIdentity(
     }
     const isOwner = authority === 'owner';
     if (action.action === 'update_profile') {
-      return await updateAgentProfile(tx, identity, isOwner, action.profile, now);
-    }
-    if (identity.deletedAt !== null) throw conflict('Deleted agents cannot be changed.');
-    await applyLifecycleAction(tx, identity, principal.userId, isOwner, action, now);
-    if (action.action !== 'resume') {
-      await clearAgentIssueResponsibility(
+      const updated = await updateAgentProfile(tx, identity, isOwner, action.profile, now);
+      const syncId = await nextSyncId(tx);
+      return await recordAgentManagementAction(
         tx,
-        identity.organizationId,
-        [identity.id],
-        await nextSyncId(tx),
-        await principalActor(tx, principal),
+        currentPrincipal,
+        identity,
+        updated,
+        action.action,
+        syncId,
         now,
       );
     }
-    return await agentIdentityById(tx, identity.id);
+    if (identity.deletedAt !== null) throw conflict('Deleted agents cannot be changed.');
+    await applyLifecycleAction(tx, identity, principal.userId, isOwner, action, now);
+    const syncId = await nextSyncId(tx);
+    const clearCause = agentLifecycleClearCause(action);
+    if (clearCause !== null) {
+      const profile = await principalActorProfile(tx, principal);
+      const changed = await clearAgentIssueResponsibility(
+        tx,
+        identity.organizationId,
+        [identity.id],
+        syncId,
+        {
+          actor: profile.actor,
+          actorAvatar: profile.avatar,
+          principalUserId: profile.actor.id,
+          principalName: profile.actor.name ?? null,
+          principalAvatar: profile.avatar,
+          cause: clearCause,
+          causeActorId: principal.userId,
+        },
+        now,
+      );
+      await stageClearedAgentAssignments(tx, changed, syncId, profile.actor);
+    }
+    const updated = await agentIdentityById(tx, identity.id);
+    return await recordAgentManagementAction(
+      tx,
+      currentPrincipal,
+      identity,
+      updated,
+      action.action,
+      syncId,
+      now,
+    );
   });
 }
 
@@ -355,14 +535,25 @@ export async function revokeAgentConnection(
     }
     if (identity.deletedAt !== null) throw conflict('Deleted agents cannot be changed.');
     await revokeExactGrantAndTokens(tx, identity.id, grantId, now);
-    await clearAgentIssueResponsibility(
+    const syncId = await nextSyncId(tx);
+    const profile = await principalActorProfile(tx, principal);
+    const changed = await clearAgentIssueResponsibility(
       tx,
       identity.organizationId,
       [identity.id],
-      await nextSyncId(tx),
-      await principalActor(tx, principal),
+      syncId,
+      {
+        actor: profile.actor,
+        actorAvatar: profile.avatar,
+        principalUserId: profile.actor.id,
+        principalName: profile.actor.name ?? null,
+        principalAvatar: profile.avatar,
+        cause: 'connection_revoked',
+        causeActorId: principal.userId,
+      },
       now,
     );
+    await stageClearedAgentAssignments(tx, changed, syncId, profile.actor);
     await tx
       .update(schema.agentIdentity)
       .set({
@@ -372,7 +563,16 @@ export async function revokeAgentConnection(
         updatedAt: now,
       })
       .where(eq(schema.agentIdentity.id, identity.id));
-    return await agentIdentityById(tx, identity.id);
+    const updated = await agentIdentityById(tx, identity.id);
+    return await recordAgentManagementAction(
+      tx,
+      currentPrincipal,
+      identity,
+      updated,
+      'revoke_connection',
+      syncId,
+      now,
+    );
   });
 }
 

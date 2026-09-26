@@ -1,7 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AgentIssueBinding } from '@orbit/core';
 import {
+  archiveAgentIssue,
   archiveIssue,
   archiveProject,
+  deleteAgentIssue,
   deleteComment,
   deleteCycle,
   deleteIssue,
@@ -9,6 +12,7 @@ import {
   deleteProject,
   getIssue,
   listMilestones,
+  unarchiveAgentIssue,
   unarchiveIssue,
   updateComment,
   updateMilestone,
@@ -23,7 +27,11 @@ import { defineTool, publish } from './support.ts';
 const issueRef = issueRefSchema.describe('An issue identifier like "ENG-42", or an issue id.');
 const projectRef = z.string().min(1).describe('Project name, slug or id.');
 
-export function registerWorkspaceTools(server: McpServer, principal: Principal): void {
+export function registerWorkspaceTools(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -36,8 +44,12 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const saved = await archiveIssue(principal, issue.id);
-      await publish(saved.actions);
+      const saved =
+        agentIssueBinding === undefined
+          ? await archiveIssue(principal, issue.id)
+          : await archiveAgentIssue(agentIssueBinding, issue.id);
+      if (!saved.actions.some((action) => action.eventId !== undefined))
+        await publish(saved.actions);
       return { archived: { id: saved.issue.id, identifier: saved.issue.identifier } };
     },
   );
@@ -53,8 +65,12 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const saved = await unarchiveIssue(principal, issue.id);
-      await publish(saved.actions);
+      const saved =
+        agentIssueBinding === undefined
+          ? await unarchiveIssue(principal, issue.id)
+          : await unarchiveAgentIssue(agentIssueBinding, issue.id);
+      if (!saved.actions.some((action) => action.eventId !== undefined))
+        await publish(saved.actions);
       return { restored: { id: saved.issue.id, identifier: saved.issue.identifier } };
     },
   );
@@ -71,8 +87,11 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const actions = await deleteIssue(principal, issue.id);
-      await publish(actions);
+      const actions =
+        agentIssueBinding === undefined
+          ? await deleteIssue(principal, issue.id)
+          : await deleteAgentIssue(agentIssueBinding, issue.id);
+      if (!actions.some((action) => action.eventId !== undefined)) await publish(actions);
       return { deleted: issue.identifier };
     },
   );

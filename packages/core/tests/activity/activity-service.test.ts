@@ -29,6 +29,13 @@ describe('describeActivity', () => {
 
   it('renders assignment, priority, titles, and fallbacks', () => {
     expect(
+      describeActivity({
+        field: 'assignee',
+        fromValue: { type: 'user', id: 'u' },
+        toValue: { type: 'agent', id: 'a' },
+      }),
+    ).toBe('assigned to an agent');
+    expect(
       describeActivity({ field: 'assigneeId', fromValue: null, toValue: { id: 'u', name: 'Ada' } }),
     ).toBe('assigned to Ada');
     expect(

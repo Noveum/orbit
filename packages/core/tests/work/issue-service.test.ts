@@ -55,6 +55,69 @@ async function newIssue(title: string, overrides: Record<string, unknown> = {}) 
 }
 
 describe('createIssue', () => {
+  it('stages human issue creation and updates in the committed outbox', async () => {
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Outbox',
+    });
+    const first = await db.select().from(schema.issueOutbox);
+    expect(first.map((row) => row.id)).toEqual(
+      created.actions
+        .map((action) => action.eventId)
+        .filter((id): id is string => id !== undefined),
+    );
+    const updated = await updateIssue(workspace.admin, created.issue.id, { title: 'Updated' });
+    const second = await db.select().from(schema.issueOutbox);
+    expect(second).toHaveLength(created.actions.length + updated.actions.length);
+    expect(second.map((row) => row.id)).toContain(updated.actions[0]?.eventId ?? '');
+  });
+
+  it('stages human move, archive, and delete actions before returning', async () => {
+    const issue = await newIssue('Lifecycle');
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      stateId: stateNamed(workspace, 'Todo').id,
+    });
+    const archived = await archiveIssue(workspace.admin, issue.id);
+    const deleted = await deleteIssue(workspace.admin, issue.id);
+    const actions = [...moved.actions, ...archived.actions, ...deleted];
+    const stored = await db.select({ id: schema.issueOutbox.id }).from(schema.issueOutbox);
+    const ids = new Set(stored.map((row) => row.id));
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) expect(ids.has(action.eventId ?? '')).toBe(true);
+  });
+
+  it('records one structured assignee change on a human assignment', async () => {
+    const { principal } = await addMember(workspace, 'member');
+    const issue = await newIssue('Assignment');
+    await updateIssue(workspace.admin, issue.id, { assigneeId: principal.userId });
+    const rows = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.issueId, issue.id));
+    const assignments = rows.filter((row) => row.field === 'assignee');
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]?.fromValue).toBeNull();
+    expect(assignments[0]?.toValue).toEqual({ type: 'user', id: principal.userId });
+  });
+
+  it('allows the owner or admin to transfer ownership to a workspace member', async () => {
+    const first = await addMember(workspace, 'member');
+    const second = await addMember(workspace, 'member');
+    const issue = await newIssue('Owned', { assigneeId: first.user.id });
+    await expect(
+      updateIssue(second.principal, issue.id, { ownerUserId: second.user.id }),
+    ).rejects.toBeInstanceOf(DomainError);
+    const transferred = await updateIssue(first.principal, issue.id, {
+      ownerUserId: second.user.id,
+    });
+    expect(transferred.issue.ownerUserId).toBe(second.user.id);
+    await expect(
+      updateIssue(first.principal, issue.id, { ownerUserId: first.user.id }),
+    ).rejects.toBeInstanceOf(DomainError);
+    const returned = await updateIssue(workspace.admin, issue.id, { ownerUserId: first.user.id });
+    expect(returned.issue.ownerUserId).toBe(first.user.id);
+  });
+
   it('allocates sequential identifiers and starts a new issue in triage', async () => {
     const first = await newIssue('First');
     const second = await newIssue('Second');
@@ -65,10 +128,11 @@ describe('createIssue', () => {
     expect(first.creatorId).toBe(workspace.admin.userId);
   });
 
-  it('assigns a new issue to whoever created it', async () => {
+  it('leaves a new issue unassigned when no assignee is supplied', async () => {
     const issue = await newIssue('Mine by default');
 
-    expect(issue.assigneeId).toBe(workspace.admin.userId);
+    expect(issue.assigneeId).toBeNull();
+    expect(issue.ownerUserId).toBeNull();
   });
 
   it('still honours an assignee that was asked for', async () => {
@@ -1647,7 +1711,7 @@ describe('allocating an issue number under concurrency', () => {
     expect(new Set(identifiers).size).toBe(identifiers.length);
   });
 
-  it('commits the counter independently of the write that follows it', async () => {
+  it('rolls back the counter with a rejected write', async () => {
     const counter = async (): Promise<number> => {
       const [row] = await db
         .select({ value: schema.team.issueCounter })
@@ -1666,7 +1730,7 @@ describe('allocating an issue number under concurrency', () => {
       }),
     ).rejects.toThrow();
 
-    expect(await counter()).toBe(before + 1);
+    expect(await counter()).toBe(before);
   });
 
   it('refuses a team the principal may not write to', async () => {
@@ -1678,7 +1742,7 @@ describe('allocating an issue number under concurrency', () => {
     );
   });
 
-  it('leaves a gap rather than reusing a number when the write is refused', async () => {
+  it('reuses the next number when the write is refused', async () => {
     const before = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Kept' });
 
     await expect(
@@ -1691,6 +1755,6 @@ describe('allocating an issue number under concurrency', () => {
 
     const after = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Next' });
 
-    expect(after.issue.number).toBeGreaterThan(before.issue.number + 1);
+    expect(after.issue.number).toBe(before.issue.number + 1);
   });
 });

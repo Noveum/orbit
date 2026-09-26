@@ -1,7 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createIssue } from '@orbit/core';
 import { addMember } from '@orbit/core/test-support';
+import { db, schema } from '@orbit/db';
 import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
+import { randomUUIDv7 } from '@orbit/shared/utils';
+import { z } from 'zod';
 import { issueEnvelopeSchema } from '@/lib/query/schemas.ts';
 import {
   actorFor,
@@ -149,5 +152,96 @@ describe('PATCH /api/issues/[id]', () => {
     );
 
     expect(response.status).toBe(404);
+  });
+});
+
+const detailSchema = z.object({
+  activity: z.array(z.record(z.string(), z.unknown())),
+});
+
+async function seedAgentActivity(issueId: string): Promise<void> {
+  await db.insert(schema.oauthApplication).values({
+    id: randomUUIDv7(),
+    clientId: 'client_read_path',
+    name: 'Read Path Client',
+    redirectUrls: 'https://example.com/callback',
+    type: 'public',
+  });
+  const [identity] = await db
+    .insert(schema.agentIdentity)
+    .values({
+      id: randomUUIDv7(),
+      organizationId: world.workspace.organizationId,
+      ownerUserId: world.admin.userId,
+      ownerNameSnapshot: world.admin.name,
+      clientId: 'client_read_path',
+      clientNameSnapshot: 'Read Path Client',
+      name: 'Scout',
+      avatar: null,
+    })
+    .returning();
+  if (identity === undefined) throw new Error('identity was not written');
+  const grantId = randomUUIDv7();
+  await db.insert(schema.mcpGrant).values({
+    id: grantId,
+    clientId: 'client_read_path',
+    userId: world.admin.userId,
+    organizationId: world.workspace.organizationId,
+    scopes: 'orbit.read',
+    agentIdentityId: identity.id,
+    principalNameSnapshot: world.admin.name,
+  });
+  await db.insert(schema.issueActivity).values({
+    id: randomUUIDv7(),
+    organizationId: world.workspace.organizationId,
+    issueId,
+    actorType: 'agent',
+    actorId: identity.id,
+    actorName: 'Scout',
+    actorAvatar: 'https://avatars.test/scout.png',
+    principalUserId: world.admin.userId,
+    principalName: 'Ada Admin',
+    principalAvatar: 'https://avatars.test/ada.png',
+    grantId,
+    field: 'stateId',
+    fromValue: 'state_one',
+    toValue: 'state_two',
+    syncId: 1,
+  });
+}
+
+function findKeys(value: unknown, wanted: ReadonlySet<string>, found: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) findKeys(item, wanted, found);
+    return found;
+  }
+  if (value === null || typeof value !== 'object') return found;
+  for (const [key, nested] of Object.entries(value)) {
+    if (wanted.has(key)) found.push(key);
+    findKeys(nested, wanted, found);
+  }
+  return found;
+}
+
+describe('GET /api/issues/[id] attribution', () => {
+  it('hands the reader the actor and the principal, never the grant', async () => {
+    await seedAgentActivity(world.second.id);
+
+    const response = await issueRoute.GET(
+      new Request(`${ISSUES_BASE}/${world.second.id}`),
+      contextFor(world.second.id),
+    );
+    const body: unknown = await response.json();
+    const entry = detailSchema.parse(body).activity.at(-1);
+
+    expect(response.status).toBe(200);
+    expect(entry).toMatchObject({
+      actorType: 'agent',
+      actorName: 'Scout',
+      actorAvatar: 'https://avatars.test/scout.png',
+      principalName: 'Ada Admin',
+      principalAvatar: 'https://avatars.test/ada.png',
+    });
+    expect(findKeys(body, new Set(['grantId', 'grant_id', 'principalUserId']))).toEqual([]);
   });
 });

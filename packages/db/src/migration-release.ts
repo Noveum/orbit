@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
 import postgres from 'postgres';
@@ -20,6 +21,9 @@ const AGENT_SCHEMA_MIGRATION = 1_789_829_081_921;
 const AGENT_SCHEMA_HASH = 'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3';
 const AGENT_BINDING_MIGRATION = 1_789_829_740_142;
 const AGENT_BINDING_HASH = '574585419f185dc95fed54d6db3a54309a7ce17ece1b2c33586fb3a67422f3ef';
+const HISTORICAL_AGENT_INSTRUCTIONS_MIGRATION = 1_787_562_015_902;
+const HISTORICAL_AGENT_INSTRUCTIONS_HASH =
+  '53266292651bb8f1368abee0336030f12a780e2086f7d7cbbf49142b4550faeb';
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
   1786217938315, 1786623194883, 1788083189965, 1789829081921, 1789834228668, 1789874131769,
   1789903534025, 1789980471869,
@@ -28,6 +32,41 @@ const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>
     /^\s*(?:call|copy|delete|do|insert|merge|truncate|update|with)\b/iu.test(statement),
+  );
+}
+
+function migrationHashMatches(hash: string, migration: MigrationMeta): boolean {
+  if (hash === migration.hash) return true;
+  const source = migration.sql.join('--> statement-breakpoint');
+  const lineEndingHashes = ['\n', '\r\n'].map((lineEnding) =>
+    createHash('sha256').update(source.replace(/\r?\n/gu, lineEnding)).digest('hex'),
+  );
+  return lineEndingHashes.includes(hash);
+}
+
+function isKnownHistoricalAgentInstructionsLedger(
+  rows: readonly LedgerRow[],
+  migrations: readonly MigrationMeta[],
+): boolean {
+  if (rows.length !== 14 || migrations.length <= 15) return false;
+  for (const [index, row] of rows.slice(0, 13).entries()) {
+    const migration = migrations[index];
+    if (
+      migration === undefined ||
+      row.created_at !== String(migration.folderMillis) ||
+      !migrationHashMatches(row.hash, migration)
+    ) {
+      return false;
+    }
+  }
+  const historicalRow = rows[13];
+  const currentEquivalent = migrations[15];
+  return (
+    historicalRow?.created_at === String(HISTORICAL_AGENT_INSTRUCTIONS_MIGRATION) &&
+    historicalRow.hash === HISTORICAL_AGENT_INSTRUCTIONS_HASH &&
+    currentEquivalent?.sql.length === 1 &&
+    currentEquivalent.sql[0]?.trim() ===
+      `ALTER TABLE "organization" ADD COLUMN "agent_instructions" text DEFAULT '' NOT NULL;`
   );
 }
 
@@ -117,7 +156,7 @@ function verifyLedger(rows: readonly LedgerRow[], migrations: readonly Migration
     if (migration === undefined || row.created_at !== String(migration.folderMillis)) {
       throw new Error('The database migration ledger is not a contiguous prefix of this checkout.');
     }
-    if (row.hash !== migration.hash) {
+    if (!migrationHashMatches(row.hash, migration)) {
       throw new Error(
         `Migration ${row.created_at} does not match the committed migration. Applied migration files are immutable.`,
       );
@@ -130,10 +169,12 @@ async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
   appliedCount = 0,
+  replaceExisting = false,
 ): Promise<void> {
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
+    if (replaceExisting) await tx`delete from drizzle.__drizzle_migrations`;
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
       await tx`
         update attachment
@@ -313,7 +354,17 @@ export async function releaseDatabase(
     }
 
     const rows = await ledgerRows(sql);
-    const pending = verifyLedger(rows, migrations);
+    let pending: number;
+    try {
+      pending = verifyLedger(rows, migrations);
+    } catch (error) {
+      if (isBehind(beforeDrift) || !isKnownHistoricalAgentInstructionsLedger(rows, migrations)) {
+        throw error;
+      }
+      await baselineLedger(sql, migrations, 0, true);
+      mode = 'baselined';
+      pending = 0;
+    }
     if (pending > 0) {
       if (isBehind(beforeDrift)) {
         await applyPendingMigrations(sql, migrations.slice(rows.length));

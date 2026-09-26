@@ -417,9 +417,7 @@ export const issue = pgTable(
       .notNull()
       .references(() => workflowState.id, { onDelete: 'restrict' }),
     priority: smallint('priority').notNull().default(0),
-    creatorId: text('creator_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    creatorId: text('creator_id').references(() => user.id, { onDelete: 'restrict' }),
     assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
     creatorUserId: text('creator_user_id').references(() => user.id, { onDelete: 'restrict' }),
     creatorAgentId: text('creator_agent_id').references(() => agentIdentity.id, {
@@ -706,7 +704,11 @@ export const issueActivity = pgTable(
     actorName: text('actor_name').notNull(),
     principalUserId: text('principal_user_id').references(() => user.id, { onDelete: 'set null' }),
     principalName: text('principal_name'),
+    actorAvatar: text('actor_avatar'),
+    principalAvatar: text('principal_avatar'),
     grantId: text('grant_id').references(() => mcpGrant.id, { onDelete: 'restrict' }),
+    cause: text('cause'),
+    causeActorId: text('cause_actor_id'),
     field: text('field').notNull(),
     fromValue: jsonb('from_value'),
     toValue: jsonb('to_value'),

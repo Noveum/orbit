@@ -254,7 +254,12 @@ export async function removeMember(
       principal.organizationId,
       current.userId,
       syncId,
-      { nextAssignee, agentIdentityIds: deletedAgentIds },
+      {
+        nextAssignee,
+        agentIdentityIds: deletedAgentIds,
+        cause: 'membership_removed',
+        causeActorId: principal.userId,
+      },
     );
     await tx
       .delete(schema.teamMember)

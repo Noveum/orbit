@@ -10,3 +10,12 @@ export type AgentFeatureGate = (typeof AGENT_FEATURE_GATES)[number];
 export function agentFeatureEnabled(gate: AgentFeatureGate): boolean {
   return process.env[`ORBIT_${gate.toUpperCase()}`] === 'true';
 }
+
+export function agentIssueWritesEnabled(): boolean {
+  return (
+    agentFeatureEnabled('agent_identity_read') &&
+    agentFeatureEnabled('agent_consent') &&
+    agentFeatureEnabled('agent_issue_write') &&
+    agentFeatureEnabled('issue_outbox_dispatch')
+  );
+}

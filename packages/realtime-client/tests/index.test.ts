@@ -353,3 +353,34 @@ describe('a delta carrying a model this build does not know', () => {
     client.close();
   });
 });
+
+describe('issue outbox replay', () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  });
+
+  it('drops duplicate event ids and older aggregate versions while retaining legacy events', async () => {
+    const received: SyncAction[] = [];
+    const client = createRealtimeClient({
+      url: 'ws://localhost:3100',
+      fetchTicket: () => Promise.resolve(TICKET),
+      onDelta: (actions) => received.push(...actions),
+    });
+    const socket = await firstSocket();
+    socket.open();
+    socket.deliver(readyMessage());
+    socket.deliver({
+      type: 'delta',
+      actions: [
+        { ...delta(10), eventId: 'event-10' },
+        { ...delta(10), eventId: 'event-10' },
+        { ...delta(9), eventId: 'event-9' },
+        delta(11),
+      ],
+    });
+    expect(received.map((action) => action.syncId)).toEqual([10, 11]);
+    expect(client.seen()).toBe(11);
+    client.close();
+  });
+});

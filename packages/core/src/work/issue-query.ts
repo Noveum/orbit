@@ -58,6 +58,21 @@ function participantFilters(participantId: string | undefined): SQL[] {
   ];
 }
 
+function assigneeFilters(filter: IssueFilterInput): SQL[] {
+  const filters: SQL[] = [];
+  if (filter.assigneeId !== undefined) {
+    filters.push(
+      filter.assigneeId === UNSET_FILTER_VALUE
+        ? isNull(schema.issue.assigneeId)
+        : eq(schema.issue.assigneeId, filter.assigneeId),
+    );
+  }
+  if (filter.assigneeAgentId !== undefined) {
+    filters.push(eq(schema.issue.assigneeAgentId, filter.assigneeAgentId));
+  }
+  return filters;
+}
+
 function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   const filters: SQL[] = [];
   if (filter.teamId !== undefined) filters.push(eq(schema.issue.teamId, filter.teamId));
@@ -66,13 +81,7 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   if (filter.milestoneId !== undefined) {
     filters.push(eq(schema.issue.milestoneId, filter.milestoneId));
   }
-  if (filter.assigneeId !== undefined) {
-    filters.push(
-      filter.assigneeId === UNSET_FILTER_VALUE
-        ? isNull(schema.issue.assigneeId)
-        : eq(schema.issue.assigneeId, filter.assigneeId),
-    );
-  }
+  filters.push(...assigneeFilters(filter));
   filters.push(...participantFilters(filter.participantId));
   if (filter.stateId !== undefined) filters.push(eq(schema.issue.stateId, filter.stateId));
   if (filter.parentId !== undefined) filters.push(eq(schema.issue.parentId, filter.parentId));

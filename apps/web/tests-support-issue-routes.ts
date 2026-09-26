@@ -161,10 +161,12 @@ export async function buildIssueRoutesWorld(): Promise<IssueRoutesWorld> {
   const one = await createIssue(workspace.admin, {
     teamId: workspace.teamId,
     title: 'Blocks the other',
+    assigneeId: workspace.admin.userId,
   });
   const two = await createIssue(workspace.admin, {
     teamId: workspace.teamId,
     title: 'Blocked by the first',
+    assigneeId: workspace.admin.userId,
   });
   const open = await createComment(workspace.admin, one.issue.id, { body: 'Out in the open' });
 

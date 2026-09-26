@@ -88,6 +88,7 @@ async function assertCleared(
   issues: Awaited<ReturnType<typeof assignments>>,
   identityId: string,
   actor: { type: 'user' | 'system'; id: string },
+  cause?: { readonly cause: string; readonly causeActorId: string | null },
 ) {
   for (const { row, open } of issues) {
     const [updated] = await db.select().from(schema.issue).where(eq(schema.issue.id, row.id));
@@ -107,6 +108,8 @@ async function assertCleared(
         actorId: actor.id,
         principalUserId: actor.type === 'user' ? actor.id : null,
         grantId: null,
+        cause: cause?.cause ?? null,
+        causeActorId: cause?.causeActorId ?? null,
         fromValue: { type: 'agent', id: identityId },
         toValue: null,
         syncId: updated?.syncId,
@@ -187,19 +190,35 @@ describe('Agent responsibility lifecycle cleanup', () => {
       await db.execute(sql`drop function reject_agent_cleanup_activity()`);
     }
     await revokeMcpGrant(grantId, owner.principal);
-    await assertCleared(issues, identity.id, { type: 'user', id: owner.user.id });
+    await assertCleared(
+      issues,
+      identity.id,
+      { type: 'user', id: owner.user.id },
+      {
+        cause: 'connection_revoked',
+        causeActorId: owner.user.id,
+      },
+    );
   });
 
-  const actions: AgentIdentityAction[] = [
-    { action: 'pause' },
-    { action: 'revoke_connection' },
-    { action: 'delete', reason: 'owner_request' },
+  const actions: { action: AgentIdentityAction; cause: string }[] = [
+    { action: { action: 'pause' }, cause: 'agent_paused' },
+    { action: { action: 'revoke_connection' }, cause: 'connection_revoked' },
+    { action: { action: 'delete', reason: 'owner_request' }, cause: 'agent_deleted' },
   ];
-  for (const action of actions) {
+  for (const { action, cause } of actions) {
     it(`${action.action} clears every open state and preserves different Issue Owners and closed history`, async () => {
       const { workspace, owner, identity, grantId, issues } = await fixture();
       await manageAgentIdentity(owner.principal, identity.id, action);
-      await assertCleared(issues, identity.id, { type: 'user', id: owner.user.id });
+      await assertCleared(
+        issues,
+        identity.id,
+        { type: 'user', id: owner.user.id },
+        {
+          cause,
+          causeActorId: owner.user.id,
+        },
+      );
       expect(
         await db
           .select()
@@ -215,7 +234,15 @@ describe('Agent responsibility lifecycle cleanup', () => {
           scopes: 'orbit.read',
           agentIdentityId: identity.id,
         });
-        await assertCleared(issues, identity.id, { type: 'user', id: owner.user.id });
+        await assertCleared(
+          issues,
+          identity.id,
+          { type: 'user', id: owner.user.id },
+          {
+            cause,
+            causeActorId: owner.user.id,
+          },
+        );
       }
     });
   }
@@ -237,7 +264,15 @@ describe('Agent responsibility lifecycle cleanup', () => {
       expect(unchanged).toEqual(row);
     }
     await revokeMcpGrant(currentId, workspace.admin);
-    await assertCleared(issues, identity.id, { type: 'user', id: workspace.adminUser.id });
+    await assertCleared(
+      issues,
+      identity.id,
+      { type: 'user', id: workspace.adminUser.id },
+      {
+        cause: 'connection_revoked',
+        causeActorId: workspace.adminUser.id,
+      },
+    );
   });
 
   it('cleans departing owners Agent assignments even when another member owns the Issues', async () => {
@@ -253,7 +288,15 @@ describe('Agent responsibility lifecycle cleanup', () => {
       );
     if (member === undefined) throw new Error('missing owner membership');
     const result = await removeMember(workspace.admin, member.id);
-    await assertCleared(issues, identity.id, { type: 'system', id: 'system' });
+    await assertCleared(
+      issues,
+      identity.id,
+      { type: 'system', id: 'system' },
+      {
+        cause: 'membership_removed',
+        causeActorId: workspace.adminUser.id,
+      },
+    );
     for (const { row, open } of issues) {
       const action = result.actions.find((entry) => entry.modelId === row.id);
       if (open) expect(action?.data['assigneeAgentId']).toBeNull();

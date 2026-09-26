@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { publishDeltas } from '@orbit/core';
+import { drainIssueOutbox, publishDeltas } from '@orbit/core';
+import { agentIssueWritesEnabled } from '@orbit/shared';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -41,6 +42,21 @@ export function failed(name: string, error: unknown): CallToolResult {
 }
 
 export async function publish(actions: readonly SyncAction[]): Promise<void> {
+  if (actions.some((action) => action.eventId !== undefined)) {
+    const ids = actions.flatMap((action) => (action.eventId === undefined ? [] : [action.eventId]));
+    for (let index = 0; index < ids.length; index += 200) {
+      await drainIssueOutbox({
+        publish: async (batch) => {
+          if (!process.env['REDIS_URL'])
+            throw new Error('REDIS_URL is required for outbox delivery');
+          await publishDeltas(batch);
+        },
+        batchSize: 200,
+        eventIds: ids.slice(index, index + 200),
+      });
+    }
+    return;
+  }
   await publishDeltas([...actions]);
 }
 
@@ -56,6 +72,7 @@ export interface ToolAccess {
   readonly reads: boolean;
   readonly writes: boolean;
   readonly actorType?: 'user' | 'agent';
+  readonly agentIssueWrite?: boolean;
 }
 
 const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
@@ -107,7 +124,24 @@ export function defineTool<Shape extends z.ZodRawShape>(
     async (args) => {
       try {
         if (ISSUE_MUTATION_TOOLS.has(config.name)) {
-          assertHumanIssueWriter(GRANTED.get(server)?.actorType ?? 'user');
+          const access = GRANTED.get(server);
+          if (
+            !(
+              (config.name === 'create_issue' ||
+                config.name === 'update_issue' ||
+                config.name === 'move_issue' ||
+                config.name === 'archive_issue' ||
+                config.name === 'unarchive_issue' ||
+                config.name === 'delete_issue' ||
+                config.name === 'set_relation' ||
+                config.name === 'remove_relation') &&
+              access?.actorType === 'agent' &&
+              access.agentIssueWrite &&
+              agentIssueWritesEnabled()
+            )
+          ) {
+            assertHumanIssueWriter(access?.actorType ?? 'user');
+          }
         }
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {

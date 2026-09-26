@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AgentIssueBinding } from '@orbit/core';
 import {
   getOrganization,
   listLabels,
@@ -9,14 +10,18 @@ import {
 import { db, eq, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
-import { permissionsFor } from '@orbit/shared/policy';
+import { can, permissionsFor } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveTeam } from '../resolve.ts';
 import { defineTool } from './support.ts';
 
 const teamRef = z.string().min(1).describe('A team key like "ENG", a team name, or a team id.');
 
-export function registerIdentityTools(server: McpServer, principal: Principal): void {
+export function registerIdentityTools(
+  server: McpServer,
+  principal: Principal,
+  agentIssueBinding?: AgentIssueBinding,
+): void {
   defineTool(
     server,
     {
@@ -57,8 +62,57 @@ export function registerIdentityTools(server: McpServer, principal: Principal): 
       if (user === undefined) throw notFound('That user no longer exists.');
       const organization = await getOrganization(principal.organizationId);
       const teams = await listTeams(principal);
+      const agent =
+        agentIssueBinding === undefined
+          ? null
+          : await db
+              .select({
+                id: schema.agentIdentity.id,
+                name: schema.agentIdentity.name,
+                avatar: schema.agentIdentity.avatar,
+              })
+              .from(schema.agentIdentity)
+              .where(eq(schema.agentIdentity.id, agentIssueBinding.agentIdentityId))
+              .limit(1)
+              .then(([row]) => {
+                if (row === undefined) throw notFound('That agent no longer exists.');
+                const scopes = agentIssueBinding.scopes.split(/\s+/).filter(Boolean);
+                const effectivePermissions = [
+                  ...(scopes.includes('orbit.read') && can(principal, 'issue:read')
+                    ? ['issue:read']
+                    : []),
+                  ...(scopes.includes('orbit.write')
+                    ? (['issue:create', 'issue:update', 'issue:delete'] as const).filter(
+                        (permission) => can(principal, permission),
+                      )
+                    : []),
+                ];
+                return {
+                  ...row,
+                  grantId: agentIssueBinding.grantId,
+                  clientId: agentIssueBinding.clientId,
+                  grantedScopes: scopes,
+                  effectivePermissions,
+                };
+              });
       return {
         user,
+        agent,
+        actor:
+          agent === null
+            ? { type: 'user', id: user.id, name: user.name }
+            : { type: 'agent', id: agent.id, name: agent.name, avatar: agent.avatar },
+        principal: { type: 'user', id: user.id, name: user.name },
+        grant:
+          agent === null
+            ? null
+            : {
+                id: agent.grantId,
+                clientId: agent.clientId,
+                scopes: agent.grantedScopes,
+                connection: 'connected',
+              },
+        effectivePermissions: agent?.effectivePermissions ?? permissionsFor(principal.role),
         organization: { id: organization.id, name: organization.name, slug: organization.slug },
         role: principal.role,
         permissions: permissionsFor(principal.role),

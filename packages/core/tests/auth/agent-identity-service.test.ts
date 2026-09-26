@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema, sql } from '@orbit/db';
+import { syncActionSchema } from '@orbit/shared/events';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import {
@@ -7,6 +8,7 @@ import {
   manageAgentIdentity,
   preparePersonalAgentConsent,
 } from '../../src/auth/agent-identity-service.ts';
+import { recordMcpGrant } from '../../src/auth/mcp-token.ts';
 import { newId } from '../../src/internal.ts';
 import {
   addMember,
@@ -14,6 +16,7 @@ import {
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
+import { createIssue } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
 let clientId = '';
@@ -44,6 +47,64 @@ async function createIdentity(name: string) {
 }
 
 describe('personal agent lifecycle', () => {
+  it('stages assignment cleanup in the same transaction as a pause', async () => {
+    const { identity } = await createIdentity('Researcher');
+    await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: 'orbit.read orbit.write',
+      agentIdentityId: identity.id,
+    });
+    const created = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Assigned',
+      assigneeAgentId: identity.id,
+    });
+    await manageAgentIdentity(workspace.admin, identity.id, { action: 'pause' });
+    const [issue] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.id, created.issue.id));
+    expect(issue?.assigneeAgentId).toBeNull();
+    const events = await db
+      .select()
+      .from(schema.issueOutbox)
+      .where(eq(schema.issueOutbox.aggregateId, created.issue.id));
+    const event = events.find((row) => syncActionSchema.parse(row.payload).action === 'update');
+    if (event === undefined) throw new Error('The assignment cleanup was not staged.');
+    expect(event.payload).toMatchObject({
+      eventId: event.id,
+      model: 'issue',
+      action: 'update',
+    });
+    const [managementEvent] = await db
+      .select()
+      .from(schema.issueOutbox)
+      .where(eq(schema.issueOutbox.aggregateId, identity.id));
+    if (managementEvent === undefined) throw new Error('The management event was not staged.');
+    expect(managementEvent.payload).toMatchObject({
+      eventId: managementEvent.id,
+      model: 'agent_identity',
+      data: { id: identity.id, lifecycle: 'disabled' },
+      attribution: {
+        actor: { type: 'user', id: workspace.adminUser.id },
+        principal: { type: 'user', id: workspace.adminUser.id },
+      },
+    });
+    expect(JSON.stringify(managementEvent.payload)).not.toContain('ownerLocked');
+    expect(JSON.stringify(managementEvent.payload)).not.toContain('grantId');
+    const [audit] = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.entityId, identity.id));
+    expect(audit).toMatchObject({
+      action: 'agent.pause',
+      actorType: 'user',
+      actorId: workspace.adminUser.id,
+      after: { lifecycle: 'disabled', connection: 'disconnected' },
+    });
+  });
   it('rechecks administrator authority against the locked current membership', async () => {
     const { identity } = await createIdentity('Researcher');
     const admin = await addMember(workspace, 'admin');

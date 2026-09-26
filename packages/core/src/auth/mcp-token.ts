@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, db, desc, eq, gt, inArray, isNull, schema } from '@orbit/db';
+import { and, db, desc, eq, gt, inArray, isNull, or, schema } from '@orbit/db';
 import { agentFeatureEnabled } from '@orbit/shared';
 import { forbidden, notFound, unauthorized } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
@@ -326,6 +326,7 @@ export async function recordMcpGrant(
 
 export interface McpGrantView {
   readonly id: string;
+  readonly agentIdentityId: string | null;
   readonly clientId: string;
   readonly clientName: string;
   readonly organizationId: string;
@@ -333,12 +334,14 @@ export interface McpGrantView {
   readonly scopes: string;
   readonly createdAt: Date;
   readonly lastUsedAt: Date | null;
+  readonly revokedAt: Date | null;
 }
 
 export function listMcpGrants(userId: string): Promise<McpGrantView[]> {
   return db
     .select({
       id: schema.mcpGrant.id,
+      agentIdentityId: schema.mcpGrant.agentIdentityId,
       clientId: schema.mcpGrant.clientId,
       clientName: schema.oauthApplication.name,
       organizationId: schema.mcpGrant.organizationId,
@@ -346,6 +349,7 @@ export function listMcpGrants(userId: string): Promise<McpGrantView[]> {
       scopes: schema.mcpGrant.scopes,
       createdAt: schema.mcpGrant.createdAt,
       lastUsedAt: schema.mcpGrant.lastUsedAt,
+      revokedAt: schema.mcpGrant.revokedAt,
     })
     .from(schema.mcpGrant)
     .innerJoin(
@@ -353,7 +357,12 @@ export function listMcpGrants(userId: string): Promise<McpGrantView[]> {
       eq(schema.oauthApplication.clientId, schema.mcpGrant.clientId),
     )
     .innerJoin(schema.organization, eq(schema.organization.id, schema.mcpGrant.organizationId))
-    .where(and(eq(schema.mcpGrant.userId, userId), isNull(schema.mcpGrant.revokedAt)))
+    .where(
+      and(
+        eq(schema.mcpGrant.userId, userId),
+        or(isNull(schema.mcpGrant.revokedAt), isNull(schema.mcpGrant.agentIdentityId)),
+      ),
+    )
     .orderBy(desc(schema.mcpGrant.createdAt));
 }
 
@@ -367,8 +376,43 @@ export async function revokeMcpGrant(
     .from(schema.mcpGrant)
     .where(eq(schema.mcpGrant.id, id))
     .limit(1);
-  if (grant?.agentIdentityId === null || grant === undefined) {
-    throw notFound('That connection does not exist.');
+  if (grant === undefined) throw notFound('That connection does not exist.');
+  if (grant.agentIdentityId === null) {
+    await db.transaction(async (tx) => {
+      const [membership] = await tx
+        .select({ id: schema.member.id })
+        .from(schema.member)
+        .where(
+          and(
+            eq(schema.member.userId, principal.userId),
+            eq(schema.member.organizationId, principal.organizationId),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (membership === undefined) throw notFound('That connection does not exist.');
+      const [current] = await tx
+        .select({ id: schema.mcpGrant.id })
+        .from(schema.mcpGrant)
+        .where(
+          and(
+            eq(schema.mcpGrant.id, id),
+            eq(schema.mcpGrant.userId, principal.userId),
+            eq(schema.mcpGrant.organizationId, principal.organizationId),
+            isNull(schema.mcpGrant.agentIdentityId),
+            isNull(schema.mcpGrant.revokedAt),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (current === undefined) throw notFound('That connection does not exist.');
+      await tx
+        .update(schema.mcpGrant)
+        .set({ revokedAt: now, revokeReason: 'connection_revoked' })
+        .where(eq(schema.mcpGrant.id, id));
+      await tx.delete(schema.oauthAccessToken).where(eq(schema.oauthAccessToken.mcpGrantId, id));
+    });
+    return;
   }
   await revokeAgentConnection(principal, grant.agentIdentityId, id, now);
 }

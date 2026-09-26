@@ -1,18 +1,26 @@
-import type { Database } from '@orbit/db';
+import { createHash } from 'node:crypto';
+import type { Database, Transaction } from '@orbit/db';
 import { and, asc, count, db, desc, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
+import { agentIssueWritesEnabled } from '@orbit/shared';
 import {
   ISSUE_RELATION_TYPES,
   type IssueRelationType,
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
 } from '@orbit/shared/constants';
-import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
+import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
-import { scopes } from '@orbit/shared/events';
+import { scopes, syncActionSchema } from '@orbit/shared/events';
 import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, assertInTeam, isInTeam, teamScope } from '@orbit/shared/policy';
+import {
+  assertCan,
+  assertInTeam,
+  assertIssueOwnerTransfer,
+  isInTeam,
+  teamScope,
+} from '@orbit/shared/policy';
 import {
   issueIdentifier,
   issueUrl,
@@ -21,6 +29,7 @@ import {
   truncate,
 } from '@orbit/shared/utils';
 import {
+  idempotencyKeySchema,
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
@@ -33,7 +42,11 @@ import {
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
-import { appendActivities, principalActor } from '../activity/activity-service.ts';
+import {
+  appendActivities,
+  principalActor,
+  resolveActivityActor,
+} from '../activity/activity-service.ts';
 import {
   captureCreatedCycleMembership,
   captureCycleMembershipChange,
@@ -49,8 +62,15 @@ import {
   notifyRecipients,
 } from '../notifications/notify.ts';
 import { requireTeam, type TeamRow } from '../org/team-service.ts';
+import { stageIssueActions } from '../realtime/issue-outbox.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import {
+  type AgentIssueBinding,
+  type LockedAgentIssueContext,
+  lockAgentIssueContext,
+  publicAgentAttribution,
+} from './agent-issue-context.ts';
 import { type CanonicalIssueRead, canonicalIssueReads } from './issue-actor-view.ts';
 import {
   applyStateTimestamps,
@@ -60,6 +80,11 @@ import {
   stateTimestamps,
 } from './issue-fields.ts';
 import { buildIssueWhere } from './issue-query.ts';
+import {
+  assertAgentAssignable,
+  issueCreateResponsibility,
+  issueUpdateResponsibility,
+} from './issue-responsibility.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { replaceReviewersFor, reviewerIdsByIssue } from './reviewer-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
@@ -367,6 +392,7 @@ function describedValue(
 function collectIssueChanges(
   current: IssueRow,
   patch: ReturnType<typeof issueUpdateSchema.parse>,
+  principalUserId: string,
 ): { values: IssueValues; changes: FieldChange[] } {
   const values: IssueValues = {};
   const changes: FieldChange[] = [];
@@ -386,13 +412,9 @@ function collectIssueChanges(
   track('description', patch.description);
   track('stateId', patch.stateId);
   track('priority', patch.priority);
-  track('assigneeId', patch.assigneeId);
-  if (values.assigneeId !== undefined) {
-    values.assigneeUserId = values.assigneeId;
-    if (current.ownerUserId === null && values.assigneeId !== null) {
-      values.ownerUserId = values.assigneeId;
-    }
-  }
+  const responsibility = issueUpdateResponsibility(current, patch, principalUserId);
+  Object.assign(values, responsibility.values);
+  changes.push(...responsibility.changes);
   track('projectId', patch.projectId);
   track(
     'milestoneId',
@@ -499,6 +521,7 @@ interface IssueNotificationInput {
   readonly issue: IssueRow;
   readonly mentionHandles: readonly string[];
   readonly assigneeId: string | null;
+  readonly assigneeAgentId?: string | null;
   readonly statusName: string | null;
 }
 
@@ -519,18 +542,30 @@ async function issueNotifications(
   principal: Principal,
   actor: Actor,
   entries: readonly IssueNotificationInput[],
+  agent: LockedAgentIssueContext | null = null,
 ): Promise<SyncAction[]> {
   const relevant = entries.filter(
     (entry) =>
-      entry.mentionHandles.length > 0 || entry.assigneeId !== null || entry.statusName !== null,
+      entry.mentionHandles.length > 0 ||
+      entry.assigneeId !== null ||
+      entry.assigneeAgentId != null ||
+      entry.statusName !== null,
   );
   if (relevant.length === 0) return [];
 
+  const attribution = await resolveActivityActor(tx, principal, agent);
   const subscribers = await issueSubscribersByIssue(
     tx,
     relevant.filter((entry) => entry.statusName !== null).map((entry) => entry.issue.id),
   );
   const mentionsByEntry = await resolveMentionsPerEntry(tx, principal.organizationId, relevant);
+
+  const assignmentRecipients = (entry: IssueNotificationInput): string[] => {
+    if (entry.assigneeAgentId !== null && entry.assigneeAgentId !== undefined) {
+      return entry.issue.ownerUserId === null ? [] : [entry.issue.ownerUserId];
+    }
+    return entry.assigneeId === null ? [] : [entry.assigneeId];
+  };
 
   const audiences = relevant.map((entry) => ({
     entry,
@@ -540,7 +575,7 @@ async function issueNotifications(
           type: 'issue_assigned' as const,
           reason: 'assigned' as const,
           title: `Assigned you ${entry.issue.identifier}`,
-          userIds: entry.assigneeId === null ? [] : [entry.assigneeId],
+          userIds: assignmentRecipients(entry),
         },
         {
           type: 'mention' as const,
@@ -550,7 +585,7 @@ async function issueNotifications(
         },
         ...statusChangeGroups(entry, subscribers.get(entry.issue.id) ?? []),
       ],
-      [principal.userId],
+      actor.type === 'agent' ? [] : [principal.userId],
     ),
   }));
 
@@ -565,6 +600,16 @@ async function issueNotifications(
         type: group.type,
         reason: group.reason,
         actor,
+        principalUserId: principal.userId,
+        principalName: agent?.principalName ?? actor.name ?? '',
+        actorAvatar: attribution.actorAvatar,
+        principalAvatar: attribution.principalAvatar,
+        ...(agent === null
+          ? {}
+          : {
+              grantId: agent.grantId,
+              attribution: publicAgentAttribution(agent),
+            }),
         entityType: 'issue',
         entityId: entry.issue.id,
         userIds: [...group.userIds],
@@ -658,7 +703,8 @@ function updateNotificationInputs(
       mentionHandles: changed.has('description')
         ? newMentions(entry.current.description, issue.description)
         : [],
-      assigneeId: changed.has('assigneeId') && issue.assigneeId !== null ? issue.assigneeId : null,
+      assigneeId: changed.has('assignee') && issue.assigneeId !== null ? issue.assigneeId : null,
+      assigneeAgentId: changed.has('assignee') ? issue.assigneeAgentId : null,
       statusName: changed.has('stateId') ? statusName : null,
     });
   }
@@ -832,104 +878,261 @@ async function assertAssignableToTeam(
 export async function createIssue(principal: Principal, input: unknown): Promise<CreatedIssue> {
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
+  return await db.transaction(
+    async (tx) => await createIssueInTransaction(tx, principal, parsed, null),
+  );
+}
 
-  const allocationTeam = await requireTeam(principal, parsed.teamId);
-  const number = await allocateIssueNumber(db, allocationTeam);
+async function createIssueInTransaction(
+  tx: Transaction,
+  principal: Principal,
+  parsed: ReturnType<typeof issueCreateSchema.parse>,
+  agent: LockedAgentIssueContext | null,
+): Promise<CreatedIssue> {
+  const team = await requireTeam(principal, parsed.teamId, tx);
+  const number = await allocateIssueNumber(tx, team);
+  const syncId = await nextSyncId(tx);
+  const attribution = await resolveActivityActor(tx, principal, agent);
+  const actor = attribution.actor;
+  const state =
+    parsed.stateId === undefined
+      ? await initialStateFor(tx, team.id)
+      : await stateOf(tx, parsed.stateId);
+  if (state.teamId !== team.id) {
+    throw validationFailed('That status belongs to another team.');
+  }
+  const responsibility = issueCreateResponsibility(
+    parsed.assigneeId ?? null,
+    parsed.assigneeAgentId ?? null,
+    principal.userId,
+  );
+  const { assigneeId, assigneeAgentId } = responsibility;
+  if (assigneeAgentId !== null) await assertAgentAssignable(tx, principal, assigneeAgentId, agent);
+  const reviewerIds = [...new Set(parsed.reviewerIds)].sort();
+  await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
+  await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
+  await assertAssignableToTeam(tx, principal.organizationId, team.id, {
+    cycleId: parsed.cycleId,
+    projectId: parsed.projectId,
+    milestoneId: parsed.milestoneId,
+  });
+  await assertLabelsUsable(tx, principal.organizationId, team.id, parsed.labelIds);
 
-  return await db.transaction(async (tx) => {
-    const team = await requireTeam(principal, parsed.teamId, tx);
-    const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
-    const state =
-      parsed.stateId === undefined
-        ? await initialStateFor(tx, team.id)
-        : await stateOf(tx, parsed.stateId);
-    if (state.teamId !== team.id) {
-      throw validationFailed('That status belongs to another team.');
-    }
-    const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
-    const reviewerIds = [...new Set(parsed.reviewerIds)].sort();
-    await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
-    await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
-    await assertAssignableToTeam(tx, principal.organizationId, team.id, {
-      cycleId: parsed.cycleId,
+  const now = new Date();
+  const id = newId();
+  if (parsed.parentId !== null) {
+    await assertParentAllowed(tx, principal, id, parsed.parentId);
+  }
+
+  const [created] = await tx
+    .insert(schema.issue)
+    .values({
+      id,
+      organizationId: principal.organizationId,
+      teamId: team.id,
+      number,
+      identifier: issueIdentifier(team.key, number),
+      title: parsed.title,
+      description: parsed.description,
+      stateId: state.id,
+      priority: parsed.priority,
+      creatorId: agent === null ? principal.userId : null,
+      creatorUserId: agent === null ? principal.userId : null,
+      creatorAgentId: agent?.agentIdentityId ?? null,
+      ...responsibility,
       projectId: parsed.projectId,
       milestoneId: parsed.milestoneId,
-    });
-    await assertLabelsUsable(tx, principal.organizationId, team.id, parsed.labelIds);
+      cycleId: parsed.cycleId,
+      parentId: parsed.parentId,
+      estimate: parsed.estimate,
+      dueDate: toDateString(parsed.dueDate) ?? null,
+      sortOrder: await topOfColumn(tx, team.id, state.id),
+      ...stateTimestamps(state.category, now),
+      syncId,
+    })
+    .returning();
+  const issue = requireRow(created, 'The issue could not be created.');
 
-    const now = new Date();
-    const id = newId();
-    if (parsed.parentId !== null) {
-      await assertParentAllowed(tx, principal, id, parsed.parentId);
-    }
+  await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
 
-    const [created] = await tx
-      .insert(schema.issue)
-      .values({
-        id,
-        organizationId: principal.organizationId,
-        teamId: team.id,
-        number,
-        identifier: issueIdentifier(team.key, number),
-        title: parsed.title,
-        description: parsed.description,
-        stateId: state.id,
-        priority: parsed.priority,
-        creatorId: principal.userId,
-        creatorUserId: principal.userId,
-        assigneeId,
-        assigneeUserId: assigneeId,
-        ownerUserId: assigneeId,
-        projectId: parsed.projectId,
-        milestoneId: parsed.milestoneId,
-        cycleId: parsed.cycleId,
-        parentId: parsed.parentId,
-        estimate: parsed.estimate,
-        dueDate: toDateString(parsed.dueDate) ?? null,
-        sortOrder: await topOfColumn(tx, team.id, state.id),
-        ...stateTimestamps(state.category, now),
-        syncId,
-      })
-      .returning();
-    const issue = requireRow(created, 'The issue could not be created.');
+  await replaceLabels(tx, issue.id, parsed.labelIds);
+  await replaceReviewersFor(tx, [issue.id], reviewerIds);
+  await subscribeUsers(tx, issue.id, [principal.userId, assigneeId, ...reviewerIds], syncId);
+  await appendActivities(tx, [
+    {
+      organizationId: principal.organizationId,
+      issueId: issue.id,
+      actor,
+      principalUserId: attribution.principalUserId,
+      principalName: attribution.principalName,
+      principalAvatar: attribution.principalAvatar,
+      actorAvatar: attribution.actorAvatar,
+      grantId: attribution.grantId,
+      field: 'created',
+      from: null,
+      to: { id: state.id, name: state.name },
+      syncId,
+    },
+  ]);
 
-    await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
-
-    await replaceLabels(tx, issue.id, parsed.labelIds);
-    await replaceReviewersFor(tx, [issue.id], reviewerIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId, ...reviewerIds], syncId);
-    await appendActivities(tx, [
-      {
-        organizationId: principal.organizationId,
-        issueId: issue.id,
-        actor,
-        field: 'created',
-        from: null,
-        to: { id: state.id, name: state.name },
-        syncId,
-      },
-    ]);
-
-    const notifications = await issueNotifications(tx, principal, actor, [
+  const notifications = await issueNotifications(
+    tx,
+    principal,
+    actor,
+    [
       {
         issue,
         mentionHandles: newMentions('', issue.description),
         assigneeId: issue.assigneeId,
+        assigneeAgentId: issue.assigneeAgentId,
         statusName: null,
       },
-    ]);
+    ],
+    agent,
+  );
 
-    return {
-      issue,
-      actions: [
-        await issueAction(tx, issue, syncId, actor, 'insert', {
-          labelIds: parsed.labelIds,
-          reviewerIds,
-        }),
-        ...notifications,
-      ],
-    };
+  const actions = [
+    await issueAction(tx, issue, syncId, actor, 'insert', {
+      labelIds: parsed.labelIds,
+      reviewerIds,
+    }),
+    ...notifications,
+  ];
+  if (agent !== null) {
+    await tx.insert(schema.auditLog).values({
+      id: newId(),
+      organizationId: principal.organizationId,
+      actorType: 'agent',
+      actorId: agent.agentIdentityId,
+      actorName: actor.name ?? 'Agent',
+      actorAvatar: agent.avatar,
+      principalUserId: principal.userId,
+      principalName: agent.principalName,
+      principalAvatar: agent.principalAvatar,
+      grantId: agent.grantId,
+      action: 'issue.create',
+      entityType: 'issue',
+      entityId: issue.id,
+      after: { identifier: issue.identifier, title: issue.title },
+    });
+    await tx
+      .update(schema.agentIdentity)
+      .set({ lastActedAt: now })
+      .where(eq(schema.agentIdentity.id, agent.agentIdentityId));
+  }
+  return {
+    issue,
+    actions: await stageIssueActions(
+      tx,
+      issue.id,
+      actions,
+      agent === null
+        ? {}
+        : {
+            attribution: publicAgentAttribution(agent),
+            grantId: agent.grantId,
+          },
+    ),
+  };
+}
+
+function canonicalRequest(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(canonicalRequest);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalRequest(nested)]),
+  );
+}
+
+const cachedIssueSchema = z.object({
+  issue: z.record(z.string(), z.unknown()),
+  actions: z.array(syncActionSchema),
+});
+
+function cachedIssueRow(value: Record<string, unknown>): IssueRow {
+  const dateFields = [
+    'startedAt',
+    'completedAt',
+    'canceledAt',
+    'stateEnteredAt',
+    'createdAt',
+    'updatedAt',
+    'archivedAt',
+  ] as const;
+  const row: Record<string, unknown> = { ...value };
+  for (const field of dateFields) {
+    const raw = row[field];
+    row[field] = raw === null ? null : z.iso.datetime().pipe(z.coerce.date()).parse(raw);
+  }
+  return row as IssueRow;
+}
+
+export async function createAgentIssue(
+  binding: AgentIssueBinding,
+  input: unknown,
+  idempotencyKey?: string,
+  now: Date = new Date(),
+): Promise<CreatedIssue & { readonly replayed: boolean }> {
+  if (!agentIssueWritesEnabled()) {
+    throw forbidden('Agent issue writes are unavailable.');
+  }
+  const parsed = issueCreateSchema.parse(input);
+  const key = idempotencyKey === undefined ? null : idempotencyKeySchema.parse(idempotencyKey);
+  const requestHash = createHash('sha256')
+    .update(JSON.stringify(canonicalRequest(parsed)))
+    .digest('hex');
+  return await db.transaction(async (tx) => {
+    const agent = await lockAgentIssueContext(tx, binding, 'issue:create', {
+      id: parsed.teamId,
+      organizationId: binding.principal.organizationId,
+    });
+    if (key !== null) {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`${binding.grantId}:create_issue:${key}`}, 0))`,
+      );
+      const [record] = await tx
+        .select()
+        .from(schema.mcpIdempotency)
+        .where(
+          and(
+            eq(schema.mcpIdempotency.grantId, binding.grantId),
+            eq(schema.mcpIdempotency.toolName, 'create_issue'),
+            eq(schema.mcpIdempotency.idempotencyKey, key),
+          ),
+        )
+        .limit(1);
+      if (record !== undefined && record.expiresAt <= now) {
+        await tx.delete(schema.mcpIdempotency).where(eq(schema.mcpIdempotency.id, record.id));
+      } else if (record !== undefined) {
+        if (record.requestHash !== requestHash) {
+          throw conflict('This idempotency key was used for a different request.', {
+            details: { reason: 'idempotency_conflict' },
+          });
+        }
+        const cached = cachedIssueSchema.parse(record.result);
+        return {
+          issue: cachedIssueRow(cached.issue),
+          actions: cached.actions,
+          replayed: true,
+        };
+      }
+    }
+    const created = await createIssueInTransaction(tx, agent.principal, parsed, agent);
+    if (key !== null) {
+      await tx.insert(schema.mcpIdempotency).values({
+        id: newId(),
+        grantId: binding.grantId,
+        toolName: 'create_issue',
+        idempotencyKey: key,
+        requestHash,
+        result: { issue: created.issue, actions: created.actions },
+        expiresAt: new Date(now.getTime() + 86_400_000),
+      });
+    }
+    return { ...created, replayed: false };
   });
 }
 
@@ -980,13 +1183,34 @@ interface UpdateContext {
   readonly state: Awaited<ReturnType<typeof stateOf>> | null;
   readonly now: Date;
   readonly reviewers: ReadonlyMap<string, string[]>;
+  readonly agent: LockedAgentIssueContext | null;
+}
+
+async function applyOwnerTransfer(
+  context: UpdateContext,
+  current: IssueRow,
+  values: IssueValues,
+  changes: FieldChange[],
+): Promise<void> {
+  const target = context.parsed.ownerUserId;
+  if (target === undefined) return;
+  const { principal, tx, agent } = context;
+  if (agent !== null) throw forbidden('Only a person can transfer issue ownership.');
+  assertIssueOwnerTransfer(principal, current);
+  await assertMemberOfWorkspace(tx, principal.organizationId, target);
+  if (values.ownerUserId !== undefined && values.ownerUserId !== target)
+    throw validationFailed('Ownership and assignment changes conflict.');
+  if (current.ownerUserId === target) return;
+  values.ownerUserId = target;
+  changes.push({ field: 'ownerUserId', from: current.ownerUserId, to: target });
 }
 
 async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Promise<PendingUpdate> {
-  const { tx, principal, parsed, state, now, reviewers } = context;
+  const { tx, principal, parsed, state, now, reviewers, agent } = context;
   assertInTeam(principal, teamScope(current));
 
-  const { values, changes } = collectIssueChanges(current, parsed);
+  const { values, changes } = collectIssueChanges(current, parsed, principal.userId);
+  await applyOwnerTransfer(context, current, values, changes);
   const currentReviewerIds = reviewers.get(current.id) ?? [];
   const reviewerIds =
     parsed.reviewerIds === undefined ? currentReviewerIds : [...new Set(parsed.reviewerIds)].sort();
@@ -1007,6 +1231,9 @@ async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Prom
     Object.assign(values, applyStateTimestamps(current, state.category, now));
   }
   await assertMemberOfWorkspace(tx, principal.organizationId, values.assigneeId);
+  if (values.assigneeAgentId !== undefined && values.assigneeAgentId !== null) {
+    await assertAgentAssignable(tx, principal, values.assigneeAgentId, agent);
+  }
   await assertReviewersCanAccessTeam(tx, principal.organizationId, current.teamId, reviewerIds);
   await assertAssignableToTeam(
     tx,
@@ -1060,10 +1287,11 @@ async function subscribeChangedReviewers(
 }
 
 async function applyIssueUpdates(
-  tx: Executor,
+  tx: Transaction,
   principal: Principal,
   issueIds: readonly string[],
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  agent: LockedAgentIssueContext | null = null,
 ): Promise<UpdatedIssue[]> {
   const loaded = await loadIssues(tx, principal.organizationId, issueIds);
   if (parsed.cycleId !== undefined) {
@@ -1074,7 +1302,7 @@ async function applyIssueUpdates(
   const now = new Date();
   const state = parsed.stateId === undefined ? null : await stateOf(tx, parsed.stateId);
   const reviewers = await reviewerIdsByIssue(tx, issueIds);
-  const context: UpdateContext = { tx, principal, parsed, state, now, reviewers };
+  const context: UpdateContext = { tx, principal, parsed, state, now, reviewers, agent };
 
   const pending: PendingUpdate[] = [];
   for (const issueId of issueIds) {
@@ -1089,7 +1317,8 @@ async function applyIssueUpdates(
   }
 
   const syncId = await nextSyncId(tx);
-  const actor = await principalActor(tx, principal);
+  const attribution = await resolveActivityActor(tx, principal, agent);
+  const actor = attribution.actor;
 
   const updated = new Map<string, IssueRow>();
   for (const [, group] of updateGroups(changing)) {
@@ -1147,6 +1376,11 @@ async function applyIssueUpdates(
         organizationId: principal.organizationId,
         issueId: entry.current.id,
         actor,
+        principalUserId: attribution.principalUserId,
+        principalName: attribution.principalName,
+        principalAvatar: attribution.principalAvatar,
+        actorAvatar: attribution.actorAvatar,
+        grantId: attribution.grantId,
         field: change.field,
         from: describedValue(described, change.field, change.from),
         to: describedValue(described, change.field, change.to),
@@ -1155,17 +1389,23 @@ async function applyIssueUpdates(
     ),
   );
 
-  const notifications = await updateNotifications(tx, principal, actor, {
-    changing,
-    updated,
-    state,
-  });
+  const notifications = await updateNotifications(
+    tx,
+    principal,
+    actor,
+    {
+      changing,
+      updated,
+      state,
+    },
+    agent,
+  );
   const decorations = await issueDecorationsByIssue(
     tx,
     pending.map((entry) => entry.current.id),
   );
 
-  return await updateResults(
+  const results = await updateResults(
     tx,
     pending,
     updated,
@@ -1173,6 +1413,61 @@ async function applyIssueUpdates(
     syncId,
     actor,
   );
+  if (agent === null) {
+    return await Promise.all(
+      results.map(async (result) => ({
+        ...result,
+        actions: await stageIssueActions(tx, result.issue.id, result.actions),
+      })),
+    );
+  }
+  return await stageAgentUpdates(tx, principal, agent, results, now);
+}
+
+async function stageAgentUpdates(
+  tx: Transaction,
+  principal: Principal,
+  agent: LockedAgentIssueContext,
+  results: readonly UpdatedIssue[],
+  now: Date,
+): Promise<UpdatedIssue[]> {
+  const staged: UpdatedIssue[] = [];
+  for (const result of results) {
+    if (result.actions.length === 0) {
+      staged.push(result);
+      continue;
+    }
+    await tx.insert(schema.auditLog).values({
+      id: newId(),
+      organizationId: principal.organizationId,
+      actorType: 'agent',
+      actorId: agent.agentIdentityId,
+      actorName: agent.actor.name ?? 'Agent',
+      actorAvatar: agent.avatar,
+      principalUserId: principal.userId,
+      principalName: agent.principalName,
+      principalAvatar: agent.principalAvatar,
+      grantId: agent.grantId,
+      action: 'issue.update',
+      entityType: 'issue',
+      entityId: result.issue.id,
+      after: { changed: result.changes.map((change) => change.field) },
+    });
+    staged.push({
+      ...result,
+      actions: await stageIssueActions(tx, result.issue.id, result.actions, {
+        attribution: publicAgentAttribution(agent),
+        grantId: agent.grantId,
+      }),
+    });
+  }
+  if (staged.some((result) => result.actions.length > 0)) {
+    await tx
+      .update(schema.agentIdentity)
+      .set({ lastActedAt: now })
+      .where(eq(schema.agentIdentity.id, agent.agentIdentityId));
+  }
+  return staged;
 }
 
 async function updateNotifications(
@@ -1184,10 +1479,11 @@ async function updateNotifications(
     readonly updated: ReadonlyMap<string, IssueRow>;
     readonly state: { readonly name: string } | null;
   },
+  agent: LockedAgentIssueContext | null = null,
 ): Promise<Map<string, SyncAction[]>> {
   const statusName = context.state === null ? null : context.state.name;
   const inputs = updateNotificationInputs(context.changing, context.updated, statusName);
-  return notificationsByEntity(await issueNotifications(tx, principal, actor, inputs));
+  return notificationsByEntity(await issueNotifications(tx, principal, actor, inputs, agent));
 }
 
 interface UpdateDecorations {
@@ -1224,12 +1520,13 @@ async function updateResults(
 }
 
 async function applyIssueUpdate(
-  tx: Executor,
+  tx: Transaction,
   principal: Principal,
   issueId: string,
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  agent: LockedAgentIssueContext | null = null,
 ): Promise<UpdatedIssue> {
-  const [result] = await applyIssueUpdates(tx, principal, [issueId], parsed);
+  const [result] = await applyIssueUpdates(tx, principal, [issueId], parsed, agent);
   return requireRow(result, 'That issue does not exist.');
 }
 
@@ -1242,6 +1539,113 @@ export async function updateIssue(
   assertCan(principal, 'issue:update');
   const parsed = issueUpdateSchema.parse(patch);
   return await database.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
+}
+
+export async function updateAgentIssue(
+  binding: AgentIssueBinding,
+  issueId: string,
+  patch: unknown,
+): Promise<UpdatedIssue> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  const parsed = issueUpdateSchema.parse(patch);
+  return await db.transaction(async (tx) => {
+    const [target] = await tx
+      .select({ teamId: schema.issue.teamId, organizationId: schema.issue.organizationId })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, issueId))
+      .limit(1);
+    if (target === undefined) throw notFound('That issue does not exist.');
+    const agent = await lockAgentIssueContext(tx, binding, 'issue:update', {
+      id: target.teamId,
+      organizationId: target.organizationId,
+    });
+    return await applyIssueUpdate(tx, agent.principal, issueId, parsed, agent);
+  });
+}
+
+async function lockAgentForExistingIssue(
+  tx: Transaction,
+  binding: AgentIssueBinding,
+  issueId: string,
+  permission: 'issue:update' | 'issue:delete',
+): Promise<{ agent: LockedAgentIssueContext; teamId: string }> {
+  const [target] = await tx
+    .select({ teamId: schema.issue.teamId, organizationId: schema.issue.organizationId })
+    .from(schema.issue)
+    .where(eq(schema.issue.id, issueId))
+    .limit(1);
+  if (target === undefined) throw notFound('That issue does not exist.');
+  const agent = await lockAgentIssueContext(tx, binding, permission, {
+    id: target.teamId,
+    organizationId: target.organizationId,
+  });
+  return { agent, teamId: target.teamId };
+}
+
+async function lockAgentForRelation(
+  tx: Transaction,
+  binding: AgentIssueBinding,
+  issueId: string,
+  relatedIssueId: string,
+): Promise<{ agent: LockedAgentIssueContext; sourceTeamId: string; targetTeamId: string }> {
+  const source = await lockAgentForExistingIssue(tx, binding, issueId, 'issue:update');
+  const target = await lockAgentForExistingIssue(tx, binding, relatedIssueId, 'issue:update');
+  return { agent: source.agent, sourceTeamId: source.teamId, targetTeamId: target.teamId };
+}
+
+async function recordAgentMutation(
+  tx: Transaction,
+  agent: LockedAgentIssueContext,
+  issueId: string,
+  action: string,
+  actions: readonly SyncAction[],
+): Promise<SyncAction[]> {
+  if (actions.length === 0) return [];
+  await tx.insert(schema.auditLog).values({
+    id: newId(),
+    organizationId: agent.principal.organizationId,
+    actorType: 'agent',
+    actorId: agent.agentIdentityId,
+    actorName: agent.actor.name ?? 'Agent',
+    actorAvatar: agent.avatar,
+    principalUserId: agent.principal.userId,
+    principalName: agent.principalName,
+    principalAvatar: agent.principalAvatar,
+    grantId: agent.grantId,
+    action,
+    entityType: 'issue',
+    entityId: issueId,
+  });
+  await tx
+    .update(schema.agentIdentity)
+    .set({ lastActedAt: new Date() })
+    .where(eq(schema.agentIdentity.id, agent.agentIdentityId));
+  const staged: SyncAction[] = [];
+  for (const event of actions) {
+    staged.push(
+      ...(await stageIssueActions(tx, event.model === 'issue' ? event.modelId : issueId, [event], {
+        attribution: publicAgentAttribution(agent),
+        grantId: agent.grantId,
+      })),
+    );
+  }
+  return staged;
+}
+
+async function stageHumanIssueMutation(
+  tx: Transaction,
+  issueId: string,
+  actions: readonly SyncAction[],
+): Promise<SyncAction[]> {
+  const staged: SyncAction[] = [];
+  for (const action of actions) {
+    staged.push(
+      ...(await stageIssueActions(tx, action.model === 'issue' ? action.modelId : issueId, [
+        action,
+      ])),
+    );
+  }
+  return staged;
 }
 
 async function orderOf(executor: Executor, issueId: string | null): Promise<number | null> {
@@ -1324,20 +1728,27 @@ function applyRegrouping(
 interface RegroupActivityInput {
   readonly organizationId: string;
   readonly issueId: string;
-  readonly actor: Actor;
+  readonly principal: Principal;
   readonly syncId: number;
   readonly regrouped: readonly GroupedMoveField[];
   readonly current: IssueRow;
   readonly issue: IssueRow;
+  readonly agent?: LockedAgentIssueContext | null;
 }
 
 async function recordRegroupings(tx: Executor, input: RegroupActivityInput): Promise<void> {
+  const attribution = await resolveActivityActor(tx, input.principal, input.agent ?? null);
   for (const field of input.regrouped) {
     await appendActivities(tx, [
       {
         organizationId: input.organizationId,
         issueId: input.issueId,
-        actor: input.actor,
+        actor: attribution.actor,
+        principalUserId: attribution.principalUserId,
+        principalName: attribution.principalName,
+        principalAvatar: attribution.principalAvatar,
+        actorAvatar: attribution.actorAvatar,
+        grantId: attribution.grantId,
         field,
         from: await describeValue(tx, field, input.current[field]),
         to: await describeValue(tx, field, input.issue[field]),
@@ -1422,16 +1833,23 @@ async function recordMovedIssueState(
     readonly state: Awaited<ReturnType<typeof stateOf>>;
     readonly organizationId: string;
     readonly issueId: string;
-    readonly actor: Actor;
+    readonly principal: Principal;
     readonly syncId: number;
+    readonly agent?: LockedAgentIssueContext | null;
   },
 ): Promise<void> {
   if (input.state.id === input.current.stateId) return;
+  const attribution = await resolveActivityActor(executor, input.principal, input.agent ?? null);
   await appendActivities(executor, [
     {
       organizationId: input.organizationId,
       issueId: input.issueId,
-      actor: input.actor,
+      actor: attribution.actor,
+      principalUserId: attribution.principalUserId,
+      principalName: attribution.principalName,
+      principalAvatar: attribution.principalAvatar,
+      actorAvatar: attribution.actorAvatar,
+      grantId: attribution.grantId,
       field: 'stateId',
       from: await describeValue(executor, 'stateId', input.current.stateId),
       to: { id: input.state.id, name: input.state.name },
@@ -1462,38 +1880,125 @@ async function landingOrder(
   return { sortOrder: sortOrderBetween(before, after), rebalanced };
 }
 
+async function prepareIssueMove(
+  tx: Transaction,
+  principal: Principal,
+  issueId: string,
+  parsed: MoveInput,
+  binding?: AgentIssueBinding,
+) {
+  const context =
+    binding === undefined
+      ? null
+      : await lockAgentForExistingIssue(tx, binding, issueId, 'issue:update');
+  if (binding !== undefined && parsed.teamId !== undefined) {
+    await lockAgentIssueContext(tx, binding, 'issue:update', {
+      id: parsed.teamId,
+      organizationId: principal.organizationId,
+    });
+  }
+  const current = await loadIssueForUpdate(tx, context?.agent.principal ?? principal, issueId);
+  if (context !== null && current.teamId !== context.teamId)
+    throw conflict('The issue moved while the agent was waiting.');
+  const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
+  const state =
+    parsed.stateId === undefined
+      ? await stateOf(tx, current.stateId)
+      : await stateOf(tx, parsed.stateId);
+  if (state.teamId !== team.id) throw validationFailed('That status belongs to another team.');
+  const changingTeam = team.id !== current.teamId;
+  if (changingTeam) {
+    const reviewers = await reviewerIdsByIssue(tx, [issueId]);
+    await assertReviewersCanAccessTeam(
+      tx,
+      principal.organizationId,
+      team.id,
+      reviewers.get(issueId) ?? [],
+    );
+    if (current.assigneeId !== null) {
+      await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, [
+        current.assigneeId,
+      ]);
+    }
+    if (current.assigneeAgentId !== null) {
+      await assertAgentAssignable(
+        tx,
+        context?.agent.principal ?? principal,
+        current.assigneeAgentId,
+        context?.agent ?? null,
+      );
+    }
+  }
+  return { context, current, team, state, changingTeam };
+}
+
+async function movedIssueActions(
+  tx: Transaction,
+  principal: Principal,
+  actor: Actor,
+  current: IssueRow,
+  issue: IssueRow,
+  rebalanced: readonly IssueRow[],
+  state: Awaited<ReturnType<typeof stateOf>>,
+  syncId: number,
+  agent: LockedAgentIssueContext | null,
+): Promise<SyncAction[]> {
+  const changingTeam = current.teamId !== issue.teamId;
+  const affected = [issue, ...rebalanced.filter((row) => row.id !== issue.id)];
+  const decorations = await issueDecorationsByIssue(
+    tx,
+    affected.map((row) => row.id),
+  );
+  const notifications = await moveNotifications(
+    tx,
+    principal,
+    actor,
+    { current, issue, state },
+    agent,
+  );
+  return [
+    ...(changingTeam ? [issueDepartureAction(current, syncId, actor)] : []),
+    ...(await Promise.all(
+      affected.map((row) =>
+        issueAction(
+          tx,
+          row,
+          syncId,
+          actor,
+          'update',
+          {
+            labelIds: decorations.labels.get(row.id) ?? [],
+            reviewerIds: decorations.reviewers.get(row.id) ?? [],
+          },
+          changingTeam && row.id === issue.id,
+        ),
+      ),
+    )),
+    ...notifications,
+  ];
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
   input: unknown,
+  binding?: AgentIssueBinding,
 ): Promise<MovedIssue> {
   assertCan(principal, 'issue:update');
   const parsed = issueMoveSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const current = await loadIssueForUpdate(tx, principal, issueId);
-
-    const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
+    const { context, current, team, state, changingTeam } = await prepareIssueMove(
+      tx,
+      principal,
+      issueId,
+      parsed,
+      binding,
+    );
     const teamId = team.id;
-    const state =
-      parsed.stateId === undefined
-        ? await stateOf(tx, current.stateId)
-        : await stateOf(tx, parsed.stateId);
-    if (state.teamId !== teamId) throw validationFailed('That status belongs to another team.');
-
-    const changingTeam = teamId !== current.teamId;
-    if (changingTeam) {
-      const reviewers = await reviewerIdsByIssue(tx, [issueId]);
-      await assertReviewersCanAccessTeam(
-        tx,
-        principal.organizationId,
-        teamId,
-        reviewers.get(issueId) ?? [],
-      );
-    }
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = context?.agent.actor ?? (await principalActor(tx, principal));
 
     if (changingTeam) {
       await tx.insert(schema.issueIdentifierAlias).values({
@@ -1536,52 +2041,51 @@ export async function moveIssue(
       state,
       organizationId: principal.organizationId,
       issueId,
-      actor,
+      principal,
       syncId,
+      agent: context?.agent ?? null,
     });
 
     await recordRegroupings(tx, {
       organizationId: principal.organizationId,
       issueId,
-      actor,
+      principal,
       syncId,
       regrouped,
       current,
       issue,
+      agent: context?.agent ?? null,
     });
 
-    const affected = [issue, ...rebalanced.filter((row) => row.id !== issueId)];
-    const decorations = await issueDecorationsByIssue(
+    const actions = await movedIssueActions(
       tx,
-      affected.map((row) => row.id),
+      context?.agent.principal ?? principal,
+      actor,
+      current,
+      issue,
+      rebalanced,
+      state,
+      syncId,
+      context?.agent ?? null,
     );
-    const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
-
     return {
       issue,
       rebalanced,
-      actions: [
-        ...(changingTeam ? [issueDepartureAction(current, syncId, actor)] : []),
-        ...(await Promise.all(
-          affected.map((row) =>
-            issueAction(
-              tx,
-              row,
-              syncId,
-              actor,
-              'update',
-              {
-                labelIds: decorations.labels.get(row.id) ?? [],
-                reviewerIds: decorations.reviewers.get(row.id) ?? [],
-              },
-              changingTeam && row.id === issue.id,
-            ),
-          ),
-        )),
-        ...notifications,
-      ],
+      actions:
+        context === null
+          ? await stageHumanIssueMutation(tx, issueId, actions)
+          : await recordAgentMutation(tx, context.agent, issueId, 'issue.move', actions),
     };
   });
+}
+
+export async function moveAgentIssue(
+  binding: AgentIssueBinding,
+  issueId: string,
+  input: unknown,
+): Promise<MovedIssue> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  return await moveIssue(binding.principal, issueId, input, binding);
 }
 
 async function moveNotifications(
@@ -1593,19 +2097,26 @@ async function moveNotifications(
     readonly issue: IssueRow;
     readonly state: { readonly id: string; readonly name: string };
   },
+  agent: LockedAgentIssueContext | null = null,
 ): Promise<SyncAction[]> {
   const assigned =
     move.issue.assigneeId !== null && move.issue.assigneeId !== move.current.assigneeId;
   const changedState = move.state.id !== move.current.stateId;
   if (!(assigned || changedState)) return [];
-  return await issueNotifications(tx, principal, actor, [
-    {
-      issue: move.issue,
-      mentionHandles: [],
-      assigneeId: assigned ? move.issue.assigneeId : null,
-      statusName: changedState ? move.state.name : null,
-    },
-  ]);
+  return await issueNotifications(
+    tx,
+    principal,
+    actor,
+    [
+      {
+        issue: move.issue,
+        mentionHandles: [],
+        assigneeId: assigned ? move.issue.assigneeId : null,
+        statusName: changedState ? move.state.name : null,
+      },
+    ],
+    agent,
+  );
 }
 
 export async function bulkUpdateIssues(
@@ -1633,14 +2144,22 @@ async function setArchived(
   principal: Principal,
   issueId: string,
   archivedAt: Date | null,
+  binding?: AgentIssueBinding,
 ): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
 
   return await db.transaction(async (tx) => {
-    await loadIssue(tx, principal, issueId);
+    const context =
+      binding === undefined
+        ? null
+        : await lockAgentForExistingIssue(tx, binding, issueId, 'issue:update');
+    const current = await loadIssueForUpdate(tx, context?.agent.principal ?? principal, issueId);
+    if (context !== null && current.teamId !== context.teamId)
+      throw conflict('The issue moved while the agent was waiting.');
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const attribution = await resolveActivityActor(tx, principal, context?.agent ?? null);
+    const actor = attribution.actor;
     const [updated] = await tx
       .update(schema.issue)
       .set({ archivedAt, updatedAt: new Date(), syncId })
@@ -1653,6 +2172,11 @@ async function setArchived(
         organizationId: principal.organizationId,
         issueId,
         actor,
+        principalUserId: attribution.principalUserId,
+        principalName: attribution.principalName,
+        principalAvatar: attribution.principalAvatar,
+        actorAvatar: attribution.actorAvatar,
+        grantId: attribution.grantId,
         field: archivedAt === null ? 'unarchived' : 'archived',
         from: null,
         to: null,
@@ -1660,17 +2184,53 @@ async function setArchived(
       },
     ]);
 
-    const decorations = await issueDecorationsByIssue(tx, [issue.id]);
+    const actions = await archivedIssueActions(tx, issue, syncId, actor, archivedAt);
     return {
       issue,
-      actions: [
-        await issueAction(tx, issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
-          labelIds: decorations.labels.get(issue.id) ?? [],
-          reviewerIds: decorations.reviewers.get(issue.id) ?? [],
-        }),
-      ],
+      actions:
+        context === null
+          ? await stageHumanIssueMutation(tx, issueId, actions)
+          : await recordAgentMutation(
+              tx,
+              context.agent,
+              issueId,
+              archivedAt === null ? 'issue.unarchive' : 'issue.archive',
+              actions,
+            ),
     };
   });
+}
+
+async function archivedIssueActions(
+  tx: Transaction,
+  issue: IssueRow,
+  syncId: number,
+  actor: Actor,
+  archivedAt: Date | null,
+): Promise<SyncAction[]> {
+  const decorations = await issueDecorationsByIssue(tx, [issue.id]);
+  return [
+    await issueAction(tx, issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
+      labelIds: decorations.labels.get(issue.id) ?? [],
+      reviewerIds: decorations.reviewers.get(issue.id) ?? [],
+    }),
+  ];
+}
+
+export async function archiveAgentIssue(
+  binding: AgentIssueBinding,
+  issueId: string,
+): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  return await setArchived(binding.principal, issueId, new Date(), binding);
+}
+
+export async function unarchiveAgentIssue(
+  binding: AgentIssueBinding,
+  issueId: string,
+): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  return await setArchived(binding.principal, issueId, null, binding);
 }
 
 export async function archiveIssue(
@@ -1691,18 +2251,25 @@ export async function deleteIssue(
   principal: Principal,
   issueId: string,
   database: Database = db,
+  binding?: AgentIssueBinding,
 ): Promise<SyncAction[]> {
   assertCan(principal, 'issue:delete');
 
   return await database.transaction(async (tx) => {
-    const current = await loadIssueForUpdate(tx, principal, issueId);
+    const context =
+      binding === undefined
+        ? null
+        : await lockAgentForExistingIssue(tx, binding, issueId, 'issue:delete');
+    const current = await loadIssueForUpdate(tx, context?.agent.principal ?? principal, issueId);
+    if (context !== null && current.teamId !== context.teamId)
+      throw conflict('The issue moved while the agent was waiting.');
     if (current.cycleId !== null) {
       await lockCycleAssignmentWorkspace(tx, principal.organizationId);
       await lockCycleAssignmentTeam(tx, current.teamId);
     }
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = context?.agent.actor ?? (await principalActor(tx, principal));
     const now = new Date();
     const orphaned = await tx
       .update(schema.issue)
@@ -1725,7 +2292,7 @@ export async function deleteIssue(
       orphaned.map((child) => child.id),
     );
 
-    return [
+    const actions = [
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
@@ -1745,7 +2312,18 @@ export async function deleteIssue(
         ),
       )),
     ];
+    return context === null
+      ? await stageHumanIssueMutation(tx, issueId, actions)
+      : await recordAgentMutation(tx, context.agent, issueId, 'issue.delete', actions);
   });
+}
+
+export async function deleteAgentIssue(
+  binding: AgentIssueBinding,
+  issueId: string,
+): Promise<SyncAction[]> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  return await deleteIssue(binding.principal, issueId, db, binding);
 }
 
 const issueListSchema = issueFilterSchema
@@ -2326,6 +2904,7 @@ export async function setRelation(
   principal: Principal,
   issueId: string,
   input: unknown,
+  binding?: AgentIssueBinding,
 ): Promise<{ relations: IssueRelationRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueRelationSchema.parse(input);
@@ -2334,11 +2913,22 @@ export async function setRelation(
   }
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal, issueId);
-    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
+    const context =
+      binding === undefined
+        ? null
+        : await lockAgentForRelation(tx, binding, issueId, parsed.relatedIssueId);
+    const currentPrincipal = context?.agent.principal ?? principal;
+    const source = await loadIssue(tx, currentPrincipal, issueId);
+    const target = await loadIssue(tx, currentPrincipal, parsed.relatedIssueId);
+    if (
+      context !== null &&
+      (source.teamId !== context.sourceTeamId || target.teamId !== context.targetTeamId)
+    )
+      throw conflict('An issue moved while the agent was waiting.');
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const attribution = await resolveActivityActor(tx, principal, context?.agent ?? null);
+    const actor = attribution.actor;
     const inverse = INVERSE_RELATION[parsed.type];
 
     const relations = await tx
@@ -2364,50 +2954,82 @@ export async function setRelation(
       .onConflictDoNothing()
       .returning();
 
-    await appendActivities(tx, [
-      {
-        organizationId: principal.organizationId,
-        issueId: source.id,
-        actor,
-        field: 'relation',
-        from: null,
-        to: `${parsed.type} ${target.identifier}`,
-        syncId,
-      },
-    ]);
+    if (relations.length > 0) {
+      await appendActivities(tx, [
+        {
+          organizationId: principal.organizationId,
+          issueId: source.id,
+          actor,
+          principalUserId: attribution.principalUserId,
+          principalName: attribution.principalName,
+          principalAvatar: attribution.principalAvatar,
+          actorAvatar: attribution.actorAvatar,
+          grantId: attribution.grantId,
+          field: 'relation',
+          from: null,
+          to: `${parsed.type} ${target.identifier}`,
+          syncId,
+        },
+      ]);
+    }
 
+    const actions = relations.map((row) =>
+      buildSyncAction({
+        syncId,
+        organizationId: principal.organizationId,
+        scopes: relationScopes(row, source, target),
+        action: 'insert',
+        model: 'issue_relation',
+        modelId: row.id,
+        data: row,
+        actor,
+      }),
+    );
     return {
       relations,
-      actions: relations.map((row) =>
-        buildSyncAction({
-          syncId,
-          organizationId: principal.organizationId,
-          scopes: relationScopes(row, source, target),
-          action: 'insert',
-          model: 'issue_relation',
-          modelId: row.id,
-          data: row,
-          actor,
-        }),
-      ),
+      actions:
+        context === null
+          ? await stageHumanIssueMutation(tx, issueId, actions)
+          : await recordAgentMutation(tx, context.agent, issueId, 'issue.relation.set', actions),
     };
   });
+}
+
+export async function setAgentRelation(
+  binding: AgentIssueBinding,
+  issueId: string,
+  input: unknown,
+): Promise<{ relations: IssueRelationRow[]; actions: SyncAction[] }> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  return await setRelation(binding.principal, issueId, input, binding);
 }
 
 export async function removeRelation(
   principal: Principal,
   issueId: string,
   input: unknown,
+  binding?: AgentIssueBinding,
 ): Promise<SyncAction[]> {
   assertCan(principal, 'issue:update');
   const parsed = issueRelationSchema.parse(input);
 
   return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal, issueId);
-    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
+    const context =
+      binding === undefined
+        ? null
+        : await lockAgentForRelation(tx, binding, issueId, parsed.relatedIssueId);
+    const currentPrincipal = context?.agent.principal ?? principal;
+    const source = await loadIssue(tx, currentPrincipal, issueId);
+    const target = await loadIssue(tx, currentPrincipal, parsed.relatedIssueId);
+    if (
+      context !== null &&
+      (source.teamId !== context.sourceTeamId || target.teamId !== context.targetTeamId)
+    )
+      throw conflict('An issue moved while the agent was waiting.');
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const attribution = await resolveActivityActor(tx, principal, context?.agent ?? null);
+    const actor = attribution.actor;
     const inverse = INVERSE_RELATION[parsed.type];
 
     const removed = await tx
@@ -2432,7 +3054,7 @@ export async function removeRelation(
       .returning();
     if (removed.length === 0) throw notFound('That relation does not exist.');
 
-    return removed.map((row) =>
+    const actions = removed.map((row) =>
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,
@@ -2444,7 +3066,34 @@ export async function removeRelation(
         actor,
       }),
     );
+    if (context === null) return await stageHumanIssueMutation(tx, issueId, actions);
+    await appendActivities(tx, [
+      {
+        organizationId: principal.organizationId,
+        issueId: source.id,
+        actor,
+        principalUserId: attribution.principalUserId,
+        principalName: attribution.principalName,
+        principalAvatar: attribution.principalAvatar,
+        actorAvatar: attribution.actorAvatar,
+        grantId: attribution.grantId,
+        field: 'relation',
+        from: `${parsed.type} ${target.identifier}`,
+        to: null,
+        syncId,
+      },
+    ]);
+    return await recordAgentMutation(tx, context.agent, issueId, 'issue.relation.remove', actions);
   });
+}
+
+export async function removeAgentRelation(
+  binding: AgentIssueBinding,
+  issueId: string,
+  input: unknown,
+): Promise<SyncAction[]> {
+  if (!agentIssueWritesEnabled()) throw forbidden('Agent issue writes are unavailable.');
+  return await removeRelation(binding.principal, issueId, input, binding);
 }
 
 export async function listRelations(

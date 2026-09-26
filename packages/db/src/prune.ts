@@ -47,3 +47,15 @@ export async function pruneOperationalTables(
 
   return pruned;
 }
+
+export async function pruneExpiredMcpIdempotency(
+  database: Database,
+  now: Date = new Date(),
+): Promise<number> {
+  const rows = await database.execute<{ deleted: number }>(sql`
+    with gone as (
+      delete from mcp_idempotency where expires_at <= ${now.toISOString()}::timestamptz returning 1
+    ) select count(*)::int as deleted from gone
+  `);
+  return rows[0]?.deleted ?? 0;
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "agent_identity" ADD COLUMN "sync_id" integer DEFAULT 0 NOT NULL;

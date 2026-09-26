@@ -46,7 +46,12 @@ async function storedTypeOf(viewId: string): Promise<string> {
 
 async function runRepair(): Promise<void> {
   const script = await readFile(SCRIPT, 'utf8');
-  await pool.unsafe(`set client_min_messages = warning;\n${script}`);
+  const connection = await pool.reserve();
+  try {
+    await connection.unsafe(`set client_min_messages = warning;\n${script}`);
+  } finally {
+    await connection.release();
+  }
 }
 
 describe('the catchup script that repairs a stored view state', () => {

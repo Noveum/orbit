@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { db, pruneOperationalTables } from '@orbit/db';
+import { db, pruneExpiredMcpIdempotency, pruneOperationalTables } from '@orbit/db';
 
 function presented(request: Request): string {
   const header = request.headers.get('authorization') ?? '';
@@ -23,5 +23,6 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const pruned = await pruneOperationalTables(db);
-  return Response.json({ pruned });
+  const idempotencyPruned = await pruneExpiredMcpIdempotency(db);
+  return Response.json({ pruned, idempotencyPruned });
 }

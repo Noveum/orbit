@@ -4,6 +4,7 @@ import { type AnalyticsQuery, analyticsQuerySchema } from '@orbit/shared';
 import type { Principal } from '@orbit/shared/policy';
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
 import { loadProjectAnalytics, PROJECT_ANALYTICS_LIMIT } from '../../src/analytics/projects.ts';
+import { insertAgentIdentity, insertIssue } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -139,6 +140,69 @@ beforeEach(async () => {
 });
 
 describe('loadProjectAnalytics', () => {
+  it('P1-AN-1 preserves project totals and filters agent assignments separately', async () => {
+    const project = await createProject(workspace.admin, {
+      name: 'Mixed ownership',
+      teamIds: [workspace.teamId],
+    });
+    const human = await addMember(workspace, 'member', { name: 'Human owner' });
+    const agentId = await insertAgentIdentity(workspace, 'Research agent');
+    const createdAt = new Date('2026-08-02T00:00:00.000Z');
+    const agentIssueId = await insertIssue(workspace, {
+      number: 91,
+      state: 'Todo',
+      projectId: project.project.id,
+      assigneeAgentId: agentId,
+      createdAt,
+    });
+    await insertIssue(workspace, {
+      number: 92,
+      state: 'Todo',
+      projectId: project.project.id,
+      assigneeId: human.user.id,
+      createdAt,
+    });
+    await insertIssue(workspace, {
+      number: 93,
+      state: 'Todo',
+      projectId: project.project.id,
+      createdAt,
+    });
+    await db
+      .update(schema.issue)
+      .set({ assigneeId: human.user.id })
+      .where(eq(schema.issue.id, agentIssueId));
+    const assigneeQuery = (value: string) =>
+      query({
+        filter: {
+          kind: 'group',
+          combinator: 'and',
+          children: [
+            {
+              kind: 'condition',
+              property: 'assignee',
+              operator: 'in',
+              values: [value],
+              negate: false,
+            },
+          ],
+        },
+      });
+    const all = await loadProjectAnalytics(workspace.admin, query(), { now, timezone: 'UTC' });
+    const agentOnly = await loadProjectAnalytics(
+      workspace.admin,
+      assigneeQuery(`agent:${agentId}`),
+      { now, timezone: 'UTC' },
+    );
+    const humanOnly = await loadProjectAnalytics(workspace.admin, assigneeQuery(human.user.id), {
+      now,
+      timezone: 'UTC',
+    });
+    expect(projectRow(all, project.project.id).scopeIssues).toBe(3);
+    expect(projectRow(agentOnly, project.project.id).scopeIssues).toBe(1);
+    expect(projectRow(humanOnly, project.project.id).scopeIssues).toBe(1);
+  });
+
   it('distinguishes a captured null project origin from missing project history', async () => {
     const beta = await createProject(workspace.admin, {
       name: 'Beta',

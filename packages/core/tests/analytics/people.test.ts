@@ -5,6 +5,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { listAnalyticsDrilldown } from '../../src/analytics/drilldown.ts';
 import { loadPeopleAnalytics, PEOPLE_ANALYTICS_LIMIT } from '../../src/analytics/people.ts';
 import { loadSprintAnalytics } from '../../src/analytics/sprints.ts';
+import { insertAgentIdentity, insertIssue } from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -136,6 +137,58 @@ beforeEach(async () => {
 });
 
 describe('loadPeopleAnalytics', () => {
+  it('P1-AN-1 excludes agent work from Human and Unassigned People cohorts', async () => {
+    const human = await addMember(workspace, 'member', { name: 'Human owner' });
+    const agentId = await insertAgentIdentity(workspace, 'Research agent');
+    const assignedAt = new Date('2026-08-02T00:00:00.000Z');
+    const agentIssueId = await insertIssue(workspace, {
+      number: 91,
+      state: 'Todo',
+      assigneeAgentId: agentId,
+      createdAt: assignedAt,
+    });
+    await db
+      .update(schema.issue)
+      .set({ assigneeId: human.user.id })
+      .where(eq(schema.issue.id, agentIssueId));
+    await insertIssue(workspace, {
+      number: 92,
+      state: 'Todo',
+      assigneeId: human.user.id,
+      createdAt: assignedAt,
+    });
+    await insertIssue(workspace, { number: 93, state: 'Todo', createdAt: assignedAt });
+
+    const result = await loadPeopleAnalytics(workspace.admin, query(), { now, timezone: 'UTC' });
+    expect(result.people.some((row) => row.person.id === `agent:${agentId}`)).toBe(false);
+    expect(personRow(result, human.user.id).currentAssignments).toBe(1);
+    expect(personRow(result, 'unassigned').currentAssignments).toBe(1);
+    expect(result.people.reduce((sum, row) => sum + row.currentAssignments, 0)).toBe(2);
+
+    const humanEvidence = await listAnalyticsDrilldown(
+      workspace.admin,
+      {
+        query: query({ personId: human.user.id }),
+        cohort: personRow(result, human.user.id).cohorts.currentAssignments,
+        limit: 100,
+      },
+      { now, timezone: 'UTC', cursorSecret: 'agent-analytics-secret' },
+    );
+    expect(humanEvidence.total).toBe(1);
+    expect(humanEvidence.issues.map((entry) => entry.id)).not.toContain(agentIssueId);
+    const unassignedEvidence = await listAnalyticsDrilldown(
+      workspace.admin,
+      {
+        query: query({ personId: 'unassigned' }),
+        cohort: personRow(result, 'unassigned').cohorts.currentAssignments,
+        limit: 100,
+      },
+      { now, timezone: 'UTC', cursorSecret: 'agent-analytics-secret' },
+    );
+    expect(unassignedEvidence.total).toBe(1);
+    expect(unassignedEvidence.issues.map((entry) => entry.id)).not.toContain(agentIssueId);
+  });
+
   it('defaults My work to the principal while listing every workspace person by name', async () => {
     const guest = await addMember(workspace, 'guest', { name: 'Zoe Guest', teamIds: [] });
     const otherTeam = await createTeam(workspace.admin, { name: 'Other', key: 'OTH' });

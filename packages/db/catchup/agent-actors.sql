@@ -11,11 +11,14 @@ CREATE TABLE IF NOT EXISTS "agent_identity" (
 	"admin_disabled_at" timestamp with time zone,
 	"deleted_at" timestamp with time zone,
 	"deleted_reason" text,
+	"sync_id" integer DEFAULT 0 NOT NULL,
 	"last_acted_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "agent_identity_owner_deleted_check" CHECK ("agent_identity"."owner_user_id" is not null or "agent_identity"."deleted_at" is not null)
 );
+
+ALTER TABLE "agent_identity" ADD COLUMN IF NOT EXISTS "sync_id" integer DEFAULT 0 NOT NULL;
 
 DO $$
 BEGIN
@@ -100,6 +103,91 @@ ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "principal_user_id" text;
 ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "principal_name" text;
 
 ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "grant_id" text;
+
+ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "actor_avatar" text;
+
+ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "principal_avatar" text;
+
+ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "cause" text;
+
+ALTER TABLE "issue_activity" ADD COLUMN IF NOT EXISTS "cause_actor_id" text;
+
+ALTER TABLE "notification" ADD COLUMN IF NOT EXISTS "actor_avatar" text;
+
+ALTER TABLE "notification" ADD COLUMN IF NOT EXISTS "principal_avatar" text;
+
+ALTER TABLE "audit_log" ADD COLUMN IF NOT EXISTS "actor_avatar" text;
+
+ALTER TABLE "audit_log" ADD COLUMN IF NOT EXISTS "principal_avatar" text;
+
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "issue_activity" SET
+      actor_avatar = coalesce(actor_avatar, (select image from "user" where id = "issue_activity".actor_id)),
+      principal_avatar = coalesce(principal_avatar, (select image from "user" where id = "issue_activity".principal_user_id))
+    WHERE id IN (
+      SELECT id
+      FROM "issue_activity"
+      WHERE actor_type = 'user'
+        AND (
+          (actor_avatar IS NULL AND EXISTS (SELECT 1 FROM "user" WHERE id = "issue_activity".actor_id AND image IS NOT NULL))
+          OR (principal_avatar IS NULL AND EXISTS (SELECT 1 FROM "user" WHERE id = "issue_activity".principal_user_id AND image IS NOT NULL))
+        )
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "notification" SET
+      actor_avatar = coalesce(actor_avatar, (select image from "user" where id = "notification".actor_id)),
+      principal_avatar = coalesce(principal_avatar, (select image from "user" where id = "notification".principal_user_id))
+    WHERE id IN (
+      SELECT id
+      FROM "notification"
+      WHERE actor_type = 'user'
+        AND (
+          (actor_avatar IS NULL AND EXISTS (SELECT 1 FROM "user" WHERE id = "notification".actor_id AND image IS NOT NULL))
+          OR (principal_avatar IS NULL AND EXISTS (SELECT 1 FROM "user" WHERE id = "notification".principal_user_id AND image IS NOT NULL))
+        )
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE affected integer;
+BEGIN
+  LOOP
+    UPDATE "audit_log" SET
+      actor_avatar = coalesce(actor_avatar, (select image from "user" where id = "audit_log".actor_id)),
+      principal_avatar = coalesce(principal_avatar, (select image from "user" where id = "audit_log".principal_user_id))
+    WHERE id IN (
+      SELECT id
+      FROM "audit_log"
+      WHERE actor_type = 'user'
+        AND (
+          (actor_avatar IS NULL AND EXISTS (SELECT 1 FROM "user" WHERE id = "audit_log".actor_id AND image IS NOT NULL))
+          OR (principal_avatar IS NULL AND EXISTS (SELECT 1 FROM "user" WHERE id = "audit_log".principal_user_id AND image IS NOT NULL))
+        )
+      ORDER BY id LIMIT 1000
+    );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    EXIT WHEN affected = 0;
+  END LOOP;
+END;
+$$;
 
 ALTER TABLE "oauth_access_token" ADD COLUMN IF NOT EXISTS "mcp_grant_id" text;
 
@@ -267,6 +355,52 @@ DO $$ BEGIN
     ALTER TABLE "agent_identity" ADD CONSTRAINT "agent_identity_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;
   END IF;
 END; $$;
+
+CREATE TABLE IF NOT EXISTS "issue_outbox" (
+  "id" text PRIMARY KEY NOT NULL,
+  "organization_id" text NOT NULL,
+  "aggregate_id" text NOT NULL,
+  "sync_id" bigint NOT NULL,
+  "payload" jsonb NOT NULL,
+  "available_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "lease_until" timestamp with time zone,
+  "lease_owner" text,
+  "attempts" integer DEFAULT 0 NOT NULL,
+  "last_error" text,
+  "delivered_at" timestamp with time zone,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.issue_outbox'::regclass AND conname = 'issue_outbox_organization_id_organization_id_fk') THEN
+    ALTER TABLE "issue_outbox" ADD CONSTRAINT "issue_outbox_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END; $$;
+
+CREATE INDEX IF NOT EXISTS "issue_outbox_available_idx" ON "issue_outbox" USING btree ("available_at","id");
+CREATE INDEX IF NOT EXISTS "issue_outbox_aggregate_sync_idx" ON "issue_outbox" USING btree ("aggregate_id","sync_id");
+
+CREATE TABLE IF NOT EXISTS "mcp_idempotency" (
+  "id" text PRIMARY KEY NOT NULL,
+  "grant_id" text NOT NULL,
+  "tool_name" text NOT NULL,
+  "idempotency_key" text NOT NULL,
+  "request_hash" text NOT NULL,
+  "result" jsonb NOT NULL,
+  "expires_at" timestamp with time zone NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.mcp_idempotency'::regclass AND conname = 'mcp_idempotency_grant_id_mcp_grant_id_fk') THEN
+    ALTER TABLE "mcp_idempotency" ADD CONSTRAINT "mcp_idempotency_grant_id_mcp_grant_id_fk" FOREIGN KEY ("grant_id") REFERENCES "public"."mcp_grant"("id") ON DELETE restrict ON UPDATE no action;
+  END IF;
+END; $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "mcp_idempotency_grant_tool_key_unique" ON "mcp_idempotency" USING btree ("grant_id","tool_name","idempotency_key");
+CREATE INDEX IF NOT EXISTS "mcp_idempotency_expires_idx" ON "mcp_idempotency" USING btree ("expires_at");
+
+ALTER TABLE "issue" ALTER COLUMN "creator_id" DROP NOT NULL;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.agent_identity'::regclass AND conname = 'agent_identity_owner_user_id_user_id_fk') THEN

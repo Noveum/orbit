@@ -31,6 +31,16 @@ type Loader = (
   limit: number,
 ) => Promise<BackfilledRow[]>;
 
+function agentLifecycleForBackfill(row: {
+  readonly deletedAt: Date | null;
+  readonly ownerDisabledAt: Date | null;
+  readonly adminDisabledAt: Date | null;
+}): 'active' | 'disabled' | 'deleted' {
+  if (row.deletedAt !== null) return 'deleted';
+  if (row.ownerDisabledAt !== null || row.adminDisabledAt !== null) return 'disabled';
+  return 'active';
+}
+
 const CATCHUP_ACTOR = { type: 'system', id: 'sync', name: 'Catch up' } as const;
 
 type AttachmentParent = {
@@ -210,6 +220,41 @@ async function teamsByProject(
 }
 
 const LOADERS: Record<SyncModel, Loader> = {
+  agent_identity: async (executor, principal, since, limit) =>
+    (
+      await executor
+        .select({
+          id: schema.agentIdentity.id,
+          organizationId: schema.agentIdentity.organizationId,
+          name: schema.agentIdentity.name,
+          avatar: schema.agentIdentity.avatar,
+          ownerDisabledAt: schema.agentIdentity.ownerDisabledAt,
+          adminDisabledAt: schema.agentIdentity.adminDisabledAt,
+          deletedAt: schema.agentIdentity.deletedAt,
+          syncId: schema.agentIdentity.syncId,
+        })
+        .from(schema.agentIdentity)
+        .where(
+          and(
+            eq(schema.agentIdentity.organizationId, principal.organizationId),
+            gt(schema.agentIdentity.syncId, since),
+          ),
+        )
+        .orderBy(asc(schema.agentIdentity.syncId))
+        .limit(limit)
+    ).map((row) => {
+      return {
+        modelId: row.id,
+        syncId: row.syncId,
+        scopes: [scopes.organization(row.organizationId)],
+        data: {
+          id: row.id,
+          name: row.name,
+          avatar: row.avatar,
+          lifecycle: agentLifecycleForBackfill(row),
+        },
+      };
+    }),
   organization: async (executor, principal, since, limit) =>
     (
       await executor
@@ -731,7 +776,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       scopes: [
         scopes.issue(row.issueId),
         scopes.team(teamId),
-        scopes.user(creatorId),
+        ...(creatorId === null ? [] : [scopes.user(creatorId)]),
         ...(assigneeId === null ? [] : [scopes.user(assigneeId)]),
       ],
       data: row,

@@ -63,6 +63,8 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
   let disposed = false;
   let resumed = false;
   let maxSeenSyncId = 0;
+  const seenEventIds = new Set<string>();
+  const appliedVersions = new Map<string, number>();
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   function setStatus(next: RealtimeStatus): void {
@@ -95,12 +97,28 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
     if (reconnected) options.onResume?.(maxSeenSyncId);
   }
 
+  function acceptAction(entry: SyncAction): boolean {
+    if (entry.eventId !== undefined && seenEventIds.has(entry.eventId)) return false;
+    const aggregate = `${entry.model}:${entry.modelId}`;
+    const applied = appliedVersions.get(aggregate) ?? -1;
+    if (entry.syncId < applied) return false;
+    appliedVersions.set(aggregate, entry.syncId);
+    if (entry.eventId !== undefined) {
+      seenEventIds.add(entry.eventId);
+      if (seenEventIds.size > 4096) {
+        const oldest = seenEventIds.values().next().value;
+        if (oldest !== undefined) seenEventIds.delete(oldest);
+      }
+    }
+    return true;
+  }
+
   function handleDelta(delivered: DeliveredSyncAction[]): void {
     const actions: SyncAction[] = [];
     for (const entry of delivered) {
       observe(entry.syncId);
       if ('unsupported' in entry) continue;
-      actions.push(entry);
+      if (acceptAction(entry)) actions.push(entry);
     }
     if (actions.length === 0) return;
     options.onDelta?.(actions);

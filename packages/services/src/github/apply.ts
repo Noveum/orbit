@@ -69,7 +69,7 @@ interface LinkedIssue {
   readonly stateId: string;
   readonly category: StateCategory;
   readonly assigneeId: string | null;
-  readonly creatorId: string;
+  readonly creatorId: string | null;
   readonly startedAt: Date | null;
   readonly subscriberIds: string[];
 }
@@ -1185,7 +1185,7 @@ function linkScopes(linked: LinkedIssue, audienceUserIds: readonly string[]): st
 }
 
 function audienceIds(linked: LinkedIssue, extra: string | null): string[] {
-  const ids = [linked.creatorId];
+  const ids = linked.creatorId === null ? [] : [linked.creatorId];
   if (linked.assigneeId !== null) ids.push(linked.assigneeId);
   if (extra !== null) ids.push(extra);
   return unique(ids.concat(linked.subscriberIds));

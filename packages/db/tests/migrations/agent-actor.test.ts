@@ -124,7 +124,47 @@ describe('agent actor migration', () => {
       await migrate(drizzle({ client: sql }), { migrationsFolder: legacyDirectory });
     });
     await seedLegacyData();
+    const beforeCounts = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ table_name: string; total: number }[]>`
+        select 'issue' as table_name, count(*)::integer as total from issue
+        union all select 'issue_activity', count(*)::integer from issue_activity
+        union all select 'audit_log', count(*)::integer from audit_log
+        union all select 'notification', count(*)::integer from notification
+        union all select 'mcp_grant', count(*)::integer from mcp_grant
+        union all select 'oauth_access_token', count(*)::integer from oauth_access_token
+        order by table_name
+      `,
+    );
     await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const afterCounts = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ table_name: string; total: number }[]>`
+        select 'issue' as table_name, count(*)::integer as total from issue
+        union all select 'issue_activity', count(*)::integer from issue_activity
+        union all select 'audit_log', count(*)::integer from audit_log
+        union all select 'notification', count(*)::integer from notification
+        union all select 'mcp_grant', count(*)::integer from mcp_grant
+        union all select 'oauth_access_token', count(*)::integer from oauth_access_token
+        order by table_name
+      `,
+    );
+    expect([...beforeCounts]).toEqual([
+      { table_name: 'audit_log', total: 1 },
+      { table_name: 'issue', total: 2 },
+      { table_name: 'issue_activity', total: 1 },
+      { table_name: 'mcp_grant', total: 1 },
+      { table_name: 'notification', total: 1 },
+      { table_name: 'oauth_access_token', total: 1 },
+    ]);
+    expect([...afterCounts]).toEqual([
+      { table_name: 'audit_log', total: 1 },
+      { table_name: 'issue', total: 2 },
+      { table_name: 'issue_activity', total: 1 },
+      { table_name: 'mcp_grant', total: 1 },
+      { table_name: 'notification', total: 1 },
+      { table_name: 'oauth_access_token', total: 0 },
+    ]);
   }, 30_000);
 
   afterAll(async () => {
@@ -216,6 +256,39 @@ describe('agent actor migration', () => {
   });
 
   it('installs issue actor checks, workspace bindings, and the active-grant uniqueness rule', async () => {
+    const legacyAvatars = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<
+        {
+          table_name: string;
+          actor_avatar: string | null;
+          principal_avatar: string | null;
+        }[]
+      >`
+        select 'issue_activity' as table_name, actor_avatar, principal_avatar
+        from issue_activity where id = 'legacy-activity'
+        union all
+        select 'audit_log', actor_avatar, principal_avatar
+        from audit_log where id = 'legacy-audit'
+        union all
+        select 'notification', actor_avatar, principal_avatar
+        from notification where id = 'legacy-notification'
+        order by table_name
+      `,
+    );
+    const [legacyCause] = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ cause: string | null; cause_actor_id: string | null }[]>`
+        select cause, cause_actor_id from issue_activity where id = 'legacy-activity'
+      `,
+    );
+    expect([...legacyAvatars]).toEqual([
+      { table_name: 'audit_log', actor_avatar: null, principal_avatar: null },
+      { table_name: 'issue_activity', actor_avatar: null, principal_avatar: null },
+      { table_name: 'notification', actor_avatar: null, principal_avatar: null },
+    ]);
+    expect(legacyCause).toEqual({ cause: null, cause_actor_id: null });
+
     const constraints = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ conname: string; definition: string }[]>`

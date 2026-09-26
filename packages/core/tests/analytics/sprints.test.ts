@@ -6,7 +6,11 @@ import {
   type SprintAnalytics,
   type SprintDetail,
 } from '../../src/analytics/sprints.ts';
-import { createProjectRow, insertIssue } from '../../src/analytics/test-fixtures.ts';
+import {
+  createProjectRow,
+  insertAgentIdentity,
+  insertIssue,
+} from '../../src/analytics/test-fixtures.ts';
 import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
@@ -73,6 +77,7 @@ async function membership(
     readonly removedAt?: string;
     readonly estimate?: number | null;
     readonly assigneeId?: string | null;
+    readonly assigneeAgentId?: string | null;
     readonly teamId?: string;
     readonly coverage?: 'captured' | 'observed';
     readonly entryKind?: 'added' | 'rollover' | 'bootstrap';
@@ -91,6 +96,7 @@ async function membership(
     removedAt: input.removedAt === undefined ? null : new Date(input.removedAt),
     estimateAtAdd: input.estimate,
     assigneeIdAtAdd: input.assigneeId,
+    assigneeAgentIdAtAdd: input.assigneeAgentId,
     entryKind: input.entryKind ?? 'added',
     coverage: input.coverage ?? 'captured',
   });
@@ -123,6 +129,43 @@ beforeEach(async () => {
 });
 
 describe('loadSprintAnalytics', () => {
+  it('P1-AN-1 includes agent work in sprint scope without adding a Human person row', async () => {
+    const cycleId = await cycle(91, '2026-08-01T00:00:00.000Z', '2026-08-11T00:00:00.000Z');
+    const human = await addMember(workspace, 'member', { name: 'Human owner' });
+    const agentId = await insertAgentIdentity(workspace, 'Research agent');
+    const agentIssueId = await insertIssue(workspace, {
+      number: 91,
+      state: 'Todo',
+      cycleId,
+      assigneeAgentId: agentId,
+      createdAt: new Date('2026-08-02T00:00:00.000Z'),
+    });
+    const humanIssueId = await insertIssue(workspace, {
+      number: 92,
+      state: 'Todo',
+      cycleId,
+      assigneeId: human.user.id,
+      createdAt: new Date('2026-08-02T00:00:00.000Z'),
+    });
+    await membership(cycleId, agentIssueId, {
+      addedAt: '2026-08-02T00:00:00.000Z',
+      assigneeAgentId: agentId,
+    });
+    await membership(cycleId, humanIssueId, {
+      addedAt: '2026-08-02T00:00:00.000Z',
+      assigneeId: human.user.id,
+    });
+
+    const result = await loadSprintAnalytics(workspace.admin, sprintQuery(cycleId), {
+      now: new Date('2026-08-05T12:00:00.000Z'),
+    });
+    const detail = currentOf(result);
+    const humanRow = detail.people.find((person) => person.personId === human.user.id);
+    expect(detail.summary.currentScope).toBe(2);
+    expect(detail.people.some((person) => person.personId === `agent:${agentId}`)).toBe(false);
+    expect(humanRow?.summary.currentScope).toBe(1);
+  });
+
   it('returns an empty state when the workspace has no sprint', async () => {
     const result = await loadSprintAnalytics(
       workspace.admin,

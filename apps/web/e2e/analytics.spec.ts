@@ -62,7 +62,7 @@ test('analytics is useful by default and preserves planning choices on reload', 
   await expect(page.getByText('My work')).toBeVisible();
   await page.reload();
   await expect(page.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByLabel('Measure')).toContainText('Points');
+  await expect(page.getByRole('combobox', { name: 'Measure' })).toContainText('Points');
 
   await context.close();
 });
@@ -163,8 +163,8 @@ test('a complete analytics view can be saved, pinned, and restored', async ({ br
     'aria-selected',
     'true',
   );
-  await expect(page.getByLabel('Measure')).toContainText('Points');
-  await expect(page.getByLabel(/Reporting range/)).toContainText('Last 90 days');
+  await expect(page.getByRole('combobox', { name: 'Measure' })).toContainText('Points');
+  await expect(page.getByRole('button', { name: /Reporting range/ })).toContainText('Last 90 days');
 
   await context.close();
 });

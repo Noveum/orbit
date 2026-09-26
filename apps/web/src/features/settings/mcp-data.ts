@@ -5,6 +5,7 @@ export async function loadMcpConnections(userId: string): Promise<readonly McpCo
   const grants = await listMcpGrants(userId);
   return grants.map((grant) => ({
     id: grant.id,
+    agentIdentityId: grant.agentIdentityId,
     clientName: grant.clientName,
     organizationName: grant.organizationName,
     lastUsedAt: grant.lastUsedAt === null ? null : grant.lastUsedAt.toISOString(),
