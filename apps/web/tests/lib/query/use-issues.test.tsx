@@ -270,6 +270,47 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     );
   });
 
+  it('rolls back the list of a failed update even when a reconnect wiped its hidden detail', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH' ? pending.promise : Promise.reject(new Error('still offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const listKey = queryKeys.issues(TEAM);
+    const detailKey = queryKeys.issue('ENG-1');
+    client.setQueryData(listKey, issuePages([issue()]));
+    client.setQueryData(detailKey, detailFor(issue(), []));
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    let result: Promise<'success' | 'error'> | undefined;
+    await act(async () => {
+      result = update.result.current
+        .mutateAsync({ issue: issue(), patch: { title: 'Optimistic title' } })
+        .then(
+          () => 'success' as const,
+          () => 'error' as const,
+        );
+      await Promise.resolve();
+    });
+    if (result === undefined) throw new Error('missing update promise');
+    await waitFor(() => expect(cachedIssue(client)?.title).toBe('Optimistic title'));
+    act(() => recordIssueCacheReset(client, [listKey]));
+    await client.resetQueries({ queryKey: detailKey, exact: true });
+
+    await act(async () => {
+      pending.resolve(
+        Response.json(
+          { error: { code: 'forbidden', message: 'The update failed.' } },
+          { status: 403 },
+        ),
+      );
+      expect(await result).toBe('error');
+    });
+
+    expect(cachedIssue(client)?.title).toBe('Ship the board');
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+  });
+
   it('does not roll back an update after its committed echo arrives', async () => {
     const pending = deferred<Response>();
     globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>

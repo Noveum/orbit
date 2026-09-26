@@ -718,17 +718,21 @@ export function useUpdateIssue() {
       const detailWasReset =
         context?.previousDetail !== undefined &&
         issueQueryWasReset(client, context.detailResetMarks, queryKeys.issue(context.identifier));
-      const canRestore =
+      const serverMovedOn =
+        currentDetail !== undefined &&
+        currentDetail !== context?.optimisticDetail &&
+        currentDetail.issue.syncId > input.issue.syncId;
+      const canRestoreList =
         context !== undefined &&
-        !detailWasReset &&
-        issueRevisionGeneration(client, input.issue.id) === context.issueRevision &&
-        currentDetail === context.optimisticDetail;
-      if (canRestore) {
-        placeIssue(client, input.issue);
-        if (context.previousDetail !== undefined) {
-          client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
-        }
-      } else {
+        !serverMovedOn &&
+        issueRevisionGeneration(client, input.issue.id) === context.issueRevision;
+      const canRestoreDetail =
+        canRestoreList && !detailWasReset && currentDetail === context?.optimisticDetail;
+      if (canRestoreList) placeIssue(client, input.issue);
+      if (canRestoreDetail && context?.previousDetail !== undefined) {
+        client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+      }
+      if (!canRestoreList || (context?.previousDetail !== undefined && !canRestoreDetail)) {
         invalidateIssueCaches(client).catch(() => undefined);
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
