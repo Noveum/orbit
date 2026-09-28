@@ -44,10 +44,10 @@ export function IntegrationsPanel({
   mcpConnections,
 }: IntegrationsPanelProps) {
   const router = useRouter();
-  const activeProvider = integrationProvider(provider, canManage, settings.slack !== undefined);
+  const activeProvider = integrationProvider(provider, canManage);
   const providers = [
     ...(canManage ? [{ id: 'github', label: 'GitHub' }] : []),
-    ...(canManage && settings.slack !== undefined ? [{ id: 'slack', label: 'Slack' }] : []),
+    ...(canManage ? [{ id: 'slack', label: 'Slack' }] : []),
     { id: 'mcp', label: 'MCP server' },
   ];
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +103,21 @@ export function IntegrationsPanel({
               status={<ConnectionBadge connected={settings.github.connected} />}
             >
               <GithubPanel settings={settings.github} canManage={canManage} onError={setError} />
+            </IntegrationCard>
+          ) : null}
+          {activeProvider === 'slack' && settings.slack === undefined ? (
+            <IntegrationCard
+              title="Slack"
+              description="Send updates to Slack channels, receive personal notifications and preview Orbit links."
+              status={<Badge tone="outline">Disabled on this server</Badge>}
+            >
+              <p className="text-muted text-xs">
+                The server operator needs to configure and enable the Slack app. A workspace admin
+                can then connect a Slack workspace and choose its channels.
+              </p>
+              <Link href="/settings/deployment#slack" className="text-accent text-xs underline">
+                Set up Slack
+              </Link>
             </IntegrationCard>
           ) : null}
           {activeProvider !== 'slack' || settings.slack === undefined ? null : (
@@ -173,12 +188,14 @@ function ConnectCta({
   href,
   label,
   pendingHint,
+  variant = 'primary',
 }: {
   canManage: boolean;
   enabled: boolean;
   href: string;
   label: string;
   pendingHint: string;
+  variant?: 'primary' | 'secondary';
 }) {
   if (!canManage) return null;
   if (!enabled) {
@@ -188,7 +205,7 @@ function ConnectCta({
       </p>
     );
   }
-  return <ConnectLink href={href} label={label} variant="primary" />;
+  return <ConnectLink href={href} label={label} variant={variant} />;
 }
 
 function LinkedChannelRow({
@@ -360,10 +377,13 @@ function SlackSection({
                   {syncing ? 'Syncing Slack members' : 'Sync Slack members'}
                 </Button>
               ) : null}
-              <ConnectLink
+              <ConnectCta
+                canManage={canManage}
+                enabled={settings.slackConnectEnabled}
                 href="/api/integrations/slack/start"
                 label="Reconnect Slack"
                 variant="secondary"
+                pendingHint="Ask the server operator to finish configuring the Slack app before reconnecting."
               />
             </div>
           ) : null}
@@ -382,9 +402,12 @@ function SlackSection({
           enabled={settings.slackConnectEnabled}
           href="/api/integrations/slack/start"
           label="Add to Slack"
-          pendingHint="Ask a workspace admin to finish configuring the Slack app before connecting."
+          pendingHint="Ask the server operator to finish configuring the Slack app before connecting."
         />
       )}
+      <Link href="/settings/deployment#slack" className="text-accent text-xs underline">
+        Slack setup and verification
+      </Link>
     </IntegrationCard>
   );
 }

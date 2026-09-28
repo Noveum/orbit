@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { OnboardingFlow } from '@/features/onboarding/onboarding-flow.tsx';
 import type { OnboardingStatusView, PendingInviteView } from '@/features/onboarding/types.ts';
 import { requireSession } from '@/lib/auth/session.ts';
+import { mcpServerUrl } from '@/lib/env.ts';
 import { safeNextPath } from '@/lib/next-path.ts';
 
 export const metadata: Metadata = { title: 'Get started' };
@@ -47,6 +48,7 @@ export default async function OnboardingPage({
       status={view}
       invites={invites}
       landingPath={landingPath}
+      mcpUrl={mcpServerUrl()}
       emailEnabled={emailEnabled}
       emailVerificationRequired={!session.user.emailVerified}
     />

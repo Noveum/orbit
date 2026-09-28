@@ -3,7 +3,7 @@
 import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
 import { CircleDot } from 'lucide-react';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -40,7 +40,7 @@ export function assignedTo(
   return ordering === 'manual' ? sortIssues(mine) : mine;
 }
 
-export function MyIssuesView() {
+export function MyIssuesView({ banner = null }: { readonly banner?: ReactNode } = {}) {
   const workspace = useWorkspace();
   const { layout, setLayout } = useLayoutPreference('my_issues', '', 'board');
   const { config, setConfig } = useViewConfig(null, layout, 'my_issues');
@@ -117,6 +117,8 @@ export function MyIssuesView() {
           />
         </div>
       </div>
+
+      {banner}
 
       <MyIssuesBody
         boardVisibilityKey={boardVisibility.key}
