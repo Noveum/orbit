@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { fireEvent, render, screen, waitFor } from '@/test/render.tsx';
 
 const passkey = mock(async () => ({ error: { message: 'The passkey prompt was dismissed.' } }));
@@ -42,16 +42,44 @@ function answerWith(replies: readonly Record<string, unknown>[]): string[] {
 }
 
 const originalFetch = globalThis.fetch;
-const assign = mock((_url: string) => undefined);
-Object.defineProperty(window, 'location', {
-  value: { ...window.location, assign },
-  writable: true,
+let currentLocation: ReturnType<typeof mockLocationAssign> | undefined;
+
+function mockLocationAssign() {
+  const originalLocation = window.location;
+  const originalUrl = originalLocation.href;
+  const assign = mock((_url: string) => undefined);
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { ...originalLocation, assign },
+    writable: true,
+  });
+  return {
+    assign,
+    restore: () => {
+      window.happyDOM.setURL(originalUrl);
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: originalLocation,
+        writable: true,
+      });
+    },
+  };
+}
+
+function currentLocationMock() {
+  if (currentLocation === undefined) throw new Error('The location mock is not initialized.');
+  return currentLocation;
+}
+
+beforeEach(() => {
+  currentLocation = mockLocationAssign();
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   passkey.mockClear();
-  assign.mockClear();
+  currentLocation?.restore();
+  currentLocation = undefined;
 });
 
 describe('when approving cannot be completed', () => {
@@ -119,8 +147,8 @@ describe('when approving cannot be completed', () => {
     const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?error=access_denied' }]);
     fireEvent.click(screen.getByRole('button', { name: /deny/i }));
 
-    await waitFor(() => expect(assign).toHaveBeenCalled());
-    expect(assign.mock.calls[0]?.[0]).toContain('error=access_denied');
+    await waitFor(() => expect(currentLocationMock().assign).toHaveBeenCalled());
+    expect(currentLocationMock().assign.mock.calls[0]?.[0]).toContain('error=access_denied');
     expect(sent[0]).toContain('"decision":"deny"');
   });
 
@@ -135,7 +163,7 @@ describe('when approving cannot be completed', () => {
     fireEvent.click(deny);
     await waitFor(() => expect(deny).toBeDisabled());
     await waitFor(() => expect(deny).not.toBeDisabled());
-    expect(assign).not.toHaveBeenCalled();
+    expect(currentLocationMock().assign).not.toHaveBeenCalled();
     expect(screen.queryByTestId('consent-blocked')).toBeNull();
   });
 
@@ -147,7 +175,9 @@ describe('when approving cannot be completed', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /approve/i }));
     await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith('https://northwind.example/cb?code=abc&state=st'),
+      expect(currentLocationMock().assign).toHaveBeenCalledWith(
+        'https://northwind.example/cb?code=abc&state=st',
+      ),
     );
     expect(sent).toHaveLength(1);
   });
