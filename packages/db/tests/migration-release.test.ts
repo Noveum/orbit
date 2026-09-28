@@ -68,6 +68,17 @@ async function migrationPrefixDirectory(throughTag: string): Promise<string> {
   return directory;
 }
 
+async function withOfficialUpstreamMigrations<T>(
+  work: (directory: string) => Promise<T>,
+): Promise<T> {
+  const directory = await migrationPrefixDirectory('0029_material_psynapse');
+  try {
+    return await work(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 const migrationJournalEntrySchema = z.object({
   idx: z.number().int().nonnegative(),
   version: z.string().min(1),
@@ -145,7 +156,7 @@ describe('database release', () => {
       await run(
         urlFor(SCRATCH),
         (sql) =>
-          sql`select id from drizzle.__drizzle_migration_state where migration_id = ${AGENT_SCHEMA_MIGRATION}`,
+          sql`select migration_id from drizzle.__drizzle_migration_state where migration_id = ${AGENT_SCHEMA_MIGRATION}`,
       ),
     ).toHaveLength(1);
     await run(urlFor(SCRATCH), async (sql) => {
@@ -358,8 +369,10 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
-    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const { result, migrations } = await withOfficialUpstreamMigrations(async (directory) => ({
+      result: await releaseDatabase(urlFor(SCRATCH), directory),
+      migrations: readMigrationFiles({ migrationsFolder: directory }),
+    }));
     const ledger = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ hash: string; created_at: string }[]>`
@@ -560,7 +573,9 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const result = await withOfficialUpstreamMigrations((directory) =>
+      releaseDatabase(urlFor(SCRATCH), directory),
+    );
     const triggers = await run(
       urlFor(SCRATCH),
       (sql) => sql<
@@ -643,7 +658,9 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const result = await withOfficialUpstreamMigrations((directory) =>
+      releaseDatabase(urlFor(SCRATCH), directory),
+    );
     const [attachment] = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ upload_expires_at: string | null }[]>`
@@ -718,7 +735,9 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const result = await withOfficialUpstreamMigrations((directory) =>
+      releaseDatabase(urlFor(SCRATCH), directory),
+    );
     const jobs = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ head_sha: string; status: string; trigger_kind: string; attempts: number }[]>`
@@ -782,11 +801,13 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
-      'historical cycle numbering backfill',
-    );
-    await applyCatchup(urlFor(SCRATCH), 'cycle-numbering-baseline.sql');
-    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('baselined');
+    await withOfficialUpstreamMigrations(async (directory) => {
+      await expect(releaseDatabase(urlFor(SCRATCH), directory)).rejects.toThrow(
+        'historical cycle numbering backfill',
+      );
+      await applyCatchup(urlFor(SCRATCH), 'cycle-numbering-baseline.sql');
+      expect((await releaseDatabase(urlFor(SCRATCH), directory)).mode).toBe('baselined');
+    });
     const cycles = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ id: string; number: number }[]>`
@@ -919,7 +940,7 @@ describe('database release', () => {
     expect(ledger?.count).toBe(0);
   }, 60_000);
 
-  it('does not baseline a catalog-complete prefix when Agent backfills are pending', async () => {
+  it('refuses a catalog-complete schema with a missing Agent migration marker', async () => {
     await resetScratch();
     await migrateScratch();
     await run(
@@ -930,9 +951,7 @@ describe('database release', () => {
       `,
     );
 
-    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
-      `Legacy baseline has no reconciliation for data migration ${AGENT_SCHEMA_MIGRATION}.`,
-    );
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow('issue_outbox');
     const [ledger] = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ count: number }[]>`

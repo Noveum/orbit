@@ -612,6 +612,7 @@ export async function releaseDatabase(
     if (pending > 0) {
       const pendingMigrations = migrations.slice(rows.length);
       if (
+        pendingMigrations.some((migration) => migration.folderMillis === AGENT_SCHEMA_MIGRATION) ||
         needsCatchup(beforeDrift) ||
         pendingMigrationsProvideChecks(pendingMigrations, beforeDrift) ||
         pendingMigrationsDropLiveTables(pendingMigrations, before)

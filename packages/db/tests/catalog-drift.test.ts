@@ -204,14 +204,27 @@ describe('catalog drift', () => {
     });
 
     const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
-    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toContain(
-      'issue_creator_actor_check',
-    );
-    expect(drift.missingCheckConstraints).toContainEqual({
-      table: 'issue',
-      check: 'issue_assignee_actor_check',
-    });
-    expect(isBehind(drift)).toBe(true);
+    try {
+      expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toContain(
+        'issue_creator_actor_check',
+      );
+      expect(drift.missingCheckConstraints).toContainEqual({
+        table: 'issue',
+        check: 'issue_assignee_actor_check',
+      });
+      expect(isBehind(drift)).toBe(true);
+    } finally {
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`alter table issue drop constraint issue_creator_actor_check`;
+        await sql`alter table issue add constraint issue_creator_actor_check
+            check (
+              (creator_user_id is not null and creator_agent_id is null)
+              or (creator_user_id is null and creator_agent_id is not null)
+            )`;
+        await sql`alter table issue add constraint issue_assignee_actor_check
+            check (assignee_user_id is null or assignee_agent_id is null)`;
+      });
+    }
   });
 
   it('accepts a check constraint renamed but not changed', async () => {
