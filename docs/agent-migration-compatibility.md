@@ -41,9 +41,14 @@ either ledger table by hand. Final constraints, Grant cleanup, lifecycle
 functions, triggers, and the migration ledger row commit together.
 
 The repeatable `agent-actors.sql` catch-up runs inside one transaction and is
-safe to rerun. Compatible foreign keys and lifecycle triggers remain in place.
-Legacy credentials are intentionally invalidated; their Grant and Consent
-history is retained. Feature gates remain off unless explicitly enabled.
+safe to rerun against the current Agent schema. It repairs Agent data and
+lifecycle artifacts after a current schema has been materialized. It does not
+apply missing upstream migrations or establish migration history, so it cannot
+turn an old 0016 schema or an untracked development catalog into a supported
+release starting point. Use `bun run db:release` from an exact upstream ledger
+prefix for upgrades. Legacy credentials are intentionally invalidated; their
+Grant and Consent history is retained. Feature gates remain off unless
+explicitly enabled.
 
 ## Verification
 

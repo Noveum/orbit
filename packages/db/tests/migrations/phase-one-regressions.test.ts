@@ -142,7 +142,7 @@ describe('Phase 1 database regressions', () => {
     ).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('F3 upgrades a no-ledger 0016 database, reconciles data, and is repeatable', async () => {
+  it('refuses an untracked 0016 database after the Agent catchup', async () => {
     await reset(true);
     await seed(true);
     await deletedHistory();
@@ -154,28 +154,15 @@ describe('Phase 1 database regressions', () => {
     const first = await fingerprint();
     await applyCatchup(url, 'agent-actors.sql');
     expect(await fingerprint()).toBe(first);
-    expect(isBehind(catalogDriftBetween(expectedCatalog(schema), await liveCatalog(url)))).toBe(
-      false,
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(url));
+    expect(isBehind(drift)).toBe(true);
+    await expect(releaseDatabase(url, migrations)).rejects.toThrow(
+      'This legacy database is not compatible with the current schema.',
     );
-    const released = await releaseDatabase(url, migrations);
-    expect(released.mode).toBe('baselined');
     expect(await fingerprint()).toBe(first);
-    const [row] = await run(
-      (sql) => sql`select creator_user_id, assignee_user_id, owner_user_id from issue`,
-    );
-    expect(row).toEqual({
-      creator_user_id: 'owner',
-      assignee_user_id: 'owner',
-      owner_user_id: 'owner',
-    });
-    const [grant] = await run(
-      (sql) => sql`select revoked_at is not null as revoked, revoke_reason from mcp_grant`,
-    );
-    expect(grant).toEqual({ revoked: true, revoke_reason: 'agent_identity_required' });
-    expect(await run((sql) => sql`select id from oauth_access_token`)).toHaveLength(0);
   }, 30_000);
 
-  it('F3 reconciles 0021 token revocation when baselining an already additive schema', async () => {
+  it('refuses to baseline an unrecorded Agent migration after an additive schema change', async () => {
     await reset();
     await seed();
     await run(async (sql) => {
@@ -183,12 +170,14 @@ describe('Phase 1 database regressions', () => {
       await sql`insert into oauth_access_token (id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, client_id, user_id, scopes) values ('token', 'access', 'refresh', now(), now(), 'client', 'owner', 'orbit.read')`;
       await sql`drop schema drizzle cascade`;
     });
-    expect((await releaseDatabase(url, migrations)).mode).toBe('baselined');
-    expect(await run((sql) => sql`select id from oauth_access_token`)).toHaveLength(0);
+    await expect(releaseDatabase(url, migrations)).rejects.toThrow(
+      'Legacy baseline has no reconciliation for data migration 1790578349503.',
+    );
+    expect(await run((sql) => sql`select id from oauth_access_token`)).toHaveLength(1);
   });
 
   for (const ledger of ['missing', 'prefix']) {
-    it(`F3/F5 reconciles deleted Human history before baselining a ${ledger} ledger`, async () => {
+    it(`refuses a ${ledger} ledger when Agent migration history is missing`, async () => {
       await reset();
       await seed();
       await deletedHistory();
@@ -196,36 +185,19 @@ describe('Phase 1 database regressions', () => {
         if (ledger === 'missing') {
           await sql`drop schema drizzle cascade`;
         } else {
-          const legacy = readMigrationFiles({ migrationsFolder: migrations }).at(16);
+          const legacy = readMigrationFiles({ migrationsFolder: migrations }).at(-2);
           if (legacy === undefined) throw new Error('Missing legacy migration');
           await sql`delete from drizzle.__drizzle_migrations where created_at > ${legacy.folderMillis}`;
         }
       });
-      expect((await releaseDatabase(url, migrations)).mode).toBe('baselined');
-      for (const table of ['issue_activity', 'audit_log', 'notification']) {
-        const [row] = await run((sql) =>
-          sql.unsafe<
-            {
-              actor_id: string;
-              actor_name: string;
-              principal_user_id: string | null;
-              principal_name: string | null;
-              grant_id: string | null;
-            }[]
-          >(
-            `select actor_id, actor_name, principal_user_id, principal_name, grant_id from "${table}"`,
-          ),
-        );
-        expect(row).toEqual({
-          actor_id: 'deleted-user',
-          actor_name: 'Historical Name',
-          principal_user_id: null,
-          principal_name: 'Historical Name',
-          grant_id: null,
-        });
-      }
       const first = await fingerprint();
-      expect((await releaseDatabase(url, migrations)).mode).toBe('current');
+      if (ledger === 'missing') {
+        await expect(releaseDatabase(url, migrations)).rejects.toThrow(
+          'Legacy baseline has no reconciliation for data migration 1790578349503.',
+        );
+      } else {
+        await expect(releaseDatabase(url, migrations)).rejects.toThrow('issue_outbox');
+      }
       expect(await fingerprint()).toBe(first);
     });
   }

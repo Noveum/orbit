@@ -58,15 +58,17 @@ For migration verification, make `DATABASE_URL` target the same database as `DIR
    and the captured starting ledger. An already-current database reports zero
    pending migrations. Do not reuse migration counts from another candidate.
 
-5. Apply a catch-up only after identifying why the target needs it. The Agent compatibility catch-up is:
+5. Apply a catch-up only when its documented starting state matches the target. The Agent compatibility catch-up is:
 
    ```bash
    bun run db:catchup -- packages/db/catchup/agent-actors.sql
    ```
 
-   This script is repeatable, but it is not a substitute for the ordered release
-   or a reason to ignore an unknown catalog. After any required catch-up, rerun
-   `bun run db:release` before proceeding.
+   This script is repeatable against the current Agent schema. It does not apply
+   missing upstream migrations or establish a migration ledger. For a supported
+   upgrade, run the ordered release directly from an exact upstream ledger
+   prefix. Do not use this catch-up to repair an unknown catalog or old #215
+   development database.
 
 6. Check the runtime URL against the committed schema:
 

@@ -8,7 +8,14 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../../scripts/test-env.ts';
 import { applyCatchup } from '../../src/apply-catchup.ts';
+import {
+  catalogDriftBetween,
+  expectedCatalog,
+  isBehind,
+  liveCatalog,
+} from '../../src/check-drift.ts';
 import { releaseDatabase } from '../../src/migration-release.ts';
+import * as schema from '../../src/schema/index.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_agent_actor_migrations', currentLane());
@@ -585,6 +592,15 @@ describe('agent actor migration', () => {
       { principal_user_id: null, principal_name: 'Former user' },
     ]);
   }, 30_000);
+
+  it('keeps the released schema drift free after repeated Agent catchup', async () => {
+    await applyCatchup(urlFor(SCRATCH), 'agent-actors.sql');
+    await applyCatchup(urlFor(SCRATCH), 'agent-actors.sql');
+
+    expect(
+      isBehind(catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)))),
+    ).toBe(false);
+  });
 
   it('rejects invalid actor combinations and duplicate active agent grants in PostgreSQL', async () => {
     await run(urlFor(SCRATCH), async (sql) => {

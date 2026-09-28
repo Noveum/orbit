@@ -54,8 +54,10 @@ historical data migration. Attachment expiry values are restored to the exact
 historical result derived from the original creation timestamp, while cycle numbering must already match the
 historical deterministic backfill. A data migration without an explicit legacy
 reconciliation makes the release fail closed. A partial catalog or an unsafe data
-invariant is refused and must be brought forward with the applicable scripts in
-`packages/db/catchup` before retrying.
+invariant is refused. Apply a catch-up only when its documented starting state
+matches the target, then rerun the release and drift checks. The Agent
+compatibility catch-up repairs a current Agent schema; it does not apply missing
+upstream migrations or create migration history.
 
 The same reconciliation applies when the ledger is a valid prefix but the live
 catalog already contains the complete pending schema. This supports upgrades
