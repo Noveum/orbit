@@ -138,7 +138,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         filtered={model.filtered}
         empty={model.shownCount === 0}
         loading={issues.isPending}
-        failed={issues.isError}
+        failed={issues.isLoadingError}
         onRetry={() => {
           issues.refetch().catch(() => undefined);
         }}

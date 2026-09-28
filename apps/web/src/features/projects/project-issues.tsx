@@ -129,7 +129,7 @@ export function ProjectIssues({ projectId, projectName }: ProjectIssuesProps) {
         columnSource={columnSource}
         canDrag={canDrag}
         loading={issues.isPending}
-        failed={issues.isError}
+        failed={issues.isLoadingError}
         onRetry={() => {
           issues.refetch().catch(() => undefined);
         }}
