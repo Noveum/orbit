@@ -144,11 +144,11 @@ describe('a grouping with more columns than a board can carry', () => {
   it('answers with the largest columns and says it left some out', async () => {
     const many = BOARD_GROUP_LIMIT + 3;
     for (let index = 0; index < many; index += 1) {
-      const { issue } = await createIssue(workspace.admin, {
+      await createIssue(workspace.admin, {
         teamId,
         title: `Estimate ${index}`,
+        estimate: index + 1,
       });
-      await updateIssue(workspace.admin, issue.id, { estimate: index + 1 });
     }
 
     const page = await listBoardGroups(workspace.admin, { teamId, groupBy: 'estimate' });
