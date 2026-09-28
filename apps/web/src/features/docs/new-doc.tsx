@@ -7,9 +7,10 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { messageOf } from '@/lib/query/fetcher.ts';
 import { useCreateDoc } from '@/lib/query/use-docs.ts';
 import { HTML_PAGE_STARTER, templateById } from './templates.ts';
+import { useDocPreferences } from './use-doc-preferences.ts';
 
 export const NEW_DOC_TITLE = 'Untitled doc';
-export const NEW_DOC_CONTENT = '# Untitled doc\n\nStart writing.\n';
+export const NEW_DOC_CONTENT = '';
 
 export interface NewDocProps {
   readonly collectionId: string | null;
@@ -20,6 +21,7 @@ export interface NewDocProps {
 
 export function NewDoc({ collectionId, projectId, templateId = null, kind = null }: NewDocProps) {
   const router = useRouter();
+  const { mode, setMode } = useDocPreferences();
   const create = useCreateDoc();
   const { toast } = useToast();
   const started = useRef(false);
@@ -28,6 +30,7 @@ export function NewDoc({ collectionId, projectId, templateId = null, kind = null
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    if (mode === 'preview') setMode('rich');
     const template =
       templateId === null && kind === 'html'
         ? {
@@ -52,7 +55,7 @@ export function NewDoc({ collectionId, projectId, templateId = null, kind = null
         });
         router.replace('/docs');
       });
-  }, [run, router, toast, collectionId, projectId, templateId, kind]);
+  }, [run, router, toast, collectionId, projectId, templateId, kind, mode, setMode]);
 
   return (
     <div className="mx-auto flex w-full max-w-[45rem] flex-col gap-4 px-6 py-10">

@@ -17,7 +17,7 @@ beforeEach(async () => {
 });
 
 async function newDoc(title: string, input: Record<string, unknown> = {}) {
-  const { doc } = await createDoc(workspace.admin, { title, ...input });
+  const { doc } = await createDoc(workspace.admin, { visibility: 'workspace', title, ...input });
   return doc;
 }
 
@@ -86,7 +86,7 @@ describe('deleteDoc', () => {
 
   it('lets an admin delete a doc somebody else wrote', async () => {
     const author = await addMember(workspace, 'member', { name: 'Ada Author' });
-    const { doc } = await createDoc(author.principal, { title: 'Theirs' });
+    const { doc } = await createDoc(author.principal, { visibility: 'workspace', title: 'Theirs' });
 
     await expect(deleteDoc(workspace.admin, doc.id)).resolves.toBeDefined();
   });
@@ -94,7 +94,7 @@ describe('deleteDoc', () => {
   it('refuses a member who did not write the doc', async () => {
     const author = await addMember(workspace, 'member', { name: 'Ada Author' });
     const other = await addMember(workspace, 'member', { name: 'Ben Bystander' });
-    const { doc } = await createDoc(author.principal, { title: 'Theirs' });
+    const { doc } = await createDoc(author.principal, { visibility: 'workspace', title: 'Theirs' });
 
     await expect(deleteDoc(other.principal, doc.id)).rejects.toMatchObject({ code: 'forbidden' });
   });

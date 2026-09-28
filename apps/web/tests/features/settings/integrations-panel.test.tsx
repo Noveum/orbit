@@ -101,11 +101,13 @@ function renderPanel(
   settings: IntegrationSettings,
   canManage: boolean,
   mcpConnections: readonly McpConnection[] = [],
+  provider: 'github' | 'slack' | 'mcp' = settings.slack === undefined ? 'github' : 'slack',
 ) {
   return render(
     <Providers>
       <IntegrationsPanel
         settings={settings}
+        provider={provider}
         canManage={canManage}
         mcpUrl={MCP_URL}
         mcpConnections={mcpConnections}
@@ -146,10 +148,66 @@ afterEach(() => {
 });
 
 describe('IntegrationsPanel', () => {
+  it('keeps existing Slack channels manageable without offering an unconfigured reconnect', () => {
+    const slack = CONNECTED_WITH_SLACK_TOKEN.slack;
+    if (slack === undefined) throw new Error('Missing Slack fixture.');
+    renderPanel(
+      { ...CONNECTED_WITH_SLACK_TOKEN, slack: { ...slack, slackConnectEnabled: false } },
+      true,
+    );
+    expect(screen.queryByRole('link', { name: 'Reconnect Slack' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Slack setup and verification' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#slack',
+    );
+    expect(
+      screen.getByText(/server operator to finish configuring the Slack app/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect a channel' })).toBeInTheDocument();
+    expect(lastRequest).toBeNull();
+  });
+
+  it('offers provider links and shows only the selected integration', () => {
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, true, [], 'github');
+    const github = screen.getByRole('link', { name: 'GitHub' });
+    expect(github).toHaveAttribute('aria-current', 'page');
+    expect(github).toHaveAttribute('href', '/settings/integrations?provider=github');
+    expect(screen.getByRole('link', { name: 'Slack' })).toHaveAttribute(
+      'href',
+      '/settings/integrations?provider=slack',
+    );
+    expect(screen.getByRole('link', { name: 'MCP server' })).toHaveAttribute(
+      'href',
+      '/settings/integrations?provider=mcp',
+    );
+    expect(screen.getByRole('heading', { name: 'GitHub' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Slack' })).toBeNull();
+    expect(screen.queryByTestId('mcp-url')).toBeNull();
+  });
+
+  it('opens Slack without rendering the repository list or MCP setup', () => {
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, true, [], 'slack');
+    expect(screen.getByRole('link', { name: 'Slack' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Slack' })).toBeInTheDocument();
+    expect(screen.queryByText('Noveum/web')).toBeNull();
+    expect(screen.queryByTestId('mcp-url')).toBeNull();
+  });
+
+  it('keeps restricted viewers on their own MCP connections', () => {
+    renderPanel(CONNECTED_WITH_SLACK_TOKEN, false, [], 'slack');
+    expect(screen.queryByRole('link', { name: 'GitHub' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slack' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'MCP server' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByTestId('mcp-url')).toBeInTheDocument();
+  });
+
   it('renders Slack when the server includes Slack settings', () => {
     renderPanel(CONNECTED_WITH_SLACK, true);
 
-    expect(screen.getByText('Slack')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Slack' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Add to Slack' })).toHaveAttribute(
       'href',
       '/api/integrations/slack/start',
@@ -157,11 +215,19 @@ describe('IntegrationsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Sync Slack members' })).toBeNull();
   });
 
-  it('does not render Slack when the server withholds Slack settings', () => {
-    renderPanel(CONNECTED, true);
+  it('keeps Slack discoverable with setup guidance while its runtime is disabled', () => {
+    renderPanel(CONNECTED, true, [], 'slack');
 
-    expect(screen.queryByText(/slack/i)).toBeNull();
-    expect(document.querySelector('a[href*="slack"]')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Slack' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { name: 'Slack' })).toBeInTheDocument();
+    expect(screen.getByText('Disabled on this server')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set up Slack' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#slack',
+    );
+    expect(screen.queryByRole('link', { name: 'Add to Slack' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Connect a channel' })).toBeNull();
+    expect(lastRequest).toBeNull();
   });
 
   it('connects a Slack channel with its id and Orbit team only', async () => {
@@ -205,7 +271,9 @@ describe('IntegrationsPanel', () => {
       'Slack member sync completed: 2 of 2 matched.',
     );
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(replace).toHaveBeenCalledWith('/settings/integrations', { scroll: false });
+    expect(replace).toHaveBeenCalledWith('/settings/integrations?provider=slack', {
+      scroll: false,
+    });
   });
 
   it('marks the member sync control aria-disabled while Slack is still responding', async () => {
@@ -295,7 +363,7 @@ describe('IntegrationsPanel', () => {
       configurable: true,
       value: { writeText },
     });
-    renderPanel(CONNECTED, true);
+    renderPanel(CONNECTED, true, [], 'mcp');
 
     expect(screen.getByTestId('mcp-url')).toHaveTextContent(MCP_URL);
     await user.click(screen.getByRole('button', { name: 'Copy MCP server URL' }));
@@ -323,7 +391,7 @@ describe('IntegrationsPanel', () => {
   });
 
   it('offers a one-click Claude Code command and drops the admin API key copy', () => {
-    renderPanel(CONNECTED, true);
+    renderPanel(CONNECTED, true, [], 'mcp');
     expect(
       screen.getByRole('button', { name: 'Copy the Claude Code command' }),
     ).toBeInTheDocument();
@@ -333,14 +401,19 @@ describe('IntegrationsPanel', () => {
 
   it('lists connected clients and disconnects one through the mcp endpoint', async () => {
     const user = userEvent.setup();
-    renderPanel(CONNECTED, true, [
-      {
-        id: 'grant-1',
-        clientName: 'Claude Desktop',
-        organizationName: 'Nova',
-        lastUsedAt: null,
-      },
-    ]);
+    renderPanel(
+      CONNECTED,
+      true,
+      [
+        {
+          id: 'grant-1',
+          clientName: 'Claude Desktop',
+          organizationName: 'Nova',
+          lastUsedAt: null,
+        },
+      ],
+      'mcp',
+    );
 
     expect(screen.getByText('Claude Desktop')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Disconnect Claude Desktop' }));

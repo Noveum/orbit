@@ -24,7 +24,7 @@ each role can do everything the one below it can.
 | --- | --- |
 | **Guest** | Read issues, projects and docs. Comment, react |
 | **Contributor** | Everything a guest can, plus create and update issues, upload attachments, manage their own views |
-| **Member** | Everything a contributor can, plus delete issues, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
+| **Member** | Everything a contributor can, plus delete issues, delete anyone's comments, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
 | **Admin** | Everything, plus invite and manage members, manage integrations and manage the workspace |
 
 Every authorization decision goes through `packages/shared/src/policy`, which
@@ -132,6 +132,13 @@ Issues can block, be blocked by, relate to, or duplicate each other. Blocking is
 the one that changes behaviour: an issue blocked by another is flagged wherever
 it appears, so the block is visible before anyone plans around it.
 
+### Duplicate detection
+
+When drafting a new issue, Orbit runs trigram similarity across existing issues
+in the same team. If similar issues already exist, up to four non-blocking
+suggestions appear beneath the title field with their current workflow state,
+allowing quick review before creating a duplicate.
+
 ### Estimates
 
 Points, on the usual scale. Optional. Sprints can track scope by issue count or
@@ -190,6 +197,27 @@ What a sprint gives you:
 - **Burndown** of remaining work against time.
 - **Carryover**, meaning what did not finish when you complete the sprint.
 
+### Lead time and cycle time
+
+The sprint analytics flow-time card summarizes completed issues associated with
+the selected sprint. It shows the median (`p50`) and the 85th percentile (`p85`)
+in calendar days. Unfinished and canceled issues do not contribute a duration.
+
+- **Lead time** runs from the issue's creation time to its durable completion
+  time. It starts at creation even when the issue joined the sprint later.
+- **Cycle time** runs from the issue's `startedAt` time to its durable completion
+  time. Orbit omits an issue from this calculation when it has no start time.
+
+Orbit also omits either duration when its end is earlier than its start. If no
+valid durations remain, the corresponding metric is unavailable.
+
+Lead time uses the creation timestamp from the current issue row. Cycle time
+uses the current mutable `startedAt` column. For an active sprint, Orbit labels
+that cycle-time coverage `current-column`. For a completed sprint, it labels the
+coverage `reconstructed-current-column` because close outcomes preserve the
+completion time but not the first start time. Editing `startedAt` later can
+therefore change a completed sprint's historical cycle-time distribution.
+
 Completing a sprint asks what to do with unfinished issues: move them to the
 next sprint, or back to the backlog.
 
@@ -202,6 +230,18 @@ runs across several sprints, and has a lead, a target date and a status.
 **Milestones** divide a project into stages, so progress is measured against
 something real rather than a percentage of a moving total.
 
+**Health and updates** track qualitative project status over time. An update
+captures a health category, markdown notes, the author, and a timestamp:
+
+- **On track** (`on_track`): The project is progressing according to schedule.
+- **At risk** (`at_risk`): Blockers, dependency delays, or capacity risks exist.
+- **Off track** (`off_track`): Key milestones or target dates will be missed without intervention.
+- **No update** (`no_update`): The initial state before a lead posts the first update.
+
+The workspace feed on the Projects page surfaces the latest update from every
+visible project in a single stream, giving leads and stakeholders visibility
+across the workspace without having to inspect each project individually.
+
 The difference from sprints in one line: a sprint is a period of time, a project
 is a body of work. An issue is usually in both.
 
@@ -212,9 +252,11 @@ beside the issues they describe rather than in a separate tool.
 
 - Organised into **collections**, and nestable.
 - **Visibility** is workspace-wide, private to named people, or a published URL.
-- **Shareable** through a members link that still requires sign-in, or a public
-  or unlisted link for people outside the workspace. An HTML page gets its own
-  URL and runs isolated from the app.
+- **Shareable** through a workspace link that still requires sign-in, or a public
+  or unlisted link for people outside the workspace. Both are the same kind of
+  link, a read only page outside the app, and the share dialog offers the
+  workspace one beside the document link as soon as a doc is shared with the
+  workspace. An HTML page gets its own URL and runs isolated from the app.
 - Commentable, and searchable alongside issues from the command palette.
 - Optionally bound to a path in a repository, so a doc can mirror a file.
 - A fenced `mermaid` block is drawn as a diagram, in the theme's own colours,
@@ -226,18 +268,15 @@ end up here.
 
 ## Standup
 
-A Kanban board of the whole workspace, with everyone's name in a row of tiles
-along the top. Click a name and the board filters to work assigned to or reviewed
-by that person. Click it again, or click Everyone, and you are back to the whole
-team.
+A Kanban board of the whole workspace. The toolbar has three controls, from left to right:
 
-That is the entire feature. There is no meeting object, no turn order and no
-timer, because the meeting already has a facilitator and they do not need
-software to tell them whose turn it is. What they need is one screen that shows
-what a given person is carrying, in the order the work moves.
+- **AI only** includes work created by, assigned to, reviewed by, commented on, reacted to, or changed by a member marked as an AI agent. Workspace admins set **Member type** to **AI agent** or **Human** in member settings. This classification is specific to the workspace and does not change permissions.
+- **All work / To review / Assigned** chooses assignments and reviews together, reviewer tasks, or assignments alone. It applies to the member selected in the next control. Pick your name, marked **(You)**, to see your own work. With **All Members**, it includes work for everyone.
+- **All Members** opens the full member list with workload counts. Pick a person to switch immediately, or choose **All Members** to return to the workspace. Unassigned work is available when present.
 
-Each tile carries a count of the open work that person owns or reviews, so you
-can see who is loaded before anyone speaks.
+Hold **Option** and press **Tab** to switch forward, or **Shift+Tab** to switch backward. The member dropdown opens as you switch and closes when you release Option. The shortcuts wrap through the available choices. Filters stay in the URL when you reload or share the view.
+
+Counts and filters are calculated by the server across all matching tasks, including tasks beyond the first page. The AI filter combines with the work type, member selection, and standard issue filters. Deleted comments do not count as involvement; recorded issue activity remains part of the history.
 
 ## Views and filters
 
@@ -264,6 +303,15 @@ nothing is hidden, and Unread, Mentions and Pull requests still span both.
 
 In-app notification preferences are per event type, with quiet hours that
 respect your timezone.
+
+With conversation reads enabled, each pull request has one inbox row with its
+comments, reviews, lifecycle updates and current-head check failures in the
+history. Documents similarly group comments, replies, mentions and changes.
+Issue activity and issue field changes remain two separate conversations.
+Unread badges count conversations, not individual events. New activity clears
+a snooze or dismissal; marking a conversation read covers its existing events.
+
+See [Inbox conversations](features/inbox.md) for delivery behavior and rollout.
 
 ## Realtime
 

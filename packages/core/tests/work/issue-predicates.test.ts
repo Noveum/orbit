@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { and, db, eq, schema } from '@orbit/db';
 import type { FilterCondition, FilterGroup, FilterNode } from '@orbit/shared/filters';
 import { inCondition } from '@orbit/shared/filters';
 import {
@@ -8,7 +9,8 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { addDays, today } from '../../src/work/issue-predicates.ts';
+import { createCycle, listCycles } from '../../src/work/cycle-service.ts';
+import { addDays, buildFilterSql, today } from '../../src/work/issue-predicates.ts';
 import { createIssue, listIssues, setRelation, subscribe } from '../../src/work/issue-service.ts';
 import { createLabel } from '../../src/work/label-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
@@ -328,5 +330,72 @@ describe('combined trees', () => {
         ],
       }),
     ).toEqual(['Low', 'Urgent']);
+  });
+});
+
+describe('current sprint conditions', () => {
+  async function schedule() {
+    const [first] = await listCycles(workspace.admin);
+    if (first === undefined) throw new Error('Missing first sprint');
+    const { cycle: second } = await createCycle(workspace.admin, {});
+    await newIssue('Week one', { cycleId: first.id });
+    await newIssue('Week two', { cycleId: second.id });
+    await newIssue('Unscheduled');
+    return { first, second };
+  }
+
+  async function at(now: Date, values = ['current'], negate = false) {
+    const predicate = buildFilterSql(inCondition('cycle', values, negate), { now });
+    const rows = await db
+      .select({ title: schema.issue.title })
+      .from(schema.issue)
+      .where(
+        and(eq(schema.issue.organizationId, workspace.organizationId), predicate ?? undefined),
+      );
+    return rows.map((row) => row.title).sort();
+  }
+
+  it('resolves the same saved filter to week two exactly at the weekly boundary', async () => {
+    const { first, second } = await schedule();
+    expect(await titlesMatching(inCondition('cycle', ['current']))).toEqual(['Week one']);
+    expect(await at(new Date(first.endsAt.getTime() - 1))).toEqual(['Week one']);
+    expect(await at(second.startsAt)).toEqual(['Week two']);
+    expect(await at(second.endsAt)).toEqual([]);
+  });
+
+  it('combines current, upcoming and unset values and preserves negation semantics', async () => {
+    const { first, second } = await schedule();
+    expect(await at(first.startsAt, ['current', second.id])).toEqual(['Week one', 'Week two']);
+    expect(await at(first.startsAt, ['current'], true)).toEqual(['Unscheduled', 'Week two']);
+    expect(await at(first.startsAt, ['current', 'none'])).toEqual(['Unscheduled', 'Week one']);
+    expect(await at(first.startsAt, ['current', 'none'], true)).toEqual(['Week two']);
+    expect(await at(second.endsAt, ['current'], true)).toEqual([
+      'Unscheduled',
+      'Week one',
+      'Week two',
+    ]);
+  });
+
+  it('excludes completed and archived sprint records', async () => {
+    const { first, second } = await schedule();
+    await db
+      .update(schema.cycle)
+      .set({ completedAt: new Date() })
+      .where(eq(schema.cycle.id, first.id));
+    await db
+      .update(schema.cycle)
+      .set({ archivedAt: new Date() })
+      .where(eq(schema.cycle.id, second.id));
+    expect(await at(first.startsAt)).toEqual([]);
+    expect(await at(second.startsAt)).toEqual([]);
+  });
+
+  it('does not treat another workspace sprint as current for an issue', async () => {
+    const other = await createWorkspace('Other');
+    const [foreign] = await listCycles(other.admin);
+    if (foreign === undefined) throw new Error('Missing other sprint');
+    const issue = await newIssue('Invalid foreign assignment');
+    await db.update(schema.issue).set({ cycleId: foreign.id }).where(eq(schema.issue.id, issue.id));
+    expect(await at(foreign.startsAt)).toEqual([]);
   });
 });

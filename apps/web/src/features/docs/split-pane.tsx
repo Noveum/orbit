@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { useMediaQuery } from '@/lib/use-media-query.ts';
 
 export const MIN_SPLIT_RATIO = 0.2;
 export const MAX_SPLIT_RATIO = 0.8;
@@ -41,6 +42,7 @@ function storeRatio(key: string, value: number): void {
 }
 
 export interface SplitPaneProps {
+  readonly stackOnSmall?: boolean;
   readonly storageKey: string;
   readonly label: string;
   readonly first: ReactNode | null;
@@ -50,6 +52,7 @@ export interface SplitPaneProps {
 }
 
 export function SplitPane({
+  stackOnSmall = false,
   storageKey,
   label,
   first,
@@ -57,6 +60,8 @@ export function SplitPane({
   firstClassName,
   secondClassName,
 }: SplitPaneProps) {
+  const wide = useMediaQuery('(min-width: 768px)');
+  const stacked = stackOnSmall && !wide;
   const [ratio, setRatio] = useState(DEFAULT_SPLIT_RATIO);
   const [dragging, setDragging] = useState(false);
   const container = useRef<HTMLDivElement>(null);
@@ -73,14 +78,18 @@ export function SplitPane({
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     const bounds = container.current?.getBoundingClientRect();
-    if (bounds === undefined || bounds.width === 0) return;
+    if (bounds === undefined || (stacked ? bounds.height : bounds.width) === 0) return;
     event.preventDefault();
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
     setDragging(true);
     let next = ratio;
     const onMove = (moveEvent: PointerEvent) => {
-      next = clampSplitRatio((moveEvent.clientX - bounds.left) / bounds.width);
+      next = clampSplitRatio(
+        stacked
+          ? (moveEvent.clientY - bounds.top) / bounds.height
+          : (moveEvent.clientX - bounds.left) / bounds.width,
+      );
       setRatio(next);
     };
     const stop = () => {
@@ -106,9 +115,13 @@ export function SplitPane({
       commit(MAX_SPLIT_RATIO);
       return;
     }
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
-    commit(clampSplitRatio(ratio + (event.key === 'ArrowLeft' ? -KEYBOARD_STEP : KEYBOARD_STEP)));
+    commit(
+      clampSplitRatio(
+        ratio + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -KEYBOARD_STEP : KEYBOARD_STEP),
+      ),
+    );
   };
 
   if (first === null || second === null) {
@@ -129,7 +142,11 @@ export function SplitPane({
   return (
     <div
       ref={container}
-      className={cn('flex min-h-0 flex-1 overflow-hidden', dragging ? 'select-none' : null)}
+      className={cn(
+        'flex min-h-0 flex-1 overflow-hidden',
+        stacked && 'flex-col',
+        dragging ? 'select-none' : null,
+      )}
       data-testid="split-pane"
     >
       <div
@@ -143,7 +160,7 @@ export function SplitPane({
         tabIndex={0}
         aria-controls={`${paneId}-first ${paneId}-second`}
         aria-label={label}
-        aria-orientation="vertical"
+        aria-orientation={stacked ? 'horizontal' : 'vertical'}
         aria-valuenow={Math.round(ratio * 100)}
         aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)}
         aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)}
@@ -152,7 +169,8 @@ export function SplitPane({
         onKeyDown={nudge}
         onDoubleClick={() => commit(DEFAULT_SPLIT_RATIO)}
         className={cn(
-          'm-0 h-auto w-1 shrink-0 cursor-col-resize touch-none self-stretch border-0 bg-border',
+          'm-0 shrink-0 touch-none self-stretch border-0 bg-border',
+          stacked ? 'h-1 w-auto cursor-row-resize' : 'h-auto w-1 cursor-col-resize',
           'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)] motion-reduce:transition-none',
           'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none',
           dragging ? 'bg-accent' : null,

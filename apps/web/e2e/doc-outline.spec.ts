@@ -15,6 +15,7 @@ test('an editable doc still has a table of contents that navigates it', async ({
   const page = await signIn(context, 'alex@orbit.example');
 
   await page.goto(`${BASE}/docs`);
+  await page.getByTestId('toggle-all-folders').click();
   await page.getByTestId('doc-tree').getByText('Realtime delta protocol').click();
 
   await expect(page.getByTestId('doc-rich-editor')).toBeVisible();

@@ -113,6 +113,23 @@ function renderPanel(settings: GithubSettingsView, canManage = true) {
 }
 
 describe('GithubPanel, connecting', () => {
+  it('offers setup instead of another installation when connected app credentials are missing', () => {
+    renderPanel({ ...SETTINGS, connectEnabled: false, discoveryEnabled: false });
+    expect(screen.queryByRole('link', { name: 'Connect another organisation' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Set up GitHub' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#github',
+    );
+    expect(screen.getByText('Organization · All repositories')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh from GitHub' })).toBeDisabled();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('keeps repository refresh available when only installation credentials are missing', () => {
+    renderPanel({ ...SETTINGS, connectEnabled: false });
+    expect(screen.getByRole('button', { name: 'Refresh from GitHub' })).toBeEnabled();
+  });
+
   it('offers a single connect link when nothing is connected', () => {
     renderPanel(DISCONNECTED);
     expect(screen.getByRole('link', { name: 'Connect GitHub' })).toHaveAttribute(
@@ -132,7 +149,13 @@ describe('GithubPanel, connecting', () => {
   it('explains that setup is pending rather than offering a link that cannot work', () => {
     renderPanel({ ...DISCONNECTED, connectEnabled: false });
     expect(screen.queryByRole('link', { name: 'Connect GitHub' })).toBeNull();
-    expect(screen.getByText(/finish configuring the GitHub App/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/server operator to finish configuring the GitHub App/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set up GitHub' })).toHaveAttribute(
+      'href',
+      '/settings/deployment#github',
+    );
   });
 });
 

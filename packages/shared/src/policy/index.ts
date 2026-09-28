@@ -4,6 +4,7 @@ import { forbidden, notFound } from '../errors/index.ts';
 export const PERMISSIONS = [
   'analytics:read',
   'issue:read',
+  'standup:read',
   'issue:create',
   'issue:update',
   'issue:delete',
@@ -35,6 +36,7 @@ export type Permission = (typeof PERMISSIONS)[number];
 const GUEST_PERMISSIONS: readonly Permission[] = [
   'analytics:read',
   'issue:read',
+  'standup:read',
   'comment:create',
   'comment:update:own',
   'reaction:toggle',
@@ -139,6 +141,14 @@ export function assertCan(principal: Principal, permission: Permission): void {
   }
 }
 
+export function assertVerifiedEmailForInvitation(emailVerified: boolean): void {
+  if (!emailVerified) {
+    throw forbidden(
+      'Verify your email before joining a workspace. Sign in with an emailed code, then accept the invitation again.',
+    );
+  }
+}
+
 export interface TeamScope {
   readonly id: string;
   readonly organizationId: string;
@@ -196,7 +206,6 @@ export function canReadDoc(
   grantedDocIds: readonly string[],
 ): boolean {
   if (doc.organizationId !== principal.organizationId) return false;
-  if (principal.role === 'admin') return true;
   if (doc.authorId === principal.userId) return true;
   if (!isRestricted(doc.visibility)) return true;
   return grantedDocIds.includes(doc.id);
@@ -219,3 +228,19 @@ export function canReadView(principal: Principal, view: ReadableViewRow): boolea
 
 export { type AgentIssueAuthority, authorizeIssueAction } from './agent-issue.ts';
 export { assertHumanIssueWriter } from './issue-writer.ts';
+
+export function canManageDocAccess(principal: DocReader, doc: ReadableDocRow): boolean {
+  return principal.organizationId === doc.organizationId && principal.userId === doc.authorId;
+}
+
+export function canWriteDoc(
+  principal: Principal,
+  doc: ReadableDocRow,
+  hasWriteGrant: boolean,
+): boolean {
+  return (
+    principal.organizationId === doc.organizationId &&
+    can(principal, 'doc:write') &&
+    (doc.authorId === principal.userId || doc.visibility === 'workspace' || hasWriteGrant)
+  );
+}

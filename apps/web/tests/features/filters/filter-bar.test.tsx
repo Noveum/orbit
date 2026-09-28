@@ -13,6 +13,9 @@ import { createQueryClient } from '@/lib/query/provider.tsx';
 import { FilterBar } from '../../../src/features/filters/filter-bar.tsx';
 import { defaultViewConfig, type ViewConfig } from '../../../src/features/filters/view-config.ts';
 import type { ViewControls } from '../../../src/features/filters/view-controls.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 const workspace: WorkspaceData = {
   ready: true,

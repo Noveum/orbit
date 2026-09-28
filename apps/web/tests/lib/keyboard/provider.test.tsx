@@ -234,3 +234,25 @@ describe('binding aliases', () => {
     expect(screen.getByTestId('advertised').textContent).toBe('j shift+j');
   });
 });
+
+describe('malformed keyboard events', () => {
+  it.each([undefined, null, 42, ''])(
+    'ignores an invalid key %p and keeps shortcuts working',
+    async (key) => {
+      const user = userEvent.setup();
+      const onRun = mock();
+      render(
+        <HotkeyProvider>
+          <GlobalCreate onRun={onRun} />
+        </HotkeyProvider>,
+      );
+      const event = new Event('keydown', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'key', { value: key });
+      expect(() => window.dispatchEvent(event)).not.toThrow();
+      expect(event.defaultPrevented).toBe(false);
+      expect(onRun).not.toHaveBeenCalled();
+      await user.keyboard('c');
+      expect(onRun).toHaveBeenCalledTimes(1);
+    },
+  );
+});

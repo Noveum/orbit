@@ -48,7 +48,16 @@ describe('password authentication', () => {
 
   it('stores sign in codes as hashes', () => {
     const plugin = auth.options.plugins?.find((candidate) => candidate.id === 'email-otp');
-    expect(plugin?.options).toMatchObject({ storeOTP: 'hashed' });
+    if (!(plugin && 'options' in plugin)) throw new Error('Email OTP plugin is missing');
+    expect(plugin.options).toMatchObject({ storeOTP: 'hashed' });
+  });
+
+  it('exposes only session switching through the organization plugin', () => {
+    const plugin = auth.options.plugins?.find((candidate) => candidate.id === 'organization');
+    if (plugin === undefined || !('endpoints' in plugin)) {
+      throw new Error('Organization plugin is missing');
+    }
+    expect(Object.keys(plugin.endpoints ?? {})).toEqual(['setActiveOrganization']);
   });
 
   it('exposes the MCP OAuth provider for one-click clients', () => {

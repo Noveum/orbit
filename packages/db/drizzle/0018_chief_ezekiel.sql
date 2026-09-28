@@ -1,3 +1,0 @@
-ALTER TABLE "oauth_access_token" ADD COLUMN "mcp_grant_id" text;--> statement-breakpoint
-ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_mcp_grant_id_mcp_grant_id_fk" FOREIGN KEY ("mcp_grant_id") REFERENCES "public"."mcp_grant"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "oauth_access_token_mcp_grant_idx" ON "oauth_access_token" USING btree ("mcp_grant_id");

@@ -186,7 +186,8 @@ export function GeneralForm({
             name="allowedEmailDomains"
           />
           <span className="text-faint text-xs">
-            Anyone with an email on these domains can join without an invite.
+            Restrict invitations to these email domains. Leave blank to allow any domain permitted
+            by the server. Joining still requires an invitation and verified email.
           </span>
           {parsedDomains.length > 0 ? (
             <span className="mt-1 flex flex-wrap gap-1.5">

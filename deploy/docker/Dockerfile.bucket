@@ -1,0 +1,4 @@
+FROM quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+LABEL org.opencontainers.image.source="https://github.com/Noveum/orbit"
+COPY deploy/docker/initialize-storage.sh /initialize-storage.sh
+ENTRYPOINT ["/bin/sh", "/initialize-storage.sh"]

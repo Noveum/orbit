@@ -33,6 +33,8 @@ describe('prepareStandalone', () => {
     await writeFile(join(root, 'public', 'asset.txt'), 'public asset');
     await writeFile(join(root, '.next', 'static', 'chunk.js'), 'static chunk');
     await writeFile(join(root, 'src', 'start.ts'), "process.stdout.write('ready');\n");
+    await writeFile(join(root, 'src', 'realtime.ts'), "process.stdout.write('realtime');\n");
+    await writeFile(join(root, 'src', 'scheduler.ts'), "process.stdout.write('scheduler');\n");
 
     await prepareStandalone(root, undefined);
 
@@ -42,5 +44,7 @@ describe('prepareStandalone', () => {
       'static chunk',
     );
     expect(await readFile(join(standalone, 'start.mjs'), 'utf8')).toContain('ready');
+    expect(await readFile(join(standalone, 'realtime.mjs'), 'utf8')).toContain('realtime');
+    expect(await readFile(join(standalone, 'scheduler.mjs'), 'utf8')).toContain('scheduler');
   });
 });

@@ -1,4 +1,5 @@
 import type { AnalyticsCompare, AnalyticsQuery } from '@orbit/shared';
+import { CURRENT_SPRINT_FILTER_VALUE } from '@orbit/shared/filters';
 import type {
   AnalyticsBucketGranularity,
   AnalyticsDateRange,
@@ -192,11 +193,14 @@ function activeSprints(cycles: readonly AnalyticsSprint[], now: Date): readonly 
   );
 }
 
-function cycleMatchesFilter(cycle: AnalyticsSprint, query: AnalyticsQuery): boolean {
+function cycleMatchesFilter(cycle: AnalyticsSprint, query: AnalyticsQuery, now: Date): boolean {
   const matches = (node: AnalyticsQuery['filter']['children'][number]): boolean => {
     if (node.kind === 'condition') {
       if (node.property !== 'cycle' || node.operator !== 'in') return true;
-      const included = node.values.includes(cycle.id);
+      const included =
+        node.values.includes(cycle.id) ||
+        (node.values.includes(CURRENT_SPRINT_FILTER_VALUE) &&
+          activeSprints([cycle], now).length > 0);
       return node.negate ? !included : included;
     }
     const values = node.children.map(matches);
@@ -244,7 +248,7 @@ function sprintRelevance(
       cycle.teamId !== context.selectedTeamId
     )
       return false;
-    return cycleMatchesFilter(cycle, query);
+    return cycleMatchesFilter(cycle, query, context.now);
   });
   const active = activeSprints(cycles, context.now);
   const filteredCycleIds = selectedCycleIds(query);

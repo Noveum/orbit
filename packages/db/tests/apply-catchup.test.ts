@@ -248,6 +248,33 @@ describe('applyCatchup against a real database', () => {
   it('refuses a file outside the catchup directory before it opens anything', async () => {
     await expect(applyCatchup(urlFor(SCRATCH), '/etc/passwd.sql')).rejects.toThrow();
   });
+
+  it('drops the module tables once and is clean on a second run', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql
+        .unsafe(`
+        create table if not exists public.module (id text primary key);
+        create table if not exists public.module_member (id text primary key);
+        create table if not exists public.module_issue (id text primary key);
+        create table if not exists public.module_link (id text primary key);
+      `)
+        .simple();
+    });
+    await applyCatchup(urlFor(SCRATCH), 'drop-module-tables-catchup.sql');
+    await applyCatchup(urlFor(SCRATCH), 'drop-module-tables-catchup.sql');
+
+    const tables = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql<{ table_name: string }[]>`
+        select table_name from information_schema.tables
+        where table_schema = 'public'
+          and table_name in ('module', 'module_member', 'module_issue', 'module_link')
+      `,
+    );
+
+    expect(tables).toHaveLength(0);
+  }, 30_000);
 });
 
 const SPRINT_SCRATCH = laneDatabase('orbit_test_workspace_sprint_catchup', currentLane());

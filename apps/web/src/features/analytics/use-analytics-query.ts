@@ -1,5 +1,6 @@
 'use client';
 
+import { hasCurrentSprintFilter } from '@orbit/shared/filters';
 import type { AnalyticsInsightsQuery, AnalyticsQuery } from '@orbit/shared/validators';
 import { type UseQueryResult, useQuery } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '@/lib/query/fetcher.ts';
@@ -78,6 +79,7 @@ export function useAnalyticsQuery(
 ): UseQueryResult<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]> {
   return useQuery<AnalyticsResponseByLens[keyof AnalyticsResponseByLens]>({
     queryKey: analyticsKeys.lens(query.lens, query),
+    refetchInterval: hasCurrentSprintFilter(query.filter) ? 60_000 : false,
     queryFn: async ({ signal }) => await fetchAnalyticsLens(query, signal),
     ...(query.lens === 'insights' ? { enabled: false } : {}),
   });

@@ -21,6 +21,7 @@ export const SYNC_MODELS = [
   'doc',
   'doc_collection',
   'notification',
+  'notification_conversation',
   'member',
   'invitation',
   'view',

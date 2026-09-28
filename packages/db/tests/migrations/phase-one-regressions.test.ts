@@ -373,7 +373,7 @@ describe('Phase 1 database regressions', () => {
       await sql`alter table issue add constraint issue_creator_actor_check check (creator_user_id is not null and (creator_agent_id is null or creator_user_id is null) and creator_agent_id is not null)`;
     });
     const drift = catalogDriftBetween(expected, await liveCatalog(url));
-    expect(drift.checkMismatches).toContainEqual(
+    expect(drift.checkConstraintMismatches).toContainEqual(
       expect.objectContaining({ table: 'issue', name: 'issue_creator_actor_check' }),
     );
     expect(isBehind(drift)).toBe(true);

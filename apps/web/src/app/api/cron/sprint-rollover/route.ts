@@ -1,0 +1,29 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { rolloverExpiredCycles } from '@orbit/core';
+import { cronAuthorizationSchema } from '@orbit/shared/validators';
+import { publish } from '@/lib/api/handler.ts';
+
+function presented(request: Request): string | null {
+  const parsed = cronAuthorizationSchema.safeParse(request.headers.get('authorization'));
+  return parsed.success ? parsed.data.slice('Bearer '.length) : null;
+}
+
+function matches(offered: string, expected: string): boolean {
+  const left = createHash('sha256').update(offered, 'utf8').digest();
+  const right = createHash('sha256').update(expected, 'utf8').digest();
+  return timingSafeEqual(left, right);
+}
+
+export async function GET(request: Request): Promise<Response> {
+  const secret = process.env['CRON_SECRET'] ?? '';
+  if (secret.length === 0) {
+    return Response.json({ error: 'sprint rollover are not configured' }, { status: 503 });
+  }
+  const token = presented(request);
+  if (token === null || !matches(token, secret)) {
+    return Response.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
+  const result = await rolloverExpiredCycles({ now: new Date(), publish });
+  return Response.json({ completed: result.completed });
+}

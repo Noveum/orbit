@@ -2,7 +2,7 @@
 
 import { signInCodeRequestSchema, signInCodeVerifySchema } from '@orbit/shared/validators';
 import { Fingerprint, KeyRound, Loader2, MailCheck } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, type ReactNode, useState } from 'react';
 import { OrbitMark } from '@/components/brand/orbit-logo.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
@@ -16,7 +16,9 @@ const MIN_PASSWORD_LENGTH = 12;
 export interface LoginFormProps {
   readonly providers: readonly string[];
   readonly callbackUrl?: string;
+  readonly errorCallbackUrl?: string;
   readonly passwordEnabled?: boolean;
+  readonly emailEnabled?: boolean;
   readonly openSignUp?: boolean;
 }
 
@@ -209,11 +211,13 @@ function OtpFields({ sent, value, pending, onChange, onResend, onChangeEmail }: 
 
 function LoginFooter({
   passwordEnabled,
+  emailEnabled,
   creatingAccount,
   openSignUp,
   onToggleAccount,
 }: {
   readonly passwordEnabled: boolean;
+  readonly emailEnabled: boolean;
   readonly creatingAccount: boolean;
   readonly openSignUp: boolean;
   readonly onToggleAccount: () => void;
@@ -231,22 +235,34 @@ function LoginFooter({
       ) : null}
       {openSignUp && !creatingAccount ? (
         <p className="text-center text-2xs text-faint">
-          New here? Signing in creates your account, then you set up a workspace.
+          {emailEnabled
+            ? 'New here? Signing in creates your account, then you set up a workspace.'
+            : 'New here? Create an account with an available sign-in method, then set up a workspace.'}
         </p>
       ) : null}
       <p className="text-center text-2xs text-faint">
-        {passwordEnabled
-          ? 'Passkeys and email codes still work. Sessions expire after 30 days.'
-          : 'Orbit never asks for a password. Sessions expire after 30 days.'}
+        Register a passkey after signing in. Sessions expire after 30 days.
       </p>
     </>
   );
 }
 
+function EmailLoginSection({
+  enabled,
+  children,
+}: {
+  readonly enabled: boolean;
+  readonly children: ReactNode;
+}) {
+  return enabled ? children : null;
+}
+
 export function LoginForm({
   providers,
   callbackUrl = DEFAULT_CALLBACK_URL,
+  errorCallbackUrl = '/login',
   passwordEnabled = false,
+  emailEnabled = true,
   openSignUp = false,
 }: LoginFormProps) {
   const { toast } = useToast();
@@ -285,7 +301,7 @@ export function LoginForm({
       const result = await authClient.signIn.social({
         provider,
         callbackURL: callbackUrl,
-        errorCallbackURL: '/login',
+        errorCallbackURL: new URL(errorCallbackUrl, window.location.origin).toString(),
       });
       if (result.error) throw new Error(result.error.message ?? 'That provider is unavailable.');
     });
@@ -319,6 +335,10 @@ export function LoginForm({
       const input = signInCodeVerifySchema.parse({ email, otp });
       const result = await authClient.signIn.emailOtp(input);
       if (result.error) throw new Error(result.error.message ?? 'That code is invalid or expired.');
+      const session = await authClient.getSession({ query: { disableCookieCache: true } });
+      if (session.error || !session.data?.user.emailVerified) {
+        throw new Error('Could not confirm your verified session. Sign in again.');
+      }
       window.location.assign(callbackUrl);
     });
 
@@ -345,7 +365,7 @@ export function LoginForm({
       submitPassword();
       return;
     }
-    sendOtp();
+    if (emailEnabled) sendOtp();
   };
   const emailCodeButtonSubmits = !passwordEnabled || otpSent;
 
@@ -384,85 +404,98 @@ export function LoginForm({
         onSelect={signInWithSocial}
       />
 
-      <div className="flex items-center gap-3">
-        <span className="h-px flex-1 bg-border" />
-        <span className="text-2xs text-faint uppercase tracking-wide">or</span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
+      <EmailLoginSection enabled={passwordEnabled || emailEnabled}>
+        <div className="flex items-center gap-3">
+          <span className="h-px flex-1 bg-border" />
+          <span className="text-2xs text-faint uppercase tracking-wide">or</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
 
-      <form onSubmit={onSubmit} className="flex flex-col gap-2">
-        {passwordEnabled && creatingAccount ? <NameField value={name} onChange={setName} /> : null}
-        <label htmlFor="login-email" className="sr-only">
-          Email address
-        </label>
-        <Input
-          id="login-email"
-          type="email"
-          name="email"
-          autoComplete="email"
-          required
-          placeholder="you@company.com"
-          value={email}
-          disabled={otpSent}
-          onChange={(event) => setEmail(event.target.value)}
-        />
-        <OtpFields
-          sent={otpSent}
-          value={otp}
-          pending={pending !== null}
-          onChange={setOtp}
-          onResend={() => {
-            setOtp('');
-            sendOtp();
-          }}
-          onChangeEmail={() => {
-            setOtp('');
-            setOtpSent(false);
-          }}
-        />
-        {passwordEnabled && !otpSent ? (
-          <PasswordField
-            creatingAccount={creatingAccount}
-            value={password}
-            onChange={setPassword}
-            busy={pending === 'password'}
-            disabled={pending !== null || email.length === 0 || password.length === 0}
+        <form onSubmit={onSubmit} className="flex flex-col gap-2">
+          <EmailLoginSection enabled={passwordEnabled && creatingAccount && !otpSent}>
+            <NameField value={name} onChange={setName} />
+          </EmailLoginSection>
+          <label htmlFor="login-email" className="sr-only">
+            Email address
+          </label>
+          <Input
+            id="login-email"
+            type="email"
+            name="email"
+            autoComplete="email"
+            required
+            placeholder="you@company.com"
+            value={email}
+            disabled={otpSent}
+            onChange={(event) => setEmail(event.target.value)}
           />
-        ) : null}
-        {passwordEnabled && !creatingAccount && !otpSent ? (
-          <ForgotPasswordButton
-            sending={pending === 'forgot'}
-            disabled={pending !== null || email.length === 0}
-            onClick={() => {
-              forgotPassword();
+          <OtpFields
+            sent={otpSent}
+            value={otp}
+            pending={pending !== null}
+            onChange={setOtp}
+            onResend={() => {
+              setOtp('');
+              sendOtp();
+            }}
+            onChangeEmail={() => {
+              setOtp('');
+              setOtpSent(false);
             }}
           />
-        ) : null}
-        <Button
-          type={emailCodeButtonSubmits ? 'submit' : 'button'}
-          variant="secondary"
-          size="md"
-          block
-          disabled={pending !== null || email.length === 0 || (otpSent && otp.length !== 6)}
-          {...(emailCodeButtonSubmits
-            ? {}
-            : {
-                onClick: () => {
-                  sendOtp();
-                },
-              })}
-        >
-          {pending === 'otp-send' || pending === 'otp-verify' ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <MailCheck className="size-4" aria-hidden="true" />
-          )}
-          {otpSent ? 'Verify code' : 'Email me a code'}
-        </Button>
-      </form>
+          {passwordEnabled && !otpSent ? (
+            <PasswordField
+              creatingAccount={creatingAccount}
+              value={password}
+              onChange={setPassword}
+              busy={pending === 'password'}
+              disabled={pending !== null || email.length === 0 || password.length === 0}
+            />
+          ) : null}
+          {passwordEnabled && emailEnabled && !creatingAccount && !otpSent ? (
+            <ForgotPasswordButton
+              sending={pending === 'forgot'}
+              disabled={pending !== null || email.length === 0}
+              onClick={() => {
+                forgotPassword();
+              }}
+            />
+          ) : null}
+          <EmailLoginSection enabled={emailEnabled}>
+            <Button
+              type={emailCodeButtonSubmits ? 'submit' : 'button'}
+              variant="secondary"
+              size="md"
+              block
+              disabled={pending !== null || email.length === 0 || (otpSent && otp.length !== 6)}
+              {...(emailCodeButtonSubmits
+                ? {}
+                : {
+                    onClick: () => {
+                      sendOtp();
+                    },
+                  })}
+            >
+              {pending === 'otp-send' || pending === 'otp-verify' ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <MailCheck className="size-4" aria-hidden="true" />
+              )}
+              {otpSent ? 'Verify code' : 'Email me a code'}
+            </Button>
+          </EmailLoginSection>
+        </form>
+      </EmailLoginSection>
+
+      <EmailLoginSection enabled={!emailEnabled}>
+        <p className="text-center text-muted text-xs">
+          Email sign-in codes and password reset emails are unavailable on this server.
+        </p>
+      </EmailLoginSection>
 
       <LoginFooter
         passwordEnabled={passwordEnabled}
+        emailEnabled={emailEnabled}
         creatingAccount={creatingAccount}
         openSignUp={openSignUp}
         onToggleAccount={() => setCreatingAccount((current) => !current)}

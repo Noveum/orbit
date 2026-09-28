@@ -9,6 +9,10 @@ import { memberUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { deletePersonalAgentsForRemovedMember } from '../auth/agent-identity-service.ts';
 import { type Executor, requireRow } from '../internal.ts';
+import {
+  lockNotificationPolicyMutation,
+  synchronizeNotificationAccess,
+} from '../notifications/access-sync.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import { canonicalIssueReads } from '../work/issue-actor-view.ts';
@@ -136,11 +140,12 @@ export async function updateMemberRole(
 ): Promise<{ member: MemberRow; actions: SyncAction[] }> {
   assertCan(principal, 'member:manage');
   const parsed = memberUpdateSchema.parse(input);
-  if (!canAssignRole(principal.role, parsed.role)) {
+  if (parsed.role !== undefined && !canAssignRole(principal.role, parsed.role)) {
     throw forbidden('Only admins can change roles.');
   }
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const [existing] = await tx
       .select()
       .from(schema.member)
@@ -154,7 +159,7 @@ export async function updateMemberRole(
       .for('update');
     const current = requireRow(existing, 'That member does not exist.');
 
-    if (current.role === 'admin' && parsed.role !== 'admin') {
+    if (current.role === 'admin' && parsed.role !== undefined && parsed.role !== 'admin') {
       const others = await countOtherAdmins(tx, principal.organizationId, memberId);
       if (others === 0) throw conflict('A workspace needs at least one admin.');
       const [inaccessibleReview] = await tx
@@ -188,7 +193,7 @@ export async function updateMemberRole(
     const actor = await principalActor(tx, principal);
     const [updated] = await tx
       .update(schema.member)
-      .set({ role: parsed.role, syncId })
+      .set({ ...parsed, syncId })
       .where(eq(schema.member.id, memberId))
       .returning();
     const member = requireRow(updated, 'That member does not exist.');
@@ -228,10 +233,17 @@ export async function updateMemberRole(
       labelIdsByIssue(tx, changedIssueIds),
       reviewerIdsByIssue(tx, changedIssueIds),
     ]);
+    const notificationActions = await synchronizeNotificationAccess(
+      tx,
+      principal.organizationId,
+      [member.userId],
+      actor,
+    );
 
     return {
       member,
       actions: [
+        ...notificationActions,
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -275,6 +287,7 @@ export async function removeMember(
   assertCan(principal, 'member:manage');
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const [existing] = await tx
       .select()
       .from(schema.member)
@@ -350,6 +363,12 @@ export async function removeMember(
       reviewerIdsByIssue(tx, changedIssueIds),
     ]);
     const actions: SyncAction[] = [
+      ...(await synchronizeNotificationAccess(
+        tx,
+        principal.organizationId,
+        [current.userId],
+        actor,
+      )),
       buildSyncAction({
         syncId,
         organizationId: principal.organizationId,

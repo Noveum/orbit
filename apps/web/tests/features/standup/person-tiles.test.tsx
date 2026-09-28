@@ -49,6 +49,46 @@ describe('PersonTiles', () => {
     ]);
   });
 
+  it('shows first names while keeping full names accessible and available on hover', () => {
+    mount(null);
+    const ada = screen.getByRole('button', { name: 'Ada Lovelace' });
+    expect(within(ada).getByText('Ada', { exact: true })).toBeVisible();
+    expect(within(ada).queryByText('Ada Lovelace', { exact: true })).toBeNull();
+    expect(ada).toHaveAttribute('title', 'Ada Lovelace');
+    expect(within(screen.getByTestId('standup-tile-user_bo')).getByText('Bo')).toBeVisible();
+    expect(within(screen.getByTestId('standup-tile-user_cy')).getByText('Cy')).toBeVisible();
+  });
+
+  it('keeps duplicate first names distinct and marks the current user', () => {
+    render(
+      <PersonTiles
+        members={[...members, member('user_other_ada', 'Ada Byron'), member('user_lin', 'Lin')]}
+        currentUserId="user_ada"
+        selectedId={null}
+        counts={counts}
+        onSelect={() => undefined}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Ada Lovelace (You)' })).toBeVisible();
+    expect(screen.getByText('Ada (You)', { exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Ada Byron' })).toBeVisible();
+    expect(screen.getByText('Lin', { exact: true })).toBeVisible();
+  });
+
+  it('shows full names in the dropdown to distinguish duplicate first names', () => {
+    render(
+      <PersonTiles
+        layout="dropdown"
+        members={[member('user_ada', 'Ada Lovelace'), member('user_other_ada', 'Ada Byron')]}
+        selectedId={null}
+        counts={counts}
+        onSelect={() => undefined}
+      />,
+    );
+    expect(screen.getByText('Ada Lovelace', { exact: true })).toBeVisible();
+    expect(screen.getByText('Ada Byron', { exact: true })).toBeVisible();
+  });
+
   it('starts on Everyone when nobody is picked', () => {
     mount(null);
 

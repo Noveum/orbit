@@ -101,6 +101,7 @@ function noop(): undefined {
 
 interface RootInvalidations {
   analytics: boolean;
+  agentWork: boolean;
   counts: boolean;
   boards: boolean;
   issueCaches: boolean;
@@ -580,6 +581,14 @@ function recordOwnIssueEcho(client: QueryClient, action: SyncAction): void {
   recordIssueGeneration(client, action, action.data['departure'] === true);
 }
 
+function resetDocAccess(client: QueryClient, action: SyncAction): void {
+  if (action.model !== 'doc' || action.data['revoked'] !== true) return;
+  client.resetQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
+  client.resetQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(noop);
+  client.resetQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(noop);
+  client.resetQueries({ queryKey: [DOC_COMMENTS_ROOT, action.modelId] }).catch(noop);
+}
+
 function routeAction(
   client: QueryClient,
   action: SyncAction,
@@ -624,6 +633,7 @@ function routeAction(
   }
   if (DOC_MODELS.has(action.model)) {
     roots.docs = true;
+    resetDocAccess(client, action);
     if (action.model === 'doc') roots.docIds.add(action.modelId);
     return;
   }
@@ -639,6 +649,15 @@ function routeAction(
 }
 
 function flushRoots(client: QueryClient, roots: RootInvalidations): void {
+  if (roots.agentWork)
+    client
+      .invalidateQueries({
+        predicate: (query) => {
+          const search = query.queryKey.at(-1);
+          return typeof search === 'string' && new URLSearchParams(search).get('aiOnly') === 'true';
+        },
+      })
+      .catch(noop);
   if (roots.analytics) client.invalidateQueries({ queryKey: [ANALYTICS_ROOT] }).catch(noop);
   if (roots.counts) {
     client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(noop);
@@ -838,6 +857,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       const finalIssueActions = finalSurvivingIssueActions(actions, tabClientId);
       const roots: RootInvalidations = {
         analytics: false,
+        agentWork: false,
         counts: false,
         boards: false,
         issueCaches: false,
@@ -850,6 +870,8 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       };
 
       for (const action of actions) {
+        if (['issue', 'member', 'comment', 'reaction', 'issue_relation'].includes(action.model))
+          roots.agentWork = true;
         if (ANALYTICS_MODELS.has(action.model)) roots.analytics = true;
         if (action.model === 'issue') {
           roots.counts = true;

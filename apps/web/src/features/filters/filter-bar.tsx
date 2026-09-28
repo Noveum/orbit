@@ -3,7 +3,7 @@
 import type { FilterCondition, FilterGroup, FilterProperty } from '@orbit/shared/filters';
 import { conditionsOf, dropLastCondition, removeCondition } from '@orbit/shared/filters';
 import { Bookmark, ListFilter, Save, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
@@ -32,6 +32,8 @@ export interface FilterBarProps {
   readonly savedView?: View | null;
   readonly dirty?: boolean;
   readonly showSaveView?: boolean;
+  readonly displayOptions?: ReactNode;
+  readonly displayModified?: boolean;
 }
 
 export function FilterBar({
@@ -46,6 +48,8 @@ export function FilterBar({
   savedView = null,
   dirty = false,
   showSaveView = true,
+  displayOptions,
+  displayModified = false,
 }: FilterBarProps) {
   const workspace = useWorkspace();
   const savedScope: ViewScope = scope ?? { teamId, projectId: null };
@@ -190,7 +194,8 @@ export function FilterBar({
         <DisplayMenu
           config={config}
           capability={controls.capability}
-          modified={controls.displayModified}
+          modified={controls.displayModified || displayModified}
+          extraOptions={displayOptions}
           onChange={onChange}
         />
       </div>

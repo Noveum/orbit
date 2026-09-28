@@ -8,16 +8,23 @@ import {
   redisRateLimitStorage,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
-import { inviteEmail, resetPasswordEmail, sendEmail, signInCodeEmail } from '@orbit/services/email';
+import {
+  assertEmailConfigured,
+  resetPasswordEmail,
+  sendEmail,
+  signInCodeEmail,
+} from '@orbit/services/email';
 import { DomainError } from '@orbit/shared/errors';
 import { signInCodeRequestSchema } from '@orbit/shared/validators';
 import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
-import { emailOTP, mcp, organization } from 'better-auth/plugins';
+import { emailOTP, mcp } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
+import { deploymentAuthOptions } from '@/lib/auth/deployment.ts';
+import { organizationSessionPlugin } from '@/lib/auth/organization.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
@@ -140,6 +147,7 @@ function emailAndPassword() {
       request?: Request,
     ) => {
       if (isDevLoginRequest(request)) return;
+      assertEmailConfigured();
       const content = await resetPasswordEmail({ url, email: user.email });
       await sendEmail(db, {
         to: user.email,
@@ -179,9 +187,11 @@ function signInCodeIdempotencyKey(email: string, otp: string): string {
   return `sign-in-code:${digest}`;
 }
 
+const deployment = deploymentAuthOptions();
+
 export const auth = betterAuth({
   appName: 'Orbit',
-  baseURL: serverEnv().BETTER_AUTH_URL,
+  baseURL: deployment.baseURL,
   secret: serverEnv().BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: emailAndPassword(),
@@ -247,6 +257,7 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    ...deployment.plugins,
     mcpTokenRateLimitProbe(),
     passkey({ rpName: 'Orbit' }),
     emailOTP({
@@ -254,6 +265,7 @@ export const auth = betterAuth({
       sendVerificationOTP: async ({ email, otp, type }, context) => {
         if (isDevLoginRequest(context)) return;
         if (type !== 'sign-in') return;
+        assertEmailConfigured();
         assertSignUpAllowed(email);
         const content = await signInCodeEmail({ code: otp, email });
         await sendEmail(db, {
@@ -266,24 +278,7 @@ export const auth = betterAuth({
         });
       },
     }),
-    organization({
-      sendInvitationEmail: async (data) => {
-        const content = await inviteEmail({
-          organizationName: data.organization.name,
-          inviterName: data.inviter.user.name,
-          role: data.role,
-          acceptUrl: `${serverEnv().NEXT_PUBLIC_APP_URL}/invite/${data.id}`,
-        });
-        await sendEmail(db, {
-          to: data.email,
-          subject: content.subject,
-          html: content.html,
-          text: content.text,
-          template: 'invite',
-          idempotencyKey: `org-invite:${data.id}`,
-        });
-      },
-    }),
+    organizationSessionPlugin(),
     mcp({
       loginPage: MCP_LOGIN_PATH,
       resource: mcpServerUrl(),

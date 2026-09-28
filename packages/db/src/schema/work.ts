@@ -1,3 +1,4 @@
+import { PROJECT_HEALTHS } from '@orbit/shared';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
@@ -19,6 +20,8 @@ import {
 import { user } from './auth.ts';
 import { agentIdentity, mcpGrant } from './oauth.ts';
 import { organization, team } from './org.ts';
+
+const healthListSql = sql.raw(PROJECT_HEALTHS.map((health) => `'${health}'`).join(', '));
 
 export const workflowState = pgTable(
   'workflow_state',
@@ -146,6 +149,7 @@ export const project = pgTable(
       .on(table.organizationId, table.slug)
       .where(sql`${table.archivedAt} is null`),
     index('project_org_idx').on(table.organizationId),
+    check('project_health_check', sql`${table.health} in (${healthListSql})`),
   ],
 );
 
@@ -184,7 +188,10 @@ export const projectUpdate = pgTable(
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('project_update_project_idx').on(table.projectId, table.createdAt)],
+  (table) => [
+    index('project_update_project_idx').on(table.projectId, table.createdAt),
+    check('project_update_health_check', sql`${table.health} in (${healthListSql})`),
+  ],
 );
 
 export const milestone = pgTable(
@@ -348,57 +355,6 @@ export const cycleIssueOutcome = pgTable(
   ],
 );
 
-export const module = pgTable(
-  'module',
-  {
-    id: text('id').primaryKey(),
-    organizationId: text('organization_id')
-      .notNull()
-      .references(() => organization.id, { onDelete: 'cascade' }),
-    teamId: text('team_id')
-      .notNull()
-      .references(() => team.id, { onDelete: 'cascade' }),
-    projectId: text('project_id').references(() => project.id, { onDelete: 'set null' }),
-    name: text('name').notNull(),
-    description: text('description').notNull().default(''),
-    status: text('status').notNull().default('backlog'),
-    leadId: text('lead_id').references(() => user.id, { onDelete: 'set null' }),
-    startDate: date('start_date'),
-    targetDate: date('target_date'),
-    sortOrder: doublePrecision('sort_order').notNull().default(1024),
-    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-    archivedAt: timestamp('archived_at', { withTimezone: true }),
-  },
-  (table) => [
-    index('module_team_idx').on(table.teamId, table.sortOrder),
-    index('module_project_idx').on(table.projectId),
-    uniqueIndex('module_team_name_active_unique')
-      .on(table.teamId, table.name)
-      .where(sql`${table.archivedAt} is null`),
-  ],
-);
-
-export const moduleMember = pgTable(
-  'module_member',
-  {
-    id: text('id').primaryKey(),
-    moduleId: text('module_id')
-      .notNull()
-      .references(() => module.id, { onDelete: 'cascade' }),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex('module_member_unique').on(table.moduleId, table.userId),
-    index('module_member_user_idx').on(table.userId),
-  ],
-);
-
 export const issue = pgTable(
   'issue',
   {
@@ -497,47 +453,6 @@ export const issue = pgTable(
       foreignColumns: [agentIdentity.organizationId, agentIdentity.id],
     }),
   ],
-);
-
-export const moduleIssue = pgTable(
-  'module_issue',
-  {
-    id: text('id').primaryKey(),
-    moduleId: text('module_id')
-      .notNull()
-      .references(() => module.id, { onDelete: 'cascade' }),
-    issueId: text('issue_id')
-      .notNull()
-      .references(() => issue.id, { onDelete: 'cascade' }),
-    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex('module_issue_unique').on(table.moduleId, table.issueId),
-    index('module_issue_issue_idx').on(table.issueId),
-  ],
-);
-
-export const moduleLink = pgTable(
-  'module_link',
-  {
-    id: text('id').primaryKey(),
-    organizationId: text('organization_id')
-      .notNull()
-      .references(() => organization.id, { onDelete: 'cascade' }),
-    moduleId: text('module_id')
-      .notNull()
-      .references(() => module.id, { onDelete: 'cascade' }),
-    title: text('title').notNull().default(''),
-    url: text('url').notNull(),
-    createdById: text('created_by_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
-    syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index('module_link_module_idx').on(table.moduleId)],
 );
 
 export const issueIdentifierAlias = pgTable(

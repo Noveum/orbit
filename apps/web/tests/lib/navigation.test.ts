@@ -74,6 +74,24 @@ describe('global commands', () => {
     expect(themeCommand?.binding).toBe('shift+t');
   });
 
+  it('registers go to settings with the g e binding', () => {
+    const visited: string[] = [];
+    const context: CommandContext = {
+      sections: [],
+      navigate: (href) => visited.push(href),
+      toggleSidebar: () => undefined,
+      toggleTheme: () => undefined,
+      showShortcuts: () => undefined,
+      dark: false,
+    };
+
+    const command = buildCommands(context).find((cmd) => cmd.id === 'navigate:/settings');
+
+    expect(command?.binding).toBe('g e');
+    command?.run();
+    expect(visited).toEqual(['/settings/general']);
+  });
+
   it('reaches the MCP server page from the palette', () => {
     const visited: string[] = [];
     const context: CommandContext = {

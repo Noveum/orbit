@@ -214,6 +214,14 @@ async function commentNotifications(
     title: group.title,
     body: truncate(comment.body, NOTIFICATION_BODY_LIMIT),
     url: issueCommentUrl(issue.identifier, comment.id),
+    source: {
+      sourceEventKey: `orbit-comment:${comment.id}:created`,
+      subjectType: 'issue',
+      subjectKey: `orbit-issue:${issue.id}:activity`,
+      occurredAt: comment.createdAt,
+      teamIds: [issue.teamId],
+      payload: { commentId: comment.id, issueId: issue.id, action: 'created' },
+    },
   }));
 
   return await notifyRecipients(tx, events);

@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { StandupBoard } from '@/features/standup/standup-board.tsx';
+import { StandupWorkspace } from '@/features/standup/standup-workspace.tsx';
 
 export const metadata: Metadata = { title: 'Standup' };
 
 export default function Standup() {
-  return <StandupBoard />;
+  return <StandupWorkspace />;
 }

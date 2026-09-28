@@ -34,14 +34,14 @@ export function parseEmails(value: string): EmailParseResult {
         .filter((entry) => entry.length > 0),
     ),
   ];
-  const valid: string[] = [];
+  const valid = new Set<string>();
   const invalid: string[] = [];
   for (const entry of entries) {
     const parsed = emailSchema.safeParse(entry);
-    if (parsed.success) valid.push(parsed.data);
+    if (parsed.success) valid.add(parsed.data);
     else invalid.push(entry);
   }
-  return { valid, invalid };
+  return { valid: [...valid], invalid };
 }
 
 const ROLE_LABELS: Record<OrgRole, string> = {
@@ -55,9 +55,17 @@ export interface InvitePanelProps {
   readonly teams: readonly TeamBadge[];
   readonly invites: readonly PendingInviteView[];
   readonly canInvite: boolean;
+  readonly canInviteAdmins?: boolean;
+  readonly emailEnabled?: boolean;
 }
 
-export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
+export function InvitePanel({
+  teams,
+  invites,
+  canInvite,
+  canInviteAdmins = false,
+  emailEnabled = true,
+}: InvitePanelProps) {
   const router = useRouter();
   const [emails, setEmails] = useState('');
   const [role, setRole] = useState<OrgRole>('member');
@@ -68,6 +76,7 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
   const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
 
   const parsed = parseEmails(emails);
+  const permittedRole = role === 'admin' && !canInviteAdmins ? 'member' : role;
 
   function toggleTeam(teamId: string): void {
     setTeamIds((current) =>
@@ -77,6 +86,7 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (!emailEnabled) return;
     setError(null);
     setSent([]);
     if (parsed.invalid.length > 0) {
@@ -92,7 +102,11 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
       await apiRequest('/api/invites', {
         method: 'POST',
         body: {
-          invites: parsed.valid.map((email) => ({ email, role, teamIds: [...teamIds] })),
+          invites: parsed.valid.map((email) => ({
+            email,
+            role: permittedRole,
+            teamIds: [...teamIds],
+          })),
         },
       });
       setSent(parsed.valid);
@@ -123,12 +137,17 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
       <header className="flex flex-col gap-1">
         <h3 className="font-medium text-dense text-text">Invite people</h3>
         <p className="text-muted text-xs">
-          One email per line, or separated by commas. They get a link that expires in 14 days.
+          {emailEnabled
+            ? 'One email per line, or separated by commas. They get a link that expires in 14 days.'
+            : 'Email invitations are unavailable. Ask the server operator to configure email delivery, then return here to invite teammates.'}
         </p>
       </header>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <fieldset disabled={!canInvite || pending} className="flex flex-col gap-3">
+        <fieldset
+          disabled={!(canInvite && emailEnabled) || pending}
+          className="flex flex-col gap-3"
+        >
           <label htmlFor="invite-emails" className="flex flex-col gap-1.5">
             <span className="sr-only">Email addresses</span>
             <Textarea
@@ -145,16 +164,18 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-muted text-xs">Role</span>
-              <Select value={role} onValueChange={(next) => setRole(next as OrgRole)}>
+              <Select value={permittedRole} onValueChange={(next) => setRole(next as OrgRole)}>
                 <SelectTrigger className="h-7 w-36 text-xs" aria-label="Invite role">
-                  <SelectValue>{ROLE_LABELS[role]}</SelectValue>
+                  <SelectValue>{ROLE_LABELS[permittedRole]}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {ORG_ROLES.map((entry) => (
-                    <SelectItem key={entry} value={entry}>
-                      {ROLE_LABELS[entry]}
-                    </SelectItem>
-                  ))}
+                  {ORG_ROLES.filter((entry) => entry !== 'admin' || canInviteAdmins).map(
+                    (entry) => (
+                      <SelectItem key={entry} value={entry}>
+                        {ROLE_LABELS[entry]}
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -202,7 +223,12 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
         )}
 
         <div>
-          <Button type="submit" variant="primary" size="sm" disabled={!canInvite || pending}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={!(canInvite && emailEnabled) || pending}
+          >
             {pending ? 'Sending' : 'Send invites'}
           </Button>
         </div>
@@ -230,7 +256,7 @@ export function InvitePanel({ teams, invites, canInvite }: InvitePanelProps) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={!canInvite || busyInviteId === invite.id}
+                    disabled={!(canInvite && emailEnabled) || busyInviteId === invite.id}
                     onClick={() =>
                       inviteAction(invite.id, 'POST', `/api/invites/${invite.id}/resend`)
                     }

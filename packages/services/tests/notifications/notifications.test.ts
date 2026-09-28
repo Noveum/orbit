@@ -6,13 +6,16 @@ import {
   notificationDelivery,
   notificationPreference,
   notificationSetting,
+  notificationSourceEvent,
   organization,
+  slackChannelSync,
   slackUserMapping,
+  team,
   user,
 } from '@orbit/db/schema';
 import { NOTIFICATION_CHANNELS, NOTIFICATION_TYPES, syncActionSchema } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   claimSlackDmDeliveries,
   defaultPreferences,
@@ -32,6 +35,7 @@ import {
 } from '../../src/notifications/index.ts';
 import { slackFeatureEnabled } from '../../src/slack/feature.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
+import { seedReadableNotificationIssues } from './policy-fixture.ts';
 
 const previousSlackEnabled = process.env['SLACK_ENABLED'];
 
@@ -51,7 +55,7 @@ interface Fixture {
   readonly graceId: string;
 }
 
-async function seed(tx: TestTransaction, timezone = 'UTC'): Promise<Fixture> {
+async function seed(tx: TestTransaction, timezone = 'UTC', seedPolicy = true): Promise<Fixture> {
   const suffix = randomUUIDv7();
   const organizationId = `org_${suffix}`;
   await tx.insert(organization).values({
@@ -67,6 +71,26 @@ async function seed(tx: TestTransaction, timezone = 'UTC'): Promise<Fixture> {
     timezone,
   }));
   await tx.insert(user).values(people);
+  if (seedPolicy)
+    await seedReadableNotificationIssues(
+      tx,
+      organizationId,
+      `usr_actor_${suffix}`,
+      people.map((person) => person.id),
+      [
+        'iss_0',
+        'iss_1',
+        'iss_2',
+        'iss_3',
+        'iss_4',
+        'iss_5',
+        'iss_a',
+        'iss_b',
+        'iss_c',
+        'iss_d',
+        'iss_fresh',
+      ],
+    );
   return {
     organizationId,
     actorId: `usr_actor_${suffix}`,
@@ -88,6 +112,19 @@ function eventFor(fixture: Fixture, overrides: Partial<NotificationEvent> = {}):
     body: 'Looks good',
     url: '/issue/ORB-1',
     ...overrides,
+  };
+}
+
+function sourcedEventFor(fixture: Fixture, sourceEventKey: string) {
+  return {
+    ...eventFor(fixture),
+    source: {
+      sourceEventKey,
+      subjectType: 'issue',
+      subjectKey: 'orbit-issue:iss_1:activity',
+      occurredAt: new Date('2026-07-22T12:00:00.000Z'),
+      payload: { kind: 'comment_created', issueId: 'iss_1' },
+    },
   };
 }
 
@@ -116,7 +153,12 @@ async function seedSlackDmConnection(
         tag: 'AAAAAAAAAAAAAAAAAAAAAA',
       },
     },
-    config: options.config ?? { scopes: ['chat:write', 'im:write'] },
+    config: {
+      slackTeamId: `T-${fixture.organizationId}`,
+      slackAppId: 'A-test',
+      credentialGeneration: 0,
+      ...(options.config ?? { scopes: ['chat:write', 'im:write'] }),
+    },
   });
   if (options.mapped === false) return;
   const mappedUserIds = options.mappedUserIds ?? [fixture.adaId];
@@ -179,7 +221,12 @@ describe('notifyMany', () => {
         );
 
         expect(outcome.slackDm).toEqual([]);
-        expect(await tx.select().from(notificationDelivery)).toEqual([]);
+        expect(
+          await tx
+            .select()
+            .from(notificationDelivery)
+            .where(eq(notificationDelivery.channel, 'slack_dm')),
+        ).toEqual([]);
       });
     });
   }
@@ -196,7 +243,12 @@ describe('notifyMany', () => {
       );
 
       expect(outcome.slackDm).toHaveLength(1);
-      expect(await tx.select().from(notificationDelivery)).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(notificationDelivery)
+          .where(eq(notificationDelivery.channel, 'slack_dm')),
+      ).toHaveLength(1);
     });
   });
 
@@ -293,6 +345,274 @@ describe('notifyMany', () => {
     });
   });
 
+  it('queues a mapped shared channel even when there is no recipient row', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await seedSlackDmConnection(tx, fixture, { mapped: false });
+      const [slackIntegration] = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+      if (slackIntegration === undefined) throw new Error('Expected a Slack integration.');
+      await tx.insert(slackChannelSync).values({
+        id: `scs_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        integrationId: slackIntegration.id,
+        channelId: 'C-WORKSPACE',
+        channelName: 'workspace-updates',
+      });
+
+      const outcome = await notifyMany(
+        tx,
+        [sourcedEventFor(fixture, `source_channel_${randomUUIDv7()}`)].map((event) => ({
+          ...event,
+          reason: 'state_changed' as const,
+          userIds: [],
+          source: {
+            ...event.source,
+            subjectType: 'github_pull_request',
+            subjectKey: 'github-pr:99:7',
+          },
+        })),
+        { slackEnabled: true },
+      );
+      const queued = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack'));
+
+      expect(outcome.notifications).toEqual([]);
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({
+        notificationId: null,
+        organizationId: fixture.organizationId,
+        userId: null,
+        destinationKind: 'shared_channel',
+      });
+      expect(queued[0]?.sourceEventId).not.toBeNull();
+    });
+  });
+
+  it('keeps each shared source inside its workspace and team channels', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await seedSlackDmConnection(tx, fixture, { mapped: false });
+      const [slackIntegration] = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+      if (slackIntegration === undefined) throw new Error('Expected a Slack integration.');
+      const teamA = `team_${randomUUIDv7()}`;
+      const teamB = `team_${randomUUIDv7()}`;
+      await tx.insert(team).values([
+        { id: teamA, organizationId: fixture.organizationId, name: 'Alpha', key: 'ALP' },
+        { id: teamB, organizationId: fixture.organizationId, name: 'Beta', key: 'BET' },
+      ]);
+      await tx.insert(slackChannelSync).values(
+        [
+          { teamId: null, channelId: 'C-WORKSPACE', channelName: 'workspace-updates' },
+          { teamId: teamA, channelId: 'C-ALPHA', channelName: 'alpha-updates' },
+          { teamId: teamB, channelId: 'C-BETA', channelName: 'beta-updates' },
+        ].map((channel) => ({
+          id: `scs_${randomUUIDv7()}`,
+          organizationId: fixture.organizationId,
+          integrationId: slackIntegration.id,
+          ...channel,
+        })),
+      );
+      const sourceA = sourcedEventFor(fixture, `source_alpha_${randomUUIDv7()}`);
+      const sourceB = sourcedEventFor(fixture, `source_beta_${randomUUIDv7()}`);
+
+      await notifyMany(
+        tx,
+        [
+          {
+            ...sourceA,
+            title: 'Alpha update',
+            reason: 'state_changed',
+            userIds: [],
+            source: {
+              ...sourceA.source,
+              subjectType: 'github_pull_request',
+              subjectKey: 'github-pr:99:7',
+              teamIds: [teamA],
+            },
+          },
+          {
+            ...sourceB,
+            title: 'Beta update',
+            reason: 'state_changed',
+            userIds: [],
+            source: {
+              ...sourceB.source,
+              subjectType: 'github_pull_request',
+              subjectKey: 'github-pr:99:8',
+              teamIds: [teamB],
+            },
+          },
+        ],
+        { slackEnabled: true },
+      );
+      const deliveries = await tx
+        .select({
+          destinationId: notificationDelivery.destinationId,
+          payload: notificationDelivery.providerPayload,
+        })
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack'));
+      const destinationsFor = (title: string) =>
+        deliveries
+          .filter((delivery) => delivery.payload?.['title'] === title)
+          .map((delivery) => delivery.destinationId?.split(':').at(-1))
+          .sort();
+
+      expect(destinationsFor('Alpha update')).toEqual(['C-ALPHA', 'C-WORKSPACE']);
+      expect(destinationsFor('Beta update')).toEqual(['C-BETA', 'C-WORKSPACE']);
+    });
+  });
+
+  it('rejects an ownerless provider delivery', async () => {
+    await withRollback(async (tx) => {
+      await expect(
+        Promise.resolve().then(
+          async () =>
+            await tx.insert(notificationDelivery).values({
+              id: `nd_${randomUUIDv7()}`,
+              notificationId: null,
+              userId: null,
+              channel: 'slack',
+            }),
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('rejects a sourced provider delivery without a destination kind', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await seedSlackDmConnection(tx, fixture, { mapped: false });
+      const [slackIntegration] = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+      if (slackIntegration === undefined) throw new Error('Expected a Slack integration.');
+      const sourceEventId = `nse_${randomUUIDv7()}`;
+      await tx.insert(notificationSourceEvent).values({
+        id: sourceEventId,
+        organizationId: fixture.organizationId,
+        sourceEventKey: `source_${randomUUIDv7()}`,
+        subjectType: 'github_pull_request',
+        subjectKey: 'github-pr:99:7',
+        occurredAt: new Date(),
+      });
+
+      await expect(
+        Promise.resolve().then(
+          async () =>
+            await tx.insert(notificationDelivery).values({
+              id: `nd_${randomUUIDv7()}`,
+              organizationId: fixture.organizationId,
+              sourceEventId,
+              channel: 'slack',
+              destinationId: `${slackIntegration.id}:C-UPDATES`,
+              integrationId: slackIntegration.id,
+              providerPayload: { title: 'Update' },
+            }),
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('rejects a notification source from another organization', async () => {
+    await withRollback(async (tx) => {
+      const sourceWorkspace = await seed(tx);
+      const recipientWorkspace = await seed(tx, 'UTC', false);
+      const sourceEventId = `nse_${randomUUIDv7()}`;
+      await tx.insert(notificationSourceEvent).values({
+        id: sourceEventId,
+        organizationId: sourceWorkspace.organizationId,
+        sourceEventKey: `source_${randomUUIDv7()}`,
+        subjectType: 'issue',
+        subjectKey: 'orbit-issue:iss_1:activity',
+        occurredAt: new Date(),
+      });
+
+      await expect(
+        Promise.resolve().then(
+          async () =>
+            await tx.insert(notification).values({
+              id: `ntf_${randomUUIDv7()}`,
+              organizationId: recipientWorkspace.organizationId,
+              userId: recipientWorkspace.adaId,
+              type: 'comment_created',
+              actorType: 'user',
+              actorId: recipientWorkspace.actorId,
+              actorName: 'Actor',
+              entityType: 'issue',
+              entityId: 'iss_1',
+              title: 'Cross workspace',
+              url: '/issue/ORB-1',
+              sourceEventId,
+            }),
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('rejects a provider integration from another organization', async () => {
+    await withRollback(async (tx) => {
+      const sourceWorkspace = await seed(tx);
+      const integrationWorkspace = await seed(tx, 'UTC', false);
+      await seedSlackDmConnection(tx, integrationWorkspace, { mapped: false });
+      const [foreignIntegration] = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(eq(integration.organizationId, integrationWorkspace.organizationId));
+      if (foreignIntegration === undefined) throw new Error('Expected a Slack integration.');
+      const sourceEventId = `nse_${randomUUIDv7()}`;
+      const notificationId = `ntf_${randomUUIDv7()}`;
+      await tx.insert(notificationSourceEvent).values({
+        id: sourceEventId,
+        organizationId: sourceWorkspace.organizationId,
+        sourceEventKey: `source_${randomUUIDv7()}`,
+        subjectType: 'issue',
+        subjectKey: 'orbit-issue:iss_1:activity',
+        occurredAt: new Date(),
+      });
+      await tx.insert(notification).values({
+        id: notificationId,
+        organizationId: sourceWorkspace.organizationId,
+        userId: sourceWorkspace.adaId,
+        type: 'comment_created',
+        actorType: 'user',
+        actorId: sourceWorkspace.actorId,
+        actorName: 'Actor',
+        entityType: 'issue',
+        entityId: 'iss_1',
+        title: 'A notification',
+        url: '/issue/ORB-1',
+        sourceEventId,
+      });
+
+      await expect(
+        Promise.resolve().then(
+          async () =>
+            await tx.insert(notificationDelivery).values({
+              id: `nd_${randomUUIDv7()}`,
+              notificationId,
+              organizationId: sourceWorkspace.organizationId,
+              sourceEventId,
+              userId: sourceWorkspace.adaId,
+              channel: 'slack_dm',
+              destinationKind: 'user',
+              destinationId: 'U-ADA',
+              integrationId: foreignIntegration.id,
+            }),
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
   it('retains a Slack DM with a deferred send time when email is also enabled', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx, 'UTC');
@@ -316,7 +636,12 @@ describe('notifyMany', () => {
       const deliveries = await tx
         .select({ channel: notificationDelivery.channel, status: notificationDelivery.status })
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.adaId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.adaId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       expect(deliveries).toEqual([{ channel: 'slack_dm', status: 'pending' }]);
       const deferredAt = outcome.slackDm[0]?.sendAt;
       if (deferredAt === undefined) throw new Error('Expected a deferred Slack DM.');
@@ -353,7 +678,10 @@ describe('notifyMany', () => {
       );
       const afterSuccess = await claimSlackDmDeliveries(tx, 10, new Date(Date.now() + 60_000));
       expect(afterSuccess).toHaveLength(0);
-      const rows = await tx.select().from(notificationDelivery);
+      const rows = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack_dm'));
       expect(rows[0]?.status).toBe('succeeded');
     });
   });
@@ -371,7 +699,12 @@ describe('notifyMany', () => {
       const [delivery] = await tx
         .select()
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.adaId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.adaId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       if (delivery === undefined) throw new Error('Expected a Slack DM delivery.');
       await tx
         .update(notificationDelivery)
@@ -427,8 +760,14 @@ describe('notifyMany', () => {
       const [delivery] = await tx
         .select({ notificationId: notificationDelivery.notificationId })
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.adaId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.adaId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       if (delivery === undefined) throw new Error('Expected a Slack DM delivery.');
+      if (delivery.notificationId === null) throw new Error('Expected a direct delivery owner.');
       return { fixture, notificationId: delivery.notificationId };
     });
     let announceClaim: () => void = () => undefined;
@@ -501,7 +840,12 @@ describe('notifyMany', () => {
       const fresh = await tx
         .select()
         .from(notificationDelivery)
-        .where(eq(notificationDelivery.userId, fixture.graceId));
+        .where(
+          and(
+            eq(notificationDelivery.userId, fixture.graceId),
+            eq(notificationDelivery.channel, 'slack_dm'),
+          ),
+        );
       expect(fresh).toHaveLength(1);
 
       const claimed = await claimSlackDmDeliveries(
@@ -573,7 +917,10 @@ describe('notifyMany', () => {
         slackEnabled: true,
       });
       const claimAt = new Date(Date.now() + 86_400_000);
-      const pendingRows = await tx.select().from(notificationDelivery);
+      const pendingRows = await tx
+        .select()
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack_dm'));
       expect(pendingRows).toHaveLength(1);
       const claimed = await claimSlackDmDeliveries(tx, 10, claimAt);
       expect(claimed).toHaveLength(1);
@@ -647,20 +994,27 @@ describe('notifyMany', () => {
       const outcome = await notifyMany(tx, [eventFor(fixture)]);
 
       expect(outcome.notifications).toHaveLength(2);
-      expect(outcome.actions).toHaveLength(2);
-      for (const action of outcome.actions) {
+      const eventActions = outcome.actions.filter((action) => action.model === 'notification');
+      expect(eventActions).toHaveLength(2);
+      expect(
+        outcome.actions.filter((action) => action.model === 'notification_conversation'),
+      ).toHaveLength(2);
+      for (const action of eventActions) {
         expect(() => syncActionSchema.parse(action)).not.toThrow();
         expect(action.model).toBe('notification');
         expect(action.action).toBe('insert');
         expect(action.syncId).toBeGreaterThan(0);
-        expect(action.scopes).toContain(`user:${action.data['userId'] as string}`);
+        expect(action.scopes).toContain(
+          `user:${outcome.notifications.find((row) => row.id === action.modelId)?.userId}`,
+        );
+        expect(Object.keys(action.data).sort()).toEqual(['id', 'syncId', 'visible']);
       }
       const rows = await tx
         .select()
         .from(notification)
         .where(eq(notification.organizationId, fixture.organizationId));
       expect(rows).toHaveLength(2);
-      expect(rows[0]?.deliveredChannels).toEqual(['inbox', 'email']);
+      expect(rows[0]?.deliveredChannels).toEqual(['inbox']);
       expect(outcome.slack).toEqual([]);
     });
   });
@@ -670,11 +1024,16 @@ describe('notifyMany', () => {
       const fixture = await seed(tx);
       const outcome = await notifyMany(tx, [eventFor(fixture, { type: 'mention' })]);
 
-      expect(outcome.actions).toHaveLength(2);
-      for (const action of outcome.actions) {
-        expect(action.scopes).toEqual([`user:${action.data['userId'] as string}`]);
+      const eventActions = outcome.actions.filter((action) => action.model === 'notification');
+      expect(eventActions).toHaveLength(2);
+      for (const action of eventActions) {
+        expect(action.scopes).toEqual([
+          `user:${outcome.notifications.find((row) => row.id === action.modelId)?.userId}`,
+        ]);
       }
-      const recipients = outcome.actions.map((action) => action.data['userId']);
+      const recipients = eventActions.map(
+        (action) => outcome.notifications.find((row) => row.id === action.modelId)?.userId,
+      );
       expect(new Set(recipients)).toEqual(new Set([fixture.adaId, fixture.graceId]));
     });
   });
@@ -686,7 +1045,7 @@ describe('notifyMany', () => {
         eventFor(fixture, { type: 'mention', reason: 'mentioned', userIds: [fixture.adaId] }),
       ]);
       expect(outcome.notifications[0]?.reason).toBe('mentioned');
-      expect(outcome.actions[0]?.data['reason']).toBe('mentioned');
+      expect(outcome.actions[0]?.data['reason']).toBeUndefined();
     });
   });
 
@@ -703,7 +1062,7 @@ describe('notifyMany', () => {
 
       expect(stored['url']).toBe('/issue/ORB-1');
       expect(stored['externalUrl']).toBe('https://github.com/acme/web/pull/7');
-      expect(outcome.actions[0]?.data['externalUrl']).toBe('https://github.com/acme/web/pull/7');
+      expect(outcome.actions[0]?.data['externalUrl']).toBeUndefined();
     });
   });
 
@@ -719,8 +1078,8 @@ describe('notifyMany', () => {
       });
       const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
 
-      expect(outcome.notifications[0]?.deliveredChannels).toEqual(['email']);
-      expect(outcome.actions).toHaveLength(0);
+      expect(outcome.notifications[0]?.deliveredChannels).toEqual([]);
+      expect(outcome.actions.filter((action) => action.model === 'notification')).toHaveLength(0);
       const page = await listInbox(tx, {
         userId: fixture.adaId,
         organizationId: fixture.organizationId,
@@ -804,10 +1163,10 @@ describe('notifyMany', () => {
         fixture.graceId,
       ]);
       const ada = outcome.notifications.find((row) => row.userId === fixture.adaId);
-      expect(ada?.deliveredChannels).toEqual(['inbox', 'slack']);
+      expect(ada?.deliveredChannels).toEqual(['inbox']);
       expect(
         outcome.actions.find((action) => action.modelId === ada?.id)?.data['deliveredChannels'],
-      ).toEqual(['inbox', 'slack']);
+      ).toBeUndefined();
     });
   });
 
@@ -828,6 +1187,87 @@ describe('notifyMany', () => {
       });
       expect(later.notifications).toHaveLength(2);
     });
+  });
+
+  it('contains concurrent fanout for one durable source', async () => {
+    const fixture = await db.transaction(async (tx) => await seed(tx));
+    const sourceEventKey = `source_concurrent_${randomUUIDv7()}`;
+    try {
+      const outcomes = await Promise.all([
+        db.transaction(
+          async (tx) => await notifyMany(tx, [sourcedEventFor(fixture, sourceEventKey)]),
+        ),
+        db.transaction(
+          async (tx) => await notifyMany(tx, [sourcedEventFor(fixture, sourceEventKey)]),
+        ),
+      ]);
+      const rows = await db
+        .select({ id: notification.id })
+        .from(notification)
+        .where(eq(notification.organizationId, fixture.organizationId));
+
+      expect(rows).toHaveLength(2);
+      expect(outcomes.flatMap((outcome) => outcome.notifications)).toHaveLength(2);
+    } finally {
+      await db.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await db
+        .delete(user)
+        .where(inArray(user.id, [fixture.actorId, fixture.adaId, fixture.graceId]));
+    }
+  });
+
+  it('contains post-commit fanout replay after the legacy window expires', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const sourceEventKey = `source_replay_${randomUUIDv7()}`;
+      const now = new Date('2026-07-22T12:00:00.000Z');
+      const first = await notifyMany(tx, [sourcedEventFor(fixture, sourceEventKey)], { now });
+      const replay = await notifyMany(tx, [sourcedEventFor(fixture, sourceEventKey)], {
+        now: new Date(now.getTime() + 120_000),
+      });
+
+      expect(first.notifications).toHaveLength(2);
+      expect(replay.notifications).toHaveLength(0);
+      expect(replay.deduped).toBe(2);
+    });
+  });
+
+  it('resumes one incomplete source exactly once across concurrent replays', async () => {
+    const fixture = await db.transaction(async (tx) => await seed(tx));
+    const sourceEventKey = `source_incomplete_${randomUUIDv7()}`;
+    const sourceEventId = `nse_${randomUUIDv7()}`;
+    try {
+      await db.insert(notificationSourceEvent).values({
+        id: sourceEventId,
+        organizationId: fixture.organizationId,
+        sourceEventKey,
+        subjectType: 'issue',
+        subjectKey: 'orbit-issue:iss_1:activity',
+        occurredAt: new Date('2026-07-22T12:00:00.000Z'),
+      });
+
+      const outcomes = await Promise.all([
+        notifyMany(db, [sourcedEventFor(fixture, sourceEventKey)]),
+        notifyMany(db, [sourcedEventFor(fixture, sourceEventKey)]),
+      ]);
+      const rows = await db
+        .select({ id: notification.id })
+        .from(notification)
+        .where(eq(notification.organizationId, fixture.organizationId));
+      const [source] = await db
+        .select({ fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt })
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.id, sourceEventId));
+
+      expect(rows).toHaveLength(2);
+      expect(outcomes.flatMap((outcome) => outcome.notifications)).toHaveLength(2);
+      expect(source?.fanoutCompletedAt).not.toBeNull();
+    } finally {
+      await db.delete(organization).where(eq(organization.id, fixture.organizationId));
+      await db
+        .delete(user)
+        .where(inArray(user.id, [fixture.actorId, fixture.adaId, fixture.graceId]));
+    }
   });
 
   it('deduplicates Slack DMs across retries of the same source delivery', async () => {
@@ -1100,6 +1540,31 @@ describe('inbox reads and writes', () => {
         unreadOnly: true,
       });
       expect(page.items).toHaveLength(0);
+    });
+  });
+
+  it('keeps dismissed unread rows unread when marking the visible inbox read', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      const outcome = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
+      const target = outcome.notifications[0];
+      if (target === undefined) throw new Error('Expected a notification.');
+      await tx
+        .update(notification)
+        .set({ dismissedAt: new Date('2026-07-22T12:00:00.000Z') })
+        .where(eq(notification.id, target.id));
+
+      expect(
+        await markAllRead(tx, {
+          userId: fixture.adaId,
+          organizationId: fixture.organizationId,
+        }),
+      ).toBe(0);
+      const [stored] = await tx
+        .select({ readAt: notification.readAt })
+        .from(notification)
+        .where(eq(notification.id, target.id));
+      expect(stored?.readAt).toBeNull();
     });
   });
 

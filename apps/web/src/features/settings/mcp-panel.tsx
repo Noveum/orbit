@@ -316,7 +316,7 @@ function AgentCard({
   );
 }
 
-function McpClientTile({
+export function McpClientTile({
   client,
   mcpUrl,
   onError,

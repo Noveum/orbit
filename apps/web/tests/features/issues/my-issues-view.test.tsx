@@ -10,6 +10,9 @@ import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { assignedSearch, DEFAULT_ISSUE_QUERY } from '@/lib/query/use-issues.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock() }),

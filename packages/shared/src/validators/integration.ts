@@ -1,6 +1,24 @@
 import { z } from 'zod';
 import { idSchema } from './common.ts';
 
+export const integrationSettingsProviderSchema = z.enum(['github', 'slack', 'mcp']);
+
+export const integrationSetupOriginSchema = z
+  .url({ protocol: /^https$/, hostname: z.regexes.domain })
+  .transform((value) => new URL(value))
+  .refine(
+    (url) =>
+      url.username.length === 0 &&
+      url.password.length === 0 &&
+      url.search.length === 0 &&
+      url.hash.length === 0 &&
+      url.pathname === '/' &&
+      !url.hostname.endsWith('.localhost') &&
+      !url.hostname.endsWith('.local'),
+    'Use the public HTTPS origin with a DNS hostname and no path, query or credentials.',
+  )
+  .transform((url) => url.origin);
+
 const githubInstallationIdSchema = z.string().trim().regex(/^\d+$/).max(32);
 const githubRepositoryIdSchema = z.string().trim().regex(/^\d+$/).max(32);
 

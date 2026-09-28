@@ -1029,6 +1029,18 @@ describe('listIssues', () => {
     const summary = await getIssueSummary(workspace.admin, { groupBy: 'participant' });
     expect(summary.groupTotals[participant.user.id]).toBe(3);
     expect(summary.groupTotals[other.user.id]).toBe(2);
+    const assignedSummary = await getIssueSummary(workspace.admin, {
+      groupBy: 'participant',
+      workType: 'assigned',
+    });
+    expect(assignedSummary.groupTotals[participant.user.id]).toBe(2);
+    expect(assignedSummary.groupTotals[other.user.id]).toBe(2);
+    const reviewSummary = await getIssueSummary(workspace.admin, {
+      groupBy: 'participant',
+      workType: 'reviewing',
+    });
+    expect(reviewSummary.groupTotals[participant.user.id]).toBe(2);
+    expect(reviewSummary.groupTotals[other.user.id]).toBeUndefined();
   });
 
   it('counts the unowned issues under the same key the facets use', async () => {
@@ -1363,6 +1375,31 @@ describe('relations', () => {
     await expect(
       setRelation(workspace.admin, issue.id, { relatedIssueId: issue.id, type: 'related' }),
     ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
+  it('does not write a second activity row on repeated setRelation', async () => {
+    const blocker = await newIssue('Blocker');
+    const blocked = await newIssue('Blocked');
+
+    const first = await setRelation(workspace.admin, blocker.id, {
+      relatedIssueId: blocked.id,
+      type: 'blocks',
+    });
+    expect(first.relations).toHaveLength(2);
+
+    const retry = await setRelation(workspace.admin, blocker.id, {
+      relatedIssueId: blocked.id,
+      type: 'blocks',
+    });
+    expect(retry.relations).toHaveLength(0);
+    expect(retry.actions).toHaveLength(0);
+
+    const activity = await db
+      .select()
+      .from(schema.issueActivity)
+      .where(eq(schema.issueActivity.issueId, blocker.id));
+    const relationActivity = activity.filter((row) => row.field === 'relation');
+    expect(relationActivity).toHaveLength(1);
   });
 
   it('returns the related issue rows alongside the link', async () => {

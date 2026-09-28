@@ -280,7 +280,13 @@ async function docScopeAllowed(docId: string, principal: ConnectionPrincipal) {
             ? sql`false`
             : and(
                 eq(schema.docAccess.subjectType, 'team'),
-                inArray(schema.docAccess.subjectId, [...principal.teamIds]),
+                inArray(
+                  schema.docAccess.subjectId,
+                  db
+                    .select({ teamId: schema.teamMember.teamId })
+                    .from(schema.teamMember)
+                    .where(eq(schema.teamMember.userId, principal.userId)),
+                ),
               ),
         ),
       ),

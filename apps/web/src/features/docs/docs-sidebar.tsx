@@ -22,6 +22,7 @@ import {
 import { DocArchiveSection } from './doc-archive-section.tsx';
 import type { DocRowActions } from './doc-row-menu.tsx';
 import { DocTree } from './doc-tree.tsx';
+import { ResizableRail } from './resizable-rail.tsx';
 import { useDocsTree } from './use-docs-tree.ts';
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -138,7 +139,9 @@ export function DocsSidebar({ canWrite }: DocsSidebarProps) {
         />
       ) : null}
 
-      <div
+      <ResizableRail
+        storageKey="orbit:docs:sidebar-width"
+        label="Resize document sidebar"
         className={cn(
           'z-40 h-full shrink-0',
           open ? 'fixed inset-y-0 left-0 shadow-pop lg:static lg:shadow-none' : 'hidden lg:block',
@@ -163,7 +166,7 @@ export function DocsSidebar({ canWrite }: DocsSidebarProps) {
           footer={<DocArchiveSection canWrite={canWrite} />}
           onNavigate={close}
         />
-      </div>
+      </ResizableRail>
     </>
   );
 }

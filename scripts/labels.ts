@@ -45,6 +45,16 @@ export const LABELS: readonly LabelDefinition[] = [
   { name: 'question', color: 'd876e3', description: 'Needs more information to act on' },
 
   {
+    name: 'preview',
+    color: '0e8a16',
+    description: 'Enables a Preview for an otherwise eligible draft after CI succeeds',
+  },
+  {
+    name: 'no-preview',
+    color: BLOCKED_COLOR,
+    description: 'Suppresses Preview creation and cancels active Preview work',
+  },
+  {
     name: 'needs triage',
     color: STATUS_COLOR,
     description: 'Not yet looked at by a maintainer',

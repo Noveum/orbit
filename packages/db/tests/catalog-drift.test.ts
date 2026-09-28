@@ -100,6 +100,10 @@ describe('catalog drift', () => {
         alter table legacy_sidecar add constraint legacy_sidecar_org_fk
         foreign key (organization_id) references organization(id)
       `;
+      await sql`
+        alter table legacy_sidecar add constraint legacy_sidecar_org_check
+        check (organization_id is not null)
+      `;
     });
 
     const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
@@ -111,6 +115,10 @@ describe('catalog drift', () => {
     expect(drift.undeclaredForeignKeys).toContainEqual({
       table: 'legacy_sidecar',
       foreignKey: 'legacy_sidecar_org_fk',
+    });
+    expect(drift.undeclaredCheckConstraints).toContainEqual({
+      table: 'legacy_sidecar',
+      check: 'legacy_sidecar_org_check',
     });
     expect(isBehind(drift)).toBe(false);
   });
@@ -196,10 +204,65 @@ describe('catalog drift', () => {
     });
 
     const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
-    expect(drift.checkMismatches.map((entry) => entry.name)).toContain('issue_creator_actor_check');
-    expect(drift.missingChecks).toContainEqual({
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toContain(
+      'issue_creator_actor_check',
+    );
+    expect(drift.missingCheckConstraints).toContainEqual({
       table: 'issue',
       check: 'issue_assignee_actor_check',
+    });
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('accepts a check constraint renamed but not changed', async () => {
+    await run(
+      urlFor(SCRATCH),
+      (sql) => sql`
+        alter table github_check_activity
+        rename constraint github_check_activity_source_kind_check
+        to legacy_check_activity_source_kind_check
+      `,
+    );
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.missingCheckConstraints).toEqual([]);
+    expect(drift.checkConstraintMismatches).toEqual([]);
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('detects a check whose expression changed under the same name', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table notification_conversation drop constraint notification_conversation_counts_check`;
+      await sql`
+        alter table notification_conversation add constraint notification_conversation_counts_check
+        check (
+          event_count >= 0
+          and unread_event_count >= 0
+          and unread_mention_count >= 0
+          and unread_event_count <= event_count
+          and unread_mention_count <= unread_event_count
+        )
+      `;
+    });
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toContain(
+      'notification_conversation_counts_check',
+    );
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('detects a dropped check constraint', async () => {
+    await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql`alter table notification_conversation drop constraint notification_conversation_category_check`,
+    );
+
+    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(urlFor(SCRATCH)));
+    expect(drift.missingCheckConstraints).toContainEqual({
+      table: 'notification_conversation',
+      check: 'notification_conversation_category_check',
     });
     expect(isBehind(drift)).toBe(true);
   });
@@ -217,6 +280,31 @@ describe('catalog drift', () => {
       table: 'agent_identity',
       trigger: 'agent_identity_active_grant_guard_trigger',
     });
+    expect(isBehind(drift)).toBe(true);
+  });
+
+  it('detects a check whose cast changed between integer and numeric', async () => {
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        alter table notification_conversation add constraint notification_conversation_cast_check
+        check ((event_count)::integer > 1)
+      `;
+    });
+    const beforeCast = await liveCatalog(urlFor(SCRATCH));
+
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table notification_conversation drop constraint notification_conversation_cast_check`;
+      await sql`
+        alter table notification_conversation add constraint notification_conversation_cast_check
+        check ((event_count)::numeric > 1)
+      `;
+    });
+    const afterCast = await liveCatalog(urlFor(SCRATCH));
+
+    const drift = catalogDriftBetween(beforeCast, afterCast);
+    expect(drift.checkConstraintMismatches.map((entry) => entry.name)).toEqual([
+      'notification_conversation_cast_check',
+    ]);
     expect(isBehind(drift)).toBe(true);
   });
 });

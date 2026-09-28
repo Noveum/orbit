@@ -1,0 +1,1 @@
+ALTER TABLE "member" ADD COLUMN "is_agent" boolean DEFAULT false NOT NULL;

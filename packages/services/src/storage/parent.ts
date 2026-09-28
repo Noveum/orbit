@@ -1,17 +1,7 @@
-import {
-  and,
-  type Database,
-  eq,
-  inArray,
-  isNull,
-  or,
-  schema,
-  sql,
-  type Transaction,
-} from '@orbit/db';
-import { isExternallyShared, isRestricted } from '@orbit/shared/constants';
+import { and, type Database, eq, inArray, isNull, or, schema, type Transaction } from '@orbit/db';
+import { isExternallyShared } from '@orbit/shared/constants';
 import { notFound } from '@orbit/shared/errors';
-import { assertCan, isInTeam, type Principal } from '@orbit/shared/policy';
+import { assertCan, canReadDoc, canWriteDoc, isInTeam, type Principal } from '@orbit/shared/policy';
 import type { SQL } from 'drizzle-orm';
 
 export type StorageExecutor = Database | Transaction;
@@ -50,21 +40,26 @@ async function docFor(
 }
 
 interface DocAccessRow {
+  readonly organizationId: string;
   readonly id: string;
   readonly visibility: string;
   readonly authorId: string;
   readonly archivedAt: Date | null;
 }
 
-function subjectMatches(principal: Principal): SQL | undefined {
+function subjectMatches(executor: StorageExecutor, principal: Principal): SQL | undefined {
   return or(
     and(eq(schema.docAccess.subjectType, 'user'), eq(schema.docAccess.subjectId, principal.userId)),
-    principal.teamIds.length === 0
-      ? sql`false`
-      : and(
-          eq(schema.docAccess.subjectType, 'team'),
-          inArray(schema.docAccess.subjectId, [...principal.teamIds]),
-        ),
+    and(
+      eq(schema.docAccess.subjectType, 'team'),
+      inArray(
+        schema.docAccess.subjectId,
+        executor
+          .select({ teamId: schema.teamMember.teamId })
+          .from(schema.teamMember)
+          .where(eq(schema.teamMember.userId, principal.userId)),
+      ),
+    ),
   );
 }
 
@@ -77,6 +72,7 @@ async function docAllowing(
   const [row] = await executor
     .select({
       id: schema.doc.id,
+      organizationId: schema.doc.organizationId,
       visibility: schema.doc.visibility,
       authorId: schema.doc.authorId,
       archivedAt: schema.doc.archivedAt,
@@ -85,10 +81,6 @@ async function docAllowing(
     .where(and(eq(schema.doc.id, docId), eq(schema.doc.organizationId, principal.organizationId)))
     .limit(1);
   if (row === undefined) return undefined;
-  if (principal.role === 'admin') return row;
-  if (row.authorId === principal.userId) return row;
-  if (!isRestricted(row.visibility)) return row;
-
   const grants = await executor
     .select({ docId: schema.docAccess.docId })
     .from(schema.docAccess)
@@ -96,11 +88,19 @@ async function docAllowing(
       and(
         eq(schema.docAccess.docId, docId),
         level === 'write' ? eq(schema.docAccess.level, 'write') : undefined,
-        subjectMatches(principal),
+        subjectMatches(executor, principal),
       ),
     )
     .limit(1);
-  return grants.length > 0 ? row : undefined;
+  const allowed =
+    level === 'read'
+      ? canReadDoc(
+          principal,
+          row,
+          grants.map((grant) => grant.docId),
+        )
+      : canWriteDoc(principal, row, grants.length > 0);
+  return allowed ? row : undefined;
 }
 
 async function docReadableBy(
@@ -178,11 +178,11 @@ export async function assertUploadParent(
   assertCan(principal, 'attachment:upload');
 
   if (parentType === 'doc') {
+    assertCan(principal, 'doc:write');
     const row = await docWritableBy(executor, principal, parentId);
     if (row === undefined || row.archivedAt !== null) {
       throw notFound('That doc does not exist.');
     }
-    assertCan(principal, 'doc:write');
     if (isExternallyShared(row.visibility)) assertCan(principal, 'doc:publish');
     return;
   }

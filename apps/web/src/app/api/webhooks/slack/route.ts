@@ -51,8 +51,7 @@ export async function POST(request: Request): Promise<Response> {
     scheduleSlackEventProcessing(
       async () =>
         await processLinkShared(
-          event.event_id,
-          claim.claimedAt,
+          claim,
           event.team_id,
           event.event.channel,
           event.event.message_ts,
@@ -65,7 +64,8 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 interface SlackEventClaim {
-  readonly claimedAt: Date;
+  readonly id: string;
+  readonly claimToken: string;
 }
 
 async function claimSlackEvent(
@@ -73,6 +73,7 @@ async function claimSlackEvent(
   eventName: string,
 ): Promise<SlackEventClaim | Response> {
   const claimedAt = new Date();
+  const claimToken = randomUUIDv7();
   const claimed = await db
     .insert(schema.webhookDelivery)
     .values({
@@ -82,13 +83,14 @@ async function claimSlackEvent(
       event: eventName,
       status: 'processing',
       claimedAt,
+      claimToken,
     })
     .onConflictDoNothing()
     .returning({ id: schema.webhookDelivery.id });
-  if (claimed.length === 1) return { claimedAt };
+  if (claimed[0] !== undefined) return { id: claimed[0].id, claimToken };
   const reclaimed = await db
     .update(schema.webhookDelivery)
-    .set({ status: 'processing', event: eventName, error: null, claimedAt })
+    .set({ status: 'processing', event: eventName, error: null, claimedAt, claimToken })
     .where(
       and(
         deliveryMatch(deliveryId),
@@ -105,13 +107,12 @@ async function claimSlackEvent(
       ),
     )
     .returning({ id: schema.webhookDelivery.id });
-  if (reclaimed.length === 1) return { claimedAt };
+  if (reclaimed[0] !== undefined) return { id: reclaimed[0].id, claimToken };
   return Response.json({ ok: true });
 }
 
 async function processLinkShared(
-  deliveryId: string,
-  claimedAt: Date,
+  claim: SlackEventClaim,
   slackTeamId: string,
   channel: string | undefined,
   ts: string | undefined,
@@ -126,13 +127,13 @@ async function processLinkShared(
         error: null,
         ...(organizationId === null ? {} : { organizationId }),
       })
-      .where(deliveryClaimMatch(deliveryId, claimedAt));
+      .where(deliveryClaimMatch(claim));
   } catch {
     try {
       await db
         .update(schema.webhookDelivery)
         .set({ status: 'failed', error: 'Slack unfurl processing failed.' })
-        .where(deliveryClaimMatch(deliveryId, claimedAt));
+        .where(deliveryClaimMatch(claim));
     } catch {
       console.error('[orbit] slack unfurl failure finalization failed');
     }
@@ -140,11 +141,12 @@ async function processLinkShared(
   }
 }
 
-function deliveryClaimMatch(deliveryId: string, claimedAt: Date) {
+function deliveryClaimMatch(claim: SlackEventClaim) {
   return and(
-    deliveryMatch(deliveryId),
+    eq(schema.webhookDelivery.id, claim.id),
+    eq(schema.webhookDelivery.provider, 'slack'),
     eq(schema.webhookDelivery.status, 'processing'),
-    eq(schema.webhookDelivery.claimedAt, claimedAt),
+    eq(schema.webhookDelivery.claimToken, claim.claimToken),
   );
 }
 

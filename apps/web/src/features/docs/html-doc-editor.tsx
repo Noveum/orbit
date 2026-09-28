@@ -8,6 +8,7 @@ import { tabHover } from '@/lib/interaction.ts';
 import { HtmlCodeEditor } from './editor/html-code-editor.tsx';
 import { HtmlPreview } from './html-preview.tsx';
 import { SplitPane } from './split-pane.tsx';
+import { useDocPreferences } from './use-doc-preferences.ts';
 
 const SPLIT_STORAGE_KEY = 'orbit:docs:html-split';
 
@@ -20,6 +21,7 @@ type HtmlView = (typeof VIEW_OPTIONS)[number]['id'];
 
 export interface HtmlDocEditorProps {
   readonly title: string;
+  readonly titleControl?: React.ReactNode;
   readonly content: string;
   readonly onChange: (value: string) => void;
   readonly footer?: React.ReactNode;
@@ -59,14 +61,25 @@ function HtmlDocDock({ children }: { readonly children: React.ReactNode }) {
   );
 }
 
-export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEditorProps) {
-  const [view, setView] = useState<HtmlView>('split');
+export function HtmlDocEditor({
+  title,
+  titleControl,
+  content,
+  onChange,
+  footer,
+}: HtmlDocEditorProps) {
+  const { mode, setMode } = useDocPreferences();
+  const [editView, setEditView] = useState<Exclude<HtmlView, 'preview'>>('split');
+  const view = mode === 'preview' ? 'preview' : editView;
   const showSource = view !== 'preview';
   const showPreview = view !== 'source';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="html-doc-editor">
-      <div className="flex h-10 shrink-0 items-center gap-1 border-border border-b px-3">
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-border border-b px-3 py-1">
+        <div className="mr-auto min-w-32 flex-1">
+          {titleControl ?? <span className="block truncate text-dense font-medium">{title}</span>}
+        </div>
         {VIEW_OPTIONS.map((entry) => {
           const Icon = entry.Icon;
           return (
@@ -81,7 +94,10 @@ export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEdito
                 tabHover,
                 view === entry.id ? 'bg-surface-2 text-text' : 'text-muted',
               )}
-              onClick={() => setView(entry.id)}
+              onClick={() => {
+                setMode(entry.id === 'preview' ? 'preview' : 'markdown');
+                if (entry.id !== 'preview') setEditView(entry.id);
+              }}
             >
               <Icon className="size-3.5" aria-hidden="true" />
               {entry.label}
@@ -90,6 +106,7 @@ export function HtmlDocEditor({ title, content, onChange, footer }: HtmlDocEdito
         })}
       </div>
       <SplitPane
+        stackOnSmall
         storageKey={SPLIT_STORAGE_KEY}
         label="Resize source and preview"
         secondClassName="bg-white"

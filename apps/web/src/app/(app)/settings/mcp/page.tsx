@@ -1,5 +1,6 @@
 import { listAgentSettings } from '@orbit/core';
 import { agentFeatureEnabled } from '@orbit/shared';
+import { StarterPromptsCard } from '@/features/ai-connect/starter-prompts-card.tsx';
 import { loadMcpConnections } from '@/features/settings/mcp-data.ts';
 import { McpPanel } from '@/features/settings/mcp-panel.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
@@ -23,6 +24,7 @@ export default async function McpSettingsPage() {
         </p>
       </div>
       <McpPanel mcpUrl={mcpServerUrl()} connections={connections} agents={agents} />
+      <StarterPromptsCard />
     </section>
   );
 }

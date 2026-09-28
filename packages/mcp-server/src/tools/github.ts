@@ -127,6 +127,7 @@ export function registerGithubTools(server: McpServer, principal: Principal): vo
       description:
         'Remove the association between a repository and a project, or the workspace level association when no project is given. Removing the last association stops Orbit watching the repository, so its events are no longer processed.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         repository: repositoryRef,
         project: projectRef,

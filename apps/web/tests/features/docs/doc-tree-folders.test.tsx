@@ -126,9 +126,10 @@ describe('folders in the doc tree', () => {
     expect(screen.getByTestId('doc-group-toggle-private').textContent).toContain('1');
   });
 
-  it('says a folder is empty rather than leaving it blank', () => {
+  it('says a folder is empty after expanding it', async () => {
     render(tree([], [collection('specs', 'Specs')]));
 
+    await userEvent.setup().click(screen.getByTestId('doc-group-toggle-specs'));
     expect(screen.getByTestId('doc-folder-specs').textContent).toContain('Nothing here yet');
   });
 });
@@ -141,6 +142,7 @@ describe('the row menu', () => {
       tree([summary('a', 'Loose page')], [collection('specs', 'Specs')], noopActions({ onMove })),
     );
 
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
     await user.click(screen.getByTestId('doc-row-menu-a'));
     await user.keyboard('{ArrowDown}{ArrowDown}{ArrowRight}');
     await screen.findByTestId('doc-move-to-specs');
@@ -155,6 +157,7 @@ describe('the row menu', () => {
     const user = userEvent.setup();
     render(tree([summary('a', 'Loose page')], [], noopActions({ onArchive })));
 
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
     await user.click(screen.getByTestId('doc-row-menu-a'));
     await user.click(screen.getByTestId('doc-archive-row'));
 
@@ -165,6 +168,7 @@ describe('the row menu', () => {
     const user = userEvent.setup();
     render(tree([summary('a', 'Loose page')], [], noopActions({ canDelete: () => false })));
 
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
     await user.click(screen.getByTestId('doc-row-menu-a'));
 
     expect(screen.queryByTestId('doc-delete-row')).toBeNull();
@@ -175,6 +179,7 @@ describe('the row menu', () => {
     const user = userEvent.setup();
     render(tree([summary('a', 'Old name')], [], noopActions(), onRenameDoc));
 
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
     await user.click(screen.getByTestId('doc-row-menu-a'));
     await user.click(screen.getByTestId('doc-rename'));
     const input = await screen.findByTestId('doc-rename-input-a');
@@ -189,6 +194,7 @@ describe('the row menu', () => {
     const user = userEvent.setup();
     render(tree([summary('a', 'Old name')], [], noopActions(), onRenameDoc));
 
+    await user.click(screen.getByTestId('doc-group-toggle-private'));
     await user.click(screen.getByTestId('doc-row-menu-a'));
     await user.click(screen.getByTestId('doc-rename'));
     await user.type(await screen.findByTestId('doc-rename-input-a'), '{Escape}');

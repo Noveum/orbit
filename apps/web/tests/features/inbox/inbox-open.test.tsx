@@ -10,6 +10,7 @@ mock.module('@orbit/realtime-client/react', () => ({
   ...realtimeReact,
   useScopeSubscription: () => undefined,
   useDeltaHandler: () => undefined,
+  useResumeHandler: () => undefined,
 }));
 
 const issueDetail = { ...(await import('@/features/issues/issue-detail.tsx')) };

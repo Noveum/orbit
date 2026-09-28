@@ -38,9 +38,10 @@ function emptyRow(): InviteRow {
 
 export interface InviteStepProps {
   readonly onNext: (status: OnboardingStatusView) => void;
+  readonly emailEnabled: boolean;
 }
 
-export function InviteStep({ onNext }: InviteStepProps) {
+export function InviteStep({ onNext, emailEnabled }: InviteStepProps) {
   const [rows, setRows] = useState<InviteRow[]>(() => [emptyRow(), emptyRow(), emptyRow()]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,9 +64,9 @@ export function InviteStep({ onNext }: InviteStepProps) {
     if (isLast && event.currentTarget.value.trim().length > 0) addRow();
   }
 
-  const validInvites = rows
+  const filledInvites = rows
     .map((row) => ({ email: row.email.trim(), role: row.role }))
-    .filter((row) => emailSchema.safeParse(row.email).success);
+    .filter((row) => row.email.length > 0);
 
   async function skip(): Promise<void> {
     setPending(true);
@@ -79,8 +80,13 @@ export function InviteStep({ onNext }: InviteStepProps) {
   }
 
   async function send(): Promise<void> {
-    if (validInvites.length === 0) {
+    if (!emailEnabled) return;
+    if (filledInvites.length === 0) {
       setError('Add at least one email, or skip this step.');
+      return;
+    }
+    if (filledInvites.some((row) => !emailSchema.safeParse(row.email).success)) {
+      setError('Correct the invalid email addresses before sending invitations.');
       return;
     }
     setPending(true);
@@ -88,7 +94,7 @@ export function InviteStep({ onNext }: InviteStepProps) {
     try {
       await apiRequest('/api/invites', {
         method: 'POST',
-        body: { invites: validInvites.map((row) => ({ email: row.email, role: row.role })) },
+        body: { invites: filledInvites },
       });
       onNext(await advanceStep({ step: 'invite' }));
     } catch (caught) {
@@ -102,72 +108,78 @@ export function InviteStep({ onNext }: InviteStepProps) {
       <header className="flex flex-col gap-1">
         <h1 className="font-semibold text-text text-xl">Invite your teammates</h1>
         <p className="text-muted text-dense">
-          They will get an email to join. You can always add more later.
+          {emailEnabled
+            ? 'They will get an email to join. You can always add more later.'
+            : 'Email invitations are unavailable until the server operator configures email delivery. Continue now and invite teammates from Settings later.'}
         </p>
       </header>
 
-      <fieldset disabled={pending} className="flex flex-col gap-2">
-        {rows.map((row, index) => {
-          const invalid =
-            row.email.trim().length > 0 && !emailSchema.safeParse(row.email.trim()).success;
-          return (
-            <div key={row.id} className="flex items-start gap-2">
-              <div className="flex flex-1 flex-col gap-1">
-                <Input
-                  type="email"
-                  value={row.email}
-                  onChange={(event) => updateRow(row.id, { email: event.target.value })}
-                  onKeyDown={(event) => onEmailKeyDown(event, index === rows.length - 1)}
-                  placeholder="teammate@company.com"
-                  autoComplete="off"
-                  aria-label={`Teammate ${index + 1} email`}
-                  aria-invalid={invalid}
-                />
-                {invalid ? (
-                  <span role="alert" className="text-danger text-xs">
-                    That does not look like an email.
-                  </span>
-                ) : null}
-              </div>
-              <div className="w-40 shrink-0">
-                <Select
-                  value={row.role}
-                  onValueChange={(value) => updateRow(row.id, { role: value as OrgRole })}
-                >
-                  <SelectTrigger aria-label={`Teammate ${index + 1} role`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ORG_ROLES.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {ROLE_LABELS[role]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="md"
-                onClick={() => removeRow(row.id)}
-                aria-label={`Remove teammate ${index + 1}`}
-                disabled={rows.length <= 1}
-                className="px-2"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
-            </div>
-          );
-        })}
-      </fieldset>
+      {emailEnabled ? (
+        <>
+          <fieldset disabled={pending} className="flex flex-col gap-2">
+            {rows.map((row, index) => {
+              const invalid =
+                row.email.trim().length > 0 && !emailSchema.safeParse(row.email.trim()).success;
+              return (
+                <div key={row.id} className="flex items-start gap-2">
+                  <div className="flex flex-1 flex-col gap-1">
+                    <Input
+                      type="email"
+                      value={row.email}
+                      onChange={(event) => updateRow(row.id, { email: event.target.value })}
+                      onKeyDown={(event) => onEmailKeyDown(event, index === rows.length - 1)}
+                      placeholder="teammate@company.com"
+                      autoComplete="off"
+                      aria-label={`Teammate ${index + 1} email`}
+                      aria-invalid={invalid}
+                    />
+                    {invalid ? (
+                      <span role="alert" className="text-danger text-xs">
+                        That does not look like an email.
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="w-40 shrink-0">
+                    <Select
+                      value={row.role}
+                      onValueChange={(value) => updateRow(row.id, { role: value as OrgRole })}
+                    >
+                      <SelectTrigger aria-label={`Teammate ${index + 1} role`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ORG_ROLES.map((role) => (
+                          <SelectItem key={role} value={role}>
+                            {ROLE_LABELS[role]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="md"
+                    onClick={() => removeRow(row.id)}
+                    aria-label={`Remove teammate ${index + 1}`}
+                    disabled={rows.length <= 1}
+                    className="px-2"
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </div>
+              );
+            })}
+          </fieldset>
 
-      <div>
-        <Button type="button" variant="ghost" size="sm" onClick={addRow} disabled={pending}>
-          <Plus className="size-3.5" aria-hidden="true" />
-          Add another
-        </Button>
-      </div>
+          <div>
+            <Button type="button" variant="ghost" size="sm" onClick={addRow} disabled={pending}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              Add another
+            </Button>
+          </div>
+        </>
+      ) : null}
 
       {error === null ? null : (
         <p role="alert" className="text-danger text-xs">
@@ -176,21 +188,23 @@ export function InviteStep({ onNext }: InviteStepProps) {
       )}
 
       <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="primary"
-          onClick={() => send().catch(() => undefined)}
-          disabled={pending}
-        >
-          {pending ? 'Sending' : 'Send invites'}
-        </Button>
+        {emailEnabled ? (
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => send().catch(() => undefined)}
+            disabled={pending}
+          >
+            {pending ? 'Sending' : 'Send invites'}
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
           onClick={() => skip().catch(() => undefined)}
           disabled={pending}
         >
-          Skip for now
+          {emailEnabled ? 'Skip for now' : 'Continue'}
         </Button>
       </div>
     </div>

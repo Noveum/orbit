@@ -385,6 +385,19 @@ describe('issues', () => {
     });
   });
 
+  it('marks duplicate via set_relation when type is duplicate_of', async () => {
+    const duplicate = await newIssue('Duplicate issue');
+    const survivor = await newIssue('Survivor issue');
+    const res = await admin.result('set_relation', {
+      issue: duplicate.identifier,
+      relatedIssue: survivor.identifier,
+      type: 'duplicate_of',
+    });
+    expect(res['issue']).toBe(duplicate.identifier);
+    expect(res['relatedIssue']).toBe(survivor.identifier);
+    expect(res['type']).toBe('duplicate_of');
+  });
+
   it('unlinks two issues from either end', async () => {
     const first = await newIssue('Still blocks the other');
     const second = await newIssue('Still blocked by the first');
@@ -435,6 +448,26 @@ describe('issues', () => {
 
     expect(failure.isError).toBe(true);
     expect(errorPayload(failure).code).toBe('not_found');
+  });
+
+  it('marks an issue as duplicate of another issue via MCP', async () => {
+    const survivor = await newIssue('Survivor issue');
+    const duplicate = await newIssue('Duplicate issue');
+
+    const result = await admin.result('mark_issue_duplicate', {
+      issue: duplicate.identifier,
+      survivorIssue: survivor.identifier,
+    });
+
+    expect(result['issue']).toBe(duplicate.identifier);
+    expect(result['survivorIssue']).toBe(survivor.identifier);
+
+    const survivorDetails = await admin.result('get_issue', { issue: survivor.identifier });
+    expect(relationsOf(survivorDetails)).toContainEqual({
+      type: 'duplicated_by',
+      identifier: duplicate.identifier,
+      title: 'Duplicate issue',
+    });
   });
 
   it('makes an issue a sub issue and detaches it again', async () => {
@@ -820,14 +853,14 @@ describe('sprints over mcp', () => {
     expect((created['cycle'] as { name: string }).name).toBe('Sprint 100');
   });
 
-  it('closes a sprint two weeks out when no end date is given', async () => {
+  it('closes a sprint one week out when no end date is given', async () => {
     const created = await admin.result('create_cycle', {
       team: workspace.teamKey,
       name: 'Sprint 101',
       startsAt: '2033-01-05',
     });
     const sprint = created['cycle'] as { startsAt: string; endsAt: string };
-    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(7 * 86_400_000);
   });
 
   it('appends a sprint after the last one when it is given no dates', async () => {
@@ -841,7 +874,7 @@ describe('sprints over mcp', () => {
     const sprint = created['cycle'] as { startsAt: string; endsAt: string };
 
     expect(sprint.startsAt).toBe(last.endsAt);
-    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(14 * 86_400_000);
+    expect(Date.parse(sprint.endsAt) - Date.parse(sprint.startsAt)).toBe(7 * 86_400_000);
   });
 
   it('starts the sprint that follows the one it just closed, and refuses to start it twice', async () => {
@@ -933,5 +966,60 @@ describe('what a token is allowed to do', () => {
   it('still gives a token carrying orbit.write the whole set', async () => {
     const { tools } = await admin.client.listTools();
     expect(tools.map((tool) => tool.name)).toContain('create_issue');
+
+    const expectedDestructive = [
+      'archive_doc',
+      'archive_issue',
+      'archive_project',
+      'complete_cycle',
+      'delete_comment',
+      'delete_doc',
+      'delete_doc_collection',
+      'delete_doc_comment',
+      'delete_issue',
+      'delete_label',
+      'delete_milestone',
+      'delete_project',
+      'delete_sprint',
+      'delete_state',
+      'delete_view',
+      'edit_comment',
+      'edit_doc_comment',
+      'mark_issue_duplicate',
+      'remove_member',
+      'remove_relation',
+      'remove_team_member',
+      'unlink_github_repository',
+      'update_state',
+      'update_view',
+    ];
+
+    const actualDestructive = tools
+      .filter((tool) => tool.annotations?.destructiveHint === true)
+      .map((tool) => tool.name)
+      .sort();
+    expect(actualDestructive).toEqual(expectedDestructive);
+
+    const actualOpenWorld = tools
+      .filter((tool) => tool.annotations?.openWorldHint === true)
+      .map((tool) => tool.name)
+      .sort();
+    expect(actualOpenWorld).toEqual([
+      'archive_doc',
+      'attach_file',
+      'create_doc',
+      'delete_doc',
+      'invite_member',
+      'unarchive_doc',
+      'update_doc',
+    ]);
+
+    const nonDestructive = ['create_issue', 'create_cycle', 'add_comment'];
+    for (const name of nonDestructive) {
+      const tool = tools.find((t) => t.name === name);
+      expect(tool).toBeDefined();
+      expect(tool?.annotations?.destructiveHint).toBe(false);
+      expect(tool?.annotations?.idempotentHint).toBe(false);
+    }
   });
 });

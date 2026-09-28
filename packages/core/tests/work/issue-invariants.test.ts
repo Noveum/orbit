@@ -6,6 +6,7 @@ import {
   INVERSE_RELATION,
   type IssueRow,
   listRelations,
+  markAsDuplicate,
   PARENT_CHAIN_LIMIT,
   removeRelation,
   setRelation,
@@ -111,9 +112,8 @@ describe('relation symmetry invariant', () => {
   it('leaves exactly one canonical direction for a duplicate', async () => {
     const original = await newIssue('Original');
     const copy = await newIssue('Copy');
-    await setRelation(workspace.admin, copy.id, {
-      relatedIssueId: original.id,
-      type: 'duplicate_of',
+    await markAsDuplicate(workspace.admin, copy.id, {
+      survivorIssueId: original.id,
     });
 
     const fromCopy = await listRelations(workspace.admin, copy.id);
@@ -125,9 +125,8 @@ describe('relation symmetry invariant', () => {
   it('removes both directions of a duplicate', async () => {
     const original = await newIssue('Original');
     const copy = await newIssue('Copy');
-    await setRelation(workspace.admin, copy.id, {
-      relatedIssueId: original.id,
-      type: 'duplicate_of',
+    await markAsDuplicate(workspace.admin, copy.id, {
+      survivorIssueId: original.id,
     });
     await removeRelation(workspace.admin, copy.id, {
       relatedIssueId: original.id,

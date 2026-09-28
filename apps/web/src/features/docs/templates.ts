@@ -39,7 +39,7 @@ export const DOC_TEMPLATES: readonly DocTemplate[] = [
     name: 'Blank doc',
     title: 'Untitled doc',
     kind: 'markdown',
-    content: '# Untitled doc\n\nStart writing.\n',
+    content: '',
   },
   {
     id: 'meeting-notes',

@@ -65,6 +65,40 @@ function expectRange(
 }
 
 describe('resolveAnalyticsQuery', () => {
+  it('resolves a saved current sprint filter against the reporting clock', () => {
+    const selected = query({
+      filter: {
+        kind: 'group',
+        combinator: 'and',
+        children: [
+          {
+            kind: 'condition',
+            property: 'cycle',
+            operator: 'in',
+            values: ['current'],
+            negate: false,
+          },
+        ],
+      },
+    });
+    const next = {
+      ...currentSprint,
+      id: 'next',
+      startsAt: currentSprint.endsAt,
+      endsAt: new Date('2024-03-25T04:00:00Z'),
+    };
+    const cycles = [previousSprint, currentSprint, next];
+    expect(resolveAnalyticsQuery(selected, context(cycles)).selectedSprintId).toBe(
+      currentSprint.id,
+    );
+    expect(
+      resolveAnalyticsQuery(selected, context(cycles, { now: next.startsAt })).selectedSprintId,
+    ).toBe(next.id);
+    expect(
+      resolveAnalyticsQuery(selected, context(cycles, { now: next.endsAt })).selectedSprintId,
+    ).toBeNull();
+  });
+
   it('uses workspace sprint history when cycle team attribution is absent', () => {
     const workspaceCurrent = { ...currentSprint, teamId: null };
     const workspacePrevious = { ...previousSprint, teamId: null };

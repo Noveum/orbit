@@ -1,1 +1,0 @@
-ALTER TABLE "issue_outbox" ADD COLUMN "lease_owner" text;

@@ -218,6 +218,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Create a document with a Markdown body or a self-contained HTML page. File it under a collection, attach it to a project, or nest it under a parent document. A document lives in a collection or in a project, never both.',
       readOnly: false,
+      openWorld: true,
       inputSchema: {
         title: z.string().trim().min(1).max(200).describe('Document title.'),
         content: z
@@ -270,6 +271,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Change a document title, body, collection, parent, project or visibility. Only the fields you pass are touched. Filing a document under a collection detaches it from any project, and attaching it to a project unfiles it.',
       readOnly: false,
+      openWorld: true,
       inputSchema: {
         doc: docRef,
         title: z.string().trim().min(1).max(200).optional(),
@@ -326,6 +328,8 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Archive a document so it leaves the sidebar and the default listings. The content is kept.',
       readOnly: false,
+      destructive: true,
+      openWorld: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
@@ -366,6 +370,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Comment on a document',
       description: 'Add a Markdown comment to a document.',
       readOnly: false,
+      destructive: false,
       inputSchema: { doc: docRef, body: z.string().min(1).max(50_000).describe('Markdown body.') },
     },
     async (args) => {
@@ -383,6 +388,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Edit a document comment',
       description: 'Rewrite the body of a comment this user wrote on a document.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         commentId: z.string().min(1).describe('The comment id.'),
         body: z.string().min(1).max(50_000).describe('Replacement Markdown body.'),
@@ -402,6 +408,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Delete a document comment',
       description: 'Remove a comment from a document.',
       readOnly: false,
+      destructive: true,
       inputSchema: { commentId: z.string().min(1).describe('The comment id.') },
     },
     async (args) => {
@@ -442,6 +449,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Create a document collection',
       description: 'Create a folder that documents can be filed under.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         name: z.string().trim().min(1).max(120).describe('Collection name.'),
         icon: z.string().trim().min(1).max(32).optional().describe('Lucide icon name.'),
@@ -493,8 +501,9 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       name: 'delete_doc_collection',
       title: 'Delete a document collection',
       description:
-        'Deletes a document collection. The documents inside are never deleted: they move to reassignTo, or become unfiled when you leave it out. This action is refused if the folder holds a document you cannot write.',
+        'Delete a folder. The documents inside stay in the workspace but lose their collection link unless you reassign them to another collection.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         collection: collectionRef,
         reassignTo: collectionRef
@@ -588,6 +597,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       title: 'Restore an archived document',
       description: 'Bring an archived document back into the sidebar and the default listings.',
       readOnly: false,
+      openWorld: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {
@@ -606,6 +616,8 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       description:
         'Delete a document permanently. Pages nested under it are lifted to its own place rather than deleted. Use archive_doc to hide a document instead of destroying it.',
       readOnly: false,
+      destructive: true,
+      openWorld: true,
       inputSchema: { doc: docRef },
     },
     async (args) => {

@@ -13,7 +13,7 @@ import { releaseDatabase } from '../../src/migration-release.ts';
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_agent_actor_migrations', currentLane());
 const MIGRATIONS = fileURLToPath(new URL('../../drizzle', import.meta.url));
-const LEGACY_MIGRATION = '0016_secure_slack_team';
+const LEGACY_MIGRATION = '0029_material_psynapse';
 
 function urlFor(database: string): string {
   const url = new URL(BASE);

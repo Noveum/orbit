@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import userEvent from '@testing-library/user-event';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { CommandPalette } from '@/components/command-palette.tsx';
 import { ShortcutsOverlay } from '@/components/shortcuts-overlay.tsx';
-import { HOTKEY_PRIORITY, HotkeyProvider, useHotkey } from '@/lib/keyboard/index.ts';
+import {
+  HOTKEY_PRIORITY,
+  HotkeyProvider,
+  useHotkey,
+  useHotkeyRegistry,
+} from '@/lib/keyboard/index.ts';
 import { buildNavigation } from '@/lib/navigation.ts';
-import { render, screen } from '@/test/render.tsx';
+import { fireEvent, render, screen } from '@/test/render.tsx';
 
 const push = mock();
 const setTheme = mock();
@@ -76,6 +81,31 @@ function CompetingSingleKey({ run }: { readonly run: () => void }) {
     scope: 'issues',
     priority: HOTKEY_PRIORITY.surface,
   });
+  return null;
+}
+
+function SeedManyShortcuts({ count }: { readonly count: number }) {
+  const registry = useHotkeyRegistry();
+  useEffect(() => {
+    const disposers = Array.from({ length: count }, (_, index) =>
+      registry.register({
+        id: `seed-shortcut-${index}`,
+        binding: `ctrl+shift+${index}`,
+        label: `Overflow shortcut ${index}`,
+        section: 'General',
+        scope: 'global',
+        priority: HOTKEY_PRIORITY.global,
+        enabled: true,
+        advertised: true,
+        preventDefault: true,
+        allowInInput: false,
+        run: noop,
+      }),
+    );
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  }, [registry, count]);
   return null;
 }
 
@@ -232,4 +262,67 @@ describe('shortcuts overlay', () => {
     const headings = [...list.querySelectorAll('h3')].map((node) => node.textContent);
     expect(headings).toEqual(['Issues']);
   });
+
+  it('uses a scroll container when the shortcut list overflows', async () => {
+    render(
+      <HotkeyProvider>
+        <SeedManyShortcuts count={30} />
+        <ShortcutsOverlay open onOpenChange={noop} />
+      </HotkeyProvider>,
+    );
+
+    const scroll = await screen.findByTestId('shortcuts-scroll');
+    expect(scroll.className).toContain('overflow-y-auto');
+    expect(screen.getByTestId('shortcuts-sections').textContent).toContain('Overflow shortcut 29');
+
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(scroll, 'scrollHeight', { configurable: true, value: 800 });
+    expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+  });
+
+  it('scrolls the shortcut list with arrow keys', async () => {
+    render(
+      <HotkeyProvider>
+        <SeedManyShortcuts count={30} />
+        <ShortcutsOverlay open onOpenChange={noop} />
+      </HotkeyProvider>,
+    );
+
+    const scroll = await screen.findByTestId('shortcuts-scroll');
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(scroll, 'scrollHeight', { configurable: true, value: 800 });
+    scroll.scrollTop = 0;
+
+    fireEvent.keyDown(scroll, { key: 'ArrowDown' });
+    expect(scroll.scrollTop).toBe(40);
+
+    fireEvent.keyDown(scroll, { key: 'ArrowUp' });
+    expect(scroll.scrollTop).toBe(0);
+  });
+});
+
+describe('modified shortcut scrolling', () => {
+  for (const modifier of ['shiftKey', 'metaKey', 'ctrlKey', 'altKey'] as const) {
+    it(`preserves arrows with ${modifier}`, async () => {
+      render(
+        <HotkeyProvider>
+          <SeedManyShortcuts count={30} />
+          <ShortcutsOverlay open onOpenChange={noop} />
+        </HotkeyProvider>,
+      );
+      const scroll = await screen.findByTestId('shortcuts-scroll');
+      scroll.scrollTop = 80;
+      for (const key of ['ArrowUp', 'ArrowDown']) {
+        const event = new KeyboardEvent('keydown', {
+          key,
+          [modifier]: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        fireEvent(scroll, event);
+        expect(scroll.scrollTop).toBe(80);
+        expect(event.defaultPrevented).toBe(false);
+      }
+    });
+  }
 });

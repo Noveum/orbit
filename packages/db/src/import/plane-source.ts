@@ -51,14 +51,6 @@ const planeCycleSchema = z.object({
   created_at: z.string(),
 });
 
-const planeModuleSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string().nullable().default(''),
-  target_date: z.string().nullable().default(null),
-  created_at: z.string(),
-});
-
 const planeIssueSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -116,7 +108,6 @@ export type PlaneProject = z.infer<typeof planeProjectSchema>;
 export type PlaneState = z.infer<typeof planeStateSchema>;
 export type PlaneLabel = z.infer<typeof planeLabelSchema>;
 export type PlaneCycle = z.infer<typeof planeCycleSchema>;
-export type PlaneModule = z.infer<typeof planeModuleSchema>;
 export type PlaneIssue = z.infer<typeof planeIssueSchema>;
 export type PlaneComment = z.infer<typeof planeCommentSchema>;
 export type PlaneLink = z.infer<typeof planeLinkSchema>;
@@ -127,11 +118,9 @@ export interface PlaneProjectExport {
   readonly states: PlaneState[];
   readonly labels: PlaneLabel[];
   readonly cycles: PlaneCycle[];
-  readonly modules: PlaneModule[];
   readonly members: PlaneMember[];
   readonly issues: PlaneIssue[];
   readonly cycleIssues: Record<string, string[]>;
-  readonly moduleIssues: Record<string, string[]>;
   readonly comments: Record<string, PlaneComment[]>;
   readonly links: Record<string, PlaneLink[]>;
   readonly pages: PlanePage[];
@@ -208,15 +197,11 @@ export function readPlaneExport(root: string): PlaneExport {
         states: readArray(directory, 'states', planeStateSchema),
         labels: readArray(directory, 'labels', planeLabelSchema),
         cycles: readArray(directory, 'cycles', planeCycleSchema),
-        modules: readArray(directory, 'modules', planeModuleSchema),
         members: readArray(directory, 'members', planeMemberSchema),
         issues: readArray(directory, 'issues', planeIssueSchema),
         cycleIssues: z
           .record(z.string(), z.array(z.string()))
           .parse(readJson(resolve(directory, 'cycle-issues.json'))),
-        moduleIssues: z
-          .record(z.string(), z.array(z.string()))
-          .parse(readJson(resolve(directory, 'module-issues.json'))),
         comments: readRecord(directory, 'comments', planeCommentSchema),
         links: readRecord(directory, 'links', planeLinkSchema),
         pages: readArray(directory, 'pages', planePageSchema),

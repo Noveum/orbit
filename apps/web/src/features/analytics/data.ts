@@ -1,14 +1,11 @@
 import {
   type AnalyticsDrilldownInput,
-  type AnalyticsScope,
-  type ChartResult,
   type CheckpointView,
   type CycleBurndown,
   type CycleChurn,
   cycleBurndown,
   cycleChurn,
   cycleFlowMetrics,
-  type DistributionSlice,
   type FlowMetrics,
   listAnalyticsDrilldown,
   listCheckpoints,
@@ -20,19 +17,14 @@ import {
   loadSprintAnalytics,
   type Measure,
   type SavedAnalyticsViewPayload,
-  type ScopePoint,
-  scopeSeries,
-  stateGroupBreakdown,
   toSavedAnalyticsViewPayload,
   type VelocityPoint,
-  workDistribution,
   workspaceVelocity,
 } from '@orbit/core';
-import { and, db, desc, eq, isNull, schema } from '@orbit/db';
+import { and, db, eq, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { sprintLabel } from '@orbit/shared/utils';
 import type {
   AnalyticsInsightsQuery,
   AnalyticsLens,
@@ -53,85 +45,6 @@ import {
   analyticsWireResponse,
 } from './contracts.ts';
 import { selectedAssigneeIds } from './person-focus.ts';
-
-const WORKSPACE: AnalyticsScope = { type: 'workspace' };
-
-export interface CycleOption {
-  readonly id: string;
-  readonly label: string;
-  readonly active: boolean;
-}
-
-function estimateName(key: string): string {
-  if (key === 'none' || key === '0') return 'No estimate';
-  return `${key} pt${key === '1' ? '' : 's'}`;
-}
-
-export async function loadCycleOptions(
-  principal: Principal,
-  now: Date = new Date(),
-): Promise<CycleOption[]> {
-  const rows = await db
-    .select({
-      id: schema.cycle.id,
-      number: schema.cycle.number,
-      name: schema.cycle.name,
-      startsAt: schema.cycle.startsAt,
-      endsAt: schema.cycle.endsAt,
-      completedAt: schema.cycle.completedAt,
-    })
-    .from(schema.cycle)
-    .where(
-      and(
-        eq(schema.cycle.organizationId, principal.organizationId),
-        isNull(schema.cycle.archivedAt),
-      ),
-    )
-    .orderBy(desc(schema.cycle.startsAt))
-    .limit(40);
-
-  return rows.map((row) => ({
-    id: row.id,
-    label: sprintLabel(row),
-    active:
-      row.completedAt === null &&
-      row.startsAt.getTime() <= now.getTime() &&
-      row.endsAt.getTime() > now.getTime(),
-  }));
-}
-
-export function loadScopeSeries(principal: Principal, measure: Measure): Promise<ScopePoint[]> {
-  return scopeSeries(principal, WORKSPACE, measure, 'week');
-}
-
-export interface Distributions {
-  readonly byAssignee: DistributionSlice[];
-  readonly byProject: DistributionSlice[];
-  readonly byLabel: DistributionSlice[];
-  readonly byEstimate: DistributionSlice[];
-}
-
-export async function loadDistributions(
-  principal: Principal,
-  measure: Measure,
-): Promise<Distributions> {
-  const [byAssignee, byProject, byLabel, byEstimateRaw] = await Promise.all([
-    workDistribution(principal, WORKSPACE, 'assignee', measure),
-    workDistribution(principal, WORKSPACE, 'project', measure),
-    workDistribution(principal, WORKSPACE, 'label', measure),
-    workDistribution(principal, WORKSPACE, 'estimate', measure),
-  ]);
-  return {
-    byAssignee,
-    byProject,
-    byLabel,
-    byEstimate: byEstimateRaw.map((slice) => ({ ...slice, name: estimateName(slice.key) })),
-  };
-}
-
-export function loadBreakdown(principal: Principal, measure: Measure): Promise<ChartResult> {
-  return stateGroupBreakdown(principal, WORKSPACE, 'assignee', measure);
-}
 
 export async function loadSavedViews(principal: Principal): Promise<SavedAnalyticsViewPayload[]> {
   const rows = await listSavedAnalyticsViews(principal);

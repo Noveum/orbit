@@ -2,8 +2,10 @@
 
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
+import { permissionsFor } from '@orbit/shared/policy';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnCardHover } from '@/lib/interaction.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
@@ -58,7 +60,12 @@ export function IssueCard({
 }: IssueCardProps) {
   const shows = (property: DisplayProperty) => properties.includes(property);
   const prefetch = usePrefetchIssueDetail();
-  const warm = () => prefetch(issue.identifier);
+  const restricted = issue.canOpen === false;
+  const { role } = useWorkspace();
+  const editable = permissionsFor(role).includes('issue:update');
+  const warm = () => {
+    if (!restricted) prefetch(issue.identifier);
+  };
   const warmUnlessDragging = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.buttons === 0) warm();
   };
@@ -79,8 +86,16 @@ export function IssueCard({
       )}
     >
       <div className="flex items-center gap-2 text-2xs text-faint">
-        {shows('priority') ? <PriorityControl issue={issue} disabled={dragging} /> : null}
-        {shows('status') ? <StatusControl issue={issue} state={state} disabled={dragging} /> : null}
+        {shows('priority') ? (
+          <PriorityControl issue={issue} disabled={dragging || restricted || !editable} />
+        ) : null}
+        {shows('status') ? (
+          <StatusControl
+            issue={issue}
+            state={state}
+            disabled={dragging || restricted || !editable}
+          />
+        ) : null}
         {shows('identifier') ? (
           <span data-numeric className="truncate whitespace-nowrap font-medium">
             {issue.identifier}
@@ -92,18 +107,24 @@ export function IssueCard({
               {issue.estimate}
             </span>
           ) : null}
-          {dragging ? null : <IssueActionsMenu issue={issue} className={revealOnCardHover} />}
+          {dragging || restricted ? null : (
+            <IssueActionsMenu issue={issue} className={revealOnCardHover} />
+          )}
         </span>
       </div>
 
-      <IssueLink
-        identifier={issue.identifier}
-        onPlainClick={onOpen === undefined ? undefined : () => onOpen(issue.id)}
-        draggable={false}
-        className="line-clamp-3 text-dense text-text leading-snug after:absolute after:inset-0 hover:text-accent"
-      >
-        {issue.title}
-      </IssueLink>
+      {restricted ? (
+        <span className="line-clamp-3 text-dense text-text leading-snug">{issue.title}</span>
+      ) : (
+        <IssueLink
+          identifier={issue.identifier}
+          onPlainClick={onOpen === undefined ? undefined : () => onOpen(issue.id)}
+          draggable={false}
+          className="line-clamp-3 text-dense text-text leading-snug after:absolute after:inset-0 hover:text-accent"
+        >
+          {issue.title}
+        </IssueLink>
+      )}
 
       <div className="flex flex-wrap items-center gap-1.5">
         {shows('labels') ? <CardLabels labels={labels} /> : null}
@@ -117,7 +138,11 @@ export function IssueCard({
         />
         <ReviewerAvatars reviewers={reviewers} size="sm" />
         {shows('assignee') ? (
-          <CardAssigneeSlot issue={issue} assignee={assignee} dragging={dragging} />
+          <CardAssigneeSlot
+            issue={issue}
+            assignee={assignee}
+            dragging={dragging || restricted || !editable}
+          />
         ) : null}
       </div>
     </article>

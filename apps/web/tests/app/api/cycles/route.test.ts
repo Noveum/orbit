@@ -100,7 +100,7 @@ describe('POST /api/cycles', () => {
     expect(response.status).toBe(200);
     expect(payload.cycle.startsAt).toBe(last.endsAt.toISOString());
     expect(Date.parse(payload.cycle.endsAt) - Date.parse(payload.cycle.startsAt)).toBe(
-      14 * 86_400_000,
+      7 * 86_400_000,
     );
   });
 

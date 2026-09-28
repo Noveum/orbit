@@ -26,7 +26,11 @@ let docId: string;
 beforeEach(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  const { doc } = await createDoc(workspace.admin, { title: 'Runbook', content: '# Runbook' });
+  const { doc } = await createDoc(workspace.admin, {
+    visibility: 'workspace',
+    title: 'Runbook',
+    content: '# Runbook',
+  });
   docId = doc.id;
 });
 

@@ -20,6 +20,7 @@ import {
 import { cn } from '@/lib/cn.ts';
 import type { Member } from '@/lib/query/schemas.ts';
 import { docProseClassName } from '../doc-body.tsx';
+import { READING_WIDTH_CLASS, useDocPreferences } from '../use-doc-preferences.ts';
 import { findTrigger, matchSlashCommands, type SlashCommand } from './commands.ts';
 import { editorHtmlFrom, markdownPasteHtml } from './editor-content.ts';
 import { EditorToolbar } from './editor-toolbar.tsx';
@@ -130,6 +131,7 @@ export function RichTextEditor({
   onBlur,
   scrollRef,
 }: RichTextEditorProps) {
+  const { width } = useDocPreferences();
   const containerRef = useRef<HTMLElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const emitted = useRef<Set<string>>(new Set([value]));
@@ -375,15 +377,19 @@ export function RichTextEditor({
   }, [editor, highlight, items.length, listId, menu, optionPrefix]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (!(event.metaKey || event.ctrlKey)) return;
+    if (!editable || event.nativeEvent.isComposing || !(event.metaKey || event.ctrlKey)) return;
+    if (!(event.target instanceof Node && editor?.view.dom.contains(event.target))) return;
     const key = event.key.toLowerCase();
-    if (key === 'enter' && onSubmit !== undefined) {
+    const submit = onSubmit ?? onForceSave;
+    if (key === 'enter' && submit !== undefined) {
       event.preventDefault();
-      onSubmit();
+      event.stopPropagation();
+      submit();
       return;
     }
     if (key === 's' && onForceSave !== undefined) {
       event.preventDefault();
+      event.stopPropagation();
       onForceSave();
     }
   };
@@ -419,7 +425,7 @@ export function RichTextEditor({
         !editable && 'opacity-60',
         className,
       )}
-      onKeyDown={onKeyDown}
+      onKeyDownCapture={onKeyDown}
       onPaste={onPaste}
       onDrop={onDrop}
       onDragOver={(event) => {
@@ -442,10 +448,17 @@ export function RichTextEditor({
       <div
         ref={scrollRef}
         className={
-          toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-6 pt-1 pb-16' : 'contents'
+          toolbar === 'full' ? 'min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-16' : 'contents'
         }
       >
-        <EditorContent editor={editor} className={cn(docProseClassName, editorSurfaceClassName)} />
+        <EditorContent
+          editor={editor}
+          className={cn(
+            docProseClassName,
+            editorSurfaceClassName,
+            toolbar === 'full' && `mx-auto w-full ${READING_WIDTH_CLASS[width]}`,
+          )}
+        />
         {footer}
       </div>
 

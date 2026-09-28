@@ -8,6 +8,9 @@ import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { createQueryClient } from '@/lib/query/provider.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 mock.module('@orbit/realtime-client/react', () => ({
   useScopeSubscription: () => undefined,

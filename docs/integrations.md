@@ -1,13 +1,21 @@
 # Integrations
 
 Orbit includes GitHub and Slack as optional external product integrations. Each
-is configured per workspace under **Settings**, **Integrations**. Slack remains
-hidden until the deployment operator completes provider setup and enables its
-global server-side gate.
+is connected per workspace under **Settings**, **Integrations**. Workspace admins
+can see both providers even before the deployment operator configures them.
 
-When an integration is not configured, Orbit hides the affordance rather than
-showing a button that fails. If a connect button is missing, the environment
-variable behind it is unset.
+An unconfigured provider links to **Settings**, **Deployment setup**, which
+shows required variable names, their presence, hosting instructions, provider
+setup steps and manual verification checks. It never displays credential values.
+Slack also provides a manifest and provider URLs generated from
+`NEXT_PUBLIC_APP_URL`, once it is a valid public HTTPS origin with a DNS hostname.
+IP addresses cannot be used as Slack unfurl domains. The connect action
+remains unavailable until the required server configuration is present.
+
+Server credentials are currently managed through the hosting environment.
+Workspace admins can connect providers but cannot edit server credentials in
+Orbit. The proposed instance-administration follow-up is described in
+[Instance administration design](instance-administration-design.md).
 
 For the MCP server, which is how AI assistants connect, see [MCP server](mcp.md).
 
@@ -86,13 +94,18 @@ GITHUB_WEBHOOK_SECRET=<the secret you set>
 The private key is multi-line. Escaped `\n` sequences are handled, so you can
 paste it as one line into a hosting dashboard that will not take newlines.
 
-`GITHUB_APP_SLUG` is what makes the connect button appear.
-`GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are what let it discover
-repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` are what let
+All six variables must be present before Orbit offers a new installation.
+`GITHUB_APP_SLUG` identifies the app. `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`
+let it discover repositories. `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` let
 it exchange the callback code and confirm the installation belongs to the person
 connecting, so it refuses to connect anything without them rather than binding an
-installation it cannot attribute. All five need to be set for the flow to
-complete.
+installation it cannot attribute. `GITHUB_WEBHOOK_SECRET` verifies incoming
+updates. In an environment file, keep the PEM inside quotes. In a hosting
+provider's secret field, paste its contents without enclosing quotes.
+
+If configuration is later removed, existing connections remain visible, but new
+installation and Slack reconnect actions link back to setup until their required
+credentials are restored.
 
 Then go to **Settings**, **Integrations**, **GitHub**, connect, and pick which
 repositories to install it on.
@@ -101,7 +114,7 @@ repositories to install it on.
 
 Slack has one global, server-side capability gate. When `SLACK_ENABLED=true`,
 Slack becomes available to every current and future Orbit organization. False
-or unset keeps the settings card hidden, makes Slack routes return not found,
+or unset shows setup guidance to admins, makes Slack routes return not found,
 stops inbound event processing, and leaves the scheduled Slack DM worker with
 no eligible work.
 
@@ -199,11 +212,11 @@ Slack integration behavior:
   scoping continue to isolate every connection and delivery.
 - **Granted scope storage.** Granted scopes are stored as non-secret
   integration metadata. The bot token is never exposed to the browser.
-- **Notification routing.** The GitHub webhook broadcast path sends eligible
-  pull request activity to configured team channels. Generic team and project
-  notifications are not yet dispatched to Slack channels. Personal
-  notifications use Slack DMs when the recipient is mapped and has that channel
-  enabled.
+- **Notification routing.** Eligible pull request activity is queued durably for
+  configured team channels. Personal notifications use Slack DMs when the
+  recipient is mapped, can still access the subject and has that channel
+  enabled. Channel mappings are workspace or team managed; personal DM settings
+  do not opt an entire shared channel out of delivery.
 - **Availability states.** Notification settings distinguish available,
   unmapped, reauthorization-required, and unavailable states so a user is not
   offered a DM preference that the current integration cannot satisfy.
@@ -211,14 +224,13 @@ Slack integration behavior:
   window ends; urgent assignments can bypass quiet hours using the existing
   notification setting. A DM-only notification with no other enabled channel
   is persisted with a deferred delivery time and sent after quiet hours end.
-- **Delivery guarantee.** Slack DMs use at-least-once delivery. A worker claim
-  that is not finalized within five minutes is reclaimed so an interrupted
-  send is not silently lost. If Slack accepted the message immediately before
-  the worker stopped, the retry can produce a duplicate DM because
-  `chat.postMessage` does not provide a documented idempotency contract. The
-  replacement claim becomes authoritative, and a late worker cannot finalize
-  the superseded attempt. The scheduled worker runs every minute, takes small
-  concurrent batches, and stops claiming new work before its runtime deadline.
+- **Threads and delivery safety.** Each conversation has one root per Slack
+  destination. Later events become ordered replies with broadcast disabled.
+  Confirmed rate limits retry with backoff. A timeout or crash after a send may
+  have succeeded becomes `ambiguous`, blocks later replies and is not resent
+  automatically. This avoids turning an unknown Slack result into a duplicate
+  message. It is not an exactly-once provider guarantee. The scheduled worker
+  runs every minute in bounded batches with claim-token fencing.
 - **Member mapping.** OAuth loads the complete Slack user directory before it
   maps every current Orbit workspace member whose normalized email has exactly
   one matching active human Slack user. Ambiguous emails remain unmapped so a
@@ -240,10 +252,12 @@ either, both, or neither. See [Configuration](configuration.md#authentication).
 
 ## Email
 
-Not an integration you connect, but worth listing since it carries invites and
-sign-in codes. Event notification email and digests are not currently
-dispatched. Slack channel delivery remains limited to channels explicitly
-mapped by each Orbit organization.
+Email carries invites, sign-in codes and enabled personal event notifications.
+Notification email is queued and sent only to the recipient's current verified
+address after checking preferences and subject access again. Retries reuse an
+encrypted frozen payload and the same Resend idempotency key. Unknown outcomes
+stop before the provider's idempotency window expires. Digests are not included.
+Transactional sign-in and invitation email retains its existing delivery path.
 
 Orbit sends through [Resend](https://resend.com) only.
 
@@ -254,6 +268,9 @@ EMAIL_FROM="Orbit <orbit@example.com>"
 
 `EMAIL_FROM` must be on a domain verified in Resend. If it is not, every send
 fails, including sign-in codes and invitations.
+
+See [Inbox conversations](features/inbox.md) for notification categories,
+worker diagnostics, migration order and rollback switches.
 
 ## Webhooks out
 

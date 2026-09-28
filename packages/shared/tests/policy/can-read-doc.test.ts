@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { canReadDoc, type DocReader, type ReadableDocRow } from '../../src/policy/index.ts';
+import {
+  canManageDocAccess,
+  canReadDoc,
+  canWriteDoc,
+  type DocReader,
+  type ReadableDocRow,
+} from '../../src/policy/index.ts';
 
 const ORG = 'org_1';
 
@@ -26,8 +32,8 @@ describe('canReadDoc', () => {
     );
   });
 
-  it('lets an org admin read anything in their own workspace', () => {
-    expect(canReadDoc(reader({ role: 'admin' }), doc({ visibility: 'private' }), [])).toBe(true);
+  it('requires an invitation even for an org admin', () => {
+    expect(canReadDoc(reader({ role: 'admin' }), doc({ visibility: 'private' }), [])).toBe(false);
   });
 
   it('lets the author read their own restricted doc', () => {
@@ -54,7 +60,24 @@ describe('canReadDoc', () => {
     expect(canReadDoc(reader(), doc({ visibility: 'team' }), ['doc_1'])).toBe(true);
   });
 
-  it('treats an unknown visibility as unrestricted, matching isRestricted', () => {
-    expect(canReadDoc(reader(), doc({ visibility: 'something_new' }), [])).toBe(true);
+  it('fails closed for an unknown visibility', () => {
+    expect(canReadDoc(reader(), doc({ visibility: 'something_new' }), [])).toBe(false);
+  });
+});
+
+describe('document sharing authority', () => {
+  it('reserves sharing for the author, including for published documents', () => {
+    for (const visibility of ['private', 'team', 'workspace', 'members', 'link', 'public']) {
+      const row = doc({ visibility });
+      expect(canManageDocAccess(reader({ role: 'admin' }), row)).toBe(false);
+      expect(canManageDocAccess(reader({ userId: row.authorId }), row)).toBe(true);
+    }
+  });
+  it('never grants edit access through a published link', () => {
+    for (const visibility of ['private', 'team', 'members', 'link', 'public', 'unknown']) {
+      const principal = { ...reader({ role: 'admin' }), teamIds: [] };
+      expect(canWriteDoc(principal, doc({ visibility }), false)).toBe(false);
+      expect(canWriteDoc(principal, doc({ visibility }), true)).toBe(true);
+    }
   });
 });

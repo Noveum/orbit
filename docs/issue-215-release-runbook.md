@@ -15,9 +15,15 @@ setup and monitoring see [Outbox worker deployment](outbox-worker-deployment.md)
 The ordered migration release supports these states:
 
 - An empty database. `bun run db:release` applies the full journal.
-- A database with a verified, contiguous ledger prefix. The release runner applies the pending suffix from the candidate's committed migration journal.
-- A recognized legacy catalog with no ledger, or the explicitly supported historical ledger/checksum cases. The release command verifies the live catalog and reconciles known historical data before baselining. It refuses unknown or partial catalogs.
+- A database with a verified, contiguous ledger prefix from the official upstream history through `0029_material_psynapse` or an earlier exact prefix. The release runner applies the official suffix and then the Agent migration `0030_green_shaman`.
+- A recognized legacy catalog with no ledger, or an explicitly documented upstream historical reconciliation. The release command verifies the live catalog and reconciles known historical data before baselining. Migration 0030's Agent attribution and credential changes do not have a schema-only baseline path.
 - An interrupted release that left the migration's supported progress state. Inspect the exact error and ledger, keep the same code and database, then retry `bun run db:release`. Do not edit either ledger table by hand.
+
+The earlier #215 development migrations used a competing 0017–0029 lineage.
+Databases carrying those timestamps or hashes are not supported starting
+points. The release runner rejects them without changing their ledger. Preserve
+such databases for investigation; do not rename or manually repair their
+ledger rows.
 
 For an unrecognized legacy database, stop and resolve the named catalog drift
 first. Follow [Database releases](database-releases.md) and the

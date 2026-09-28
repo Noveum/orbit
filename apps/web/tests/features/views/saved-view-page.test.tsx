@@ -9,6 +9,9 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, View, WorkflowState } from '@/lib/query/schemas.ts';
 import { emptyFacets } from '@/lib/query/schemas.ts';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock() }),

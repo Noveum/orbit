@@ -1,2 +1,0 @@
-ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_agent_binding_fk" FOREIGN KEY ("organization_id","user_id","client_id","agent_identity_id") REFERENCES "public"."agent_identity"("organization_id","owner_user_id","client_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "agent_identity_grant_binding_unique" ON "agent_identity" USING btree ("organization_id","owner_user_id","client_id","id");

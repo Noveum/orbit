@@ -61,12 +61,12 @@ export function CommentComposer({
 
   const submit = useCallback(() => {
     const body = latest.current.trim();
-    if (body.length === 0) return;
+    if (pending || body.length === 0) return;
     onSubmit(body);
     latest.current = '';
     setValue('');
     setResetKey((key) => key + 1);
-  }, [onSubmit]);
+  }, [onSubmit, pending]);
 
   const change = useCallback((next: string) => {
     latest.current = next;

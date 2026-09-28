@@ -122,7 +122,25 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
           back in with the invited address.
         </p>
         <Button variant="secondary" size="md" block asChild>
-          <Link href={`/login?next=${encodeURIComponent(`/invite/${token}`)}`}>Switch account</Link>
+          <Link href={`/login?reauth=1&next=${encodeURIComponent(`/invite/${token}`)}`}>
+            Switch account
+          </Link>
+        </Button>
+      </Shell>
+    );
+  }
+
+  if (!session.user.emailVerified) {
+    return (
+      <Shell title="Verify your email to join">
+        <p className="text-muted text-xs">
+          Sign in with an emailed code for {invite.email} to confirm this address belongs to you,
+          then return to accept the invitation.
+        </p>
+        <Button variant="primary" size="md" block asChild>
+          <Link href={`/login?reauth=1&next=${encodeURIComponent(`/invite/${token}`)}`}>
+            Verify email
+          </Link>
         </Button>
       </Shell>
     );

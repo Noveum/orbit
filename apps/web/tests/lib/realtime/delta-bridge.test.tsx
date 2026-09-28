@@ -1265,6 +1265,22 @@ describe('DeltaBridge workspace sprint membership', () => {
 });
 
 describe('DeltaBridge root invalidation', () => {
+  it('clears document metadata immediately when access is revoked', () => {
+    const client = mount();
+    const keys = [[DOCS_ROOT, ''], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']];
+    for (const key of keys) client.setQueryData(key, { id: 'doc_1', title: 'Private notes' });
+    act(() =>
+      capturedHandler?.([
+        action({
+          model: 'doc',
+          modelId: 'doc_1',
+          data: { id: 'doc_1', accessChanged: true, revoked: true },
+        }),
+      ]),
+    );
+    for (const key of keys) expect(client.getQueryData(key)).toBeUndefined();
+  });
+
   it('invalidates the bootstrap root once for a burst of org config models', () => {
     const client = mount();
     const seen = trackInvalidations(client);
@@ -1945,4 +1961,25 @@ describe('DeltaBridge deletions', () => {
     expect(rows.map((row) => row.id)).toEqual(['issue_child']);
     expect(rows[0]?.parentId).toBeNull();
   });
+});
+
+describe('DeltaBridge agent involvement', () => {
+  it.each(['member', 'comment', 'reaction', 'issue_relation'] as const)(
+    'refreshes agent task lists and aggregates after a %s change',
+    (model) => {
+      const client = mount();
+      const keys = [
+        queryKeys.allIssues('aiOnly=true'),
+        queryKeys.issueSummary('aiOnly=true'),
+        queryKeys.issueFacets('aiOnly=true'),
+        queryKeys.boardPage('aiOnly=true'),
+      ];
+      for (const key of keys) client.setQueryData(key, {});
+      const ordinary = queryKeys.allIssues('aiOnly=false');
+      client.setQueryData(ordinary, {});
+      act(() => capturedHandler?.([action({ model })]));
+      for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(ordinary)?.isInvalidated).toBe(false);
+    },
+  );
 });

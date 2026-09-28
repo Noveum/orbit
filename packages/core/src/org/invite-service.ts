@@ -5,7 +5,7 @@ import { conflict, forbidden, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan, canAssignRole } from '@orbit/shared/policy';
+import { assertCan, assertVerifiedEmailForInvitation, canAssignRole } from '@orbit/shared/policy';
 import { inviteBulkSchema, inviteCreateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, newToken, requireRow } from '../internal.ts';
@@ -343,7 +343,11 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     assertCanInviteRole(orgRoleOf(inviter?.role), invitation.role);
 
     const [invitedUser] = await tx
-      .select({ email: schema.user.email, name: schema.user.name })
+      .select({
+        email: schema.user.email,
+        name: schema.user.name,
+        emailVerified: schema.user.emailVerified,
+      })
       .from(schema.user)
       .where(eq(schema.user.id, userId))
       .limit(1);
@@ -351,6 +355,7 @@ export async function acceptInvite(token: string, userId: string): Promise<Accep
     if (invitedUser.email.toLowerCase() !== invitation.email.toLowerCase()) {
       throw conflict('That invite was sent to a different email address.');
     }
+    assertVerifiedEmailForInvitation(invitedUser.emailVerified);
 
     const syncId = await nextSyncId(tx);
     const [created] = await tx

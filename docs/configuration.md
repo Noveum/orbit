@@ -49,13 +49,47 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 | Variable | Notes |
 | --- | --- |
-| `CRON_SECRET` | Protects the scheduled sprint snapshot, operational pruning, Slack notification worker and issue-outbox recovery routes. Use a long random value in every deployed environment |
+| `CRON_SECRET` | Protects scheduled sprint rollover, sprint snapshots, operational pruning, notification workers and issue-outbox recovery. Use a long random value in every deployed environment |
+| `NOTIFICATION_PROVIDERS_PAUSED` | Set `true` to stop Slack and notification-email claims during migration or incident response. Defaults to false |
+| `NOTIFICATION_CONVERSATIONS_ENABLED` | Set `true` after conversation backfill and verification to select the grouped inbox. False or unset retains the legacy view |
 
 Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
-routes. Without the secret, these routes refuse to run. The Slack notification
-worker processes eligible deliveries across every organization only when
-`SLACK_ENABLED=true`; with the flag false or unset, it has no eligible work. The
-analytics route runs every six hours so every sprint-local
+routes. Without the secret, protected routes refuse to run. The notification
+worker runs every minute. Slack delivery additionally requires
+`SLACK_ENABLED=true`; notification email requires Resend configuration.
+Pausing providers preserves queued work and still allows GitHub reconciliation
+and snooze wakes. See [Inbox conversations](features/inbox.md) for rollout order.
+The sprint rollover route runs every minute. It closes expired sprints and moves
+unfinished committed tasks into the next scheduled sprint, creating a successor
+with the same duration if needed. Completed and canceled tasks retain their sprint;
+triage and backlog tasks return to the backlog, matching manual completion.
+Missed boundaries are processed oldest first, up to 100 completions per invocation.
+Repeated or overlapping invocations do not close a sprint twice. Task assignment
+menus and filters show current and future sprints, with the active one labeled
+Current sprint. The Current sprint filter stores a relative selection, so saved
+views follow the active sprint when the calendar advances. Open pages refresh
+sprint choices, facet counts, and relative sprint results within a minute, and
+refresh stale workspace data when the window regains focus. Sprint history
+remains available from the Sprints page.
+
+New workspaces and newly created sprints default to seven days. Explicit dates
+remain supported, and existing sprint dates are not rewritten. A workspace that
+already has two-week sprints keeps that schedule until its dates are edited.
+To change an existing schedule, edit the sprint dates from the Sprints page and
+use **Move later sprints by the same amount** when later windows must move too.
+The rollover job uses stored dates, not the sprint number or a calendar-week
+number.
+
+If a menu shows Current sprint (Sprint 1) but omits Sprint 2, inspect the stored
+windows and completion state on the Sprints page or the authenticated
+`/api/cycles` response. Current means `startsAt <= now < endsAt` and not completed;
+expired or completed sprints are excluded from assignment menus, and archived
+records are excluded from workspace data. A missing number alone does not prove
+that rollover failed. Check the Vercel cron invocation logs for
+`/api/cron/sprint-rollover` to verify execution. An unauthenticated 401 confirms
+route protection, not a successful scheduled run. Correct the dates or completion
+state only after establishing why that specific sprint was excluded.
+The analytics route runs every six hours so every sprint-local
 calendar day is observed across timezone and daylight-saving changes. It records
 one row per active sprint and local day, then publishes the returned realtime
 actions. Sprint completion also records a final snapshot in the same transaction
@@ -200,25 +234,30 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | --- | --- |
 | `GITHUB_APP_ID` | GitHub App, for linking pull requests to issues |
 | `GITHUB_APP_PRIVATE_KEY` | The PEM. Escaped newlines as `\n` are handled |
-| `GITHUB_APP_SLUG` | The app's URL slug. Without it, the connect button hides |
+| `GITHUB_APP_SLUG` | The app's URL slug, required along with the other five GitHub App variables before connecting |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
 | `SLACK_CLIENT_ID` | Slack OAuth client ID. It is not secret |
+| `SLACK_APP_ID` | Optional fallback app identity for legacy connections. New OAuth connections store the returned app ID automatically |
 | `SLACK_CLIENT_SECRET` | Slack OAuth client secret. Mark it Sensitive in Vercel |
 | `SLACK_SIGNING_SECRET` | Verifies Slack webhook signatures. Mark it Sensitive in Vercel |
 | `SLACK_ENABLED` | Global server-side Slack gate. `true` enables Slack for every current and future Orbit organization. False or unset keeps Slack dark |
 
-All are optional. Orbit hides the GitHub affordance when it is not configured.
-Slack requires all three Slack OAuth and webhook variables. Keep
+Both integrations are optional. Their setup cards remain visible to workspace
+admins when they are unconfigured. **Settings**, **Deployment setup** provides
+the variable checklist and configuration instructions. GitHub requires all six
+GitHub App variables before offering installation. Slack requires all three
+Slack OAuth and webhook variables before offering installation or reconnection. Keep
 `SLACK_ENABLED=false` or leave it unset while preparing a deployment. Setting
-it to `true` is a global release action: the Slack settings surface, routes,
+it to `true` is a global release action: Slack connection and channel controls, routes,
 webhook processing, and notification worker become available to every current
 and future Orbit organization. It does not connect an organization
 automatically. An authorized manager must complete a separate OAuth connection
 for each organization.
 
-Do not configure `SLACK_APP_ID`, `SLACK_BOT_TOKEN`, or `SLACK_APP_TOKEN`.
-Orbit does not use them. See [Integrations](integrations.md#slack) for the safe
+Do not configure `SLACK_BOT_TOKEN` or `SLACK_APP_TOKEN`.
+Orbit does not use those global tokens. Prefer reconnecting legacy installations
+through OAuth to persist their app identity. See [Integrations](integrations.md#slack) for the safe
 launch sequence and Slack-side configuration.
 
 ## MCP

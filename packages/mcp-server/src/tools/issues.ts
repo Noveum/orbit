@@ -13,6 +13,7 @@ import {
   listIssues,
   listLabels,
   listRelatedIssues,
+  markAsDuplicate,
   moveAgentIssue,
   moveIssue,
   readAttachment,
@@ -101,6 +102,7 @@ function registerCreateIssue(
       description:
         'Create an issue on a team. The workflow state defaults to the team first unstarted state. Returns the new issue with its identifier such as "ENG-42".',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         team: z.string().min(1).describe('Team key like "ENG", team name, or team id.'),
         title: z.string().min(1).max(255).describe('One line summary of the work.'),
@@ -604,6 +606,7 @@ function registerAddComment(server: McpServer, principal: Principal): void {
       title: 'Comment on an issue',
       description: 'Post a markdown comment on an issue, optionally as a reply to another comment.',
       readOnly: false,
+      destructive: false,
       inputSchema: {
         issue: issueRef,
         body: z.string().min(1).max(100_000).describe('Markdown body of the comment.'),
@@ -732,6 +735,7 @@ function registerRemoveRelation(
       description:
         'Remove a link between two issues. The inverse link on the other issue goes with it, so removing "blocks" also removes "blocked by".',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         issue: issueRef,
         relatedIssue: issueRef.describe('The issue on the other end of the link.'),
@@ -754,6 +758,39 @@ function registerRemoveRelation(
         issue: issue.identifier,
         relations: await issueRelationViews(principal, issue.id),
         deltas: deltaViews(actions),
+      };
+    },
+  );
+}
+
+function registerMarkIssueDuplicate(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'mark_issue_duplicate',
+      title: 'Mark an issue as duplicate',
+      description:
+        'Mark an issue as a duplicate of another issue. Moves the duplicate issue to the team canceled state, records the duplicate_of relation, and transfers subscribers to the survivor issue.',
+      readOnly: false,
+      destructive: true,
+      idempotent: true,
+      inputSchema: {
+        issue: issueRef.describe('The duplicate issue identifier or id.'),
+        survivorIssue: issueRef.describe('The survivor issue identifier or id.'),
+      },
+    },
+    async (args) => {
+      const issue = await getIssue(principal, args.issue);
+      const survivor = await getIssue(principal, args.survivorIssue);
+      const result = await markAsDuplicate(principal, issue.id, {
+        survivorIssueId: survivor.id,
+      });
+      await publish(result.actions);
+      return {
+        issue: issue.identifier,
+        survivorIssue: survivor.identifier,
+        relations: await issueRelationViews(principal, issue.id),
+        deltas: deltaViews(result.actions),
       };
     },
   );
@@ -876,6 +913,7 @@ function registerAttachFile(server: McpServer, principal: Principal): void {
       description:
         'Upload a file and attach it to an issue, a comment, a doc or a project. Returns a url you can put in markdown, for example ![name](url).',
       readOnly: false,
+      openWorld: true,
       inputSchema: {
         parentType: z
           .enum(['issue', 'comment', 'doc', 'project'])
@@ -962,6 +1000,7 @@ export function registerIssueTools(
   registerListIssueComments(server, principal);
   registerSetRelation(server, principal, agentIssueBinding);
   registerRemoveRelation(server, principal, agentIssueBinding);
+  registerMarkIssueDuplicate(server, principal);
   registerAttachFile(server, principal);
   registerListIssueAttachments(server, principal);
   registerReadAttachment(server, principal);

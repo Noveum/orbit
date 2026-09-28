@@ -6,7 +6,7 @@ export const DOC_PREFERENCES_STORAGE_KEY = 'orbit:docs:preferences';
 
 const STORAGE_KEY = DOC_PREFERENCES_STORAGE_KEY;
 
-export type EditorMode = 'rich' | 'markdown';
+export type EditorMode = 'rich' | 'markdown' | 'preview';
 export type ReadingWidth = 'comfortable' | 'wide' | 'full';
 
 export interface DocPreferences {
@@ -18,10 +18,10 @@ export interface DocPreferences {
 export const DEFAULT_DOC_PREFERENCES: DocPreferences = {
   mode: 'rich',
   toolbar: false,
-  width: 'wide',
+  width: 'comfortable',
 };
 
-const MODES: readonly EditorMode[] = ['rich', 'markdown'];
+const MODES: readonly EditorMode[] = ['rich', 'markdown', 'preview'];
 const WIDTHS: readonly ReadingWidth[] = ['comfortable', 'wide', 'full'];
 
 export function parsePreferences(raw: unknown): DocPreferences {

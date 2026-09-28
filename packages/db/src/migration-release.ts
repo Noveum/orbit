@@ -1,8 +1,17 @@
-import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from './check-drift.ts';
+import {
+  type Catalog,
+  catalogDriftBetween,
+  type Drift,
+  expectedCatalog,
+  isBehind,
+  liveCatalog,
+  needsCatchup,
+} from './check-drift.ts';
 import * as schema from './schema/index.ts';
 
 interface LedgerRow {
@@ -17,62 +26,29 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
-const AGENT_SCHEMA_MIGRATION = 1_789_829_081_921;
-const AGENT_SCHEMA_HASH = '8d410a4698cc081dfbfc80eb723daf843f3035c41414fdeb2863d4f704855471';
+const AGENT_SCHEMA_MIGRATION = 1_790_578_349_503;
+const AGENT_SCHEMA_HASH = '78a930aeab8c145aef77e8087526f781d4d2506bab7f199fe5d420792c94f431';
 const AGENT_SCHEMA_BATCH_SIZE = 1_000;
-const PRE_BATCH_AGENT_SCHEMA_HASH =
-  'fad36f4b76c8fd47a5d7efd41b64d71eae7828c162091763c9689353d8f504d3';
-const AGENT_BINDING_MIGRATION = 1_789_829_740_142;
-const AGENT_BINDING_HASH = '574585419f185dc95fed54d6db3a54309a7ce17ece1b2c33586fb3a67422f3ef';
-const HISTORICAL_AGENT_INSTRUCTIONS_MIGRATION = 1_787_562_015_902;
-const HISTORICAL_AGENT_INSTRUCTIONS_HASH =
-  '53266292651bb8f1368abee0336030f12a780e2086f7d7cbbf49142b4550faeb';
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
-  1786217938315, 1786623194883, 1788083189965, 1789829081921, 1789834228668, 1789874131769,
-  1789903534025, 1789980471869,
+  1786217938315, 1786623194883, 1788083189965, 1788724695589, 1788724695585, 1789603762953,
 ]);
+const NOTIFICATION_AUDIT_MIGRATION = 1788724695590;
+const NOTIFICATION_AUDIT_ARTIFACTS = [
+  {
+    functionName: 'validate_notification_deduplicated_target',
+    triggerName: 'notification_deduplicated_target_trigger',
+    tableName: 'notification',
+  },
+  {
+    functionName: 'validate_notification_delivery_deduplicated_target',
+    triggerName: 'notification_delivery_deduplicated_target_trigger',
+    tableName: 'notification_delivery',
+  },
+] as const;
 
 function containsDataChange(migration: MigrationMeta): boolean {
   return migration.sql.some((statement) =>
     /^\s*(?:call|copy|delete|do|insert|merge|truncate|update|with)\b/iu.test(statement),
-  );
-}
-
-function migrationHashMatches(hash: string, migration: MigrationMeta): boolean {
-  if (hash === migration.hash) return true;
-  if (migration.folderMillis === AGENT_SCHEMA_MIGRATION && hash === PRE_BATCH_AGENT_SCHEMA_HASH) {
-    return true;
-  }
-  const source = migration.sql.join('--> statement-breakpoint');
-  const lineEndingHashes = ['\n', '\r\n'].map((lineEnding) =>
-    createHash('sha256').update(source.replace(/\r?\n/gu, lineEnding)).digest('hex'),
-  );
-  return lineEndingHashes.includes(hash);
-}
-
-function isKnownHistoricalAgentInstructionsLedger(
-  rows: readonly LedgerRow[],
-  migrations: readonly MigrationMeta[],
-): boolean {
-  if (rows.length !== 14 || migrations.length <= 15) return false;
-  for (const [index, row] of rows.slice(0, 13).entries()) {
-    const migration = migrations[index];
-    if (
-      migration === undefined ||
-      row.created_at !== String(migration.folderMillis) ||
-      !migrationHashMatches(row.hash, migration)
-    ) {
-      return false;
-    }
-  }
-  const historicalRow = rows[13];
-  const currentEquivalent = migrations[15];
-  return (
-    historicalRow?.created_at === String(HISTORICAL_AGENT_INSTRUCTIONS_MIGRATION) &&
-    historicalRow.hash === HISTORICAL_AGENT_INSTRUCTIONS_HASH &&
-    currentEquivalent?.sql.length === 1 &&
-    currentEquivalent.sql[0]?.trim() ===
-      `ALTER TABLE "organization" ADD COLUMN "agent_instructions" text DEFAULT '' NOT NULL;`
   );
 }
 
@@ -86,6 +62,79 @@ function verifyLegacyDataReconciliation(migrations: readonly MigrationMeta[]): v
     throw new Error(
       `Legacy baseline has no reconciliation for data migration ${missing[0]?.folderMillis}.`,
     );
+  }
+}
+
+function artifactStatement(migration: MigrationMeta, prefix: string): string {
+  const statements = migration.sql.filter((statement) => statement.trimStart().startsWith(prefix));
+  if (statements.length !== 1) {
+    throw new Error(`Migration ${migration.folderMillis} has an invalid ${prefix} artifact.`);
+  }
+  const statement = statements[0];
+  if (statement === undefined) {
+    throw new Error(`Migration ${migration.folderMillis} has no ${prefix} artifact.`);
+  }
+  return statement;
+}
+
+async function reconcileNotificationAuditArtifacts(
+  sql: postgres.TransactionSql,
+  migration: MigrationMeta,
+): Promise<void> {
+  for (const artifact of NOTIFICATION_AUDIT_ARTIFACTS) {
+    const functionStatement = artifactStatement(
+      migration,
+      `CREATE FUNCTION ${artifact.functionName}()`,
+    );
+    const triggerStatement = artifactStatement(
+      migration,
+      `CREATE CONSTRAINT TRIGGER ${artifact.triggerName}`,
+    );
+    await sql.unsafe(functionStatement.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
+    await sql.unsafe(`drop trigger if exists "${artifact.triggerName}" on "${artifact.tableName}"`);
+    await sql.unsafe(triggerStatement);
+  }
+
+  const artifacts = await sql<
+    {
+      trigger_name: string;
+      table_name: string;
+      function_name: string;
+      valid: boolean;
+    }[]
+  >`
+    select
+      trigger.tgname as trigger_name,
+      relation.relname as table_name,
+      procedure.proname as function_name,
+      trigger.tgdeferrable
+        and trigger.tginitdeferred
+        and trigger.tgenabled = 'O'
+        and trigger.tgconstraint <> 0
+        and trigger.tgtype = 21 as valid
+    from pg_trigger trigger
+    inner join pg_class relation on relation.oid = trigger.tgrelid
+    inner join pg_namespace relation_namespace on relation_namespace.oid = relation.relnamespace
+    inner join pg_proc procedure on procedure.oid = trigger.tgfoid
+    inner join pg_namespace procedure_namespace on procedure_namespace.oid = procedure.pronamespace
+    where relation_namespace.nspname = 'public'
+      and procedure_namespace.nspname = 'public'
+      and trigger.tgname in (
+        'notification_deduplicated_target_trigger',
+        'notification_delivery_deduplicated_target_trigger'
+      )
+  `;
+  const valid = NOTIFICATION_AUDIT_ARTIFACTS.every((expected) =>
+    artifacts.some(
+      (artifact) =>
+        artifact.trigger_name === expected.triggerName &&
+        artifact.table_name === expected.tableName &&
+        artifact.function_name === expected.functionName &&
+        artifact.valid,
+    ),
+  );
+  if (!valid || artifacts.length !== NOTIFICATION_AUDIT_ARTIFACTS.length) {
+    throw new Error('Notification audit trigger reconciliation did not produce valid artifacts.');
   }
 }
 
@@ -110,16 +159,17 @@ async function ledgerRows(sql: postgres.Sql): Promise<LedgerRow[]> {
 
 async function applyPendingMigrations(
   sql: postgres.Sql,
+  migrationsFolder: string,
   migrations: readonly MigrationMeta[],
 ): Promise<void> {
   const agentSchemaIndex = migrations.findIndex(
     (migration) => migration.folderMillis === AGENT_SCHEMA_MIGRATION,
   );
-  if (agentSchemaIndex >= 0) {
-    await applyPendingMigrationsWithAgentSchema(sql, migrations, agentSchemaIndex);
+  if (agentSchemaIndex < 0) {
+    await migrate(drizzle({ client: sql }), { migrationsFolder });
     return;
   }
-  await applyMigrationTransaction(sql, migrations);
+  await applyPendingMigrationsWithAgentSchema(sql, migrationsFolder, migrations, agentSchemaIndex);
 }
 
 async function applyMigrationTransaction(
@@ -132,8 +182,7 @@ async function applyMigrationTransaction(
       id serial primary key, hash text not null, created_at bigint
     )`;
     for (const migration of migrations) {
-      const statements = compatibleMigrationStatements(migration);
-      for (const statement of statements) await tx.unsafe(statement);
+      for (const statement of migration.sql) await tx.unsafe(statement);
       await tx`insert into drizzle.__drizzle_migrations (hash, created_at)
         values (${migration.hash}, ${migration.folderMillis})`;
     }
@@ -142,6 +191,7 @@ async function applyMigrationTransaction(
 
 async function applyPendingMigrationsWithAgentSchema(
   sql: postgres.Sql,
+  migrationsFolder: string,
   migrations: readonly MigrationMeta[],
   agentSchemaIndex: number,
 ): Promise<void> {
@@ -157,14 +207,10 @@ async function applyPendingMigrationsWithAgentSchema(
     for (const statement of finalization) await tx.unsafe(statement);
     await tx`insert into drizzle.__drizzle_migrations (hash, created_at)
       values (${agentSchemaMigration.hash}, ${agentSchemaMigration.folderMillis})`;
-    for (const migration of migrations.slice(agentSchemaIndex + 1)) {
-      for (const statement of compatibleMigrationStatements(migration)) await tx.unsafe(statement);
-      await tx`insert into drizzle.__drizzle_migrations (hash, created_at)
-        values (${migration.hash}, ${migration.folderMillis})`;
-    }
     await tx`delete from drizzle.__drizzle_migration_state
       where migration_id = ${agentSchemaMigration.folderMillis}`;
   });
+  await migrate(drizzle({ client: sql }), { migrationsFolder });
 }
 
 interface AgentSchemaMigrationParts {
@@ -177,7 +223,10 @@ function splitAgentSchemaMigration(migration: MigrationMeta): AgentSchemaMigrati
   if (migration.hash !== AGENT_SCHEMA_HASH) {
     throw new Error('The historical agent schema migration does not match its recorded source.');
   }
-  const backfillStatements = migration.sql.filter((statement) => /^\s*DO\b/iu.test(statement));
+  const isBackfillBatch = (statement: string) =>
+    /^\s*DO\b/iu.test(statement) &&
+    /\bGET DIAGNOSTICS\s+affected\s*=\s*ROW_COUNT\b/iu.test(statement);
+  const backfillStatements = migration.sql.filter(isBackfillBatch);
   const migrationBackfills = backfillStatements.map((statement) => {
     const update = statement.match(
       /\b(UPDATE\s+"[^"]+"[\s\S]*?);\s*GET DIAGNOSTICS\s+affected\s*=\s*ROW_COUNT\s*;/iu,
@@ -196,8 +245,8 @@ function splitAgentSchemaMigration(migration: MigrationMeta): AgentSchemaMigrati
   if (migrationBackfills.length !== 6) {
     throw new Error('The agent schema migration must contain six ordered backfill batches.');
   }
-  const firstBackfill = migration.sql.findIndex((statement) => /^\s*DO\b/iu.test(statement));
-  const lastBackfill = migration.sql.findLastIndex((statement) => /^\s*DO\b/iu.test(statement));
+  const firstBackfill = migration.sql.findIndex(isBackfillBatch);
+  const lastBackfill = migration.sql.findLastIndex(isBackfillBatch);
   if (firstBackfill < 0 || lastBackfill < firstBackfill) {
     throw new Error('The agent schema migration backfill batches are missing.');
   }
@@ -240,7 +289,7 @@ async function prepareAgentSchemaMigration(
       where migration_id = ${migration.folderMillis} for update
     `;
     if (state !== undefined) {
-      if (!migrationHashMatches(state.hash, migration)) {
+      if (state.hash !== migration.hash) {
         throw new Error('The pending agent schema migration does not match its recorded source.');
       }
       return;
@@ -289,24 +338,6 @@ async function lockAgentSchemaTables(tx: postgres.TransactionSql): Promise<void>
     in share row exclusive mode`);
 }
 
-function dependencyOrderedAgentBinding(migration: MigrationMeta): readonly string[] {
-  if (migration.hash !== AGENT_BINDING_HASH || migration.sql.length !== 2) {
-    throw new Error('The historical agent binding migration does not match its recorded source.');
-  }
-  return [...migration.sql].reverse();
-}
-
-function compatibleMigrationStatements(migration: MigrationMeta): readonly string[] {
-  if (migration.folderMillis === AGENT_BINDING_MIGRATION) {
-    return dependencyOrderedAgentBinding(migration);
-  }
-  if (migration.folderMillis !== AGENT_SCHEMA_MIGRATION) return migration.sql;
-  if (migration.hash !== AGENT_SCHEMA_HASH) {
-    throw new Error('The historical agent schema migration does not match its recorded source.');
-  }
-  return migration.sql;
-}
-
 function verifyLedger(rows: readonly LedgerRow[], migrations: readonly MigrationMeta[]): number {
   if (rows.length > migrations.length) {
     throw new Error('The database migration ledger is ahead of this checkout.');
@@ -316,7 +347,7 @@ function verifyLedger(rows: readonly LedgerRow[], migrations: readonly Migration
     if (migration === undefined || row.created_at !== String(migration.folderMillis)) {
       throw new Error('The database migration ledger is not a contiguous prefix of this checkout.');
     }
-    if (!migrationHashMatches(row.hash, migration)) {
+    if (row.hash !== migration.hash) {
       throw new Error(
         `Migration ${row.created_at} does not match the committed migration. Applied migration files are immutable.`,
       );
@@ -325,28 +356,57 @@ function verifyLedger(rows: readonly LedgerRow[], migrations: readonly Migration
   return migrations.length - rows.length;
 }
 
+async function reconcileNotificationAuditReplacements(
+  tx: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  for (const migration of migrations) {
+    for (const statement of migration.sql) {
+      if (statement.trimStart().startsWith('CREATE OR REPLACE FUNCTION validate_notification_')) {
+        await tx.unsafe(statement);
+      }
+    }
+  }
+}
+
+async function reconcileNotificationChecks(
+  tx: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  const checks = new Map<string, { table: string; name: string; statement: string }>();
+  for (const migration of migrations) {
+    for (const statement of migration.sql) {
+      const match =
+        /^\s*ALTER TABLE "(notification_delivery|webhook_delivery)" ADD CONSTRAINT "(notification_delivery_owner_shape_check|webhook_delivery_processing_claim_check)" CHECK\b/u.exec(
+          statement,
+        );
+      if (match?.[1] !== undefined && match[2] !== undefined) {
+        checks.set(match[2], { table: match[1], name: match[2], statement });
+      }
+    }
+  }
+  for (const check of checks.values()) {
+    await tx.unsafe(`alter table "${check.table}" drop constraint if exists "${check.name}"`);
+    await tx.unsafe(check.statement);
+  }
+}
+
 async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
   appliedCount = 0,
-  replaceExisting = false,
 ): Promise<void> {
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
-  const agentSchemaMigration = pendingMigrations.find(
-    (migration) => migration.folderMillis === AGENT_SCHEMA_MIGRATION,
-  );
-  if (agentSchemaMigration !== undefined) {
-    await baselineLedgerWithAgentSchema(
-      sql,
-      pendingMigrations,
-      agentSchemaMigration,
-      replaceExisting,
+  await sql.begin(async (tx) => {
+    const notificationAuditMigration = migrations.find(
+      (migration) => migration.folderMillis === NOTIFICATION_AUDIT_MIGRATION,
     );
-    return;
-  }
-  await sql.begin(async (tx) => {
-    if (replaceExisting) await tx`delete from drizzle.__drizzle_migrations`;
+    if (notificationAuditMigration !== undefined) {
+      await reconcileNotificationAuditArtifacts(tx, notificationAuditMigration);
+    }
+    await reconcileNotificationAuditReplacements(tx, migrations);
+    await reconcileNotificationChecks(tx, migrations);
     if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
       await tx`
         update attachment
@@ -377,7 +437,86 @@ async function baselineLedger(
         );
       }
     }
-    await reconcileAgentData(tx, pendingMigrations);
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1788724695589)) {
+      await tx`
+        insert into github_check_head_reconciliation (
+          id,
+          organization_id,
+          repository_sync_id,
+          head_sha,
+          status,
+          job_version,
+          context_generation,
+          trigger_kind,
+          trigger_identity,
+          attempts,
+          available_at,
+          rerun_required,
+          created_at,
+          updated_at
+        )
+        select
+          'ghr_bootstrap_' || md5(organization_id || ':' || repository_sync_id || ':' || head_sha),
+          organization_id,
+          repository_sync_id,
+          head_sha,
+          'pending',
+          1,
+          0,
+          'migration_bootstrap',
+          '0021_mixed_dust',
+          0,
+          now(),
+          false,
+          now(),
+          now()
+        from (
+          select organization_id, repository_sync_id, lower(head_sha) as head_sha
+          from github_pull_request
+          where state in ('draft', 'open', 'approved', 'changes_requested')
+            and merged = false
+            and head_sha ~ '^[0-9A-Fa-f]{40}$'
+          group by organization_id, repository_sync_id, lower(head_sha)
+        ) current_heads
+        on conflict (organization_id, repository_sync_id, head_sha) do nothing
+      `;
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1788724695585)) {
+      await tx`
+        update project
+        set health = 'no_update'
+        where health not in ('on_track', 'at_risk', 'off_track', 'no_update')
+      `;
+      await tx`
+        update project_update
+        set health = 'no_update'
+        where health not in ('on_track', 'at_risk', 'off_track', 'no_update')
+      `;
+      await tx`
+        do $$
+        begin
+          if not exists (
+            select 1 from pg_constraint where conname = 'project_health_check'
+          ) then
+            alter table project add constraint project_health_check check (health in ('on_track', 'at_risk', 'off_track', 'no_update'));
+          end if;
+          if not exists (
+            select 1 from pg_constraint where conname = 'project_update_health_check'
+          ) then
+            alter table project_update add constraint project_update_health_check check (health in ('on_track', 'at_risk', 'off_track', 'no_update'));
+          end if;
+        end $$;
+      `;
+    }
+    if (pendingMigrations.some((migration) => migration.folderMillis === 1789603762953)) {
+      await tx`
+        update doc
+        set publish_token =
+          replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+        where visibility in ('workspace', 'members')
+          and (publish_token is null or publish_token = '')
+      `;
+    }
     await tx`create schema if not exists drizzle`;
     await tx`
       create table if not exists drizzle.__drizzle_migrations (
@@ -393,169 +532,46 @@ async function baselineLedger(
       `;
     }
   });
-}
-
-async function baselineLedgerWithAgentSchema(
-  sql: postgres.Sql,
-  pendingMigrations: readonly MigrationMeta[],
-  agentSchemaMigration: MigrationMeta,
-  replaceExisting: boolean,
-): Promise<void> {
-  const { backfills } = splitAgentSchemaMigration(agentSchemaMigration);
-  const reconciliations = pendingMigrations.filter(
-    (migration) => migration.folderMillis !== AGENT_SCHEMA_MIGRATION,
-  );
-  await prepareAgentSchemaMigration(sql, agentSchemaMigration, []);
-  await runAgentSchemaBackfills(sql, backfills);
-  await sql.begin(async (tx) => {
-    await lockAgentSchemaTables(tx);
-    await runAgentSchemaBackfillsInTransaction(tx, backfills);
-    if (replaceExisting) await tx`delete from drizzle.__drizzle_migrations`;
-    if (pendingMigrations.some((migration) => migration.folderMillis === 1786217938315)) {
-      await tx`
-        update attachment
-        set upload_expires_at = created_at + interval '900 seconds'
-      `;
-    }
-    if (pendingMigrations.some((migration) => migration.folderMillis === 1786623194883)) {
-      const [cycleNumbering] = await tx<{ mismatched: boolean }[]>`
-        with expected as (
-          select
-            id,
-            row_number() over (
-              partition by organization_id
-              order by starts_at, created_at, id
-            ) as number
-          from cycle
-        )
-        select exists (
-          select 1
-          from cycle
-          inner join expected on expected.id = cycle.id
-          where cycle.number is distinct from expected.number
-        ) as mismatched
-      `;
-      if (cycleNumbering?.mismatched === true) {
-        throw new Error(
-          'The historical cycle numbering backfill is missing. Apply the required catchup script before baselining.',
-        );
-      }
-    }
-    await reconcileAgentData(tx, reconciliations);
-    await tx`create schema if not exists drizzle`;
-    await tx`
-      create table if not exists drizzle.__drizzle_migrations (
-        id serial primary key,
-        hash text not null,
-        created_at bigint
-      )
-    `;
-    for (const migration of pendingMigrations) {
-      await tx`
-        insert into drizzle.__drizzle_migrations (hash, created_at)
-        values (${migration.hash}, ${migration.folderMillis})
-      `;
-    }
-    await tx`delete from drizzle.__drizzle_migration_state
-      where migration_id = ${agentSchemaMigration.folderMillis}`;
-  });
-}
-
-async function reconcileAgentData(
-  tx: postgres.TransactionSql,
-  migrations: readonly MigrationMeta[],
-): Promise<void> {
-  const pending = new Set(migrations.map((migration) => migration.folderMillis));
-  if (pending.has(1789829081921)) {
-    await tx`
-      update issue
-      set
-        creator_user_id = coalesce(creator_user_id, creator_id),
-        assignee_user_id = coalesce(assignee_user_id, assignee_id),
-        owner_user_id = coalesce(owner_user_id, assignee_id)
-    `;
-    for (const table of ['issue_activity', 'audit_log', 'notification'] as const) {
-      await tx.unsafe(`
-        update ${table} record
-        set principal_user_id = (
-              select existing_user.id from "user" existing_user
-              where existing_user.id = record.actor_id
-            ),
-            principal_name = coalesce(record.principal_name, record.actor_name)
-        where record.actor_type = 'user'
-          and (record.principal_user_id is null or record.principal_name is null)
-      `);
-    }
-    await tx`
-      update mcp_grant
-      set principal_name_snapshot = coalesce(existing_user.name, 'Former member')
-      from "user" existing_user
-      where existing_user.id = mcp_grant.user_id
-        and mcp_grant.principal_name_snapshot is null
-    `;
-    await tx`
-      update mcp_grant
-      set principal_name_snapshot = 'Former member'
-      where principal_name_snapshot is null
-    `;
-  }
-  if (pending.has(1789834228668) || pending.has(1789874131769)) {
-    await tx`
-      update mcp_grant
-      set revoked_at = coalesce(revoked_at, now()), revoke_reason = 'agent_identity_required'
-      where agent_identity_id is null
-        and revoke_reason is distinct from 'agent_identity_required'
-    `;
-  }
-  if (pending.has(1789874131769)) {
-    await tx`
-      update mcp_grant grant_row
-      set revoked_at = now(), revoke_reason = 'agent_identity_inactive'
-      where grant_row.revoked_at is null
-        and grant_row.agent_identity_id is not null
-        and (
-          grant_row.user_id is null
-          or not exists (
-            select 1
-            from agent_identity identity_row
-            where identity_row.id = grant_row.agent_identity_id
-              and identity_row.organization_id = grant_row.organization_id
-              and identity_row.owner_user_id = grant_row.user_id
-              and identity_row.client_id = grant_row.client_id
-              and identity_row.deleted_at is null
-              and identity_row.owner_disabled_at is null
-              and identity_row.admin_disabled_at is null
-          )
-        )
-    `;
-    await tx`
-      delete from oauth_access_token token_row
-      where token_row.mcp_grant_id is null
-        or not exists (
-          select 1
-          from mcp_grant grant_row
-          where grant_row.id = token_row.mcp_grant_id
-            and grant_row.revoked_at is null
-            and grant_row.agent_identity_id is not null
-        )
-    `;
-  }
-  if (pending.has(1789980471869)) {
-    await tx`
-      update agent_identity set
-        owner_disabled_actor_id_snapshot = coalesce(owner_disabled_actor_id_snapshot, owner_disabled_by_user_id),
-        owner_resumed_actor_id_snapshot = coalesce(owner_resumed_actor_id_snapshot, owner_resumed_by_user_id),
-        admin_disabled_actor_id_snapshot = coalesce(admin_disabled_actor_id_snapshot, admin_disabled_by_user_id),
-        admin_resumed_actor_id_snapshot = coalesce(admin_resumed_actor_id_snapshot, admin_resumed_by_user_id),
-        connection_revoked_actor_id_snapshot = coalesce(connection_revoked_actor_id_snapshot, connection_revoked_by_user_id),
-        deleted_actor_id_snapshot = coalesce(deleted_actor_id_snapshot, deleted_by_user_id)
-    `;
-  }
 }
 
 function declaredTableCount(live: Awaited<ReturnType<typeof liveCatalog>>): number {
   const expectedNames = new Set(expectedCatalog(schema).tables.map((table) => table.name));
   return live.tables.filter((table) => expectedNames.has(table.name)).length;
+}
+
+function pendingMigrationsProvideChecks(
+  migrations: readonly MigrationMeta[],
+  drift: Drift,
+): boolean {
+  const targets = [
+    ...drift.missingCheckConstraints.map((entry) => ({ table: entry.table, name: entry.check })),
+    ...drift.checkConstraintMismatches.map((entry) => ({ table: entry.table, name: entry.name })),
+  ];
+  if (targets.length === 0) return false;
+  return targets.some(({ table, name }) =>
+    migrations.some((migration) =>
+      migration.sql.some(
+        (statement) =>
+          statement.includes(`ALTER TABLE "${table}" `) &&
+          statement.includes(`ADD CONSTRAINT "${name}" CHECK`),
+      ),
+    ),
+  );
+}
+
+const DROP_TABLE_STATEMENT = /^\s*drop\s+table\s+(?:if\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/iu;
+
+function pendingMigrationsDropLiveTables(
+  migrations: readonly MigrationMeta[],
+  live: Catalog,
+): boolean {
+  const liveTables = new Set(live.tables.map((table) => table.name));
+  return migrations.some((migration) =>
+    migration.sql.some((statement) => {
+      const match = DROP_TABLE_STATEMENT.exec(statement);
+      return match?.[1] !== undefined && liveTables.has(match[1].toLowerCase());
+    }),
+  );
 }
 
 export async function releaseDatabase(
@@ -582,7 +598,7 @@ export async function releaseDatabase(
     let applied = 0;
 
     if ((!hadLedger || existingRows.length === 0) && declaredTableCount(before) > 0) {
-      if (isBehind(beforeDrift)) {
+      if (needsCatchup(beforeDrift)) {
         throw new Error(
           'This legacy database is not compatible with the current schema. Apply the required catchup scripts, verify drift, and run db:release again.',
         );
@@ -592,20 +608,15 @@ export async function releaseDatabase(
     }
 
     const rows = await ledgerRows(sql);
-    let pending: number;
-    try {
-      pending = verifyLedger(rows, migrations);
-    } catch (error) {
-      if (isBehind(beforeDrift) || !isKnownHistoricalAgentInstructionsLedger(rows, migrations)) {
-        throw error;
-      }
-      await baselineLedger(sql, migrations, 0, true);
-      mode = 'baselined';
-      pending = 0;
-    }
+    const pending = verifyLedger(rows, migrations);
     if (pending > 0) {
-      if (isBehind(beforeDrift)) {
-        await applyPendingMigrations(sql, migrations.slice(rows.length));
+      const pendingMigrations = migrations.slice(rows.length);
+      if (
+        needsCatchup(beforeDrift) ||
+        pendingMigrationsProvideChecks(pendingMigrations, beforeDrift) ||
+        pendingMigrationsDropLiveTables(pendingMigrations, before)
+      ) {
+        await applyPendingMigrations(sql, migrationsFolder, pendingMigrations);
         applied = pending;
         mode = 'migrated';
       } else {

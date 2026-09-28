@@ -32,7 +32,7 @@ export const docCreateSchema = z
     projectId: idSchema.nullable().default(null),
     collectionId: idSchema.nullable().default(null),
     parentId: idSchema.nullable().default(null),
-    visibility: z.enum(DOC_VISIBILITIES).default('workspace'),
+    visibility: z.enum(DOC_VISIBILITIES).default('private'),
   })
   .refine(livesInOnePlace, { message: ONE_HOME_MESSAGE, path: ['collectionId'] });
 

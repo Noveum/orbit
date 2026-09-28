@@ -5,10 +5,13 @@
 > support, migration, rollback, backup, or compatibility contract. Review the
 > [readiness tracker](open-source-readiness.md) before deploying important data.
 
-Orbit's Web app needs Postgres, Redis and an S3-compatible bucket. Enabling
-Agent issue writes also requires a persistent Outbox Worker connected to the
-same Postgres and Redis. The Worker image is separate from the Web deployment;
-Cron is only its recovery path.
+Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
+plus a usable sign-in method. A Docker Compose preview packages the standalone
+application and those dependencies for local evaluation.
+
+Enabling Agent issue writes also requires a persistent Outbox Worker connected
+to the same Postgres and Redis. The Worker image is separate from the Web
+deployment; Cron is only its recovery path.
 
 Everything below has a free tier, so a small team can run Orbit for nothing.
 
@@ -18,8 +21,9 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | --- | --- | --- |
 | [Vercel](#deploy-on-vercel) | About 20 minutes | Almost everyone. This is what we run |
 | [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
+| [Docker Compose (Preview)](docker-preview.md) | Local image build and setup | Evaluation with bundled infrastructure, realtime and maintenance |
 
-Both need the same infrastructure plus one complete first-login method.
+All routes need the same infrastructure plus one complete first-login method.
 For Agent capabilities, also follow the
 [Agent release runbook](issue-215-release-runbook.md). Keep the four Agent gates
 off until their rollout prerequisites are met.
@@ -193,8 +197,11 @@ wired up correctly. That single test covers more than any health check.
 
 ### 9. Sign in for the first time
 
-The first person to sign in becomes the owner of a new workspace, and onboarding
-walks through naming it and creating the first team.
+Each person who creates a workspace becomes its admin, and onboarding walks
+through naming it and creating the first team. The first account has no special
+server-wide privileges. There is no default administrator account. See the
+[first-run setup guide](first-run.md) for registration, invitation verification,
+email setup and the deployment checks available to workspace admins.
 
 The production preflight has already confirmed that at least one first-login
 method is configured. See [Configuration](configuration.md#authentication) for
@@ -208,11 +215,10 @@ authenticated user registers one; they cannot create the first session.
 
 If you want to evaluate Orbit inside your own network, run the Next.js
 standalone build behind a reverse proxy. This standalone path is Preview only:
-HTTP routes and assets work, but realtime and live updates do not yet work in
-this mode. `/api/ws` relies on Vercel's request context for
-`experimental_upgradeWebSocket`; running the standalone server with Node does
-not provide that context. DEP-002 tracks portable realtime deployment
-separately. Use Vercel for production realtime today.
+Running only the Next HTTP server serves routes and assets. The complete
+[Docker Compose preview](docker-preview.md) also starts a Node WebSocket host,
+a same-origin gateway and a maintenance scheduler. Use that stack to evaluate
+live updates and background work on a VPS.
 
 The packaged start command requires Node.js 22 or newer. Bun remains required
 for installing dependencies, applying the schema, and building the app.
@@ -246,9 +252,10 @@ location / {
 }
 ```
 
-You can run Postgres, Redis and MinIO from the bundled `docker-compose.yml`, but
-change every credential in it first. It is written for local development and its
-passwords are in this repository.
+For a complete evaluation stack, use the [Docker Compose preview](docker-preview.md).
+It supplies Postgres, Redis and MinIO with generated private credentials and
+persistent volumes. The root `docker-compose.yml` is for local development only;
+its published passwords must never be used for a deployed installation.
 
 ## Keeping it running
 
@@ -286,14 +293,84 @@ dated tag for deployed versions.
 Watch the [releases](https://github.com/Noveum/orbit/releases) for anything
 labelled `breaking change` and follow the upgrade notes in the associated release.
 
+Upgrades across this release drop four tables the app never displayed: `module`,
+`module_member`, `module_issue` and `module_link`. A Plane import before #287
+filled them and nothing has read them since, so the migration removes them.
+Databases that materialized their schema without a migration ledger can remove
+them with `packages/db/catchup/drop-module-tables-catchup.sql`.
+
 ### Backups
 
-Back up Postgres. That is where everything lives except uploaded files, which
-are in the bucket. Redis holds no durable state, so losing it costs you nothing
-except a reconnect.
+Back up Postgres and object storage together. Orbit ships a coordinated backup
+CLI (`bun run backup:create`) that exports a single repeatable-read PostgreSQL
+snapshot, runs `pg_dump` against it, and downloads all referenced attachment
+objects into an atomic backup archive.
 
-Supabase and Neon both take automatic backups. If you run your own Postgres,
-`pg_dump` on a schedule, and restore it somewhere once so you know it works.
+```bash
+# Capture a backup into ./backups
+bun run backup:create --destination ./backups
+
+# Pass a direct database connection explicitly
+DIRECT_URL="postgres://user:pass@host:5432/orbit" bun run backup:create -d ./backups
+
+# Machine-readable output for cron or orchestrators
+bun run backup:create --json --destination /var/backups/orbit
+```
+
+#### CLI flags and environment variables
+
+| Flag | Env variable | Default | Description |
+| --- | --- | --- | --- |
+| `--destination`, `-d` | `ORBIT_BACKUP_DESTINATION` | `./backups` | Target directory where the backup folder is published |
+| `--database-url` | `DIRECT_URL`, `DATABASE_URL` | none | Direct connection string to PostgreSQL |
+| `--pg-dump-path` | `PG_DUMP_PATH` | `pg_dump` | Path to the local `pg_dump` binary |
+| `--orbit-version` | `ORBIT_VERSION` | `0.1.0` | Orbit version string stamped into `manifest.json` |
+| `--source-revision` | `SOURCE_REVISION`, `VERCEL_GIT_COMMIT_SHA` | `unknown` | Git commit SHA stamped into `manifest.json` |
+| `--json` | none | `false` | Emit JSON status on stdout and stderr |
+
+#### Prerequisites
+
+1. **`pg_dump` installed locally:** The backup runner invokes `pg_dump` directly.
+   Its version must match or exceed the version of the PostgreSQL server being
+   backed up. Configure `PG_DUMP_PATH` or `--pg-dump-path` if `pg_dump` is not in
+   `PATH`.
+2. **Direct database connection:** `DIRECT_URL` must point directly to PostgreSQL,
+   not through a transaction-mode connection pooler such as PgBouncer or Supabase's
+   transaction pooler (port 6543). The coordinated snapshot requires
+   `pg_export_snapshot()`, which requires an open transaction session.
+3. **Object storage credentials:** Storage environment variables (`S3_BUCKET`,
+   `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, etc.) must be
+   accessible to the command so it can download attachment files.
+
+#### Output structure and atomicity
+
+Each backup creates an isolated directory named `orbit-backup-<timestamp>-<hash>/`:
+
+```
+orbit-backup-2026-09-10T19-36-31-839Z-68a1dddb/
+├── manifest.json      # Schema ledger, checksums, counts, safe config allowlist
+├── database.dump      # pg_dump custom format (-Fc) archive
+└── objects/           # Captured attachments keyed by storage key
+    └── org_xxx/issue/att_yyy/file.png
+```
+
+Backups write to a temporary `.tmp` directory first. If `pg_dump`, preflight
+validation, or object capture fails, the working directory is renamed to
+`.incomplete` and the command exits with code 1. Only a fully verified backup
+is published to its final path.
+
+#### Backup limitations
+
+- **Unencrypted at rest:** Archive files and dumps are written with restricted
+  file modes (`0o600`), but payloads are unencrypted. Encrypt the backup
+  directory at the filesystem or bucket level if storing backups in cloud cold
+  storage.
+- **Online object capture:** The database snapshot guarantees consistent relational
+  state, and object storage capture fetches all attachments present when the
+  snapshot began. If external tooling deletes an object from storage while Orbit
+  is running, the backup fails rather than publishing a partial archive.
+- **Local scratch disk space:** The destination directory must have enough disk
+  capacity to hold the uncompressed PostgreSQL dump and all attachment objects.
 
 ### Scaling
 
@@ -323,7 +400,7 @@ version:
 
 | Symptom | Cause |
 | --- | --- |
-| Endless "Reconnecting to live updates" | Standalone Node does not support realtime yet. On Vercel, verify the websocket route and Redis configuration |
+| Endless "Reconnecting to live updates" | Check the Docker realtime service and gateway, or the Vercel websocket route, and Redis configuration |
 | Live updates never arrive, no banner | `REDIS_URL` is wrong, or Redis is unreachable from the functions |
 | Uploads fail in the browser, server looks fine | Bucket CORS does not allow your origin |
 | Invites and sign-in codes never arrive | `EMAIL_FROM` is not on a domain verified in Resend |

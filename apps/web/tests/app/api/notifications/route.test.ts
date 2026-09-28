@@ -1,11 +1,14 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { createIssue } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
-import { db, schema } from '@orbit/db';
+import { db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
+import { notificationActions } from '../../../../src/app/api/notifications/deltas.ts';
 import { mockSession } from '../../../../tests-support.ts';
 
 let workspace: Workspace;
+let issueId: string;
 
 interface Signed {
   user: { id: string; name: string; email: string };
@@ -15,8 +18,15 @@ interface Signed {
 const signedIn: { value: Signed | null } = { value: null };
 
 mockSession(() => signedIn.value);
+const nextHeaders = await import('next/headers');
+mock.module('next/headers', () => ({ headers: () => Promise.resolve(new Headers()) }));
 
 const notifications = await import('../../../../src/app/api/notifications/route.ts');
+const notificationById = await import('../../../../src/app/api/notifications/[id]/route.ts');
+
+afterAll(() => {
+  mock.module('next/headers', () => nextHeaders);
+});
 
 const pageSchema = z.object({
   notifications: z.array(
@@ -51,7 +61,7 @@ async function seed(count: number): Promise<void> {
       actorId: workspace.admin.userId,
       actorName: 'Someone',
       entityType: 'issue',
-      entityId: `issue_${index}`,
+      entityId: issueId,
       title: `Notification ${String(index).padStart(3, '0')}`,
       body: '',
       url: `/issue/ENG-${index}`,
@@ -71,6 +81,11 @@ async function get(url: string): Promise<Response> {
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace();
+  const created = await createIssue(workspace.admin, {
+    title: 'Notification subject',
+    teamId: workspace.teamId,
+  });
+  issueId = created.issue.id;
 });
 
 beforeEach(async () => {
@@ -79,6 +94,13 @@ beforeEach(async () => {
 });
 
 describe('GET /api/notifications', () => {
+  it('publishes only identifiers and visibility instead of notification content', async () => {
+    await seed(1);
+    const rows = await db.select().from(schema.notification);
+    const action = notificationActions(workspace.admin, 'Admin', 'update', rows)[0];
+    expect(action?.data).toEqual({ id: rows[0]?.id, syncId: 0, visible: true });
+    expect(JSON.stringify(action?.data)).not.toContain('Notification');
+  });
   it('hands back a page and the cursor that follows it', async () => {
     await seed(60);
 
@@ -135,6 +157,33 @@ describe('GET /api/notifications', () => {
 
     expect(page.notifications).toHaveLength(4);
     expect(page.nextCursor).not.toBeNull();
+  });
+
+  it('soft dismisses a notification without deleting its event history', async () => {
+    await seed(1);
+    const [created] = await db.select().from(schema.notification);
+    if (created === undefined) throw new Error('the seeded notification is missing');
+
+    const response = await notificationById.DELETE(
+      new Request(`http://orbit.test/api/notifications/${created.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    const [stored] = await db
+      .select()
+      .from(schema.notification)
+      .where(eq(schema.notification.id, created.id));
+    const page = pageSchema.parse(await (await get('http://orbit.test/api/notifications')).json());
+    const repeated = await notificationById.DELETE(
+      new Request(`http://orbit.test/api/notifications/${created.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(repeated.status).toBe(404);
+    expect(stored).toBeDefined();
+    expect(stored?.dismissedAt).toBeInstanceOf(Date);
+    expect(stored?.syncId).toBeGreaterThan(created.syncId);
+    expect(page.notifications).toHaveLength(0);
   });
 
   it('turns a row into what the inbox reads, not the raw record', async () => {

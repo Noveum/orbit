@@ -99,3 +99,22 @@ describe('MembersTable', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });
+
+describe('member types', () => {
+  it('lets admins mark a member as an agent without changing their role', async () => {
+    mockFetch(200, { member: { id: 'member-2', isAgent: true } });
+    const user = userEvent.setup();
+    render(<MembersTable members={MEMBERS} canManage />);
+    await user.click(screen.getByLabelText('Member type for Aditi Rao'));
+    await user.click(screen.getByRole('option', { name: 'AI agent' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/members/member-2',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ isAgent: true }) }),
+    );
+  });
+  it('disables member classification for non-admins', () => {
+    render(<MembersTable members={MEMBERS} canManage={false} />);
+    expect(screen.getByLabelText('Member type for Aditi Rao')).toBeDisabled();
+  });
+});

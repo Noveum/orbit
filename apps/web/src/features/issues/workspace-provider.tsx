@@ -6,8 +6,17 @@ import {
   STATE_CATEGORY_ORDER,
   type StateCategory,
 } from '@orbit/shared/constants';
+import { permissionsFor } from '@orbit/shared/policy';
 import { usePathname } from 'next/navigation';
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { useHotkey } from '@/lib/keyboard/index.ts';
 import type {
   Bootstrap,
@@ -24,6 +33,7 @@ import { QuickCreateDialog } from './quick-create.tsx';
 
 export interface WorkspaceData {
   readonly ready: boolean;
+  readonly now?: number;
   readonly userId: string | null;
   readonly role: OrgRole;
   readonly teams: readonly Team[];
@@ -36,7 +46,7 @@ export interface WorkspaceData {
   readonly stateById: ReadonlyMap<string, WorkflowState>;
   readonly labelById: ReadonlyMap<string, Label>;
   readonly memberById: ReadonlyMap<string, Member>;
-  readonly openQuickCreate: (teamId?: string) => void;
+  readonly openQuickCreate: (teamId?: string, stateId?: string) => void;
 }
 
 const EMPTY_MAP = new Map<string, never>();
@@ -57,6 +67,16 @@ const WorkspaceContext = createContext<WorkspaceData>({
   memberById: EMPTY_MAP,
   openQuickCreate: () => undefined,
 });
+
+export function WorkspaceDataProvider({
+  value,
+  children,
+}: {
+  value: WorkspaceData;
+  children: ReactNode;
+}) {
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+}
 
 export function useWorkspace(): WorkspaceData {
   return useContext(WorkspaceContext);
@@ -90,13 +110,15 @@ export function teamKeyFromPath(pathname: string): string | null {
 
 export function workspaceFrom(
   data: Bootstrap | undefined,
-  openQuickCreate: (teamId?: string) => void,
+  openQuickCreate: (teamId?: string, stateId?: string) => void,
+  now = Date.now(),
 ): WorkspaceData {
   const states = data?.states ?? [];
   const labels = data?.labels ?? [];
   const members = data?.members ?? [];
   return {
     ready: data !== undefined,
+    now,
     userId: data?.userId ?? null,
     role: toOrgRole(data?.role),
     teams: data?.teams ?? [],
@@ -104,7 +126,7 @@ export function workspaceFrom(
     labels,
     members,
     projects: data?.projects ?? [],
-    cycles: data?.cycles ?? [],
+    cycles: [...(data?.cycles ?? [])],
     seedIssues: data?.issues ?? [],
     stateById: new Map(states.map((state) => [state.id, state])),
     labelById: new Map(labels.map((label) => [label.id, label])),
@@ -117,38 +139,54 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const bootstrap = useBootstrap(null);
   const pathname = usePathname();
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
+  const [createStateId, setCreateStateId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const refresh = () => setNow(Date.now());
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
   const data = bootstrap.data;
+  const canCreate = permissionsFor(toOrgRole(data?.role)).includes('issue:create');
   const routeTeamKey = teamKeyFromPath(pathname);
   const routeTeamId = data?.teams.find((team) => team.key === routeTeamKey)?.id ?? null;
 
-  const openQuickCreate = useCallback((teamId?: string) => {
-    setCreateTeamId(teamId ?? null);
-    setCreateOpen(true);
-  }, []);
-
-  const value = useMemo<WorkspaceData>(
-    () => workspaceFrom(data, openQuickCreate),
-    [data, openQuickCreate],
-  );
-
-  useHotkey(
-    'c',
-    () => {
-      setCreateTeamId(null);
+  const openQuickCreate = useCallback(
+    (teamId?: string, stateId?: string) => {
+      if (!canCreate) return;
+      setCreateTeamId(teamId ?? null);
+      setCreateStateId(stateId ?? null);
       setCreateOpen(true);
     },
-    { label: 'Create issue', section: 'Issues' },
+    [canCreate],
   );
+
+  const value = useMemo<WorkspaceData>(
+    () => workspaceFrom(data, openQuickCreate, now),
+    [data, openQuickCreate, now],
+  );
+
+  useHotkey('c', () => openQuickCreate(), {
+    label: 'Create issue',
+    section: 'Issues',
+    enabled: canCreate,
+  });
 
   return (
     <WorkspaceContext.Provider value={value}>
       <IssueDeletionProvider>{children}</IssueDeletionProvider>
       <QuickCreateDialog
-        open={createOpen}
+        open={createOpen && canCreate}
         onOpenChange={setCreateOpen}
         defaultTeamId={createTeamId ?? routeTeamId}
+        defaultStateId={createStateId}
       />
     </WorkspaceContext.Provider>
   );

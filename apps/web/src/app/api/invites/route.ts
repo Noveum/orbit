@@ -1,4 +1,6 @@
 import { createInvites, listPendingInvites } from '@orbit/core';
+import { assertEmailConfigured } from '@orbit/services/email';
+import { assertCan } from '@orbit/shared/policy';
 import { apiContext, handleRoute, publish, readJson } from '@/lib/api/handler.ts';
 import { sendInviteEmail } from '@/lib/api/send-invite.ts';
 
@@ -12,6 +14,8 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   return await handleRoute(async () => {
     const context = await apiContext();
+    assertCan(context.principal, 'member:invite');
+    assertEmailConfigured();
     const result = await createInvites(context.principal, await readJson(request));
     await publish(result.actions);
     for (const created of result.invites) {

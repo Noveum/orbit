@@ -1,4 +1,4 @@
-import { isHtmlDoc } from '@orbit/shared/constants';
+import { isHtmlDoc, isWorkspaceShared } from '@orbit/shared/constants';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { DocReader } from '@/features/docs/doc-reader.tsx';
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
 
 function publishedBanner(visibility: string): string {
   if (isIndexable(visibility)) return 'Published doc, read only';
-  if (visibility === 'members') return 'Members only, read only';
+  if (isWorkspaceShared(visibility)) return 'Workspace only, read only';
   return 'Unlisted, read only';
 }
 
@@ -75,7 +75,7 @@ export default async function PublishedDocPage({ params }: PageProps) {
   });
 
   return (
-    <main className="min-h-dvh bg-bg" data-testid="published-doc">
+    <main className="min-h-dvh bg-surface" data-testid="published-doc">
       {jsonLd === null ? null : (
         <script
           type="application/ld+json"
@@ -84,8 +84,8 @@ export default async function PublishedDocPage({ params }: PageProps) {
           dangerouslySetInnerHTML={{ __html: jsonLd }}
         />
       )}
-      <div className="border-border border-b">
-        <div className="mx-auto flex h-11 w-full max-w-[68rem] items-center justify-between px-6">
+      <div className="sticky top-0 z-10 border-border border-b bg-surface/95 backdrop-blur">
+        <div className="mx-auto flex h-14 w-full max-w-[68rem] items-center justify-between px-6">
           <span className="font-medium text-dense text-text">Orbit</span>
           <span className="text-2xs text-faint">{publishedBanner(detail.doc.visibility)}</span>
         </div>

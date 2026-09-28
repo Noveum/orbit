@@ -1,63 +1,58 @@
 # Agent identity migration compatibility
 
-Agent identity upgrades include compatibility for the historical migrations
-below and additive repairs to lifecycle and grant constraints. Previously
-committed SQL, snapshots, journal timestamps and migration hashes stay unchanged.
-Existing ledger rows are not replaced, renumbered or supplemented with backdated
-compatibility records. Use [Database releases](database-releases.md) for the
-release command and the [Agent release runbook](issue-215-release-runbook.md)
-for deployment ordering and client impact.
+The Agent schema is appended as migration `0030_green_shaman.sql` after the
+official upstream migration history through `0029_material_psynapse`. Upstream
+SQL files, journal entries, timestamps and snapshots through migration 0029 are
+preserved verbatim. The merged migration contains the final schema changes and
+the data and lifecycle SQL that Drizzle cannot generate from the schema alone.
 
-## Historical dependency order
+## Supported starting points
 
-`0019_lyrical_pet_avengers.sql` declares the composite Grant foreign key before
-the unique index that PostgreSQL requires for that key. A new database cannot
-execute those two statements in source order.
+The release runner supports a database whose Drizzle ledger is an exact,
+contiguous prefix of the committed upstream migration history. It applies the
+official pending suffix first, then migration 0030. That migration batches the
+Human issue actor, owner, and historical principal backfills; preserves deleted
+Human attribution without requiring a live User row; freezes Grants without a
+valid Agent binding; removes their OAuth access tokens; and installs the Agent
+identity and Grant lifecycle guards. Grant, Consent, Issue, Activity,
+Notification, audit, and subscription history remains stored. The migration
+does not create synthetic Activity, Notification, or Outbox rows.
 
-The release runner recognizes only that migration's exact timestamp and SHA-256
-hash. When it is pending, the runner executes its unique index before its foreign
-key, then records the original timestamp and hash. It does not alter the SQL file
-or an existing ledger entry. A changed source hash is rejected. All pending
-statements and their ledger records share a transaction, including this ordering
-compatibility. An error rolls them back together.
+The old #215 development migration lineage is not an upgrade starting point.
+Its duplicate 0017–0029 timestamps and hashes are not aliases for upstream
+migrations. The runner rejects those ledger rows as an invalid prefix and does
+not rewrite, renumber, or repair the ledger. Do not edit an existing ledger to
+make it resemble the new history. Start acceptance from a fresh database or a
+database carrying an exact upstream ledger prefix.
 
-`0017_panoramic_gravity.sql` also predates support for deleted Human principals.
-After its original attribution backfill, and before its foreign keys are installed,
-the runner clears only principal IDs whose User no longer exists. Actor IDs and
-all historical names remain unchanged. This compatibility applies only to the
-exact original migration hash; it does not rewrite the migration or its ledger.
+Unknown timestamps, changed hashes, gaps, and ledgers ahead of the committed
+journal fail closed. A complete catalog with an empty ledger is not enough to
+reconcile migration 0030's data changes; the release runner refuses to invent
+that history. Use the release command rather than `db:push` as migration
+evidence.
 
-Both `bun run db:migrate` and `bun run db:release` use this runner. Directly running
-`drizzle-kit migrate` bypasses the historical ordering compatibility and is not a
-supported entry point for this migration chain.
+## Retry and catch-up behavior
 
-## Forward changes and catch-up
+Migration 0030 records its exact source hash in the resumable progress table
+before running bounded backfill batches. Each batch commits independently. If a
+batch fails, preserve the database and both ledger tables, fix the underlying
+cause, and retry the same candidate with `bun run db:release`. Do not edit
+either ledger table by hand. Final constraints, Grant cleanup, lifecycle
+functions, triggers, and the migration ledger row commit together.
 
-The new migrations add missing lifecycle records and strengthen binding guards.
-Where an existing invariant conflicts with the required model, its replacement
-is transactional and preserves business history:
-
-- The old Client/User uniqueness rule is replaced with one active Grant per
-  Identity. Revoked Grant history remains stored.
-- User deletion clears historical nullable user references rather than deleting
-  Identity or Grant history. Client deletion cannot cascade through that history.
-- The active-binding CHECK freezes unbound Grants with the stable
-  `agent_identity_required` reason, explicitly rejecting a null reason.
-- The assignment history index covers both legacy `assigneeId` and canonical
-  `assignee` activity fields.
-
-The repeatable `agent-actors.sql` catch-up runs inside one transaction. Compatible
-foreign keys and lifecycle triggers are retained on repeated executions. Legacy
-credentials are intentionally invalidated; this does not delete their Grant or
-Consent history. Feature gates remain off unless explicitly enabled.
+The repeatable `agent-actors.sql` catch-up runs inside one transaction and is
+safe to rerun. Compatible foreign keys and lifecycle triggers remain in place.
+Legacy credentials are intentionally invalidated; their Grant and Consent
+history is retained. Feature gates remain off unless explicitly enabled.
 
 ## Verification
 
-`packages/db/tests/migration-release.test.ts` covers an original 22-record ledger,
-an injected failure during the forward upgrade, unchanged historical ledger and
-Consent rows, credential invalidation, and a successful retry. Migration and
-catalog tests also cover fresh databases, no-ledger legacy data, interrupted
-batched catch-up, repeated catch-up and drift.
+`packages/db/tests/migration-release.test.ts` and
+`packages/db/tests/migrations/agent-actor.test.ts` cover a fresh database, an
+official upstream ledger prefix with representative legacy data, bounded batch
+retry, migration preparation rollback, exact ledger and hash rejection,
+credential invalidation, historical attribution, repeated release and
+catch-up, and catalog drift.
 
-Run schema-changing commands against a disposable database first. After successful
+Run schema-changing commands against a disposable database. After a successful
 release, repeat the release and catch-up, then run `bun run db:check-drift`.

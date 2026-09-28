@@ -1,6 +1,11 @@
 import { createHash, createSign } from 'node:crypto';
 import { internal } from '@orbit/shared';
 import { z } from 'zod';
+import {
+  githubContextKey,
+  type NormalizedGithubCheckState,
+  normalizedGithubCheckState,
+} from './checks.ts';
 
 export const GITHUB_API_BASE = 'https://api.github.com';
 export const GITHUB_REQUEST_TIMEOUT_MS = 10_000;
@@ -81,6 +86,14 @@ const openPullRequestSchema = z.object({
 
 const openPullRequestsSchema = z.array(openPullRequestSchema);
 
+const githubCommitShaSchema = z.string().regex(/^[0-9a-f]{40}$/i);
+
+const pullRequestHeadSchema = z.object({
+  number: z.number().int().positive(),
+  head: z.object({ sha: githubCommitShaSchema }),
+  updated_at: z.string().datetime(),
+});
+
 const historyCommentSchema = z.object({
   id: z.number().int().nonnegative(),
   body: z.string().max(65536).default(''),
@@ -136,10 +149,43 @@ const historyCommitStatusSchema = z.object({
   updated_at: z.string().datetime().nullable().default(null),
 });
 
+const checkHeadRunSchema = z.object({
+  id: z.number().int().positive(),
+  head_sha: githubCommitShaSchema,
+  name: z.string().min(1).max(255),
+  app: z.object({ id: z.number().int().positive() }),
+  status: z.string().min(1).max(64),
+  conclusion: z.string().max(64).nullable().default(null),
+  html_url: z.string().url().max(2048).nullable().default(null),
+  details_url: z.string().url().max(2048).nullable().default(null),
+  started_at: z.string().datetime().nullable().default(null),
+  completed_at: z.string().datetime().nullable().default(null),
+});
+
+const checkHeadRunsSchema = z.object({
+  total_count: z.number().int().nonnegative(),
+  check_runs: z.array(checkHeadRunSchema),
+});
+
+const checkHeadCommitStatusSchema = z.object({
+  id: z.number().int().positive(),
+  state: z.string().min(1).max(64),
+  context: z.string().min(1).max(255),
+  target_url: z.string().url().max(2048).nullable().default(null),
+  creator: z
+    .object({ login: z.string().min(1).max(255), id: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  created_at: z.string().datetime().nullable().default(null),
+  updated_at: z.string().datetime().nullable().default(null),
+});
+
 export const GITHUB_REPOSITORY_PAGE_SIZE = 100;
 export const GITHUB_MAX_REPOSITORY_PAGES = 100;
 export const GITHUB_PULL_REQUEST_PAGE_SIZE = 100;
 export const GITHUB_MAX_PULL_REQUEST_PAGES = 100;
+export const GITHUB_CHECK_HEAD_PAGE_SIZE = 100;
+export const GITHUB_MAX_CHECK_HEAD_PAGES = 10;
 
 export const GITHUB_REPOSITORY_SELECTIONS = ['all', 'selected'] as const;
 export type GithubRepositorySelection = (typeof GITHUB_REPOSITORY_SELECTIONS)[number];
@@ -199,6 +245,12 @@ export interface GithubOpenPullRequest {
   readonly updatedAt: string | null;
 }
 
+export interface GithubPullRequestHead {
+  readonly number: number;
+  readonly headSha: string;
+  readonly providerUpdatedAt: string;
+}
+
 export interface GithubPullRequestHistoryEntry {
   readonly externalId: string;
   readonly type: 'comment' | 'review' | 'review_comment' | 'checks';
@@ -209,6 +261,27 @@ export interface GithubPullRequestHistoryEntry {
   readonly path: string | null;
   readonly line: number | null;
   readonly occurredAt: string;
+}
+
+export interface GithubCheckHeadSnapshotActivity {
+  readonly sourceKind: 'check_run' | 'commit_status';
+  readonly contextKey: string;
+  readonly providerObjectId: string;
+  readonly providerRunId: string | null;
+  readonly providerContext: string;
+  readonly appId: number | null;
+  readonly state: NormalizedGithubCheckState;
+  readonly status: string;
+  readonly conclusion: string;
+  readonly providerUpdatedAt: string;
+  readonly url: string;
+  readonly creator: { readonly login: string; readonly id: number } | null;
+}
+
+export interface GithubCheckHeadSnapshot {
+  readonly headSha: string;
+  readonly activities: GithubCheckHeadSnapshotActivity[];
+  readonly contexts: GithubCheckHeadSnapshotActivity[];
 }
 
 export interface GithubInstallationAccount {
@@ -247,6 +320,34 @@ async function githubJson<T extends z.ZodTypeAny>(
   const parsed = schema.safeParse(await response.json().catch(() => null));
   if (!parsed.success) throw internal(`GitHub ${label} returned an unexpected payload.`);
   return parsed.data;
+}
+
+function githubLinkHasNext(link: string | null): boolean {
+  if (link === null) return false;
+  return link.split(',').some((entry) =>
+    entry
+      .split(';')
+      .slice(1)
+      .some((parameter) => parameter.trim() === 'rel="next"'),
+  );
+}
+
+async function githubJsonPage<T extends z.ZodTypeAny>(
+  fetchImpl: typeof globalThis.fetch,
+  url: string,
+  init: RequestInit,
+  schema: T,
+  label: string,
+): Promise<{ readonly data: z.infer<T>; readonly hasNext: boolean }> {
+  const response = await fetchImpl(url, {
+    ...init,
+    headers: { ...GITHUB_HEADERS, ...(init.headers ?? {}) },
+    signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) throw internal(`GitHub ${label} returned HTTP ${response.status}.`);
+  const parsed = schema.safeParse(await response.json().catch(() => null));
+  if (!parsed.success) throw internal(`GitHub ${label} returned an unexpected payload.`);
+  return { data: parsed.data, hasNext: githubLinkHasNext(response.headers.get('link')) };
 }
 
 function credentialOverrides(input: GithubAppCredentials): {
@@ -441,6 +542,37 @@ export async function fetchGithubOpenPullRequests(
   );
 }
 
+export async function fetchGithubPullRequestHead(
+  input: GithubAppRequest & {
+    readonly repository: string;
+    readonly pullRequestNumber: number;
+  },
+): Promise<GithubPullRequestHead> {
+  const pullRequestNumber = z.number().int().positive().safeParse(input.pullRequestNumber);
+  if (!pullRequestNumber.success) {
+    throw internal('GitHub pull request head requires a positive pull request number.');
+  }
+  const token = await githubInstallationToken(input);
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const base = input.apiBase ?? GITHUB_API_BASE;
+  const repository = input.repository
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const pullRequest = await githubJson(
+    fetchImpl,
+    `${base}/repos/${repository}/pulls/${pullRequestNumber.data}`,
+    { headers: { authorization: `Bearer ${token}` } },
+    pullRequestHeadSchema,
+    'pull request head',
+  );
+  return {
+    number: pullRequest.number,
+    headSha: pullRequest.head.sha,
+    providerUpdatedAt: new Date(pullRequest.updated_at).toISOString(),
+  };
+}
+
 async function githubPagedArray<T extends z.ZodTypeAny>(input: {
   readonly fetchImpl: typeof globalThis.fetch;
   readonly endpoint: string;
@@ -461,6 +593,215 @@ async function githubPagedArray<T extends z.ZodTypeAny>(input: {
     if (body.length < GITHUB_PULL_REQUEST_PAGE_SIZE) return collected;
   }
   throw internal(`GitHub ${input.label} exceeded the supported history size.`);
+}
+
+function requiredGithubProviderTimestamp(
+  primary: string | null,
+  fallback: string | null,
+  label: string,
+): string {
+  const timestamp = primary ?? fallback;
+  if (timestamp === null) throw internal(`GitHub ${label} is missing its provider timestamp.`);
+  return new Date(timestamp).toISOString();
+}
+
+function normalizeCheckHeadRun(
+  checkRun: z.infer<typeof checkHeadRunSchema>,
+  headSha: string,
+): GithubCheckHeadSnapshotActivity {
+  if (checkRun.head_sha.toLowerCase() !== headSha.toLowerCase()) {
+    throw internal(`GitHub check run ${checkRun.id} belongs to a different head.`);
+  }
+  const conclusion = checkRun.conclusion ?? '';
+  return {
+    sourceKind: 'check_run',
+    contextKey: githubContextKey(['check_run', String(checkRun.app.id), checkRun.name]),
+    providerObjectId: String(checkRun.id),
+    providerRunId: String(checkRun.id),
+    providerContext: checkRun.name,
+    appId: checkRun.app.id,
+    state: normalizedGithubCheckState(checkRun.status, conclusion),
+    status: checkRun.status,
+    conclusion,
+    providerUpdatedAt: requiredGithubProviderTimestamp(
+      checkRun.completed_at,
+      checkRun.started_at,
+      `check run ${checkRun.id}`,
+    ),
+    url: checkRun.html_url ?? checkRun.details_url ?? '',
+    creator: null,
+  };
+}
+
+function normalizeCheckHeadCommitStatus(
+  status: z.infer<typeof checkHeadCommitStatusSchema>,
+): GithubCheckHeadSnapshotActivity {
+  return {
+    sourceKind: 'commit_status',
+    contextKey: githubContextKey(['commit_status', status.context.toLowerCase()]),
+    providerObjectId: String(status.id),
+    providerRunId: null,
+    providerContext: status.context,
+    appId: null,
+    state: normalizedGithubCheckState(status.state, status.state),
+    status: status.state,
+    conclusion: status.state,
+    providerUpdatedAt: requiredGithubProviderTimestamp(
+      status.updated_at,
+      status.created_at,
+      `commit status ${status.id}`,
+    ),
+    url: status.target_url ?? '',
+    creator: status.creator,
+  };
+}
+
+function newerSnapshotActivity(
+  candidate: GithubCheckHeadSnapshotActivity,
+  current: GithubCheckHeadSnapshotActivity,
+): boolean {
+  const timestampOrder = candidate.providerUpdatedAt.localeCompare(current.providerUpdatedAt);
+  return timestampOrder > 0;
+}
+
+function compareSnapshotActivities(
+  left: GithubCheckHeadSnapshotActivity,
+  right: GithubCheckHeadSnapshotActivity,
+): number {
+  if (left.sourceKind !== right.sourceKind) return left.sourceKind === 'check_run' ? -1 : 1;
+  const contextOrder = compareGithubSnapshotStrings(left.contextKey, right.contextKey);
+  if (contextOrder !== 0) return contextOrder;
+  const timestampOrder = right.providerUpdatedAt.localeCompare(left.providerUpdatedAt);
+  if (timestampOrder !== 0) return timestampOrder;
+  const leftObjectId = BigInt(left.providerObjectId);
+  const rightObjectId = BigInt(right.providerObjectId);
+  if (leftObjectId === rightObjectId) return 0;
+  return leftObjectId > rightObjectId ? -1 : 1;
+}
+
+function compareGithubSnapshotStrings(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+function currentCheckHeadContexts(
+  activities: readonly GithubCheckHeadSnapshotActivity[],
+): GithubCheckHeadSnapshotActivity[] {
+  const contexts = new Map<string, GithubCheckHeadSnapshotActivity>();
+  for (const activity of activities) {
+    const current = contexts.get(activity.contextKey);
+    if (current === undefined || newerSnapshotActivity(activity, current)) {
+      contexts.set(activity.contextKey, activity);
+    }
+  }
+  return [...contexts.values()].sort(compareSnapshotActivities);
+}
+
+async function fetchGithubCheckRunsForHead(input: {
+  readonly fetchImpl: typeof globalThis.fetch;
+  readonly root: string;
+  readonly token: string;
+  readonly headSha: string;
+}): Promise<z.infer<typeof checkHeadRunSchema>[]> {
+  const collected: z.infer<typeof checkHeadRunSchema>[] = [];
+  const providerObjectIds = new Set<number>();
+  let expectedTotal: number | null = null;
+  for (let page = 1; page <= GITHUB_MAX_CHECK_HEAD_PAGES; page += 1) {
+    const body = await githubJson(
+      input.fetchImpl,
+      `${input.root}/commits/${encodeURIComponent(input.headSha)}/check-runs?filter=latest&per_page=${GITHUB_CHECK_HEAD_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${input.token}` } },
+      checkHeadRunsSchema,
+      'head check runs',
+    );
+    expectedTotal ??= body.total_count;
+    if (body.total_count !== expectedTotal) {
+      throw internal('GitHub head check runs changed during snapshot pagination.');
+    }
+    for (const checkRun of body.check_runs) {
+      if (providerObjectIds.has(checkRun.id)) {
+        throw internal('GitHub head check runs repeated an object during snapshot pagination.');
+      }
+      providerObjectIds.add(checkRun.id);
+    }
+    collected.push(...body.check_runs);
+    if (collected.length === expectedTotal) return collected;
+    if (collected.length > expectedTotal) {
+      throw internal('GitHub head check runs returned an inconsistent snapshot total.');
+    }
+    if (body.check_runs.length < GITHUB_CHECK_HEAD_PAGE_SIZE) {
+      throw internal('GitHub head check runs returned an incomplete snapshot.');
+    }
+  }
+  throw internal('GitHub head check runs exceeded the supported snapshot size.');
+}
+
+async function fetchGithubCommitStatusesForHead(input: {
+  readonly fetchImpl: typeof globalThis.fetch;
+  readonly root: string;
+  readonly token: string;
+  readonly headSha: string;
+}): Promise<z.infer<typeof checkHeadCommitStatusSchema>[]> {
+  const collected: z.infer<typeof checkHeadCommitStatusSchema>[] = [];
+  const providerObjectIds = new Set<number>();
+  for (let page = 1; page <= GITHUB_MAX_CHECK_HEAD_PAGES; page += 1) {
+    const result = await githubJsonPage(
+      input.fetchImpl,
+      `${input.root}/commits/${encodeURIComponent(input.headSha)}/statuses?per_page=${GITHUB_CHECK_HEAD_PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${input.token}` } },
+      z.array(checkHeadCommitStatusSchema),
+      'head commit statuses',
+    );
+    for (const status of result.data) {
+      if (providerObjectIds.has(status.id)) {
+        throw internal(
+          'GitHub head commit statuses repeated an object during snapshot pagination.',
+        );
+      }
+      providerObjectIds.add(status.id);
+    }
+    collected.push(...result.data);
+    if (!result.hasNext) return collected;
+  }
+  throw internal('GitHub head commit statuses exceeded the supported snapshot size.');
+}
+
+export async function fetchGithubCheckHeadSnapshot(
+  input: GithubAppRequest & { readonly repository: string; readonly headSha: string },
+): Promise<GithubCheckHeadSnapshot> {
+  const parsedHeadSha = githubCommitShaSchema.safeParse(input.headSha);
+  if (!parsedHeadSha.success) throw internal('GitHub head check snapshot requires a commit SHA.');
+  const token = await githubInstallationToken(input);
+  const fetchImpl = input.fetch ?? globalThis.fetch;
+  const base = input.apiBase ?? GITHUB_API_BASE;
+  const repository = input.repository
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const root = `${base}/repos/${repository}`;
+  const [checkRuns, statuses] = await Promise.all([
+    fetchGithubCheckRunsForHead({
+      fetchImpl,
+      root,
+      token,
+      headSha: parsedHeadSha.data,
+    }),
+    fetchGithubCommitStatusesForHead({
+      fetchImpl,
+      root,
+      token,
+      headSha: parsedHeadSha.data,
+    }),
+  ]);
+  const fetchedActivities = [
+    ...checkRuns.map((checkRun) => normalizeCheckHeadRun(checkRun, parsedHeadSha.data)),
+    ...statuses.map(normalizeCheckHeadCommitStatus),
+  ];
+  return {
+    headSha: parsedHeadSha.data,
+    activities: [...fetchedActivities].sort(compareSnapshotActivities),
+    contexts: currentCheckHeadContexts(fetchedActivities),
+  };
 }
 
 function historyActor(actor: { readonly login: string; readonly id: number } | null): {

@@ -32,6 +32,7 @@ import {
   listProjectsForTeams,
   listProjectTeams,
   listProjectUpdates,
+  listWorkspaceProjectUpdates,
   postProjectUpdate,
   projectProgress,
   removeProjectTeam,
@@ -677,5 +678,98 @@ describe('deleteProject and watched repositories', () => {
     await deleteProject(workspace.admin, doomed.id);
 
     expect(await counts()).toEqual({ links: 1, watched: 1 });
+  });
+});
+
+describe('listWorkspaceProjectUpdates', () => {
+  it('lists the most recent update for each visible project ordered newest first', async () => {
+    const { project: alpha } = await createProject(workspace.admin, {
+      name: 'Alpha',
+      teamIds: [workspace.teamId],
+    });
+    const { project: beta } = await createProject(workspace.admin, {
+      name: 'Beta',
+      teamIds: [workspace.teamId],
+    });
+
+    await postProjectUpdate(workspace.admin, alpha.id, {
+      health: 'on_track',
+      body: 'Alpha update 1',
+    });
+    await postProjectUpdate(workspace.admin, beta.id, {
+      health: 'at_risk',
+      body: 'Beta update 1',
+    });
+    await postProjectUpdate(workspace.admin, alpha.id, {
+      health: 'off_track',
+      body: 'Alpha update 2',
+    });
+
+    const updates = await listWorkspaceProjectUpdates(workspace.admin);
+
+    expect(updates).toHaveLength(2);
+    expect(updates[0]?.body).toBe('Alpha update 2');
+    expect(updates[0]?.projectName).toBe('Alpha');
+    expect(updates[0]?.health).toBe('off_track');
+    expect(updates[1]?.body).toBe('Beta update 1');
+    expect(updates[1]?.projectName).toBe('Beta');
+    expect(updates[1]?.health).toBe('at_risk');
+  });
+
+  it('hides updates for projects belonging to other teams that the member cannot see', async () => {
+    const otherTeam = await createTeam(workspace.admin, { name: 'Design', key: 'DSGN' });
+    const { project: secretProject } = await createProject(workspace.admin, {
+      name: 'Secret Design',
+      teamIds: [otherTeam.team.id],
+    });
+    const { project: publicProject } = await createProject(workspace.admin, {
+      name: 'General Public',
+      teamIds: [workspace.teamId],
+    });
+
+    await postProjectUpdate(workspace.admin, secretProject.id, {
+      health: 'on_track',
+      body: 'Secret update',
+    });
+    await postProjectUpdate(workspace.admin, publicProject.id, {
+      health: 'on_track',
+      body: 'Public update',
+    });
+
+    const { principal: engineer } = await addMember(workspace, 'member');
+    const updates = await listWorkspaceProjectUpdates(engineer);
+
+    expect(updates.map((u) => u.projectId)).toContain(publicProject.id);
+    expect(updates.map((u) => u.projectId)).not.toContain(secretProject.id);
+  });
+
+  it('excludes updates from archived projects', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Soon archived',
+      teamIds: [workspace.teamId],
+    });
+    await postProjectUpdate(workspace.admin, project.id, {
+      health: 'on_track',
+      body: 'Archived project update',
+    });
+
+    await archiveProject(workspace.admin, project.id);
+
+    const updates = await listWorkspaceProjectUpdates(workspace.admin);
+    expect(updates.map((u) => u.projectId)).not.toContain(project.id);
+  });
+
+  it('enforces workspace isolation', async () => {
+    const otherWorkspace = await createWorkspace();
+    const { project: otherProject } = await createProject(otherWorkspace.admin, {
+      name: 'Other Org Project',
+    });
+    await postProjectUpdate(otherWorkspace.admin, otherProject.id, {
+      health: 'on_track',
+      body: 'Other org update',
+    });
+
+    const updates = await listWorkspaceProjectUpdates(workspace.admin);
+    expect(updates.map((u) => u.projectId)).not.toContain(otherProject.id);
   });
 });

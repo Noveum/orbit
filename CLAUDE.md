@@ -163,6 +163,11 @@ Agent Writer needs all four. The Worker needs dispatch plus the same Postgres
 and Redis as Web. Follow the [release runbook](docs/issue-215-release-runbook.md);
 never roll back to readers that cannot understand existing Agent Actor rows.
 
+The Docker Compose template in `deploy/docker` packages standalone Node with
+Postgres, Redis and MinIO, a Node realtime host, an HTTP gateway routing `/api/ws`,
+and a maintenance scheduler. See `docs/docker-preview.md`. Nothing runs in
+Kubernetes.
+
 The node runtime is not optional. `/api/ws` upgrades through
 `experimental_upgradeWebSocket` from `@vercel/functions`, and Vercel only injects
 that upgrade bridge on node. Setting `bunVersion` in `apps/web/vercel.json` moves

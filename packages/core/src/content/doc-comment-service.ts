@@ -184,6 +184,13 @@ async function docCommentNotifications(
     title: group.title,
     body: truncate(comment.body, NOTIFICATION_BODY_LIMIT),
     url: docCommentUrl(doc.id, comment.id),
+    source: {
+      sourceEventKey: `orbit-doc-comment:${comment.id}:created`,
+      subjectType: 'doc',
+      subjectKey: `orbit-doc:${doc.id}:activity`,
+      occurredAt: comment.createdAt,
+      payload: { documentId: doc.id, commentId: comment.id },
+    },
   }));
 
   return await notifyRecipients(tx, events);

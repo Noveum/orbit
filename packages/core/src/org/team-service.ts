@@ -1,4 +1,5 @@
 import { and, asc, db, eq, inArray, isNull, schema } from '@orbit/db';
+import { DEFAULT_SPRINT_DAYS } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -7,6 +8,10 @@ import { assertCan, assertInTeam } from '@orbit/shared/policy';
 import { teamCreateSchema, teamMemberSchema, teamUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
+import {
+  lockNotificationPolicyMutation,
+  synchronizeNotificationAccess,
+} from '../notifications/access-sync.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
@@ -100,7 +105,7 @@ export async function createFirstCycle(
       number: 1,
       name: '',
       startsAt,
-      endsAt: addUtcDays(startsAt, 14),
+      endsAt: addUtcDays(startsAt, DEFAULT_SPRINT_DAYS),
       syncId: params.syncId,
     })
     .returning();
@@ -326,6 +331,7 @@ export async function addTeamMember(
   const parsed = teamMemberSchema.parse(input);
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const team = await requireTeam(principal, teamId, tx);
 
     const [membership] = await tx
@@ -353,9 +359,16 @@ export async function addTeamMember(
       })
       .returning();
     const row = requireRow(inserted, 'That team membership could not be created.');
+    const notificationActions = await synchronizeNotificationAccess(
+      tx,
+      principal.organizationId,
+      [parsed.userId],
+      actor,
+    );
     return {
       teamMember: row,
       actions: [
+        ...notificationActions,
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -379,6 +392,7 @@ export async function removeTeamMember(
   assertCan(principal, 'team:manage');
 
   return await db.transaction(async (tx) => {
+    await lockNotificationPolicyMutation(tx, principal.organizationId);
     const team = await requireTeam(principal, teamId, tx);
     const [member] = await tx
       .select({ role: schema.member.role })
@@ -434,6 +448,7 @@ export async function removeTeamMember(
       reviewerIdsByIssue(tx, issueIds),
     ]);
     return [
+      ...(await synchronizeNotificationAccess(tx, principal.organizationId, [userId], actor)),
       ...views.map((row) =>
         buildSyncAction({
           syncId,

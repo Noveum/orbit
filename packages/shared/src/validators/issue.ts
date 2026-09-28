@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  DUPLICATE_SUGGESTIONS_MAX_COUNT,
   ISSUE_DESCRIPTION_MAX_LENGTH,
   ISSUE_RELATION_TYPES,
   ISSUE_REVIEWER_MAX_COUNT,
@@ -85,6 +86,7 @@ export const issueBulkUpdateSchema = z.object({
 });
 
 export const issueFilterSchema = z.object({
+  view: z.literal('standup').optional(),
   teamId: idSchema.optional(),
   projectId: idSchema.optional(),
   cycleId: idSchema.optional(),
@@ -92,6 +94,8 @@ export const issueFilterSchema = z.object({
   assigneeId: idSchema.optional(),
   assigneeAgentId: idSchema.optional(),
   participantId: idSchema.optional(),
+  workType: z.enum(['all', 'reviewing', 'assigned']).default('all'),
+  aiOnly: booleanFlag(false),
   stateId: idSchema.optional(),
   stateCategory: z.enum(STATE_CATEGORIES).optional(),
   labelId: idSchema.optional(),
@@ -138,7 +142,24 @@ export const issueSubscribeSchema = z.object({ subscribed: z.boolean().default(t
 
 export const issueRefSchema = z.string().trim().min(1).max(128);
 
+export const duplicateIssueQuerySchema = z.object({
+  teamId: idSchema,
+  title: z.string().trim().min(1).max(256),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(DUPLICATE_SUGGESTIONS_MAX_COUNT)
+    .default(DUPLICATE_SUGGESTIONS_MAX_COUNT),
+});
+
+export const issueMarkDuplicateSchema = z.object({
+  survivorIssueId: idSchema,
+});
+
 export type IssueCreateInput = z.infer<typeof issueCreateSchema>;
 export type IssueUpdateInput = z.infer<typeof issueUpdateSchema>;
 export type IssueFilterInput = z.infer<typeof issueFilterSchema>;
 export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
+export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
+export type IssueMarkDuplicateInput = z.infer<typeof issueMarkDuplicateSchema>;

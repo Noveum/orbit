@@ -3,8 +3,10 @@ import {
   integration,
   issue,
   member,
+  notificationDelivery,
   organization,
   slackChannelSync,
+  slackNotificationThread,
   slackUserMapping,
   team,
   user,
@@ -565,6 +567,7 @@ export async function ensureSlackIntegration(
     readonly botToken: string;
     readonly externalId?: string;
     readonly scopes?: readonly string[];
+    readonly slackAppId?: string;
   },
 ): Promise<string> {
   return (await writeSlackIntegration(database, input)).id;
@@ -583,6 +586,7 @@ export async function ensureSlackIntegrationWithVersion(
     readonly botToken: string;
     readonly externalId?: string;
     readonly scopes?: readonly string[];
+    readonly slackAppId?: string;
   },
 ): Promise<SlackIntegrationWrite> {
   return await writeSlackIntegration(database, input);
@@ -596,9 +600,79 @@ async function writeSlackIntegration(
     readonly botToken: string;
     readonly externalId?: string;
     readonly scopes?: readonly string[];
+    readonly slackAppId?: string;
   },
 ): Promise<SlackIntegrationWrite> {
   try {
+    const draining = await database.transaction(async (tx) => {
+      await assertSlackIntegrationManagerForUpdate(tx, {
+        organizationId: input.organizationId,
+        userId: input.connectedById,
+      });
+      const rows = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(
+          and(
+            eq(integration.organizationId, input.organizationId),
+            eq(integration.provider, 'slack'),
+          ),
+        )
+        .for('update');
+      const current = rows[0];
+      if (current === undefined) return false;
+      await tx
+        .update(integration)
+        .set({
+          config: sql`jsonb_set(${integration.config}, '{notificationDeliveryState}', '"draining"'::jsonb)`,
+        })
+        .where(eq(integration.id, current.id));
+      await tx
+        .select({ id: slackNotificationThread.id })
+        .from(slackNotificationThread)
+        .where(eq(slackNotificationThread.integrationId, current.id))
+        .orderBy(slackNotificationThread.id)
+        .for('update');
+      await tx
+        .update(notificationDelivery)
+        .set({
+          status: sql`case when ${notificationDelivery.sendStartedAt} is null then 'failed' else 'ambiguous' end`,
+          lastError: 'reconnect_expired_lease',
+        })
+        .where(
+          and(
+            eq(notificationDelivery.integrationId, current.id),
+            eq(notificationDelivery.status, 'processing'),
+            sql`${notificationDelivery.leaseExpiresAt} <= now()`,
+          ),
+        );
+      await tx
+        .update(slackNotificationThread)
+        .set({ state: 'ambiguous', lastError: 'reconnect_expired_lease', updatedAt: new Date() })
+        .where(
+          and(
+            eq(slackNotificationThread.integrationId, current.id),
+            isNull(slackNotificationThread.rootTs),
+            sql`exists(select 1 from notification_delivery where id = ${slackNotificationThread.createdByDeliveryId} and status = 'ambiguous')`,
+          ),
+        );
+      const [active] = await tx
+        .select({ id: notificationDelivery.id })
+        .from(notificationDelivery)
+        .where(
+          and(
+            eq(notificationDelivery.integrationId, current.id),
+            eq(notificationDelivery.status, 'processing'),
+          ),
+        )
+        .limit(1);
+      return active !== undefined;
+    });
+    if (draining)
+      throw conflict(
+        'Slack is finishing active notification deliveries. Reconnect again after they finish.',
+        { details: { reason: 'slack_delivery_draining' } },
+      );
     if ('transaction' in database) {
       return await database.transaction(async (tx) => await persistSlackIntegration(tx, input));
     }
@@ -611,6 +685,7 @@ async function writeSlackIntegration(
   }
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: reconnect atomically fences namespace, credentials, queued deliveries and thread roots
 async function persistSlackIntegration(
   database: Transaction,
   input: {
@@ -619,6 +694,7 @@ async function persistSlackIntegration(
     readonly botToken: string;
     readonly externalId?: string;
     readonly scopes?: readonly string[];
+    readonly slackAppId?: string;
   },
 ): Promise<SlackIntegrationWrite> {
   await assertSlackIntegrationManagerForUpdate(database, {
@@ -660,6 +736,11 @@ async function persistSlackIntegration(
         },
         config: {
           credentialVersion,
+          credentialGeneration: 0,
+          notificationDeliveryState: 'active',
+          ...((input.slackAppId ?? process.env['SLACK_APP_ID']) === undefined
+            ? {}
+            : { slackAppId: input.slackAppId ?? process.env['SLACK_APP_ID'] }),
           ...(input.externalId === undefined ? {} : { slackTeamId: input.externalId }),
           ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
         },
@@ -675,15 +756,78 @@ async function persistSlackIntegration(
     typeof configuredSlackTeamId === 'string' ? configuredSlackTeamId : legacySlackTeamId;
   const slackTeamChanged =
     input.externalId !== undefined && previousSlackTeamId !== input.externalId;
-  if (slackTeamChanged) {
+  const slackAppId =
+    input.slackAppId ?? process.env['SLACK_APP_ID'] ?? existing.config['slackAppId'];
+  const previousSlackAppId = existing.config['slackAppId'] ?? process.env['SLACK_APP_ID'];
+  const namespaceChanged = slackTeamChanged || previousSlackAppId !== slackAppId;
+  const previousGeneration =
+    typeof existing.config['credentialGeneration'] === 'number'
+      ? existing.config['credentialGeneration']
+      : 0;
+  const credentialGeneration = previousGeneration + 1;
+  await database
+    .select({ id: slackNotificationThread.id })
+    .from(slackNotificationThread)
+    .where(eq(slackNotificationThread.integrationId, existing.id))
+    .orderBy(slackNotificationThread.id)
+    .for('update');
+  const [active] = await database
+    .select({ id: notificationDelivery.id })
+    .from(notificationDelivery)
+    .where(
+      and(
+        eq(notificationDelivery.integrationId, existing.id),
+        eq(notificationDelivery.status, 'processing'),
+      ),
+    )
+    .limit(1);
+  if (active !== undefined) throw conflict('Slack notification delivery is still draining.');
+  if (namespaceChanged) {
     await database.delete(slackUserMapping).where(eq(slackUserMapping.integrationId, existing.id));
     await database.delete(slackChannelSync).where(eq(slackChannelSync.integrationId, existing.id));
+    await database
+      .update(notificationDelivery)
+      .set({ status: 'unavailable', lastError: 'integration_namespace_changed' })
+      .where(
+        and(
+          eq(notificationDelivery.integrationId, existing.id),
+          inArray(notificationDelivery.status, ['pending', 'failed']),
+        ),
+      );
+    await database
+      .update(slackNotificationThread)
+      .set({ state: 'archived', updatedAt: new Date() })
+      .where(eq(slackNotificationThread.integrationId, existing.id));
+  } else {
+    await database
+      .update(slackNotificationThread)
+      .set({ credentialGeneration, updatedAt: new Date() })
+      .where(
+        and(
+          eq(slackNotificationThread.integrationId, existing.id),
+          eq(slackNotificationThread.credentialGeneration, previousGeneration),
+          inArray(slackNotificationThread.state, ['ready', 'blocked', 'creating']),
+        ),
+      );
+    await database
+      .update(notificationDelivery)
+      .set({ credentialGeneration })
+      .where(
+        and(
+          eq(notificationDelivery.integrationId, existing.id),
+          eq(notificationDelivery.credentialGeneration, previousGeneration),
+          inArray(notificationDelivery.status, ['pending', 'failed']),
+        ),
+      );
   }
   const { slackReauthorize: _staleReauthorize, ...previousConfig } = existing.config;
   const slackTeamId = input.externalId ?? previousSlackTeamId;
   const config = {
     ...previousConfig,
     credentialVersion,
+    credentialGeneration,
+    notificationDeliveryState: 'active',
+    ...(typeof slackAppId === 'string' ? { slackAppId } : {}),
     ...(slackTeamId === undefined ? {} : { slackTeamId }),
     ...(input.scopes === undefined ? {} : { scopes: [...input.scopes] }),
   };

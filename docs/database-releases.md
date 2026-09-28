@@ -3,6 +3,12 @@
 Development databases use `bun run db:push`. Production databases use ordered,
 immutable migrations through `bun run db:release`.
 
+`db:push` is not a substitute for a migration when a change adds a constraint to a
+table that already exists. `drizzle-kit push` does not diff check constraints on
+existing tables, so the constraint is silently never added, while a fresh database
+built from the same schema does have it. Generate and release a migration for
+constraint changes, and run `db:check-drift` to confirm the catalog really has them.
+
 ## Before merging a schema change
 
 1. Generate and commit the Drizzle migration and metadata.
@@ -25,13 +31,19 @@ The catalog check covers required tables, columns, PostgreSQL types, nullability
 database defaults, generated columns, primary keys, index definitions, foreign-key
 targets and delete actions, CHECK constraints, required lifecycle guard functions
 and triggers, and enum values. Additional tables, indexes and foreign keys are
-reported but preserved.
+and check constraints are reported but preserved.
 
 Agent upgrades have specific historical ordering and binding repairs. Read
 [Agent migration compatibility](agent-migration-compatibility.md) before
 upgrading a database that issued MCP credentials. The
 [Agent release runbook](issue-215-release-runbook.md) covers legacy grant
 invalidation, deployment gates and Actor-compatible rollback.
+
+The Agent schema is appended after the official upstream journal through
+`0029_material_psynapse`. The previous #215 development migration lineage is
+not a supported database starting point. Its timestamps and hashes are rejected
+as a non-contiguous prefix; do not rewrite its ledger. Begin from a fresh
+database or an exact upstream ledger prefix.
 
 ## Existing databases without a ledger
 
@@ -50,13 +62,44 @@ catalog already contains the complete pending schema. This supports upgrades
 that previously materialized schema through an approved catchup without
 replaying destructive or conflicting DDL. The release records only the verified
 missing ledger suffix. A partial pending schema is migrated normally or refused
-if its catalog is incompatible.
+if its catalog is incompatible. Migration 0030 contains Agent attribution and
+credential data changes without an empty-catalog reconciliation path. If that
+migration is pending while the full schema is already present, release fails
+closed instead of recording a fabricated history.
 
 ## Deployment guard
 
 Every production Vercel build checks the configured production database before the
 application build. Missing credentials, an unreachable database or required drift
 fails the deployment. This guard never applies migrations during a build.
+
+## Notification history backfill
+
+Keep `NOTIFICATION_PROVIDERS_PAUSED=true` and
+`NOTIFICATION_CONVERSATIONS_ENABLED=false` on the deployed application while
+backfilling historical notifications. Schema migration alone does not complete
+this rollout.
+
+With `DATABASE_URL` loaded securely for the intended database, run:
+
+```bash
+bun run notifications:conversations-backfill --all --batch-size=100 --source-concurrency=4
+bun run notifications:conversations-verify --all
+```
+
+Source concurrency defaults to one and accepts integers from one through eight.
+It bounds independent source resolution and classification work, not the number
+of organizations. Start conservatively and account for the database connection
+pool and live application traffic. Equivalence groups stay intact, overlapping
+groups are refused, and checkpoints advance only after every started operation
+in the batch settles successfully. The remaining phases keep their existing
+ordering.
+
+Run only one backfill process per organization. After an interrupted process has
+stopped, rerun the same command to resume saved progress; do not erase checkpoints
+or delivery history. Require the verifier to return `ok: true` with zero drift
+before enabling conversation reads and resuming provider delivery. Environment
+flag changes require a new deployment before they affect running functions.
 
 ## Rollback
 

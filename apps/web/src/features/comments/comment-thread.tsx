@@ -16,6 +16,7 @@ import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { proseOverflowClassName, taskListClassName } from '@/features/docs/doc-body.tsx';
 import { useHashScroll } from '@/features/docs/use-hash-scroll.ts';
 import { ActivityEntry } from '@/features/issues/activity-feed.tsx';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
@@ -29,6 +30,7 @@ import {
 } from '@/lib/query/use-comments.ts';
 import { useCurrentUserId } from '@/lib/realtime/session.tsx';
 import { CommentComposer } from './comment-composer.tsx';
+import { canModerateComments } from './comment-permissions.ts';
 import { usePendingCommentFiles } from './comment-uploads.ts';
 
 const QUICK_EMOJI = ['👍', '🎉', '🚀', '👀', '❤️'] as const;
@@ -257,6 +259,7 @@ function CommentItem({
   isReply = false,
 }: CommentItemProps) {
   const currentUserId = useCurrentUserId();
+  const workspace = useWorkspace();
   const react = useToggleReaction(issueId);
   const update = useUpdateComment(issueId);
   const remove = useDeleteComment(issueId);
@@ -265,6 +268,7 @@ function CommentItem({
   const [editing, setEditing] = useState(false);
 
   const mine = entry.comment.authorId === currentUserId;
+  const removable = mine || canModerateComments(workspace.role);
   const summary = summarizeReactions(entry.reactions, currentUserId);
 
   return (
@@ -362,14 +366,14 @@ function CommentItem({
               </Button>
             )}
             {mine ? (
-              <>
-                <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-                  Edit
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => remove.mutate(entry.comment.id)}>
-                  Delete
-                </Button>
-              </>
+              <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            ) : null}
+            {removable ? (
+              <Button size="sm" variant="ghost" onClick={() => remove.mutate(entry.comment.id)}>
+                Delete
+              </Button>
             ) : null}
           </span>
         </div>

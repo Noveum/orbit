@@ -201,6 +201,10 @@ describe('POST /api/webhooks/slack', () => {
     expect(await response.json()).toEqual({ ok: true });
     expect(scheduledTasks).toHaveLength(1);
     expect(providerRequests).toEqual([]);
+    const [claim] = await db
+      .select({ token: schema.webhookDelivery.claimToken })
+      .from(schema.webhookDelivery);
+    expect(claim?.token).toEqual(expect.any(String));
 
     await scheduledTasks[0]?.();
 
@@ -360,6 +364,7 @@ describe('POST /api/webhooks/slack', () => {
       deliveryId: 'Ev-STALE',
       event: 'link_shared',
       status: 'processing',
+      claimToken: randomUUIDv7(),
       claimedAt: new Date(Date.now() - 5 * 60_000),
     });
 

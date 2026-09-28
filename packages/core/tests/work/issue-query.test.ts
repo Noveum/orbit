@@ -274,3 +274,119 @@ describe('buildIssueWhere predicate parity', () => {
     ]);
   });
 });
+
+describe('standup work types and agents', () => {
+  it('separates assignments and reviews, including unassigned work', async () => {
+    const reviewer = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Assigned',
+      assigneeId: reviewer.user.id,
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Review',
+      reviewerIds: [reviewer.user.id],
+    });
+    expect(await listedTitles(workspace.admin, { participantId: reviewer.user.id })).toEqual([
+      'Assigned',
+      'Review',
+    ]);
+    expect(
+      await listedTitles(workspace.admin, {
+        participantId: reviewer.user.id,
+        workType: 'assigned',
+      }),
+    ).toEqual(['Assigned']);
+    expect(
+      await listedTitles(workspace.admin, {
+        participantId: reviewer.user.id,
+        workType: 'reviewing',
+      }),
+    ).toEqual(['Review']);
+    expect(
+      await listedTitles(workspace.admin, { participantId: 'none', workType: 'reviewing' }),
+    ).toEqual([]);
+  });
+
+  it('includes agent creators, assignees, reviewers, commenters, reactions and activity only in the current workspace', async () => {
+    const agent = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    await db
+      .update(schema.member)
+      .set({ isAgent: true })
+      .where(eq(schema.member.userId, agent.user.id));
+    await createIssue(agent.principal, { teamId: workspace.teamId, title: 'Created' });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Assigned',
+      assigneeId: agent.user.id,
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Review',
+      reviewerIds: [agent.user.id],
+    });
+    const commented = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Comment',
+    });
+    await db.insert(schema.comment).values({
+      id: 'agent_comment',
+      organizationId: workspace.organizationId,
+      issueId: commented.issue.id,
+      authorId: agent.user.id,
+      body: 'Ready',
+    });
+    const activity = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Activity',
+    });
+    await db.insert(schema.issueActivity).values({
+      id: 'agent_activity',
+      organizationId: workspace.organizationId,
+      issueId: activity.issue.id,
+      actorId: agent.user.id,
+      actorName: 'Agent',
+      field: 'title',
+    });
+    const reaction = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Reaction',
+    });
+    await db.insert(schema.reaction).values({
+      id: 'agent_reaction',
+      organizationId: workspace.organizationId,
+      issueId: reaction.issue.id,
+      userId: agent.user.id,
+      emoji: 'thumbsup',
+    });
+    await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Human' });
+    const other = await createWorkspace('Other');
+    await db.insert(schema.member).values({
+      id: 'foreign_agent_membership',
+      organizationId: other.organizationId,
+      userId: workspace.admin.userId,
+      role: 'member',
+      isAgent: true,
+    });
+    await createIssue(other.admin, { teamId: other.teamId, title: 'Other workspace' });
+    expect(await listedTitles(workspace.admin, { aiOnly: true })).toEqual([
+      'Activity',
+      'Assigned',
+      'Comment',
+      'Created',
+      'Reaction',
+      'Review',
+    ]);
+    await db
+      .update(schema.comment)
+      .set({ deletedAt: new Date() })
+      .where(eq(schema.comment.id, 'agent_comment'));
+    expect(await listedTitles(workspace.admin, { aiOnly: true })).not.toContain('Comment');
+    await db
+      .update(schema.member)
+      .set({ isAgent: false })
+      .where(eq(schema.member.userId, agent.user.id));
+    expect(await listedTitles(workspace.admin, { aiOnly: true })).toEqual([]);
+  });
+});

@@ -71,7 +71,7 @@ export function DocRowMenu({ doc, collections, actions, className }: DocRowMenuP
               data-testid="doc-move-to-private"
               onSelect={() => actions.onMove(doc, null)}
             >
-              <span className="flex-1">Private</span>
+              <span className="flex-1">Unfiled</span>
               {doc.collectionId === null ? (
                 <Check className="size-3.5 text-accent" aria-hidden="true" />
               ) : null}

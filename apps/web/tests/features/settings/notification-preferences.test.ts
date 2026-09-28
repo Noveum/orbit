@@ -61,6 +61,44 @@ afterAll(() => {
 });
 
 describe('notification preferences', () => {
+  it('serializes a newly disabled preference with the provider recipient preflight lock', async () => {
+    let release: (() => void) | undefined;
+    let acquired: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
+    const holder = db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.user.id })
+        .from(schema.user)
+        .where(eq(schema.user.id, workspace.admin.userId))
+        .for('share');
+      acquired?.();
+      await gate;
+    });
+    await ready;
+    let saved = false;
+    const saving = saveNotificationPreferences(workspace.admin.userId, workspace.organizationId, {
+      preferences: [{ channel: 'email', type: 'mention', enabled: false }],
+    }).then(() => {
+      saved = true;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(saved).toBe(false);
+    } finally {
+      release?.();
+      await holder;
+      await saving;
+    }
+    expect(
+      (await loadNotificationPreferences(workspace.admin.userId, workspace.organizationId))
+        .disabledKeys,
+    ).toContain('email:mention');
+  });
   it('keeps Slack DM disabled while the global integration capability is off', async () => {
     process.env['SLACK_ENABLED'] = 'false';
     await seedSlackConnection();

@@ -77,11 +77,17 @@ export async function createDoc(
   page: Page,
   title: string,
   visibility: string,
+  options: { readonly kind?: string; readonly content?: string } = {},
 ): Promise<{ id: string }> {
   const body = await json(page, '/api/docs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title, content: 'Body.', visibility }),
+    body: JSON.stringify({
+      title,
+      content: options.content ?? 'Body.',
+      visibility,
+      ...(options.kind === undefined ? {} : { kind: options.kind }),
+    }),
   });
   return docEnvelopeSchema.parse(body).doc;
 }

@@ -597,6 +597,65 @@ export async function listProjectUpdates(
     .limit(limit);
 }
 
+export interface WorkspaceProjectUpdateRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly projectSlug: string;
+  readonly authorId: string;
+  readonly health: string;
+  readonly body: string;
+  readonly createdAt: Date;
+}
+
+export async function listWorkspaceProjectUpdates(
+  principal: Principal,
+): Promise<WorkspaceProjectUpdateRow[]> {
+  assertCan(principal, 'project:read');
+
+  const ranked = db
+    .select({
+      id: schema.projectUpdate.id,
+      projectId: schema.projectUpdate.projectId,
+      projectName: schema.project.name,
+      projectSlug: schema.project.slug,
+      authorId: schema.projectUpdate.authorId,
+      health: schema.projectUpdate.health,
+      body: schema.projectUpdate.body,
+      createdAt: schema.projectUpdate.createdAt,
+      rowNumber:
+        sql<number>`row_number() over (partition by ${schema.projectUpdate.projectId} order by ${schema.projectUpdate.createdAt} desc, ${schema.projectUpdate.id} desc)`.as(
+          'rn',
+        ),
+    })
+    .from(schema.projectUpdate)
+    .innerJoin(schema.project, eq(schema.project.id, schema.projectUpdate.projectId))
+    .where(
+      and(
+        eq(schema.projectUpdate.organizationId, principal.organizationId),
+        eq(schema.project.organizationId, principal.organizationId),
+        isNull(schema.project.archivedAt),
+        visibleProjectFilter(principal),
+      ),
+    )
+    .as('ranked_project_updates');
+
+  return await db
+    .select({
+      id: ranked.id,
+      projectId: ranked.projectId,
+      projectName: ranked.projectName,
+      projectSlug: ranked.projectSlug,
+      authorId: ranked.authorId,
+      health: ranked.health,
+      body: ranked.body,
+      createdAt: ranked.createdAt,
+    })
+    .from(ranked)
+    .where(eq(ranked.rowNumber, 1))
+    .orderBy(desc(ranked.createdAt), desc(ranked.id));
+}
+
 export interface MilestoneProgress {
   readonly milestoneId: string;
   readonly name: string;

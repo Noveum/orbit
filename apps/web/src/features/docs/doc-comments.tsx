@@ -8,7 +8,9 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { CommentComposer } from '@/features/comments/comment-composer.tsx';
+import { canModerateComments } from '@/features/comments/comment-permissions.ts';
 import { CommentBody } from '@/features/comments/comment-thread.tsx';
+import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
 import type { DocComment, Member } from '@/lib/query/schemas.ts';
@@ -163,6 +165,7 @@ function DocCommentItem({
   isReply = false,
 }: DocCommentItemProps) {
   const currentUserId = useCurrentUserId();
+  const workspace = useWorkspace();
   const update = useUpdateDocComment(docId);
   const remove = useDeleteDocComment(docId);
   const createReply = useCreateDocComment(docId);
@@ -171,6 +174,7 @@ function DocCommentItem({
   const article = useRef<HTMLElement>(null);
 
   const mine = entry.comment.authorId === currentUserId;
+  const removable = mine || canModerateComments(workspace.role);
   const anchor = entry.comment.anchor;
   const state = anchorState(anchor, anchorText);
 
@@ -233,14 +237,14 @@ function DocCommentItem({
             </Button>
           )}
           {mine ? (
-            <>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-                Edit
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => remove.mutate(entry.comment.id)}>
-                Delete
-              </Button>
-            </>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+          ) : null}
+          {removable ? (
+            <Button size="sm" variant="ghost" onClick={() => remove.mutate(entry.comment.id)}>
+              Delete
+            </Button>
           ) : null}
         </div>
 
