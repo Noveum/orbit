@@ -960,6 +960,7 @@ describe('applyGithubEvent', () => {
         title: 'Related checks',
         stateId,
         creatorId: fixture.assigneeId,
+        creatorUserId: fixture.assigneeId,
       });
 
       await applyGithubEvent(
@@ -1314,6 +1315,7 @@ describe('applyGithubEvent', () => {
         title: 'Shared head work',
         stateId,
         creatorId: fixture.creatorId,
+        creatorUserId: fixture.creatorId,
         assigneeId: fixture.assigneeId,
       });
       await applyGithubEvent(tx, prEvent({ body: 'Fixes ENG-3', headSha: SHARED_HEAD_SHA }));
@@ -1644,6 +1646,7 @@ describe('applyGithubEvent', () => {
         title: 'Related dashboard work',
         stateId,
         creatorId: fixture.creatorId,
+        creatorUserId: fixture.creatorId,
         assigneeId: fixture.assigneeId,
       });
 

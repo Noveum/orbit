@@ -31,7 +31,6 @@ import { notFound } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, count, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { renderMarkdown } from '../markdown/index.ts';
 import { hasSlackBotToken } from '../slack/credentials.ts';
 import { slackCredentialVersionExpression } from '../slack/dispatch.ts';
 import { slackFeatureEnabled } from '../slack/feature.ts';
@@ -1038,26 +1037,6 @@ function toSyncAction(row: NotificationRecord, plan: Plan): SyncAction {
     modelId: row.id,
     data: {
       id: row.id,
-      organizationId: row.organizationId,
-      userId: row.userId,
-      type: row.type,
-      reason: row.reason,
-      actorType: row.actorType,
-      actorId: row.actorId,
-      actorName: row.actorName,
-      actorAvatar: row.actorAvatar,
-      principalAvatar: row.principalAvatar,
-      ...(plan.event.attribution === undefined ? {} : { attribution: plan.event.attribution }),
-      entityType: row.entityType,
-      entityId: row.entityId,
-      title: row.title,
-      body: row.body,
-      bodyHtml: renderMarkdown(row.body),
-      url: row.url,
-      externalUrl: row.externalUrl,
-      readAt: row.readAt?.toISOString() ?? null,
-      snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
-      deliveredChannels: row.deliveredChannels,
       syncId: row.syncId,
       visible: row.dismissedAt === null,
     },

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createIssue, verifyMcpAccessToken } from '@orbit/core';
 import { and, db, eq, schema } from '@orbit/db';
+import { syncActionSchema } from '@orbit/shared/events';
 import {
   connect,
   createWorkspace,
@@ -111,10 +112,18 @@ describe('agent issue tools', () => {
     expect(after).toEqual({
       issues: 1,
       activities: 1,
-      outbox: 2,
+      outbox: 3,
       notifications: 1,
       idempotency: 1,
     });
+    const outboxRows = await db
+      .select({ payload: schema.issueOutbox.payload })
+      .from(schema.issueOutbox);
+    expect(outboxRows.map((row) => syncActionSchema.parse(row.payload).model).sort()).toEqual([
+      'issue',
+      'notification',
+      'notification_conversation',
+    ]);
 
     const replay = await agent.result('create_issue', args);
     expect((replay['issue'] as { id: string }).id).toBe(firstIssue.id);
