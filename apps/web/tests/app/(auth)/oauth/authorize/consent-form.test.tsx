@@ -56,7 +56,10 @@ function mockLocationAssign() {
   return {
     assign,
     restore: () => {
-      window.happyDOM.setURL(originalUrl);
+      const happyWindow = window as unknown as Window & {
+        happyDOM: { setURL(url: string): void };
+      };
+      happyWindow.happyDOM.setURL(originalUrl);
       Object.defineProperty(window, 'location', {
         configurable: true,
         value: originalLocation,
