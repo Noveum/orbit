@@ -76,7 +76,7 @@ bun install          install every workspace dependency
 bun run infra:up     start postgres, redis, minio
 bun run db:push      apply schema to the dev database
 bun run db:seed      load demo org, teams, members, issues, comments
-bun run db:test-setup create the per package test databases and push the schema
+bun run db:test-setup create per-package test databases from the release migrations
 bun run dev          run web, realtime, and mcp together
 bun run verify       lint + comment policy + typecheck + tests
 bun test             run one package's tests from inside that package
