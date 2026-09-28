@@ -5,6 +5,23 @@ import { deploymentStatus } from '@/features/settings/deployment-status.ts';
 const admin: Principal = { userId: 'user', organizationId: 'org', role: 'admin', teamIds: [] };
 
 describe('deploymentStatus', () => {
+  it('distinguishes disabled Slack from an enabled app missing credentials', () => {
+    expect(deploymentStatus(admin, {}).find((check) => check.id === 'slack')?.status).toBe(
+      'Disabled',
+    );
+    expect(
+      deploymentStatus(admin, { SLACK_ENABLED: 'true' }).find((check) => check.id === 'slack')
+        ?.status,
+    ).toBe('Needs configuration');
+    expect(
+      deploymentStatus(admin, {
+        SLACK_ENABLED: ' TRUE ',
+        SLACK_CLIENT_ID: 'id',
+        SLACK_CLIENT_SECRET: 'secret',
+        SLACK_SIGNING_SECRET: 'signing',
+      }).find((check) => check.id === 'slack')?.status,
+    ).toBe('Configured');
+  });
   it.each(['member', 'contributor', 'guest'] as const)(
     'refuses configuration access for %s',
     (role) => {

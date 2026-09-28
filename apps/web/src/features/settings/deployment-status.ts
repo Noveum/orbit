@@ -6,7 +6,12 @@ type Environment = Readonly<Record<string, string | undefined>>;
 export interface DeploymentCheck {
   readonly id: string;
   readonly title: string;
-  readonly status: 'Configured' | 'Needs configuration' | 'Requires verification' | 'Unavailable';
+  readonly status:
+    | 'Configured'
+    | 'Needs configuration'
+    | 'Requires verification'
+    | 'Unavailable'
+    | 'Disabled';
   readonly description: string;
   readonly variables: readonly string[];
 }
@@ -130,7 +135,7 @@ export function deploymentStatus(
     ),
     {
       ...slack,
-      status: slackEnabled ? slack.status : 'Unavailable',
+      status: slackEnabled ? slack.status : 'Disabled',
       variables: ['SLACK_ENABLED', ...slack.variables],
     },
     {

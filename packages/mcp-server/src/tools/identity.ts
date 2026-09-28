@@ -39,7 +39,7 @@ export function registerIdentityTools(server: McpServer, principal: Principal): 
       name: 'get_me',
       title: 'Get the current identity',
       description:
-        'Return the Orbit user, workspace, role and teams that this API key acts as. Call this first to learn which teams you may write to.',
+        'Return the Orbit user, workspace, role and teams authorized by the OAuth grant. Call this first to learn which teams you may write to.',
       readOnly: true,
       inputSchema: {},
     },

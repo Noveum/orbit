@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -74,13 +75,17 @@ export function GithubPanel({ settings, canManage, onError }: GithubPanelProps) 
 
       {canManage ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Button asChild variant="secondary" size="sm">
-            <a href="/api/integrations/github/start">Connect another organisation</a>
-          </Button>
+          {settings.connectEnabled ? (
+            <Button asChild variant="secondary" size="sm">
+              <a href="/api/integrations/github/start">Connect another organisation</a>
+            </Button>
+          ) : (
+            <GithubSetupRequired />
+          )}
           <Button
             variant="ghost"
             size="sm"
-            disabled={busy === 'refresh'}
+            disabled={busy === 'refresh' || !settings.discoveryEnabled}
             onClick={() =>
               run('refresh', () =>
                 apiRequest('/api/integrations/github/repositories', { method: 'POST' }),
@@ -132,17 +137,26 @@ function NotConnected({
     return <p className="text-muted text-xs">Ask a workspace admin to connect GitHub.</p>;
   }
   if (!connectEnabled) {
-    return (
-      <p className="rounded-lg border border-border border-dashed bg-surface-2 px-3 py-2 text-faint text-2xs">
-        Ask the server operator to finish configuring the GitHub App before a workspace admin
-        connects it.
-      </p>
-    );
+    return <GithubSetupRequired />;
   }
   return (
     <Button asChild variant="primary" className="w-fit">
       <a href="/api/integrations/github/start">Connect GitHub</a>
     </Button>
+  );
+}
+
+function GithubSetupRequired() {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border border-dashed bg-surface-2 px-3 py-2 text-faint text-2xs">
+      <p>
+        Ask the server operator to finish configuring the GitHub App before a workspace admin
+        connects it.
+      </p>
+      <Link href="/settings/deployment#github" className="text-accent text-xs underline">
+        Set up GitHub
+      </Link>
+    </div>
   );
 }
 

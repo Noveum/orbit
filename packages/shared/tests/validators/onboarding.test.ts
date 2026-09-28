@@ -26,7 +26,7 @@ describe('workspaceSlugSchema', () => {
 });
 
 describe('resolveOnboardingStep', () => {
-  it('walks profile, workspace, invite, theme, then done', () => {
+  it('walks profile, workspace, invite, connect, theme, then done', () => {
     expect(resolveOnboardingStep({}, { hasWorkspace: false })).toBe('profile');
     expect(resolveOnboardingStep({ profileComplete: true }, { hasWorkspace: false })).toBe(
       'workspace',
@@ -37,10 +37,16 @@ describe('resolveOnboardingStep', () => {
         { profileComplete: true, workspaceInvite: true },
         { hasWorkspace: true },
       ),
+    ).toBe('connect');
+    expect(
+      resolveOnboardingStep(
+        { profileComplete: true, workspaceInvite: true, aiConnectSeen: true },
+        { hasWorkspace: true },
+      ),
     ).toBe('theme');
     expect(
       resolveOnboardingStep(
-        { profileComplete: true, workspaceInvite: true, themeSet: true },
+        { profileComplete: true, workspaceInvite: true, aiConnectSeen: true, themeSet: true },
         { hasWorkspace: true },
       ),
     ).toBe('done');
@@ -48,6 +54,15 @@ describe('resolveOnboardingStep', () => {
 
   it('treats an existing workspace as satisfying the workspace step', () => {
     expect(resolveOnboardingStep({ profileComplete: true }, { hasWorkspace: true })).toBe('invite');
+  });
+
+  it('sends a user who finished invites before the connect step existed to connect, not done', () => {
+    expect(
+      resolveOnboardingStep(
+        { profileComplete: true, workspaceInvite: true, themeSet: true },
+        { hasWorkspace: true },
+      ),
+    ).toBe('connect');
   });
 
   it('does not let client-attested flags advance the workspace step without a real workspace', () => {

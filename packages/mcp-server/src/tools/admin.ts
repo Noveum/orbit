@@ -39,9 +39,10 @@ export function registerAdminTools(server: McpServer, principal: Principal): voi
       name: 'invite_member',
       title: 'Invite someone to the workspace',
       description:
-        'Send a workspace invite to an email address. Requires a role that can invite members. Only admins can invite admins.',
+        'Create a pending workspace invitation for an email address. This tool does not send an invitation email. Requires a role that can invite members. Only admins can invite admins.',
       readOnly: false,
       destructive: false,
+      openWorld: true,
       inputSchema: {
         email: z.string().email().describe('Email address to invite.'),
         role: z.enum(ORG_ROLES).default('member').describe('Role the invitee joins with.'),

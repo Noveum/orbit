@@ -3,12 +3,51 @@ import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from 'next/constants
 import {
   assertProductionAuthenticationConfigured,
   assertProductionStartupAuthenticationConfigured,
+  githubConnectReady,
+  slackConnectReady,
 } from '@/lib/env';
 import nextConfig from '../../next.config.ts';
 
 const productionEnvironment = {
   NODE_ENV: 'production',
 };
+
+describe('GitHub connection readiness', () => {
+  const environment = {
+    GITHUB_APP_SLUG: 'orbit',
+    GITHUB_APP_ID: '123',
+    GITHUB_APP_PRIVATE_KEY: 'private-key',
+    GITHUB_APP_CLIENT_ID: 'client',
+    GITHUB_APP_CLIENT_SECRET: 'secret',
+    GITHUB_WEBHOOK_SECRET: 'webhook',
+  };
+
+  it('requires the complete app configuration before starting installation', () => {
+    expect(githubConnectReady(environment)).toBe(true);
+    for (const key of Object.keys(environment)) {
+      expect(githubConnectReady({ ...environment, [key]: '' })).toBe(false);
+      expect(githubConnectReady({ ...environment, [key]: '   ' })).toBe(false);
+      expect(githubConnectReady({ ...environment, [key]: undefined })).toBe(false);
+    }
+  });
+});
+
+describe('Slack connection readiness', () => {
+  const environment = {
+    SLACK_CLIENT_ID: 'client',
+    SLACK_CLIENT_SECRET: 'secret',
+    SLACK_SIGNING_SECRET: 'signing',
+  };
+
+  it('requires OAuth and request verification credentials', () => {
+    expect(slackConnectReady(environment)).toBe(true);
+    for (const key of Object.keys(environment)) {
+      expect(slackConnectReady({ ...environment, [key]: '' })).toBe(false);
+      expect(slackConnectReady({ ...environment, [key]: '   ' })).toBe(false);
+      expect(slackConnectReady({ ...environment, [key]: undefined })).toBe(false);
+    }
+  });
+});
 
 const authenticationVariables = [
   'ORBIT_PASSWORD_AUTH',

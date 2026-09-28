@@ -86,6 +86,7 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       title: 'Edit an issue comment',
       description: 'Rewrite the body of a comment this user wrote on an issue.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         commentId: z.string().min(1).describe('The comment id.'),
         body: z.string().min(1).max(50_000).describe('Replacement Markdown body.'),
