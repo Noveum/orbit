@@ -151,6 +151,12 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
         },
       });
       expect(preflight.status).toBeLessThan(400);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(PRODUCTION_ORIGIN);
+      expect(preflight.headers.get('access-control-allow-methods')).toContain('PUT');
+      expect(preflight.headers.get('access-control-allow-headers')?.toLowerCase()).toContain(
+        'content-type',
+      );
+      expect(preflight.headers.get('access-control-max-age')).toBe('3000');
 
       const put = await fetch(target.url, {
         method: target.method,
@@ -158,6 +164,8 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
         body: bodyFor(upload.contentType),
       });
       expect(put.status).toBe(200);
+      expect(put.headers.get('access-control-allow-origin')).toBe(PRODUCTION_ORIGIN);
+      expect(put.headers.get('access-control-expose-headers')).toContain('ETag');
 
       const stored = await storage().stat(key);
       expect(stored?.contentType).toBe(upload.contentType);
@@ -166,10 +174,12 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
         contentType: upload.contentType,
         disposition: `inline; filename="${upload.name}"`,
       });
-      const download = await fetch(downloadUrl);
+      const download = await fetch(downloadUrl, { headers: { origin: PRODUCTION_ORIGIN } });
       expect(download.status).toBe(200);
       expect(download.headers.get('content-type')).toBe(upload.contentType);
       expect(download.headers.get('content-disposition')).toBe(`inline; filename="${upload.name}"`);
+      expect(download.headers.get('access-control-allow-origin')).toBe(PRODUCTION_ORIGIN);
+      expect(download.headers.get('access-control-expose-headers')).toContain('ETag');
       expect((await download.arrayBuffer()).byteLength).toBe(bodyFor(upload.contentType).size);
     });
   }
@@ -178,6 +188,17 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
     const key = `org_round_trip/2026/07/${Bun.randomUUIDv7()}-oversized.txt`;
     const declared = new Blob(['ten bytes!']);
     const target = await storage().createUploadTarget(key, 'text/plain', declared.size);
+    written.push(key);
+
+    const foreignPreflight = await fetch(target.url, {
+      method: 'OPTIONS',
+      headers: {
+        origin: FOREIGN_ORIGIN,
+        'access-control-request-method': 'PUT',
+        'access-control-request-headers': 'content-type',
+      },
+    });
+    expect(foreignPreflight.headers.get('access-control-allow-origin')).not.toBe(FOREIGN_ORIGIN);
 
     const oversized = await fetch(target.url, {
       method: target.method,
@@ -193,7 +214,6 @@ describe.skipIf(!storageConfigured)('presign, PUT and GET against object storage
       headers: { ...target.headers, origin: PRODUCTION_ORIGIN },
       body: declared,
     });
-    written.push(key);
     expect(honest.status).toBe(200);
     expect((await storage().stat(key))?.size).toBe(declared.size);
   });

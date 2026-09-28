@@ -139,8 +139,10 @@ Full walkthrough in [docs/getting-started.md](docs/getting-started.md).
 The setup below describes the Noveum AI deployment profile. It is not a
 provider-neutral production support commitment.
 
-Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
-all of which have free tiers, so a small team can run it for nothing.
+Orbit's Web app needs Postgres, Redis and an S3-compatible bucket. Enabling
+Agent issue writes additionally requires a supervised persistent
+[Outbox Worker](docs/outbox-worker-deployment.md); account for that service
+when choosing a deployment host.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNoveum%2Forbit&root-directory=apps%2Fweb&env=DATABASE_URL,REDIS_URL,BETTER_AUTH_SECRET,BETTER_AUTH_URL,NEXT_PUBLIC_APP_URL,RESEND_API_KEY,EMAIL_FROM&project-name=orbit&repository-name=orbit)
 
@@ -175,14 +177,18 @@ speaks MCP can read your board and do work in it.
 claude mcp add --transport http orbit https://orbit.example.com/mcp
 ```
 
-OAuth only, no API keys. You pick the workspace, re-verify a passkey and approve
-the scopes, and the grant is revocable from settings. **An agent never has more
-permission than the person who authorised it**, because the tools run through
-the same policy as everything else. A token with only `orbit.read` is not shown
-the write tools at all.
+OAuth only, no API keys. You pick the workspace, re-verify a passkey, select or
+create a Personal Agent and approve scopes. Each connection is revocable from
+settings. **An agent never has more permission than the person who authorised
+it**: scopes, current Human permissions and resource policy all apply. A token
+with only `orbit.read` is not shown write tools.
 
-Sixty odd tools covering issues, sprints, projects and docs. Things that work
-today:
+Agent identities can be assigned issues with a Human owner, and issue activity
+distinguishes the Agent from its authorising Human. Agent capabilities default
+off until operators complete the [release sequence](docs/issue-215-release-runbook.md).
+
+Tools cover issues, sprints, projects and docs. With the required capabilities
+enabled, you can ask:
 
 > "What is blocking the Realtime Sync Engine project?"
 >
@@ -213,7 +219,7 @@ today:
 
 ```
 apps/web                  Next.js 16: UI, REST handlers, auth, /api/ws, /mcp
-apps/realtime             Websocket host, local development only, never deployed
+apps/realtime             Local WebSocket host and separate production Outbox Worker
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/realtime-client  Browser client: subscribe, patch, reconnect
 packages/mcp-server       MCP tools and the handler behind /mcp

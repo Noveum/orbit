@@ -254,12 +254,14 @@ jobs:
       ORBIT_SEED_CONFIRM_TARGET: localhost:5433/orbit:user-sha256:4fa1a13ac468ac495f3390e859d76d5e8ef49806815b45a21de7711bcc624194
       REDIS_URL: redis://localhost:6380
       BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
-      BETTER_AUTH_URL: http://localhost:3000
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NEXT_PUBLIC_REALTIME_URL: ws://localhost:3100
-      REALTIME_PORT: "3100"
+      BETTER_AUTH_URL: http://127.0.0.1:23000
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:23000
+      NEXT_PUBLIC_REALTIME_URL: ws://localhost:23101
+      REALTIME_PORT: "23101"
       ORBIT_DEV_LOGIN: "1"
-      ORBIT_E2E_BASE_URL: http://localhost:3000
+      ORBIT_E2E_BASE_URL: http://127.0.0.1:23000
+      ORBIT_E2E_REALTIME_PORT: "23101"
+      ORBIT_TEST_LANE: issue215-ci-${{ github.run_id }}-${{ github.run_attempt }}
       S3_ENDPOINT: http://localhost:9010
       S3_REGION: us-east-1
       S3_BUCKET: orbit-uploads
@@ -310,52 +312,15 @@ jobs:
           echo "minio never became healthy" >&2
           docker logs orbit-minio >&2 || true
           exit 1
-      - name: Apply the schema to the e2e database
-        run: bun run --filter '@orbit/db' push
+      - name: Prepare the test database templates
+        run: bun run db:test-setup
       - name: Install the Playwright browser
         working-directory: apps/web
         run: bunx playwright install --with-deps chromium
-      - name: Boot the realtime and web servers
-        run: |
-          nohup bun run --filter '@orbit/realtime' dev > "$RUNNER_TEMP/realtime.log" 2>&1 &
-          disown
-          nohup bun run --filter '@orbit/web' dev > "$RUNNER_TEMP/web.log" 2>&1 &
-          disown
-      - name: Wait for the web server to answer its health check
-        run: |
-          for attempt in $(seq 1 90); do
-            if curl -fsS http://localhost:3000/api/health | grep -q '"status":"ok"'; then
-              echo "web is up after ${attempt} attempts"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "web never became healthy" >&2
-          cat "$RUNNER_TEMP/web.log" >&2 || true
-          exit 1
-      - name: Wait for the realtime server to answer its health check
-        run: |
-          for attempt in $(seq 1 60); do
-            if curl -fsS "http://localhost:${REALTIME_PORT}/health" >/dev/null 2>&1; then
-              echo "realtime is up after ${attempt} attempts"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "realtime never became healthy" >&2
-          cat "$RUNNER_TEMP/realtime.log" >&2 || true
-          exit 1
-      - name: Run the end-to-end suite
+      - name: Run the ordinary end-to-end suite
         run: bun run test:e2e
-      - name: Show what the servers logged
-        if: failure()
-        run: |
-          echo "::group::web"
-          cat "$RUNNER_TEMP/web.log" || true
-          echo "::endgroup::"
-          echo "::group::realtime"
-          cat "$RUNNER_TEMP/realtime.log" || true
-          echo "::endgroup::"
+      - name: Run both Agent HTTP release phases
+        run: bun run test:e2e:agent-release
       - name: Upload Playwright traces
         if: failure()
         uses: actions/upload-artifact@v7
@@ -363,8 +328,3 @@ jobs:
           name: playwright-traces
           path: apps/web/test-results/
           if-no-files-found: ignore
-      - name: Dump server logs on failure
-        if: failure()
-        run: |
-          echo "=== web ==="; cat "$RUNNER_TEMP/web.log" || true
-          echo "=== realtime ==="; cat "$RUNNER_TEMP/realtime.log" || true

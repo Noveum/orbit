@@ -23,6 +23,17 @@ function standaloneOutputUnlessVercelTracesItItself(): Pick<NextConfig, 'output'
   return process.env['VERCEL'] === '1' ? {} : { output: 'standalone' };
 }
 
+function localE2EDevOrigins(isDevServer: boolean): Partial<Pick<NextConfig, 'allowedDevOrigins'>> {
+  const baseUrl = process.env['ORBIT_E2E_BASE_URL'];
+  if (!isDevServer || baseUrl === undefined) return {};
+  try {
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === '127.0.0.1' ? { allowedDevOrigins: [hostname] } : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function config(phase: string): NextConfig {
   if (phase === PHASE_PRODUCTION_BUILD) {
     assertProductionAuthenticationConfigured({
@@ -49,6 +60,7 @@ export default function config(phase: string): NextConfig {
     transpilePackages: isDevServer
       ? [...workspacePackages, ...devServerOnlyBundledPackages]
       : workspacePackages,
+    ...localE2EDevOrigins(isDevServer),
     typedRoutes: false,
     experimental: {
       optimizePackageImports: ['lucide-react'],

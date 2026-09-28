@@ -30,6 +30,7 @@
     "typecheck": "tsc -p scripts/tsconfig.json --noEmit && bun run --filter '*' typecheck",
     "test": "bun test ./tests/*.test.ts && bun run --filter '*' test",
     "test:e2e": "bun run --filter '@orbit/web' test:e2e",
+    "test:e2e:agent-release": "bun --env-file=.env scripts/run-agent-release-e2e.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",

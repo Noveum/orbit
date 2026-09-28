@@ -1,9 +1,12 @@
 # Agent identity migration compatibility
 
-Phase 2 adds forward migrations after `0021_agent_identity_lifecycle_operators`.
-Previously committed SQL, snapshots, journal timestamps and migration hashes stay
-unchanged. Existing ledger rows are not replaced, renumbered or supplemented with
-backdated compatibility records.
+Agent identity upgrades include compatibility for the historical migrations
+below and additive repairs to lifecycle and grant constraints. Previously
+committed SQL, snapshots, journal timestamps and migration hashes stay unchanged.
+Existing ledger rows are not replaced, renumbered or supplemented with backdated
+compatibility records. Use [Database releases](database-releases.md) for the
+release command and the [Agent release runbook](issue-215-release-runbook.md)
+for deployment ordering and client impact.
 
 ## Historical dependency order
 

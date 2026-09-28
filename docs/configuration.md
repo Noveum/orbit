@@ -49,10 +49,10 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 | Variable | Notes |
 | --- | --- |
-| `CRON_SECRET` | Protects the scheduled sprint snapshot, operational pruning, and Slack notification worker routes. Use a long random value in every deployed environment |
+| `CRON_SECRET` | Protects the scheduled sprint snapshot, operational pruning, Slack notification worker and issue-outbox recovery routes. Use a long random value in every deployed environment |
 
 Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
-routes. Without the secret, all three routes refuse to run. The Slack notification
+routes. Without the secret, these routes refuse to run. The Slack notification
 worker processes eligible deliveries across every organization only when
 `SLACK_ENABLED=true`; with the flag false or unset, it has no eligible work. The
 analytics route runs every six hours so every sprint-local
@@ -69,7 +69,6 @@ explicitly so it cannot block other snapshots or prevent the sprint from closing
 | --- | --- | --- |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | **Local development only.** Set it to `ws://localhost:3100` locally; the app connects to `/api/ws` under it |
 | `REALTIME_PORT` | `3100` | Port for the local development websocket host |
-| `ORBIT_ISSUE_OUTBOX_DISPATCH` | `false` | Set to `true` on the persistent `apps/realtime` outbox worker and the web app when Agent issue delivery is enabled |
 
 `NEXT_PUBLIC_REALTIME_URL` is ignored whenever `NODE_ENV` is `production`, where
 the socket is always served from the page's own origin at `/api/ws`. Setting it
@@ -230,6 +229,28 @@ launch sequence and Slack-side configuration.
 
 You almost never need this. It exists for deployments that put the MCP endpoint
 behind a different hostname. See [MCP server](mcp.md).
+
+### Agent release gates
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `ORBIT_AGENT_IDENTITY_READ` | `false` | Exposes Agent identity and settings read paths. |
+| `ORBIT_AGENT_CONSENT` | `false` | Allows consent to select or create an Agent identity. |
+| `ORBIT_AGENT_ISSUE_WRITE` | `false` | Enables Agent issue mutations only when all three supporting gates are also enabled. |
+| `ORBIT_ISSUE_OUTBOX_DISPATCH` | `false` | Enables outbox dispatch on Web and is required to start the persistent Worker. |
+
+Only the exact value `true` enables a gate. These settings apply to the entire
+process, not to an individual workspace. Deploy or restart processes after
+changing them. They never bypass scopes, current membership or resource policy.
+
+The Worker needs only the dispatch gate, plus its database and Redis settings.
+Web needs dispatch and `CRON_SECRET` for Cron recovery. Open Identity Read and
+Consent before Writer, and keep Writer off until migrations, delivery and user
+flows are verified. Follow the [release runbook](issue-215-release-runbook.md).
+
+Closing gates does not undo migrations, restore legacy credentials or remove
+Agent rows. Keep an Actor-compatible application and the delivery Worker when
+rolling back Writer availability.
 
 ## Testing
 

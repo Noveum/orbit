@@ -25,13 +25,14 @@ process.env['NEXT_PUBLIC_APP_URL'] = BASE;
 process.env['NEXT_PUBLIC_REALTIME_URL'] = REALTIME_URL;
 process.env['ORBIT_SEED_CONFIRM_TARGET'] =
   `${databaseTarget.hostname.toLowerCase()}:${databaseTarget.port}/${databaseTarget.pathname.slice(1)}:user-sha256:${createHash('sha256').update(username).digest('hex')}`;
-process.env['ORBIT_AGENT_IDENTITY_READ'] = 'true';
-process.env['ORBIT_AGENT_CONSENT'] = 'true';
-process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
-process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = 'true';
+process.env['ORBIT_AGENT_IDENTITY_READ'] ??= 'true';
+process.env['ORBIT_AGENT_CONSENT'] ??= 'true';
+process.env['ORBIT_AGENT_ISSUE_WRITE'] ??= 'true';
+process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] ??= 'true';
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: ['**/mcp-http-release.spec.ts', '**/mcp-http-writer-off.spec.ts'],
   globalSetup: './e2e/global-setup.ts',
   timeout: 180_000,
   expect: { timeout: 45_000 },

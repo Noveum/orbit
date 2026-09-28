@@ -23,8 +23,15 @@ applies pending migrations transactionally, and checks the resulting catalog.
 
 The catalog check covers required tables, columns, PostgreSQL types, nullability,
 database defaults, generated columns, primary keys, index definitions, foreign-key
-targets and delete actions, and enum values. Additional tables, indexes and foreign
-keys are reported but preserved.
+targets and delete actions, CHECK constraints, required lifecycle guard functions
+and triggers, and enum values. Additional tables, indexes and foreign keys are
+reported but preserved.
+
+Agent upgrades have specific historical ordering and binding repairs. Read
+[Agent migration compatibility](agent-migration-compatibility.md) before
+upgrading a database that issued MCP credentials. The
+[Agent release runbook](issue-215-release-runbook.md) covers legacy grant
+invalidation, deployment gates and Actor-compatible rollback.
 
 ## Existing databases without a ledger
 

@@ -18,6 +18,9 @@ gated behind a plan.
 | Let an AI agent read and update your board | [MCP server](mcp.md) |
 | Connect GitHub | [Integrations](integrations.md) |
 | Know how the realtime sync actually works | [Architecture](architecture.md) |
+| Apply and verify database upgrades | [Database releases](database-releases.md) |
+| Roll out Agent identities and issue writes | [Agent release runbook](issue-215-release-runbook.md) |
+| Run the persistent issue delivery process | [Outbox worker deployment](outbox-worker-deployment.md) |
 | Write or run the tests | [Testing](testing.md) |
 | Fix something that broke | [Troubleshooting](troubleshooting.md) |
 | See what is coming | [Roadmap](roadmap.md) |
@@ -27,6 +30,7 @@ gated behind a plan.
 
 The canonical quick start is in [Getting started](getting-started.md). Follow
 that page for the full commands and troubleshooting notes.
+
 ## What Orbit is
 
 - **Issues** with priorities, labels, states, estimates, assignees, multiple
@@ -42,7 +46,9 @@ that page for the full commands and troubleshooting notes.
 - **Realtime everywhere.** A change writes to Postgres, publishes to Redis, and
   fans out over a websocket to everyone allowed to see it.
 - **An MCP server**, so an agent can read the board and file work with the same
-  permissions the person who authorised it has.
+  permission ceiling as the person who authorised it. When enabled, Agent
+  identities are assignable and issue activity records them separately from
+  the authorising Human.
 - **Notifications**, an inbox and GitHub integration.
 
 ## What Orbit is not

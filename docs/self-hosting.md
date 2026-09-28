@@ -5,9 +5,10 @@
 > support, migration, rollback, backup, or compatibility contract. Review the
 > [readiness tracker](open-source-readiness.md) before deploying important data.
 
-Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
-and that is the whole architecture. There is nothing to containerise and nothing
-to orchestrate.
+Orbit's Web app needs Postgres, Redis and an S3-compatible bucket. Enabling
+Agent issue writes also requires a persistent Outbox Worker connected to the
+same Postgres and Redis. The Worker image is separate from the Web deployment;
+Cron is only its recovery path.
 
 Everything below has a free tier, so a small team can run Orbit for nothing.
 
@@ -19,6 +20,9 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | [Standalone Node (Preview)](#run-standalone-node-preview) | About 30 minutes | Evaluation inside your own network, without realtime |
 
 Both need the same infrastructure plus one complete first-login method.
+For Agent capabilities, also follow the
+[Agent release runbook](issue-215-release-runbook.md). Keep the four Agent gates
+off until their rollout prerequisites are met.
 
 ## What Orbit needs
 
@@ -247,6 +251,19 @@ change every credential in it first. It is written for local development and its
 passwords are in this repository.
 
 ## Keeping it running
+
+### Agent issue delivery
+
+Deploy the [Outbox Worker](outbox-worker-deployment.md) on a host that supports
+a supervised persistent process. This Worker does not replace `/api/ws` or
+enable WebSocket support for standalone Node. Apply migrations, deploy
+Actor-compatible Web code, start the Worker and enable Cron recovery before
+opening Consent and then Agent Writer.
+
+An upgrade freezes legacy unbound MCP grants and invalidates their credentials
+even if the release gates stay off. Notify users before migrating and provide
+the [reconnection steps](mcp.md#managing-access). A Writer rollback keeps the
+additive schema, Actor-compatible readers and delivery of pending events.
 
 ### Upgrading
 

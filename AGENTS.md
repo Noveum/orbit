@@ -12,7 +12,8 @@ how to test, and how a pull request is reviewed.
 
 Orbit is a free, realtime, keyboard-first task manager. One Next.js app on
 Vercel's node runtime, with the realtime hub and the MCP tools in workspace
-packages.
+packages. Agent issue delivery also requires a separate persistent Outbox Worker;
+see the deployment section of `CLAUDE.md` before enabling it.
 
 ```bash
 bun install

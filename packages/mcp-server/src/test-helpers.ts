@@ -169,6 +169,22 @@ export interface TestClient {
   close(): Promise<void>;
 }
 
+function testClient(client: Client): TestClient {
+  return {
+    client,
+    call: (name, args = {}) =>
+      client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
+    async result(name, args = {}) {
+      const called = (await client.callTool({ name, arguments: args })) as CallToolResult;
+      if (called.isError === true) {
+        throw new Error(`tool ${name} failed: ${JSON.stringify(called.content)}`);
+      }
+      return payloadOf(called);
+    },
+    close: () => client.close(),
+  };
+}
+
 function payloadOf(result: CallToolResult): Record<string, unknown> {
   const [first] = result.content;
   if (first === undefined || first.type !== 'text') {
@@ -198,19 +214,27 @@ export async function connect(accessToken: string): Promise<TestClient> {
     fetch: directFetch,
   });
   await client.connect(transport as unknown as Transport);
-  return {
-    client,
-    call: (name, args = {}) =>
-      client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
-    async result(name, args = {}) {
-      const called = (await client.callTool({ name, arguments: args })) as CallToolResult;
-      if (called.isError === true) {
-        throw new Error(`tool ${name} failed: ${JSON.stringify(called.content)}`);
-      }
-      return payloadOf(called);
+  return testClient(client);
+}
+
+export async function connectOverHttp(accessToken: string, mcpUrl: string): Promise<TestClient> {
+  const client = new Client({ name: 'orbit-http-test', version: '0.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+    requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      console.info(
+        JSON.stringify({
+          mcpHttpMethod: init?.method ?? 'GET',
+          bearerPresent: new Headers(init?.headers).has('authorization'),
+          mcpHttpStatus: response.status,
+        }),
+      );
+      return response;
     },
-    close: () => client.close(),
-  };
+  });
+  await client.connect(transport as unknown as Transport);
+  return testClient(client);
 }
 
 export function errorPayload(result: CallToolResult): { code: string; message: string } {
