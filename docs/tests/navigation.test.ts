@@ -8,6 +8,8 @@ describe('documentationNavigation', () => {
       { text: 'Getting started', link: '/getting-started' },
       { text: 'Concepts', link: '/concepts' },
       { text: 'Self-hosting', link: '/self-hosting' },
+      { text: 'First-run setup', link: '/first-run' },
+      { text: 'Docker Compose preview', link: '/docker-preview' },
       { text: 'Configuration', link: '/configuration' },
       { text: 'Keyboard shortcuts', link: '/keyboard-shortcuts' },
       { text: 'MCP server', link: '/mcp' },
