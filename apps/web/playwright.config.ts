@@ -4,6 +4,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { resolveTestDatabaseUrl } from '../../scripts/test-env.ts';
 
 const { BASE } = await import('./e2e/base-url.ts');
+process.env['ORBIT_E2E_BASE_URL'] = BASE;
 const WEB_PORT = new URL(BASE).port || '3000';
 const REALTIME_PORT = process.env['ORBIT_E2E_REALTIME_PORT'] ?? '3101';
 const REALTIME_URL = `ws://localhost:${REALTIME_PORT}`;
@@ -41,7 +42,7 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: BASE,
-    trace: 'retain-on-failure',
+    trace: process.env['ORBIT_E2E_TRACE'] === 'off' ? 'off' : 'retain-on-failure',
     ...devices['Desktop Chrome'],
   },
   webServer: [

@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
 import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ChangeEvent, ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -40,10 +41,13 @@ function issue(): Issue {
 }
 
 function mountBody(onCommit: (description: string) => Promise<unknown>): void {
+  const queryClient = new QueryClient();
   render(
-    <ToastProvider>
-      <IssueBody issue={issue()} members={[]} onCommit={onCommit} />
-    </ToastProvider>,
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <IssueBody issue={issue()} members={[]} onCommit={onCommit} />
+      </ToastProvider>
+    </QueryClientProvider>,
   );
 }
 

@@ -1,6 +1,13 @@
+import { scopes } from '@orbit/shared/events';
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { z } from 'zod';
 import { createDoc, statusOf } from './api.ts';
 import { BASE } from './base-url.ts';
+
+const subscriptionResultSchema = z.object({
+  type: z.literal('subscribed'),
+  denied: z.array(z.string()),
+});
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
@@ -8,6 +15,39 @@ async function signIn(context: BrowserContext, email: string): Promise<Page> {
   await page.getByTestId(`dev-sign-in-${email}`).click();
   await page.waitForURL(`${BASE}/my-issues`);
   return page;
+}
+
+function waitForDeniedDocSubscription(page: Page, docId: string): Promise<void> {
+  const docScope = scopes.doc(docId);
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      page.off('websocket', handleWebSocket);
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const timeout = setTimeout(
+      () => finish(new Error(`realtime did not deny the revoked scope ${docScope}`)),
+      15_000,
+    );
+    const handleWebSocket = (socket: import('@playwright/test').WebSocket) => {
+      socket.on('framereceived', ({ payload }) => {
+        if (settled || typeof payload !== 'string') return;
+        let value: unknown;
+        try {
+          value = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        const parsed = subscriptionResultSchema.safeParse(value);
+        if (parsed.success && parsed.data.denied.includes(docScope)) finish();
+      });
+    };
+    page.on('websocket', handleWebSocket);
+  });
 }
 
 test('private access requires an invitation even for admins and revocation clears an open page', async ({
@@ -31,10 +71,27 @@ test('private access requires an invitation even for admins and revocation clear
   await reader.getByTestId('doc-share').filter({ visible: true }).click();
   await expect(reader.getByTestId('doc-visibility-link')).toBeDisabled();
   await reader.keyboard.press('Escape');
+  const revokedAccess = owner.waitForResponse(
+    (response) =>
+      response.url() === `${BASE}/api/docs/${doc.id}/access` &&
+      response.request().method() === 'PUT',
+  );
+  const revokedRead = reader.waitForResponse(
+    (response) =>
+      response.url() === `${BASE}/api/docs/${doc.id}` &&
+      response.request().method() === 'GET' &&
+      response.status() === 404,
+  );
   await owner.locator('[data-testid^="doc-access-remove-"]').first().click();
+  expect((await revokedAccess).status()).toBe(200);
   await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(0);
+  expect((await revokedRead).status()).toBe(404);
   await expect(reader.getByTestId('doc-reader')).toHaveCount(0);
   expect(await statusOf(reader, `/api/docs/${doc.id}`)).toBe(404);
+  const deniedSubscription = waitForDeniedDocSubscription(reader, doc.id);
+  await reader.reload();
+  await deniedSubscription;
+  await expect(reader.getByTestId('doc-reader')).toHaveCount(0);
   await ownerContext.close();
   await readerContext.close();
 });

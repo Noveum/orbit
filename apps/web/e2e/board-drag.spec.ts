@@ -320,8 +320,10 @@ test('a keyboard drag can be cancelled with Escape and returns to the original p
   });
 
   await cardLocator.focus();
+  await expect(cardLocator).toBeFocused();
   await page.keyboard.press('Space');
   await expect(boardStatus).toContainText(`Picked up ${moving}`, { timeout: 10_000 });
+  await waitForKeyboardDragReady(page, moving);
   await page.keyboard.press('ArrowRight');
   await expect(boardStatus).toContainText(`Moved ${moving}`, { timeout: 10_000 });
   await page.keyboard.press('Escape');

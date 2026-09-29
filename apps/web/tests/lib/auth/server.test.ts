@@ -106,9 +106,10 @@ describe('open signup rate limits', () => {
     for (const path of Object.keys(rules)) expect(served).toContain(path);
   });
 
-  it('matches rules against the path better-auth strips the base from', async () => {
-    const context = await auth.$context;
-    expect(new URL(context.baseURL).pathname).toBe('/api/auth');
+  it('matches rules against the path better-auth strips the base from', () => {
+    return auth.$context.then((context) => {
+      expect(context.options).toHaveProperty('basePath', '/api/auth');
+    });
   });
 });
 

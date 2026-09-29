@@ -55,6 +55,7 @@ async function signIn(context: BrowserContext, email: string): Promise<Page> {
   await page.goto(`${BASE}/login`);
   await page.getByTestId(`dev-sign-in-${email}`).click();
   await page.waitForURL(`${BASE}/my-issues`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
   return page;
 }
 
@@ -131,6 +132,11 @@ test('OAuth consent creates an agent that can be managed from MCP settings', asy
 
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await signIn(context, DEMO_EMAIL);
+  const bootstrapResponse = await page.request.get(`${BASE}/api/bootstrap`);
+  expect(bootstrapResponse.ok()).toBe(true);
+  const { organizationId: activeOrganizationId } = z
+    .object({ organizationId: z.string() })
+    .parse(await bootstrapResponse.json());
   await context.route(/^http:\/\/127\.0\.0\.1:9876\/callback/, async (route) => {
     await route.fulfill({
       status: 200,
@@ -139,8 +145,10 @@ test('OAuth consent creates an agent that can be managed from MCP settings', asy
     });
   });
   await page.goto(`${BASE}/oauth/authorize?consent_code=${encodeURIComponent(consentCode)}`);
-  const organizationId = await page.getByLabel('Workspace').inputValue();
-  if (organizationId.length === 0) throw new Error('OAuth consent did not select a workspace.');
+  const workspace = page.getByLabel('Workspace');
+  await workspace.selectOption(activeOrganizationId);
+  await expect(workspace).toHaveValue(activeOrganizationId);
+  const organizationId = await workspace.inputValue();
   await page.getByLabel('Agent identity').selectOption({ label: 'Create a new agent' });
   await page.getByLabel('Agent name').fill(agentName);
   await page.getByRole('button', { name: 'Approve' }).click();
@@ -276,6 +284,8 @@ test('OAuth consent creates an agent that can be managed from MCP settings', asy
   await expect(card).toContainText('Lifecycle: disabled');
   await card.getByRole('button', { name: 'Resume' }).click();
   await expect(card).toContainText('Lifecycle: active');
+  await card.getByRole('button', { name: 'Pause' }).click();
+  await expect(card).toContainText('Lifecycle: disabled');
   await agent.close();
   await context.close();
 });

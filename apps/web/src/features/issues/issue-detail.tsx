@@ -2,6 +2,7 @@
 
 import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
 import { permissionsFor } from '@orbit/shared/policy';
+import { useQueryClient } from '@tanstack/react-query';
 import { Bell, BellOff, Check } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -18,6 +19,7 @@ import { useAutosave } from '@/features/docs/use-autosave.ts';
 import { IssuePullRequests } from '@/features/pulls/issue-pull-requests.tsx';
 import { HOTKEY_PRIORITY, ownsKeyboardLayer, useHotkey } from '@/lib/keyboard/index.ts';
 import { apiFetch, messageOf } from '@/lib/query/fetcher.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue, Member, Team } from '@/lib/query/schemas.ts';
 import { subscribedSchema } from '@/lib/query/schemas.ts';
 import { useComments } from '@/lib/query/use-comments.ts';
@@ -131,12 +133,18 @@ export function IssueBody({
   readonly onCommit: (description: string) => Promise<unknown>;
 }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [draft, setDraft] = useState(issue.description);
 
   const upload = useCallback(
     async (file: File) => {
       try {
-        return await uploadAttachment('issue', issue.id, file);
+        const uploaded = await uploadAttachment('issue', issue.id, file);
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.issue(issue.identifier),
+          exact: true,
+        });
+        return uploaded;
       } catch (error: unknown) {
         toast({
           title: 'Could not attach that file',
@@ -146,7 +154,7 @@ export function IssueBody({
         throw error;
       }
     },
-    [issue.id, toast],
+    [issue.id, issue.identifier, queryClient, toast],
   );
   const autosave = useAutosave({
     value: draft,
