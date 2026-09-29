@@ -48,13 +48,16 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     logo: row.organization.logo,
   }));
 
+  const activeLogo =
+    workspaces.find((row) => row.id === membership?.principal.organizationId)?.logo ?? null;
+
   const shell = (
     <WorkspaceShell
       workspace={{
         id: membership?.principal.organizationId ?? '',
         name: membership?.organizationName ?? 'Orbit',
         slug: membership?.organizationSlug ?? 'orbit',
-        logo: membership?.organizationLogo ?? null,
+        logo: activeLogo,
       }}
       workspaces={workspaces}
       user={{

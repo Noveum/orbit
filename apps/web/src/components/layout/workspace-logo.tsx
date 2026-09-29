@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import * as AvatarPrimitive from '@radix-ui/react-avatar';
 import { cn } from '@/lib/cn.ts';
 
 export interface WorkspaceLogoProps {
@@ -11,37 +11,29 @@ export interface WorkspaceLogoProps {
 }
 
 export function WorkspaceLogo({ name, logo, size = 'md', className }: WorkspaceLogoProps) {
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const normalizedLogo = logo?.trim() ? logo.trim() : null;
-  const hasError = normalizedLogo !== null && failedSrc === normalizedLogo;
-
-  if (normalizedLogo && !hasError) {
-    return (
-      // biome-ignore lint/performance/noImgElement: user-supplied workspace logo image
-      <img
-        src={normalizedLogo}
-        alt={name}
-        onError={() => setFailedSrc(normalizedLogo)}
-        className={cn(
-          'shrink-0 rounded-sm object-cover select-none',
-          size === 'sm' ? 'size-4' : 'size-5',
-          className,
-        )}
-      />
-    );
-  }
 
   return (
-    <span
+    <AvatarPrimitive.Root
       className={cn(
-        'flex shrink-0 items-center justify-center rounded-sm font-semibold select-none',
-        size === 'sm'
-          ? 'size-4 bg-surface-2 text-[9px] text-muted'
-          : 'size-5 bg-accent text-2xs text-accent-contrast',
+        'relative flex shrink-0 items-center justify-center overflow-hidden rounded-sm select-none',
+        size === 'sm' ? 'size-4' : 'size-5',
         className,
       )}
     >
-      {name.slice(0, 1).toUpperCase()}
-    </span>
+      {normalizedLogo ? (
+        <AvatarPrimitive.Image src={normalizedLogo} alt="" className="size-full object-cover" />
+      ) : null}
+      <AvatarPrimitive.Fallback
+        className={cn(
+          'flex size-full items-center justify-center font-semibold',
+          size === 'sm'
+            ? 'bg-surface-2 text-[9px] text-muted'
+            : 'bg-accent text-2xs text-accent-contrast',
+        )}
+      >
+        {name.slice(0, 1).toUpperCase()}
+      </AvatarPrimitive.Fallback>
+    </AvatarPrimitive.Root>
   );
 }

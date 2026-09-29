@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { hydrateRoot } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher.tsx';
 import type { ShellWorkspace } from '@/lib/navigation.ts';
 
@@ -9,6 +11,37 @@ const refresh = mock();
 const setActive = mock();
 const assign = mock();
 const realLocation = window.location;
+const realImage = window.Image;
+
+class MockImage extends EventTarget {
+  complete = false;
+  naturalWidth = 0;
+  onload: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  private _src = '';
+
+  get src(): string {
+    return this._src;
+  }
+
+  set src(val: string) {
+    this._src = val;
+    setTimeout(() => {
+      this.complete = true;
+      if (val.includes('broken')) {
+        this.naturalWidth = 0;
+        const event = new Event('error');
+        this.onerror?.(event);
+        this.dispatchEvent(event);
+      } else {
+        this.naturalWidth = 100;
+        const event = new Event('load');
+        this.onload?.(event);
+        this.dispatchEvent(event);
+      }
+    }, 0);
+  }
+}
 
 mock.module('next/navigation', () => ({
   useRouter: () => ({ push, refresh }),
@@ -38,10 +71,12 @@ beforeEach(() => {
   refresh.mockClear();
   setActive.mockReset();
   assign.mockClear();
+  window.Image = MockImage as unknown as typeof Image;
   Object.defineProperty(window, 'location', { value: { assign }, writable: true });
 });
 
 afterEach(() => {
+  window.Image = realImage;
   Object.defineProperty(window, 'location', { value: realLocation, writable: true });
 });
 
@@ -172,7 +207,7 @@ describe('WorkspaceSwitcher', () => {
     expect(push).toHaveBeenCalledWith('/settings/mcp');
   });
 
-  it('renders the workspace logo in the switcher trigger when configured', () => {
+  it('renders the workspace logo in the switcher trigger with decorative alt', async () => {
     const workspaceWithLogo: ShellWorkspace = {
       ...NOVEUM,
       logo: 'https://example.com/noveum.png',
@@ -187,13 +222,15 @@ describe('WorkspaceSwitcher', () => {
     );
 
     const trigger = screen.getByTestId('workspace-switcher');
-    const img = trigger.querySelector('img');
-    expect(img).not.toBeNull();
-    expect(img).toHaveAttribute('src', 'https://example.com/noveum.png');
-    expect(img).toHaveAttribute('alt', 'Noveum');
+    await waitFor(() => {
+      const img = trigger.querySelector('img');
+      expect(img).not.toBeNull();
+      expect(img).toHaveAttribute('src', 'https://example.com/noveum.png');
+      expect(img).toHaveAttribute('alt', '');
+    });
   });
 
-  it('falls back to the text initial in the switcher trigger when logo fails to load', () => {
+  it('falls back to the text initial in the switcher trigger when logo fails to load', async () => {
     const workspaceWithBrokenLogo: ShellWorkspace = {
       ...NOVEUM,
       logo: 'https://example.com/broken.png',
@@ -208,12 +245,10 @@ describe('WorkspaceSwitcher', () => {
     );
 
     const trigger = screen.getByTestId('workspace-switcher');
-    const img = trigger.querySelector('img');
-    expect(img).not.toBeNull();
-    fireEvent.error(img as Element);
-
-    expect(trigger.querySelector('img')).toBeNull();
-    expect(trigger).toHaveTextContent('N');
+    await waitFor(() => {
+      expect(trigger.querySelector('img')).toBeNull();
+      expect(trigger).toHaveTextContent('N');
+    });
   });
 
   it('renders logos for workspaces in the switcher dropdown menu', async () => {
@@ -236,13 +271,89 @@ describe('WorkspaceSwitcher', () => {
     await openMenu();
 
     const noveumOption = screen.getByTestId('workspace-option-noveum');
-    const noveumImg = noveumOption.querySelector('img');
-    expect(noveumImg).not.toBeNull();
-    expect(noveumImg).toHaveAttribute('src', 'https://example.com/noveum.png');
+    await waitFor(() => {
+      const noveumImg = noveumOption.querySelector('img');
+      expect(noveumImg).not.toBeNull();
+      expect(noveumImg).toHaveAttribute('src', 'https://example.com/noveum.png');
+      expect(noveumImg).toHaveAttribute('alt', '');
+    });
 
     const cometOption = screen.getByTestId('workspace-option-comet');
-    const cometImg = cometOption.querySelector('img');
-    expect(cometImg).not.toBeNull();
-    expect(cometImg).toHaveAttribute('src', 'https://example.com/comet.png');
+    await waitFor(() => {
+      const cometImg = cometOption.querySelector('img');
+      expect(cometImg).not.toBeNull();
+      expect(cometImg).toHaveAttribute('src', 'https://example.com/comet.png');
+      expect(cometImg).toHaveAttribute('alt', '');
+    });
+  });
+
+  it('sets aria-label to the workspace name when the sidebar is collapsed', () => {
+    render(
+      <WorkspaceSwitcher
+        workspace={NOVEUM}
+        workspaces={[NOVEUM, COMET]}
+        user={USER}
+        collapsed={true}
+      />,
+    );
+
+    const trigger = screen.getByTestId('workspace-switcher');
+    expect(trigger).toHaveAttribute('aria-label', 'Noveum');
+  });
+
+  it('does not set aria-label on the trigger when the sidebar is expanded', () => {
+    render(
+      <WorkspaceSwitcher
+        workspace={NOVEUM}
+        workspaces={[NOVEUM, COMET]}
+        user={USER}
+        collapsed={false}
+      />,
+    );
+
+    const trigger = screen.getByTestId('workspace-switcher');
+    expect(trigger).not.toHaveAttribute('aria-label');
+  });
+
+  it('server renders the trigger with fallback and preserves fallback after hydration on error', async () => {
+    const workspaceWithBrokenLogo: ShellWorkspace = {
+      ...NOVEUM,
+      logo: 'https://example.com/broken.png',
+    };
+
+    const element = (
+      <WorkspaceSwitcher
+        workspace={workspaceWithBrokenLogo}
+        workspaces={[workspaceWithBrokenLogo, COMET]}
+        user={USER}
+        collapsed={false}
+      />
+    );
+
+    const html = renderToString(element);
+    expect(html).toContain('>N<');
+    expect(html).not.toContain('<img');
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    container.innerHTML = html;
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+    act(() => {
+      root = hydrateRoot(container, element);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const trigger = container.querySelector('[data-testid="workspace-switcher"]');
+    expect(trigger).not.toBeNull();
+    expect(trigger?.querySelector('img')).toBeNull();
+    expect(trigger?.textContent).toContain('N');
+
+    act(() => {
+      root?.unmount();
+    });
+    document.body.removeChild(container);
   });
 });
