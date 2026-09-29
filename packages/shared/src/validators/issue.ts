@@ -99,6 +99,26 @@ export const issueBulkUpdateSchema = z.object({
   patch: issueUpdateSchema,
 });
 
+export const subIssueItemSchema = z.object({
+  title: titleSchema,
+  description: issueDescriptionSchema.default(''),
+  stateId: idSchema.optional(),
+  priority: prioritySchema.default(0),
+  assigneeId: idSchema.nullable().optional(),
+  reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).default([]),
+  projectId: idSchema.nullable().optional(),
+  milestoneId: idSchema.nullable().optional(),
+  cycleId: idSchema.nullable().optional(),
+  estimate: z.number().int().min(0).max(100).nullable().default(null),
+  dueDate: calendarDateSchema.nullable().default(null),
+  labelIds: z.array(idSchema).max(50).default([]),
+});
+
+export const createSubIssuesSchema = z.object({
+  parentId: idSchema,
+  issues: z.array(subIssueItemSchema).min(1).max(50),
+});
+
 export const issueFilterSchema = z.object({
   view: z.literal('standup').optional(),
   teamId: idSchema.optional(),

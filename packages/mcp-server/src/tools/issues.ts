@@ -1,9 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   attachFile,
+  bulkUpdateIssues,
   createComment,
   createIssue,
+  createSubIssues,
   getIssue,
+  type IssueRow,
   listAttachmentsFor,
   listComments,
   listIssueAttachments,
@@ -138,6 +141,121 @@ function registerCreateIssue(server: McpServer, principal: Principal): void {
   );
 }
 
+interface ResolvedSubIssue {
+  readonly title: string;
+  readonly description: string;
+  readonly stateId?: string | undefined;
+  readonly priority: number;
+  readonly assigneeId?: string | null | undefined;
+  readonly estimate: number | null;
+  readonly dueDate: string | null;
+  readonly labelIds: string[];
+}
+
+interface SubIssueArg {
+  readonly title: string;
+  readonly description?: string | undefined;
+  readonly state?: string | undefined;
+  readonly priority?: keyof typeof PRIORITY_VALUES | undefined;
+  readonly assignee?: string | undefined;
+  readonly estimate?: number | null | undefined;
+  readonly dueDate?: string | null | undefined;
+  readonly labels?: string[] | undefined;
+}
+
+async function resolveSubIssueItem(
+  principal: Principal,
+  teamId: string,
+  item: SubIssueArg,
+): Promise<ResolvedSubIssue> {
+  const stateId =
+    item.state === undefined ? undefined : await resolveStateId(principal, teamId, item.state);
+  const assigneeId =
+    item.assignee === undefined ? undefined : await resolveUserId(principal, item.assignee);
+  const labelIds =
+    item.labels === undefined ? [] : await resolveLabelIds(principal, item.labels, teamId);
+  return {
+    title: item.title,
+    description: item.description ?? '',
+    ...(stateId === undefined ? {} : { stateId }),
+    priority: item.priority === undefined ? 0 : PRIORITY_VALUES[item.priority],
+    ...(assigneeId === undefined ? {} : { assigneeId }),
+    estimate: item.estimate ?? null,
+    dueDate: item.dueDate ?? null,
+    labelIds,
+  };
+}
+
+function registerCreateSubIssues(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'create_sub_issues',
+      title: 'Create sub-issues',
+      description:
+        'Create up to 50 sub-issues under a parent issue in one transaction. Returns the created identifiers in order.',
+      readOnly: false,
+      inputSchema: {
+        parent: issueRef.describe('Parent issue identifier like "ENG-42" or id.'),
+        issues: z
+          .array(
+            z.object({
+              title: z.string().min(1).max(255).describe('One line summary of the work.'),
+              description: z
+                .string()
+                .max(ISSUE_DESCRIPTION_MAX_LENGTH)
+                .optional()
+                .describe('Markdown body of the sub-issue.'),
+              state: z
+                .string()
+                .min(1)
+                .optional()
+                .describe('Workflow state name or id on the parent team.'),
+              priority: priorityRef.optional(),
+              assignee: z
+                .string()
+                .min(1)
+                .optional()
+                .describe('Assignee name, handle, email, id, or "me".'),
+              estimate: z.number().int().min(0).max(100).optional().describe('Estimate points.'),
+              dueDate: dueDateRef.optional(),
+              labels: labelsRef.optional(),
+            }),
+          )
+          .min(1)
+          .max(50)
+          .describe('List of sub-issues to create (maximum 50).'),
+      },
+    },
+    async (args) => {
+      const parent = await getIssue(principal, args.parent);
+      const items: ResolvedSubIssue[] = [];
+      let index = 0;
+      for (const item of args.issues) {
+        index += 1;
+        try {
+          items.push(await resolveSubIssueItem(principal, parent.teamId, item));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw validationFailed(`Failed on item ${index}: ${message}`);
+        }
+      }
+
+      const result = await createSubIssues(principal, {
+        parentId: parent.id,
+        issues: items,
+      });
+      await publish(result.actions);
+      return {
+        parent: parent.identifier,
+        count: result.issues.length,
+        identifiers: result.issues.map((issue) => issue.identifier),
+        deltas: deltaViews(result.actions),
+      };
+    },
+  );
+}
+
 function registerUpdateIssue(server: McpServer, principal: Principal): void {
   defineTool(
     server,
@@ -201,6 +319,81 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
         issue: await describeIssue(principal, updated.issue),
         changed: updated.changes.map((change) => change.field),
         deltas: deltaViews(updated.actions),
+      };
+    },
+  );
+}
+
+function registerBulkUpdateIssues(server: McpServer, principal: Principal): void {
+  defineTool(
+    server,
+    {
+      name: 'bulk_update_issues',
+      title: 'Bulk update issues',
+      description:
+        'Update multiple issues at once (up to 50). Changes state, assignee, labels, priority, sprint (cycle) or project across all issues in one atomic operation.',
+      readOnly: false,
+      inputSchema: {
+        issues: z
+          .array(issueRef)
+          .min(1)
+          .max(50)
+          .describe('List of issue identifiers like "ENG-42" or ids (maximum 50).'),
+        patch: z.object({
+          state: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('Workflow state name or id on the issues team.'),
+          priority: priorityRef.optional(),
+          assignee: z
+            .string()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe('Assignee name, handle, email, id, "me", or null to unassign.'),
+          project: z
+            .string()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe('Project name, slug, id or null to remove.'),
+          cycle: z
+            .string()
+            .min(1)
+            .nullable()
+            .optional()
+            .describe('Sprint name, number, id or null to remove.'),
+          labels: labelsRef.optional(),
+        }),
+      },
+    },
+    async (args) => {
+      const resolvedIssues: IssueRow[] = [];
+      let index = 0;
+      for (const ref of args.issues) {
+        index += 1;
+        try {
+          const issue = await getIssue(principal, ref);
+          resolvedIssues.push(issue);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw validationFailed(`Failed on item ${index} (${ref}): ${message}`);
+        }
+      }
+
+      const firstIssue = resolvedIssues[0];
+      if (firstIssue === undefined) throw validationFailed('No issues provided.');
+      const patch = await buildIssuePatch(principal, firstIssue.teamId, args.patch);
+      const result = await bulkUpdateIssues(principal, {
+        issueIds: resolvedIssues.map((issue) => issue.id),
+        patch,
+      });
+      await publish(result.actions);
+      return {
+        count: result.issues.length,
+        identifiers: result.issues.map((issue) => issue.identifier),
+        deltas: deltaViews(result.actions),
       };
     },
   );
@@ -866,7 +1059,9 @@ function registerCopyBranchName(server: McpServer, principal: Principal): void {
 
 export function registerIssueTools(server: McpServer, principal: Principal): void {
   registerCreateIssue(server, principal);
+  registerCreateSubIssues(server, principal);
   registerUpdateIssue(server, principal);
+  registerBulkUpdateIssues(server, principal);
   registerGetIssue(server, principal);
   registerSearchIssues(server, principal);
   registerListMyIssues(server, principal);
