@@ -754,6 +754,15 @@ function reconcileTracker(tracker: IssueMutationTracker): void {
   }
 }
 
+function markTrackedMutationFailed(issueId: string, sequence: number): void {
+  const tracker = mutationTrackers.get(issueId);
+  if (tracker === undefined) return;
+  const mutation = tracker.active.find((item) => item.sequence === sequence);
+  if (mutation !== undefined) mutation.status = 'failed';
+  reconcileTracker(tracker);
+  if (!hasPendingMutation(tracker)) mutationTrackers.delete(issueId);
+}
+
 function hasPendingMutation(tracker: IssueMutationTracker): boolean {
   return tracker.active.some((mutation) => mutation.status === 'pending');
 }
@@ -992,20 +1001,8 @@ export function useUpdateIssue() {
       };
     },
     onError: (error, input, context) => {
-      const tracker = mutationTrackers.get(input.issue.id);
-
-      if (tracker !== undefined && context !== undefined) {
-        const mutation = tracker.active.find((item) => item.sequence === context.sequence);
-
-        if (mutation !== undefined) {
-          mutation.status = 'failed';
-        }
-
-        reconcileTracker(tracker);
-
-        if (!hasPendingMutation(tracker)) {
-          mutationTrackers.delete(input.issue.id);
-        }
+      if (context !== undefined) {
+        markTrackedMutationFailed(input.issue.id, context.sequence);
       }
 
       const currentDetail =
