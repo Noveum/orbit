@@ -92,7 +92,7 @@ export function SprintIssues({ cycleId, sprintName, layout }: SprintIssuesProps)
         columnSource={columnSource}
         canDrag={canDrag}
         loading={issues.isPending}
-        failed={issues.isError}
+        failed={issues.isLoadingError}
         onRetry={() => {
           issues.refetch().catch(() => undefined);
         }}

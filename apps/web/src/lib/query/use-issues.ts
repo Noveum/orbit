@@ -21,10 +21,11 @@ import {
 } from '@/features/issues/use-issue-property-undo.ts';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
-  issueCacheResetGeneration,
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
+  issueQueryResetMarks,
+  issueQueryWasReset,
   issueRevisionGeneration,
   recordIssueDeletions,
   recordIssueListRevisions,
@@ -986,7 +987,7 @@ export function useUpdateIssue() {
         previousDetail,
         optimisticDetail,
         identifier: input.issue.identifier,
-        resetGeneration: issueCacheResetGeneration(client),
+        detailResetMarks: issueQueryResetMarks(client, [detailKey]),
         issueRevision: issueRevisionGeneration(client, input.issue.id),
       };
     },
@@ -1011,17 +1012,24 @@ export function useUpdateIssue() {
         context === undefined
           ? undefined
           : client.getQueryData<IssueDetail>(queryKeys.issue(context.identifier));
-      const canRestore =
+      const detailWasReset =
+        context?.previousDetail !== undefined &&
+        issueQueryWasReset(client, context.detailResetMarks, queryKeys.issue(context.identifier));
+      const serverMovedOn =
+        currentDetail !== undefined &&
+        currentDetail !== context?.optimisticDetail &&
+        currentDetail.issue.syncId > input.issue.syncId;
+      const canRestoreList =
         context !== undefined &&
-        issueCacheResetGeneration(client) === context.resetGeneration &&
-        issueRevisionGeneration(client, input.issue.id) === context.issueRevision &&
-        currentDetail === context.optimisticDetail;
-      if (canRestore) {
-        placeIssue(client, input.issue);
-        if (context.previousDetail !== undefined) {
-          client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
-        }
-      } else {
+        !serverMovedOn &&
+        issueRevisionGeneration(client, input.issue.id) === context.issueRevision;
+      const canRestoreDetail =
+        canRestoreList && !detailWasReset && currentDetail === context?.optimisticDetail;
+      if (canRestoreList) placeIssue(client, input.issue);
+      if (canRestoreDetail && context?.previousDetail !== undefined) {
+        client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+      }
+      if (!canRestoreList || (context?.previousDetail !== undefined && !canRestoreDetail)) {
         invalidateIssueCaches(client).catch(() => undefined);
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
@@ -1100,7 +1108,7 @@ interface MoveMutationContext {
   readonly lists: readonly MoveListSnapshot[];
   readonly deletionGeneration: number;
   readonly issueRevision: number;
-  readonly resetGeneration: number;
+  readonly resetMarks: ReadonlyMap<string, number>;
 }
 
 export interface IssueMoveSettlement {
@@ -1148,8 +1156,7 @@ function failedMoveRollbackFenced(
 ): boolean {
   return (
     context !== undefined &&
-    (issueCacheResetGeneration(client) !== context.resetGeneration ||
-      issueRevisionGeneration(client, input.issue.id) !== context.issueRevision)
+    issueRevisionGeneration(client, input.issue.id) !== context.issueRevision
   );
 }
 
@@ -1165,9 +1172,11 @@ async function rollbackFailedMove(
       snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
     ),
   );
+  const resetMarks = context?.resetMarks ?? new Map<string, number>();
   const current = client
     .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
-    .flatMap(([, pages]) => {
+    .flatMap(([key, pages]) => {
+      if (issueQueryWasReset(client, resetMarks, key)) return [];
       const found = issueFromPages(pages, input.issue.id);
       return found === undefined ? [] : [found];
     });
@@ -1175,6 +1184,10 @@ async function rollbackFailedMove(
   const intervening = current.some((issue) => !expected.has(issueFingerprint(issue)));
 
   for (const snapshot of lists) {
+    if (issueQueryWasReset(client, resetMarks, snapshot.key)) {
+      refreshKeys.push(snapshot.key);
+      continue;
+    }
     const pages = client.getQueryData<IssuePages>(snapshot.key);
     const found = issueFromPages(pages, input.issue.id);
     const stillOptimistic =
@@ -1239,7 +1252,10 @@ export function useMoveIssue() {
         deletionGeneration:
           moveDeletionGenerations.get(input) ?? issueDeletionGeneration(client, input.issue.id),
         issueRevision: issueRevisionGeneration(client, input.issue.id),
-        resetGeneration: issueCacheResetGeneration(client),
+        resetMarks: issueQueryResetMarks(
+          client,
+          before.map(([key]) => key),
+        ),
       };
     },
     onError: async (error, input, context) => {
@@ -1321,7 +1337,7 @@ interface DeleteListSnapshot {
 interface DeleteMutationContext {
   readonly lists: readonly DeleteListSnapshot[];
   readonly issueRevisions: ReadonlyMap<string, number>;
-  readonly resetGeneration: number;
+  readonly resetMarks: ReadonlyMap<string, number>;
 }
 
 function dropFromIssueLists(client: QueryClient, removed: ReadonlySet<string>): void {
@@ -1455,6 +1471,7 @@ function restoreIssueList(
 
 function restoreIssueLists(client: QueryClient, context: DeleteMutationContext): void {
   for (const snapshot of context.lists) {
+    if (issueQueryWasReset(client, context.resetMarks, snapshot.key)) continue;
     client.setQueryData<IssuePages>(snapshot.key, (current) =>
       restoreIssueList(client, context, snapshot, current),
     );
@@ -1508,7 +1525,10 @@ export function useDeleteIssues() {
         issueRevisions: new Map(
           [...changedIds].map((issueId) => [issueId, issueRevisionGeneration(client, issueId)]),
         ),
-        resetGeneration: issueCacheResetGeneration(client),
+        resetMarks: issueQueryResetMarks(
+          client,
+          lists.map((snapshot) => snapshot.key),
+        ),
       };
     },
     onError: async (error, _issues, context) => {
@@ -1519,8 +1539,10 @@ export function useDeleteIssues() {
         await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
       }
       const resetChanged =
-        context !== undefined && issueCacheResetGeneration(client) !== context.resetGeneration;
-      if (context !== undefined && !resetChanged) restoreIssueLists(client, context);
+        context?.lists.some((snapshot) =>
+          issueQueryWasReset(client, context.resetMarks, snapshot.key),
+        ) ?? false;
+      if (context !== undefined) restoreIssueLists(client, context);
       if (resetChanged) await invalidateIssueCaches(client);
       if (partiallyDeleted) {
         dropFromIssueLists(client, new Set(error.gone));

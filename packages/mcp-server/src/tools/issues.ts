@@ -793,6 +793,7 @@ function registerAttachFile(server: McpServer, principal: Principal): void {
       description:
         'Upload a file and attach it to an issue, a comment, a doc or a project. Returns a url you can put in markdown, for example ![name](url).',
       readOnly: false,
+      openWorld: true,
       inputSchema: {
         parentType: z
           .enum(['issue', 'comment', 'doc', 'project'])
