@@ -1,0 +1,20 @@
+[Unit]
+Description=Orbit Database and Object Storage Backup
+Documentation=https://github.com/Noveum/orbit
+After=network.target
+
+[Service]
+Type=oneshot
+User=orbit
+Group=orbit
+WorkingDirectory=/opt/orbit
+EnvironmentFile=/etc/orbit/orbit.env
+ExecStart=/usr/local/bin/bun run backup:create --destination /var/backups/orbit
+StandardOutput=journal
+StandardError=journal
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/orbit
+
+[Install]
+WantedBy=multi-user.target

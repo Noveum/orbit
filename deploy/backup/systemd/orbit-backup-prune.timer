@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Orbit Backup Retention and Pruning Timer
+Documentation=https://github.com/Noveum/orbit
+Requires=orbit-backup-prune.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

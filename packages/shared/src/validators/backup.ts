@@ -40,6 +40,12 @@ export const backupDatabaseDumpSchema = z.object({
     .length(64)
     .regex(/^[0-9a-f]{64}$/i),
   bytes: z.number().int().nonnegative(),
+  plaintextSha256: z
+    .string()
+    .length(64)
+    .regex(/^[0-9a-f]{64}$/i)
+    .optional(),
+  plaintextBytes: z.number().int().nonnegative().optional(),
 });
 
 export type BackupDatabaseDump = z.infer<typeof backupDatabaseDumpSchema>;
@@ -52,6 +58,12 @@ export const backupObjectEntrySchema = z.object({
     .regex(/^[0-9a-f]{64}$/i),
   bytes: z.number().int().nonnegative(),
   contentType: z.string().min(1),
+  plaintextSha256: z
+    .string()
+    .length(64)
+    .regex(/^[0-9a-f]{64}$/i)
+    .optional(),
+  plaintextBytes: z.number().int().nonnegative().optional(),
 });
 
 export type BackupObjectEntry = z.infer<typeof backupObjectEntrySchema>;
@@ -69,6 +81,9 @@ export const backupEncryptionSchema = z.object({
   enabled: z.boolean(),
   algorithm: z.enum(['aes-256-gcm']).optional(),
   keyId: z.string().optional(),
+  encryptedDek: z.string().optional(),
+  dekIv: z.string().optional(),
+  dekTag: z.string().optional(),
 });
 
 export type BackupEncryption = z.infer<typeof backupEncryptionSchema>;
@@ -212,3 +227,19 @@ export const restoreRecoveryStateSchema = z.object({
 });
 
 export type RestoreRecoveryState = z.infer<typeof restoreRecoveryStateSchema>;
+
+export const backupPruneResultSchema = z.object({
+  evaluatedCount: z.number().int().nonnegative(),
+  deletedBackups: z.array(z.string()),
+  retainedBackups: z.array(z.string()),
+  pinnedBackups: z.array(z.string()),
+  deletedIncomplete: z.array(z.string()),
+  freedBytes: z.number().int().nonnegative(),
+  totalRemainingBytes: z.number().int().nonnegative(),
+  newestGoodBackupId: z.string().optional(),
+  isStale: z.boolean(),
+  staleAgeHours: z.number().nonnegative().optional(),
+  dryRun: z.boolean(),
+});
+
+export type BackupPruneResult = z.infer<typeof backupPruneResultSchema>;

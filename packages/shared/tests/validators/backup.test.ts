@@ -165,3 +165,53 @@ describe('configuration safety and extraction', () => {
     ).toThrow(DomainError);
   });
 });
+
+describe('backupEncryptionSchema', () => {
+  it('accepts enabled encryption with envelope parameters', async () => {
+    const { backupEncryptionSchema } = await import('../../src/validators/backup.ts');
+    const parsed = backupEncryptionSchema.parse({
+      enabled: true,
+      algorithm: 'aes-256-gcm',
+      keyId: 'vault-2026',
+      encryptedDek: 'base64ciphertext',
+      dekIv: 'base64iv',
+      dekTag: 'base64tag',
+    });
+    expect(parsed.enabled).toBe(true);
+    expect(parsed.algorithm).toBe('aes-256-gcm');
+    expect(parsed.keyId).toBe('vault-2026');
+  });
+
+  it('rejects unsupported encryption algorithm', async () => {
+    const { backupEncryptionSchema } = await import('../../src/validators/backup.ts');
+    expect(() =>
+      backupEncryptionSchema.parse({
+        enabled: true,
+        algorithm: 'des-ede3-cbc',
+      }),
+    ).toThrow();
+  });
+});
+
+describe('backupPruneResultSchema', () => {
+  it('validates a valid prune result object', async () => {
+    const { backupPruneResultSchema } = await import('../../src/validators/backup.ts');
+    const valid = {
+      evaluatedCount: 5,
+      deletedBackups: ['b1', 'b2'],
+      retainedBackups: ['b3', 'b4', 'b5'],
+      pinnedBackups: ['b5'],
+      deletedIncomplete: ['inc1'],
+      freedBytes: 1048576,
+      totalRemainingBytes: 2097152,
+      newestGoodBackupId: 'b5',
+      isStale: false,
+      staleAgeHours: 2.5,
+      dryRun: false,
+    };
+    const parsed = backupPruneResultSchema.parse(valid);
+    expect(parsed.evaluatedCount).toBe(5);
+    expect(parsed.retainedBackups.length).toBe(3);
+    expect(parsed.isStale).toBe(false);
+  });
+});
