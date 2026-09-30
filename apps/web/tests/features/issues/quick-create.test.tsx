@@ -11,6 +11,7 @@ await restoreModulesAfterThisFile([
   '@/features/issues/workspace-provider.tsx',
   '@/lib/query/use-issues.ts',
   '@/lib/query/use-duplicate-issues.ts',
+  '@/features/issues/issue-detail.tsx',
 ]);
 
 const created = mock((_input: Record<string, unknown>) => undefined);
@@ -70,6 +71,12 @@ let workspace: WorkspaceData;
 mock.module('@/features/issues/workspace-provider.tsx', () => ({
   ...workspaceProvider,
   useWorkspace: () => workspace,
+}));
+
+mock.module('@/features/issues/issue-detail.tsx', () => ({
+  IssueDetailView: ({ identifier }: { readonly identifier: string }) => (
+    <span data-testid="preview-detail">{identifier}</span>
+  ),
 }));
 
 const { QuickCreateDialog } = await import('@/features/issues/quick-create.tsx');
@@ -182,6 +189,9 @@ function DialogHarness({
       <button type="button" onClick={() => setOpen(true)}>
         Reopen create
       </button>
+      <article data-testid="issue-card-ENG-2">
+        <button type="button">Another standup task</button>
+      </article>
       <QuickCreateDialog
         open={open}
         onOpenChange={(next) => {
@@ -1064,6 +1074,34 @@ describe('story points on a new issue', () => {
 });
 
 describe('the property chips on the new issue dialog', () => {
+  it('opens a similar task in the sidebar and keeps the draft while inspecting board cards', async () => {
+    workspace = buildWorkspace();
+    mockDuplicates = [
+      {
+        id: 'iss_99',
+        identifier: 'ENG-99',
+        title: 'Existing duplicate bug',
+        state: { id: 'st_1', name: 'Todo', category: 'unstarted', color: '#888' },
+        similarity: 0.9,
+      },
+    ];
+    open();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.type(screen.getByTestId('quick-create-title'), 'Duplicate found');
+    await user.click(screen.getByRole('button', { name: /No priority/ }));
+    await user.click(await screen.findByText('High'));
+    await user.click(screen.getByRole('link', { name: /Existing duplicate bug/ }));
+    expect(await screen.findByTestId('issue-peek')).toHaveAttribute('aria-label', 'Peek ENG-99');
+    expect(screen.getByTestId('preview-detail')).toHaveTextContent('ENG-99');
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Another standup task' }));
+    await waitFor(() => expect(screen.queryByTestId('issue-peek')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-title')).toHaveValue('Duplicate found');
+    expect(screen.getByRole('button', { name: /High/ })).toBeInTheDocument();
+    expect(created).not.toHaveBeenCalled();
+  });
+
   it('gives every chip a glyph, so the row does not read as one icon and six words', () => {
     workspace = buildWorkspace();
     open();

@@ -23,12 +23,21 @@ import {
 } from '@/features/docs/editor/rich-text-editor.tsx';
 import { assertUploadable, uploadAttachment } from '@/features/docs/upload.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
-import type { Cycle, Issue, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
+import type {
+  Cycle,
+  DuplicateIssueMatch,
+  Issue,
+  Member,
+  Project,
+  Team,
+  WorkflowState,
+} from '@/lib/query/schemas.ts';
 import { useDuplicateIssues } from '@/lib/query/use-duplicate-issues.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { sprintOptions } from '@/lib/sprint-options.ts';
 import { DuplicateSuggestions } from './duplicate-suggestions.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
+import { IssuePeek } from './issue-peek.tsx';
 import {
   attachPending,
   holdAttachment,
@@ -72,6 +81,10 @@ function initialState(
 
 function initialAssignee(members: readonly Member[], defaultAssigneeId: string | null | undefined) {
   return members.find((member) => member.id === defaultAssigneeId)?.id ?? null;
+}
+
+function initialTeam(teams: readonly Team[], defaultTeamId: string | null) {
+  return teams.find((team) => team.id === defaultTeamId)?.id ?? teams[0]?.id ?? null;
 }
 
 function compatibleTeamId(
@@ -187,10 +200,7 @@ export function QuickCreateDialog({
 }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
-  const firstTeamId =
-    defaultTeamId !== null && teams.some((team) => team.id === defaultTeamId)
-      ? defaultTeamId
-      : (teams[0]?.id ?? null);
+  const firstTeamId = initialTeam(teams, defaultTeamId);
   const [teamId, setTeamId] = useState<string | null>(firstTeamId);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -206,6 +216,7 @@ export function QuickCreateDialog({
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
   const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
+  const [preview, setPreview] = useState<DuplicateIssueMatch | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const draftInitialized = useRef(false);
@@ -235,6 +246,10 @@ export function QuickCreateDialog({
   useEffect(() => {
     return () => releasePending(heldRef.current);
   }, []);
+
+  useEffect(() => {
+    if (open) setPreview(null);
+  }, [open]);
 
   useEffect(() => {
     if (!open || draftInitialized.current) return;
@@ -398,6 +413,9 @@ export function QuickCreateDialog({
       <DialogContent
         data-testid="quick-create"
         className="flex max-w-xl flex-col overflow-y-hidden"
+        onCloseAutoFocus={(event) => {
+          if (preview !== null) event.preventDefault();
+        }}
       >
         <DialogTitle className="sr-only">Create issue</DialogTitle>
         <p
@@ -447,6 +465,10 @@ export function QuickCreateDialog({
               <DuplicateSuggestions
                 duplicates={duplicates}
                 onDismiss={() => setDismissedDuplicates(true)}
+                onOpen={(issue) => {
+                  setPreview(issue);
+                  onOpenChange(false);
+                }}
               />
             ) : null}
             <RichTextEditor
@@ -657,6 +679,13 @@ export function QuickCreateDialog({
           </div>
         </form>
       </DialogContent>
+      <IssuePeek
+        issueId={preview?.id ?? null}
+        issue={undefined}
+        preview={preview}
+        retainOnIssueInteraction={false}
+        onClose={() => setPreview(null)}
+      />
     </Dialog>
   );
 }
