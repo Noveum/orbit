@@ -399,6 +399,29 @@ async function assertBulkLabelsTeam(
   }
 }
 
+async function assertBulkProjectTeam(
+  issues: readonly IssueRow[],
+  refs: readonly string[],
+  projectId: string,
+): Promise<void> {
+  const teams = await db
+    .select({ teamId: schema.projectTeam.teamId })
+    .from(schema.projectTeam)
+    .where(eq(schema.projectTeam.projectId, projectId));
+  const teamIds = teams.map((t) => t.teamId);
+  if (teamIds.length === 0) return;
+
+  for (let index = 0; index < issues.length; index += 1) {
+    const issue = issues[index];
+    if (issue !== undefined && !teamIds.includes(issue.teamId)) {
+      const ref = refs[index] ?? issue.identifier;
+      throw validationFailed(
+        `Failed on item ${index + 1} (${ref}): That project belongs to another team.`,
+      );
+    }
+  }
+}
+
 function registerBulkUpdateIssues(server: McpServer, principal: Principal): void {
   defineTool(
     server,
@@ -450,6 +473,11 @@ function registerBulkUpdateIssues(server: McpServer, principal: Principal): void
 
       if (args.patch.state !== undefined) {
         assertBulkStateTeam(resolvedIssues, args.issues, firstIssue.teamId);
+      }
+
+      if (args.patch.project !== undefined && args.patch.project !== null) {
+        const project = await resolveProject(principal, args.patch.project);
+        await assertBulkProjectTeam(resolvedIssues, args.issues, project.id);
       }
 
       const patch = await buildIssuePatch(principal, firstIssue.teamId, args.patch);

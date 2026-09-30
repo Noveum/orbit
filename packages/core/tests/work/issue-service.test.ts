@@ -38,6 +38,7 @@ import {
 } from '../../src/work/issue-service.ts';
 import { createMilestone } from '../../src/work/milestone-service.ts';
 import { createProject } from '../../src/work/project-service.ts';
+import { raceAcrossCycleLock } from '../support/interleave.ts';
 
 let workspace: Workspace;
 
@@ -1795,37 +1796,34 @@ describe('createSubIssues atomicity and concurrency', () => {
   });
 
   it('does not deadlock against moveIssue into the same team under concurrency', async () => {
-    const { team: otherTeam } = await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
     const { cycle } = await createCycle(workspace.admin, {
       startsAt: new Date('2030-05-01').toISOString(),
       endsAt: new Date('2030-05-15').toISOString(),
     });
-    const targetState = stateNamed(workspace, 'Todo');
     const parent = await newIssue('Parent in sprint', { cycleId: cycle.id });
 
-    for (let round = 0; round < 5; round += 1) {
-      const toMove = await createIssue(workspace.admin, {
-        teamId: otherTeam.id,
-        title: `To move ${round}`,
-      });
-
-      const [subResult, moveResult] = await Promise.all([
+    const outcome = await raceAcrossCycleLock({
+      organizationId: workspace.organizationId,
+      race: () =>
         createSubIssues(workspace.admin, {
           parentId: parent.id,
           issues: [
-            { title: `Sub A ${round}`, cycleId: cycle.id },
-            { title: `Sub B ${round}`, cycleId: cycle.id },
+            { title: 'Sub A', cycleId: cycle.id },
+            { title: 'Sub B', cycleId: cycle.id },
           ],
         }),
-        moveIssue(workspace.admin, toMove.issue.id, {
-          teamId: workspace.teamId,
-          stateId: targetState.id,
-          cycleId: cycle.id,
-        }),
-      ]);
+      interlope: async (client) => {
+        await client`
+          update team
+          set issue_counter = issue_counter + 1
+          where id = ${workspace.teamId}
+        `;
+      },
+    });
 
-      expect(subResult.issues).toHaveLength(2);
-      expect(moveResult.issue.teamId).toBe(workspace.teamId);
+    expect(outcome.status).toBe('fulfilled');
+    if (outcome.status === 'fulfilled') {
+      expect(outcome.value.issues).toHaveLength(2);
     }
   });
 });

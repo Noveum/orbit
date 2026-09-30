@@ -12,19 +12,15 @@ import {
 
 let workspace: TestWorkspace;
 let admin: TestClient;
-let guest: TestClient;
 
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
   admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
-  const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(await mintToken(workspace.organizationId, guestMember.user.id));
 });
 
 afterAll(async () => {
   await admin.close();
-  await guest.close();
 });
 
 describe('create_sub_issues', () => {
@@ -55,12 +51,14 @@ describe('create_sub_issues', () => {
         identifier: schema.issue.identifier,
         parentId: schema.issue.parentId,
         number: schema.issue.number,
+        title: schema.issue.title,
       })
       .from(schema.issue)
       .where(eq(schema.issue.parentId, parent.id))
       .orderBy(asc(schema.issue.number));
     expect(rows).toHaveLength(3);
     expect(identifiers).toEqual(rows.map((r) => r.identifier));
+    expect(rows.map((r) => r.title)).toEqual(['Sub task one', 'Sub task two', 'Sub task three']);
   });
 
   it('fails atomically when the seventh item is invalid and writes nothing', async () => {
@@ -179,6 +177,34 @@ describe('bulk_update_issues', () => {
     const failed = await admin.call('bulk_update_issues', {
       issues: [issue1.identifier, issue2.identifier],
       patch: { state: 'Done' },
+    });
+
+    expect(failed.isError).toBe(true);
+    const text = (failed.content[0] as { text: string }).text;
+    expect(text).toContain('Failed on item 2');
+    expect(text).toContain(issue2.identifier);
+  });
+
+  it('refuses cross-team bulk update when setting a team-scoped project and reports the item', async () => {
+    const otherTeam = await admin.result('create_team', { name: 'Other Team 2', key: 'OT2' });
+    const otherKey = (otherTeam['team'] as { key: string }).key;
+
+    const projectRes = await admin.result('create_project', {
+      name: 'Team 1 Project',
+      teams: [workspace.teamKey],
+    });
+    const projectName = (projectRes['project'] as { name: string }).name;
+
+    const issue1 = (
+      await admin.result('create_issue', { team: workspace.teamKey, title: 'Team 1 issue' })
+    )['issue'] as { identifier: string };
+    const issue2 = (await admin.result('create_issue', { team: otherKey, title: 'Team 2 issue' }))[
+      'issue'
+    ] as { identifier: string };
+
+    const failed = await admin.call('bulk_update_issues', {
+      issues: [issue1.identifier, issue2.identifier],
+      patch: { project: projectName },
     });
 
     expect(failed.isError).toBe(true);
