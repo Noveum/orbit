@@ -183,6 +183,15 @@ describe('bulk_update_issues', () => {
     const text = (failed.content[0] as { text: string }).text;
     expect(text).toContain('Failed on item 2');
     expect(text).toContain(issue2.identifier);
+
+    const read1 = (await admin.result('get_issue', { issue: issue1.identifier }))['issue'] as {
+      state: string;
+    };
+    const read2 = (await admin.result('get_issue', { issue: issue2.identifier }))['issue'] as {
+      state: string;
+    };
+    expect(read1.state).not.toBe('Done');
+    expect(read2.state).not.toBe('Done');
   });
 
   it('refuses cross-team bulk update when setting a team-scoped project and reports the item', async () => {
@@ -211,6 +220,15 @@ describe('bulk_update_issues', () => {
     const text = (failed.content[0] as { text: string }).text;
     expect(text).toContain('Failed on item 2');
     expect(text).toContain(issue2.identifier);
+
+    const read1 = (await admin.result('get_issue', { issue: issue1.identifier }))['issue'] as {
+      projectId: string | null;
+    };
+    const read2 = (await admin.result('get_issue', { issue: issue2.identifier }))['issue'] as {
+      projectId: string | null;
+    };
+    expect(read1.projectId).toBeNull();
+    expect(read2.projectId).toBeNull();
   });
 
   it('refuses more than 50 issues in bulk update', async () => {
