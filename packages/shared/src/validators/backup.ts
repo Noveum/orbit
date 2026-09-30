@@ -234,6 +234,7 @@ export const backupPruneResultSchema = z.object({
   retainedBackups: z.array(z.string()),
   pinnedBackups: z.array(z.string()),
   deletedIncomplete: z.array(z.string()),
+  failedDeletions: z.array(z.string()).default([]),
   freedBytes: z.number().int().nonnegative(),
   totalRemainingBytes: z.number().int().nonnegative(),
   newestGoodBackupId: z.string().optional(),

@@ -30,9 +30,9 @@ describe('backup encryption', () => {
     expect(parsed.toString('base64')).toBe(base64Key);
   });
 
-  it('derives uniform 32-byte keys from arbitrary passphrases using sha256', () => {
-    const parsed = parseEncryptionKey('my-operator-secret-passphrase');
-    expect(parsed.length).toBe(32);
+  it('rejects keys that are not valid 32-byte hex or base64', () => {
+    expect(() => parseEncryptionKey('my-operator-secret-passphrase')).toThrow();
+    expect(() => parseEncryptionKey('too-short')).toThrow();
   });
 
   it('rejects empty or whitespace encryption keys', () => {
@@ -66,7 +66,7 @@ describe('backup encryption', () => {
 
   it('resolves master key from secret command helper', async () => {
     const resolved = await resolveMasterEncryptionKey({
-      command: `echo ${hexKey}`,
+      command: `"${process.execPath}" -e "process.stdout.write('${hexKey}')"`,
     });
     expect(resolved.key.toString('hex')).toBe(hexKey);
   });

@@ -451,4 +451,29 @@ describe('createBackup', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('fails fast on invalid encryption key and cleans workingDir without leaving incomplete backup', async () => {
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-backup-enc-fail-'));
+    const driver = createMockDriver(new Map());
+
+    try {
+      await expect(
+        createBackup({
+          destinationDir: tempDir,
+          databaseUrl,
+          storageDriver: driver,
+          pgDumpPath: resolvedPgDump,
+          encrypt: true,
+          encryptionKey: 'invalid-too-short-key',
+        }),
+      ).rejects.toThrow();
+
+      const files = await readdir(tempDir);
+      expect(files.filter((f) => f.includes('incomplete')).length).toBe(0);
+      expect(files.filter((f) => f.includes('tmp')).length).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

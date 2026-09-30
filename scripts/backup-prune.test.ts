@@ -46,9 +46,21 @@ describe('backup prune CLI args', () => {
     expect(args.json).toBe(true);
   });
 
-  it('parses --no-clean-incomplete flag', () => {
-    const args = parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--no-clean-incomplete']);
+  it('parses --no-clean-incomplete and --incomplete-max-age-hours flag', () => {
+    const args = parsePruneArgs([
+      'bun',
+      'scripts/backup/prune.ts',
+      '--no-clean-incomplete',
+      '--incomplete-max-age-hours=48',
+    ]);
     expect(args.cleanIncomplete).toBe(false);
+    expect(args.incompleteMaxAgeHours).toBe(48);
+  });
+
+  it('rejects invalid or negative integer flag values', () => {
+    expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--keep-count=10x'])).toThrow();
+    expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--keep-count=-5'])).toThrow();
+    expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--keep-days=1.5'])).toThrow();
   });
 
   it('executes prune CLI with dry-run and json flags successfully', async () => {

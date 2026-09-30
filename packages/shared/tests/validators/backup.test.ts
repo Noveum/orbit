@@ -212,6 +212,7 @@ describe('backupPruneResultSchema', () => {
     const parsed = backupPruneResultSchema.parse(valid);
     expect(parsed.evaluatedCount).toBe(5);
     expect(parsed.retainedBackups.length).toBe(3);
+    expect(parsed.failedDeletions).toEqual([]);
     expect(parsed.isStale).toBe(false);
   });
 });

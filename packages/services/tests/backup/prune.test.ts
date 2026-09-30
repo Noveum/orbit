@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseByteSize, pruneBackups } from '../../src/backup/prune.ts';
@@ -84,6 +84,7 @@ describe('backup retention and pruning', () => {
       const result = await pruneBackups({
         destinationDir: tempDir,
         cleanIncomplete: true,
+        incompleteMaxAgeHours: 0,
       });
 
       expect(result.deletedIncomplete.length).toBe(2);
@@ -91,6 +92,51 @@ describe('backup retention and pruning', () => {
       expect(result.deletedIncomplete).toContain('orbit-backup-2026-09-02T12-00-00Z.tmp');
       expect(result.retainedBackups).toContain('orbit-backup-good');
       expect(result.freedBytes).toBeGreaterThanOrEqual(7000);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves recent temporary directories by default unless age threshold is reached', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-tmp-safe-'));
+    try {
+      const freshTmpDir = join(tempDir, 'orbit-backup-2026-09-02T12-00-00Z.tmp');
+      await mkdir(freshTmpDir, { recursive: true });
+      await writeFile(join(freshTmpDir, 'partial'), Buffer.alloc(1000));
+
+      const goodDate = new Date().toISOString();
+      await createMockBackup(tempDir, 'orbit-backup-good', goodDate);
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        cleanIncomplete: true,
+      });
+
+      expect(result.deletedIncomplete).not.toContain('orbit-backup-2026-09-02T12-00-00Z.tmp');
+      expect(await stat(freshTmpDir)).not.toBeNull();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves candidate directories with unparseable manifests instead of deleting them', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-unparseable-'));
+    try {
+      const corruptDir = join(tempDir, 'orbit-backup-corrupted');
+      await mkdir(corruptDir, { recursive: true });
+      await writeFile(join(corruptDir, 'manifest.json'), '{ invalid json');
+
+      const goodDate = new Date().toISOString();
+      await createMockBackup(tempDir, 'orbit-backup-good', goodDate);
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        cleanIncomplete: true,
+      });
+
+      expect(result.deletedBackups).not.toContain('orbit-backup-corrupted');
+      expect(result.deletedIncomplete).not.toContain('orbit-backup-corrupted');
+      expect(await stat(corruptDir)).not.toBeNull();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

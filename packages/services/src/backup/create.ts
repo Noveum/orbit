@@ -80,10 +80,9 @@ async function processPayloadEncryption(
   workingDir: string,
   dumpResult: Awaited<ReturnType<typeof dumpDatabase>>,
   storageResult: Awaited<ReturnType<typeof captureStorageObjects>>,
-  options: BackupCreateOptions,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  masterKey: Awaited<ReturnType<typeof resolveMasterEncryptionKey>> | undefined,
 ): Promise<ProcessedPayload> {
-  if (!isEncryptionRequested(options, env)) {
+  if (masterKey === undefined) {
     return {
       databaseDumpFile: dumpResult.file,
       databaseDumpSha256: dumpResult.sha256,
@@ -101,14 +100,6 @@ async function processPayloadEncryption(
       },
     };
   }
-
-  const masterKey = await resolveMasterEncryptionKey({
-    key: options.encryptionKey,
-    keyFile: options.encryptionKeyFile,
-    command: options.encryptionCommand,
-    keyId: options.encryptionKeyId,
-    env,
-  });
 
   const { dek, envelope } = createEnvelopeDataKey(masterKey.key, masterKey.keyId);
 
@@ -148,6 +139,18 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
   const destinationDir = options.destinationDir;
   if (destinationDir.length === 0) {
     throw validationFailed('Destination directory path must not be empty.');
+  }
+
+  const encryptionRequested = isEncryptionRequested(options, env);
+  let masterKey: Awaited<ReturnType<typeof resolveMasterEncryptionKey>> | undefined;
+  if (encryptionRequested) {
+    masterKey = await resolveMasterEncryptionKey({
+      key: options.encryptionKey,
+      keyFile: options.encryptionKeyFile,
+      command: options.encryptionCommand,
+      keyId: options.encryptionKeyId,
+      env,
+    });
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -196,46 +199,10 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
       workingDir,
       dumpResult,
       storageResult,
-      options,
-      env,
+      masterKey,
     );
 
-    const orbitVersion = options.orbitVersion ?? env['ORBIT_VERSION'] ?? '0.1.0';
-    const sourceRevision =
-      options.sourceRevision ?? env['SOURCE_REVISION'] ?? env['VERCEL_GIT_COMMIT_SHA'] ?? 'unknown';
-    const imageDigests = options.imageDigests ?? {};
-
-    const rawManifest: BackupManifest = {
-      formatVersion: CURRENT_BACKUP_FORMAT_VERSION,
-      orbitVersion,
-      sourceRevision,
-      imageDigests,
-      databaseVersion: dumpResult.databaseVersion,
-      createdAt: new Date().toISOString(),
-      migrationLedger: [...dumpResult.migrationLedger],
-      configuration,
-      checksums: {
-        databaseDump: {
-          file: processed.databaseDumpFile,
-          sha256: processed.databaseDumpSha256,
-          bytes: processed.databaseDumpBytes,
-          ...(processed.databasePlaintextSha256 === undefined
-            ? {}
-            : { plaintextSha256: processed.databasePlaintextSha256 }),
-          ...(processed.databasePlaintextBytes === undefined
-            ? {}
-            : { plaintextBytes: processed.databasePlaintextBytes }),
-        },
-        objects: processed.objectsChecksums,
-      },
-      counts: dumpResult.counts,
-      encryption: processed.encryptionMetadata,
-      metadata: {
-        ...(options.customMetadata ?? {}),
-        generator: 'orbit-backup-create',
-        boundedConsistencyModel: 'postgres-snapshot-coordinated-object-capture',
-      },
-    };
+    const rawManifest = buildRawManifest(options, env, dumpResult, processed, configuration);
 
     const manifest = backupManifestSchema.parse(rawManifest);
     await writeFile(join(workingDir, 'manifest.json'), JSON.stringify(manifest, null, 2), {
@@ -251,11 +218,68 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
       manifest,
     };
   } catch (error) {
-    try {
-      await rename(workingDir, incompleteDir);
-    } catch {
-      await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
-    }
+    await cleanupFailedWorkingDir(workingDir, incompleteDir, encryptionRequested);
     throw error;
+  }
+}
+
+function buildRawManifest(
+  options: BackupCreateOptions,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  dumpResult: Awaited<ReturnType<typeof dumpDatabase>>,
+  processed: Awaited<ReturnType<typeof processPayloadEncryption>>,
+  configuration: Record<string, string>,
+): BackupManifest {
+  const orbitVersion = options.orbitVersion ?? env['ORBIT_VERSION'] ?? '0.1.0';
+  const sourceRevision =
+    options.sourceRevision ?? env['SOURCE_REVISION'] ?? env['VERCEL_GIT_COMMIT_SHA'] ?? 'unknown';
+  const imageDigests = options.imageDigests ?? {};
+
+  return {
+    formatVersion: CURRENT_BACKUP_FORMAT_VERSION,
+    orbitVersion,
+    sourceRevision,
+    imageDigests,
+    databaseVersion: dumpResult.databaseVersion,
+    createdAt: new Date().toISOString(),
+    migrationLedger: [...dumpResult.migrationLedger],
+    configuration,
+    checksums: {
+      databaseDump: {
+        file: processed.databaseDumpFile,
+        sha256: processed.databaseDumpSha256,
+        bytes: processed.databaseDumpBytes,
+        ...(processed.databasePlaintextSha256 === undefined
+          ? {}
+          : { plaintextSha256: processed.databasePlaintextSha256 }),
+        ...(processed.databasePlaintextBytes === undefined
+          ? {}
+          : { plaintextBytes: processed.databasePlaintextBytes }),
+      },
+      objects: processed.objectsChecksums,
+    },
+    counts: dumpResult.counts,
+    encryption: processed.encryptionMetadata,
+    metadata: {
+      ...(options.customMetadata ?? {}),
+      generator: 'orbit-backup-create',
+      boundedConsistencyModel: 'postgres-snapshot-coordinated-object-capture',
+    },
+  };
+}
+
+async function cleanupFailedWorkingDir(
+  workingDir: string,
+  incompleteDir: string,
+  encryptionRequested: boolean,
+): Promise<void> {
+  if (encryptionRequested) {
+    await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
+    return;
+  }
+  try {
+    await rename(workingDir, incompleteDir);
+  } catch {
+    await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
