@@ -1,7 +1,9 @@
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { open, readFile, rm, writeFile } from 'node:fs/promises';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { validationFailed } from '@orbit/shared';
 
 export const ENCRYPTION_MAGIC = Buffer.from('ORBITENC', 'utf8');
@@ -38,6 +40,47 @@ export interface DecryptFileResult {
   readonly sha256: string;
 }
 
+function tokenizeCommand(raw: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inQuote: '"' | "'" | null = null;
+
+  for (const char of raw) {
+    if (inQuote !== null) {
+      if (char === inQuote) {
+        inQuote = null;
+      } else {
+        current += char;
+      }
+    } else if (char === '"' || char === "'") {
+      inQuote = char;
+    } else if (char === ' ' || char === '\t') {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
+function parseCommand(raw: string): { executable: string; args: string[] } {
+  const tokens = tokenizeCommand(raw);
+  const [executable, ...args] = tokens;
+  if (executable === undefined || executable.length === 0) {
+    throw validationFailed('Secret source helper command is empty.');
+  }
+
+  return { executable, args };
+}
+
 export function parseEncryptionKey(raw: string): Buffer {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
@@ -55,7 +98,41 @@ export function parseEncryptionKey(raw: string): Buffer {
     }
   }
 
-  return createHash('sha256').update(trimmed, 'utf8').digest();
+  throw validationFailed(
+    'Encryption key must be a valid 32-byte key encoded as 64-character hex or 44-character base64.',
+  );
+}
+
+async function resolveFileKey(filePath: string): Promise<Buffer> {
+  try {
+    const fileContent = await readFile(filePath.trim(), 'utf8');
+    return parseEncryptionKey(fileContent);
+  } catch (error) {
+    throw validationFailed(`Failed to read backup encryption key file: ${filePath}`, {
+      cause: error,
+    });
+  }
+}
+
+function resolveCommandKey(command: string): Buffer {
+  const { executable, args } = parseCommand(command.trim());
+  try {
+    const result = spawnSync(executable, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10000,
+      shell: false,
+    });
+    if (result.error !== undefined || result.status !== 0) {
+      throw validationFailed('Secret source helper command for backup encryption failed.');
+    }
+    return parseEncryptionKey(result.stdout ?? '');
+  } catch (error) {
+    if (error instanceof Error && error.name === 'DomainError') {
+      throw error;
+    }
+    throw validationFailed('Secret source helper command for backup encryption failed.');
+  }
 }
 
 export async function resolveMasterEncryptionKey(options: SecretSourceOptions): Promise<{
@@ -76,28 +153,12 @@ export async function resolveMasterEncryptionKey(options: SecretSourceOptions): 
 
   const keyFilePath = options.keyFile ?? env['ORBIT_BACKUP_ENCRYPTION_KEY_FILE'];
   if (keyFilePath !== undefined && keyFilePath.trim().length > 0) {
-    try {
-      const fileContent = await readFile(keyFilePath.trim(), 'utf8');
-      return { key: parseEncryptionKey(fileContent), keyId };
-    } catch (error) {
-      throw validationFailed(`Failed to read backup encryption key file: ${keyFilePath}`, {
-        cause: error,
-      });
-    }
+    return { key: await resolveFileKey(keyFilePath), keyId };
   }
 
   const command = options.command ?? env['ORBIT_BACKUP_ENCRYPTION_COMMAND'];
   if (command !== undefined && command.trim().length > 0) {
-    try {
-      const stdout = execSync(command.trim(), {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10000,
-      });
-      return { key: parseEncryptionKey(stdout), keyId };
-    } catch {
-      throw validationFailed('Secret source helper command for backup encryption failed.');
-    }
+    return { key: resolveCommandKey(command), keyId };
   }
 
   throw validationFailed(
@@ -171,54 +232,51 @@ export async function encryptFile(
   let ciphertextBytes = 0;
 
   const header = Buffer.concat([ENCRYPTION_MAGIC, iv]);
-  ciphertextHash.update(header);
-  outputStream.write(header);
+  let headerPushed = false;
+
+  const transform = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (!headerPushed) {
+        headerPushed = true;
+        ciphertextHash.update(header);
+        this.push(header);
+      }
+      plaintextBytes += chunk.length;
+      plaintextHash.update(chunk);
+
+      const encryptedChunk = cipher.update(chunk);
+      if (encryptedChunk.length > 0) {
+        ciphertextBytes += encryptedChunk.length;
+        ciphertextHash.update(encryptedChunk);
+        this.push(encryptedChunk);
+      }
+      callback();
+    },
+    flush(callback) {
+      if (!headerPushed) {
+        headerPushed = true;
+        ciphertextHash.update(header);
+        this.push(header);
+      }
+      try {
+        const finalChunk = cipher.final();
+        if (finalChunk.length > 0) {
+          ciphertextBytes += finalChunk.length;
+          ciphertextHash.update(finalChunk);
+          this.push(finalChunk);
+        }
+        const tag = cipher.getAuthTag();
+        ciphertextHash.update(tag);
+        this.push(tag);
+        callback();
+      } catch (error) {
+        callback(error as Error);
+      }
+    },
+  });
 
   try {
-    await new Promise<void>((resolvePromise, rejectPromise) => {
-      inputStream.on('data', (chunk: Buffer | string) => {
-        const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-        plaintextBytes += buffer.length;
-        plaintextHash.update(buffer);
-
-        const encryptedChunk = cipher.update(buffer);
-        if (encryptedChunk.length > 0) {
-          ciphertextBytes += encryptedChunk.length;
-          ciphertextHash.update(encryptedChunk);
-          outputStream.write(encryptedChunk);
-        }
-      });
-
-      inputStream.on('end', () => {
-        try {
-          const finalChunk = cipher.final();
-          if (finalChunk.length > 0) {
-            ciphertextBytes += finalChunk.length;
-            ciphertextHash.update(finalChunk);
-            outputStream.write(finalChunk);
-          }
-
-          const tag = cipher.getAuthTag();
-          ciphertextHash.update(tag);
-          outputStream.end(tag, () => {
-            resolvePromise();
-          });
-        } catch (error) {
-          rejectPromise(error);
-        }
-      });
-
-      inputStream.on('error', (err) => {
-        outputStream.destroy();
-        rejectPromise(err);
-      });
-
-      outputStream.on('error', (err) => {
-        inputStream.destroy();
-        rejectPromise(err);
-      });
-    });
-
+    await pipeline(inputStream, transform, outputStream);
     const totalCiphertextBytes = header.length + ciphertextBytes + ENCRYPTION_TAG_LENGTH;
     return {
       bytes: totalCiphertextBytes,
@@ -280,50 +338,40 @@ export async function decryptFile(
       start: ciphertextStart,
       end: ciphertextEnd,
     });
-
     const writeStream = createWriteStream(outputFile, { mode: 0o600 });
     const plaintextHash = createHash('sha256');
     let plaintextBytes = 0;
 
-    await new Promise<void>((resolvePromise, rejectPromise) => {
-      readStream.on('data', (chunk: Buffer | string) => {
+    const transform = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
         try {
-          const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-          const decryptedChunk = decipher.update(buffer);
+          const decryptedChunk = decipher.update(chunk);
           if (decryptedChunk.length > 0) {
             plaintextBytes += decryptedChunk.length;
             plaintextHash.update(decryptedChunk);
-            writeStream.write(decryptedChunk);
+            this.push(decryptedChunk);
           }
-        } catch (err) {
-          rejectPromise(err);
+          callback();
+        } catch (error) {
+          callback(error as Error);
         }
-      });
-
-      readStream.on('end', () => {
+      },
+      flush(callback) {
         try {
           const finalDecrypted = decipher.final();
           if (finalDecrypted.length > 0) {
             plaintextBytes += finalDecrypted.length;
             plaintextHash.update(finalDecrypted);
-            writeStream.write(finalDecrypted);
+            this.push(finalDecrypted);
           }
-          writeStream.end(() => resolvePromise());
-        } catch (err) {
-          rejectPromise(err);
+          callback();
+        } catch (error) {
+          callback(error as Error);
         }
-      });
-
-      readStream.on('error', (err) => {
-        writeStream.destroy();
-        rejectPromise(err);
-      });
-
-      writeStream.on('error', (err) => {
-        readStream.destroy();
-        rejectPromise(err);
-      });
+      },
     });
+
+    await pipeline(readStream, transform, writeStream);
 
     return {
       bytes: plaintextBytes,
@@ -331,7 +379,12 @@ export async function decryptFile(
     };
   } catch (error) {
     await rm(outputFile, { force: true }).catch(() => undefined);
-    if (error instanceof Error && error.message.includes('authenticate data')) {
+    const isAuthFailure =
+      error instanceof Error &&
+      (error.message.includes('authenticate') ||
+        error.message.includes('Unsupported state') ||
+        ('code' in error && error.code === 'ERR_OSSL_GCM_AUTH_TAG'));
+    if (isAuthFailure) {
       throw validationFailed(
         'Backup file decryption failed: authentication tag mismatch or corrupted ciphertext.',
         { cause: error },

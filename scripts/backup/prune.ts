@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { type BackupPruneResult, validationFailed } from '@orbit/shared';
 import { parseByteSize } from '../../packages/services/src/backup/prune.ts';
 
 export interface ParsedPruneArgs {
@@ -11,6 +12,7 @@ export interface ParsedPruneArgs {
   readonly keepMonthly?: number | undefined;
   readonly maxTotalBytes?: number | undefined;
   readonly cleanIncomplete: boolean;
+  readonly incompleteMaxAgeHours?: number | undefined;
   readonly staleAlertHours?: number | undefined;
   readonly pinnedBackupIds?: readonly string[] | undefined;
   readonly dryRun: boolean;
@@ -80,10 +82,17 @@ function extractPruneFlags(argv: readonly string[]): {
   return { flags, bools };
 }
 
-function parseOptionalInt(val: string | undefined): number | undefined {
+function parseOptionalInt(val: string | undefined, flagName = 'flag'): number | undefined {
   if (val === undefined || val.trim().length === 0) return undefined;
-  const num = Number.parseInt(val, 10);
-  return Number.isNaN(num) ? undefined : num;
+  const trimmed = val.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw validationFailed(`Flag ${flagName} must be a non-negative integer: "${val}"`);
+  }
+  const num = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(num) || num < 0) {
+    throw validationFailed(`Flag ${flagName} must be a non-negative integer: "${val}"`);
+  }
+  return num;
 }
 
 export function parsePruneArgs(argv: readonly string[]): ParsedPruneArgs {
@@ -98,24 +107,35 @@ export function parsePruneArgs(argv: readonly string[]): ParsedPruneArgs {
 
   const keepCount = parseOptionalInt(
     flags.get('--keep-count') ?? process.env['ORBIT_BACKUP_KEEP_COUNT'],
+    '--keep-count',
   );
   const keepDays = parseOptionalInt(
     flags.get('--keep-days') ?? process.env['ORBIT_BACKUP_KEEP_DAYS'],
+    '--keep-days',
   );
   const keepHourly = parseOptionalInt(
     flags.get('--keep-hourly') ?? process.env['ORBIT_BACKUP_KEEP_HOURLY'],
+    '--keep-hourly',
   );
   const keepDaily = parseOptionalInt(
     flags.get('--keep-daily') ?? process.env['ORBIT_BACKUP_KEEP_DAILY'],
+    '--keep-daily',
   );
   const keepWeekly = parseOptionalInt(
     flags.get('--keep-weekly') ?? process.env['ORBIT_BACKUP_KEEP_WEEKLY'],
+    '--keep-weekly',
   );
   const keepMonthly = parseOptionalInt(
     flags.get('--keep-monthly') ?? process.env['ORBIT_BACKUP_KEEP_MONTHLY'],
+    '--keep-monthly',
   );
   const staleAlertHours = parseOptionalInt(
     flags.get('--stale-alert-hours') ?? process.env['ORBIT_BACKUP_STALE_ALERT_HOURS'],
+    '--stale-alert-hours',
+  );
+  const incompleteMaxAgeHours = parseOptionalInt(
+    flags.get('--incomplete-max-age-hours') ?? process.env['ORBIT_BACKUP_INCOMPLETE_MAX_AGE_HOURS'],
+    '--incomplete-max-age-hours',
   );
 
   const rawBytes = flags.get('--max-bytes') ?? process.env['ORBIT_BACKUP_MAX_BYTES'];
@@ -144,6 +164,7 @@ export function parsePruneArgs(argv: readonly string[]): ParsedPruneArgs {
     keepMonthly,
     maxTotalBytes,
     cleanIncomplete,
+    incompleteMaxAgeHours,
     staleAlertHours,
     pinnedBackupIds,
     dryRun: bools['dryRun'] === true,
@@ -159,21 +180,22 @@ Usage:
   bun run backup:prune [options]
 
 Options:
-  --destination, -d <dir>      Backup directory to inspect and prune (default: ./backups)
-  --keep-count=<N>             Retain the N newest backups
-  --keep-days=<N>              Retain backups newer than N days
-  --keep-hourly=<N>            Retain newest backup for each of the last N hourly slots
-  --keep-daily=<N>             Retain newest backup for each of the last N daily slots
-  --keep-weekly=<N>            Retain newest backup for each of the last N weekly slots
-  --keep-monthly=<N>           Retain newest backup for each of the last N monthly slots
-  --max-bytes=<size>           Storage quota limit (e.g. 50GB, 500MB, 1000000000)
-  --pinned=<ids>               Comma-separated list of backup IDs to pin
-  --clean-incomplete           Remove .incomplete and .tmp failed backup directories (default: true)
-  --no-clean-incomplete        Preserve .incomplete and .tmp failed backup directories
-  --stale-alert-hours=<N>      Warn if newest backup is older than N hours
-  --dry-run                    Preview pruning decisions without deleting files
-  --json                       Emit machine-readable JSON output
-  --help, -h                   Show this help message
+  --destination, -d <dir>          Backup directory to inspect and prune (default: ./backups)
+  --keep-count=<N>                 Retain the N newest backups
+  --keep-days=<N>                  Retain backups newer than N days
+  --keep-hourly=<N>                Retain newest backup for each of the last N hourly slots
+  --keep-daily=<N>                 Retain newest backup for each of the last N daily slots
+  --keep-weekly=<N>                Retain newest backup for each of the last N weekly slots
+  --keep-monthly=<N>               Retain newest backup for each of the last N monthly slots
+  --max-bytes=<size>               Storage quota limit (e.g. 50GB, 500MB, 1000000000)
+  --pinned=<ids>                   Comma-separated list of backup IDs to pin
+  --clean-incomplete               Remove .incomplete and .tmp failed backup directories (default: true)
+  --no-clean-incomplete            Preserve .incomplete and .tmp failed backup directories
+  --incomplete-max-age-hours=<N>   Age threshold in hours before cleaning .tmp directories (default: 24)
+  --stale-alert-hours=<N>          Warn if newest backup is older than N hours
+  --dry-run                        Preview pruning decisions without deleting files
+  --json                           Emit machine-readable JSON output
+  --help, -h                       Show this help message
 `);
 }
 
@@ -197,6 +219,7 @@ async function main(): Promise<void> {
       keepMonthly: args.keepMonthly,
       maxTotalBytes: args.maxTotalBytes,
       cleanIncomplete: args.cleanIncomplete,
+      incompleteMaxAgeHours: args.incompleteMaxAgeHours,
       staleAlertHours: args.staleAlertHours,
       pinnedBackupIds: args.pinnedBackupIds,
       dryRun: args.dryRun,
@@ -205,37 +228,71 @@ async function main(): Promise<void> {
     if (args.json) {
       process.stdout.write(`${JSON.stringify({ status: 'ok', ...result }, null, 2)}\n`);
     } else {
-      const modePrefix = result.dryRun ? '[DRY RUN] ' : '';
-      process.stdout.write(`${modePrefix}Backup retention and pruning completed.\n`);
-      process.stdout.write(`Destination: ${args.destination}\n`);
-      process.stdout.write(`Evaluated: ${result.evaluatedCount}\n`);
-      process.stdout.write(`Retained: ${result.retainedBackups.length}\n`);
-      process.stdout.write(`Deleted: ${result.deletedBackups.length}\n`);
-      process.stdout.write(`Pinned: ${result.pinnedBackups.length}\n`);
-      process.stdout.write(`Incomplete cleaned: ${result.deletedIncomplete.length}\n`);
-      process.stdout.write(`Freed space: ${result.freedBytes} bytes\n`);
-      process.stdout.write(`Remaining space: ${result.totalRemainingBytes} bytes\n`);
-      process.stdout.write(`Newest backup: ${result.newestGoodBackupId ?? 'none'}\n`);
-
-      if (result.isStale) {
-        process.stderr.write(
-          `WARNING: Backups are stale! Newest backup is ${result.staleAgeHours} hours old (threshold: ${args.staleAlertHours} hours).\n`,
-        );
-      }
+      printHumanReport(args, result);
     }
+
+    handleFailedDeletions(args, result.failedDeletions);
 
     if (result.isStale) {
       process.exitCode = 2;
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (args.json) {
-      process.stderr.write(`${JSON.stringify({ status: 'error', error: message }, null, 2)}\n`);
-    } else {
-      process.stderr.write(`Prune failed: ${message}\n`);
-    }
-    process.exit(1);
+    handlePruneError(args, error);
   }
+}
+
+function printHumanReport(args: ParsedPruneArgs, result: BackupPruneResult): void {
+  const modePrefix = result.dryRun ? '[DRY RUN] ' : '';
+  process.stdout.write(`${modePrefix}Backup retention and pruning completed.\n`);
+  process.stdout.write(`Destination: ${args.destination}\n`);
+  process.stdout.write(`Evaluated: ${result.evaluatedCount}\n`);
+  process.stdout.write(`Retained: ${result.retainedBackups.length}\n`);
+  process.stdout.write(`Deleted: ${result.deletedBackups.length}\n`);
+  process.stdout.write(`Pinned: ${result.pinnedBackups.length}\n`);
+  process.stdout.write(`Incomplete cleaned: ${result.deletedIncomplete.length}\n`);
+  process.stdout.write(`Freed space: ${result.freedBytes} bytes\n`);
+  process.stdout.write(`Remaining space: ${result.totalRemainingBytes} bytes\n`);
+  process.stdout.write(`Newest backup: ${result.newestGoodBackupId ?? 'none'}\n`);
+
+  if (result.isStale) {
+    process.stderr.write(
+      `WARNING: Backups are stale! Newest backup is ${result.staleAgeHours} hours old (threshold: ${args.staleAlertHours} hours).\n`,
+    );
+  }
+}
+
+function handleFailedDeletions(args: ParsedPruneArgs, failedDeletions: readonly string[]): void {
+  if (failedDeletions.length === 0) {
+    return;
+  }
+  if (args.json) {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          status: 'error',
+          error: `Failed to delete ${failedDeletions.length} backup directory(ies).`,
+          failedDeletions,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    process.stderr.write(
+      `Error: Failed to delete ${failedDeletions.length} backup directory(ies): ${failedDeletions.join(', ')}\n`,
+    );
+  }
+  process.exit(1);
+}
+
+function handlePruneError(args: ParsedPruneArgs, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (args.json) {
+    process.stderr.write(`${JSON.stringify({ status: 'error', error: message }, null, 2)}\n`);
+  } else {
+    process.stderr.write(`Prune failed: ${message}\n`);
+  }
+  process.exit(1);
 }
 
 if (import.meta.main) {

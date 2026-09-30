@@ -89,10 +89,12 @@ async function isPinnedBackup(
   manifest: BackupManifest,
   pinnedIds: readonly string[] | undefined,
 ): Promise<boolean> {
-  const backupId = manifest.metadata['backupId'] ?? manifest.sourceRevision;
+  const ownId = manifest.metadata['backupId'];
+  const fallbackId = manifest.sourceRevision;
   if (
     pinnedIds !== undefined &&
-    (pinnedIds.includes(manifest.metadata['backupId'] ?? '') || pinnedIds.includes(backupId))
+    ((ownId !== undefined && ownId.length > 0 && pinnedIds.includes(ownId)) ||
+      pinnedIds.includes(fallbackId))
   ) {
     return true;
   }
@@ -168,50 +170,48 @@ async function cleanIncompleteDirectories(
   candidates: readonly string[],
   maxAgeHours: number | undefined,
   dryRun: boolean,
-): Promise<{ deleted: string[]; freedBytes: number }> {
+): Promise<{ deleted: string[]; failed: string[]; freedBytes: number }> {
   const deleted: string[] = [];
+  const failed: string[] = [];
   let freedBytes = 0;
 
   for (const name of candidates) {
     const fullPath = join(destinationDir, name);
-    let eligible = true;
-    if (maxAgeHours !== undefined) {
-      const itemStat = await stat(fullPath).catch(() => null);
-      if (itemStat !== null) {
-        const ageHours = (Date.now() - itemStat.mtime.getTime()) / (1000 * 60 * 60);
-        if (ageHours < maxAgeHours) {
-          eligible = false;
-        }
-      }
+    const itemStat = await stat(fullPath).catch(() => null);
+    if (itemStat === null) {
+      continue;
     }
 
-    if (eligible) {
-      const bytes = await calculateDirectorySize(fullPath);
-      if (!dryRun) {
-        await rm(fullPath, { recursive: true, force: true }).catch(() => undefined);
-      }
+    const ageHours = (Date.now() - itemStat.mtime.getTime()) / (1000 * 60 * 60);
+    const thresholdHours = maxAgeHours ?? (name.endsWith('.tmp') ? 24 : 0);
+    if (ageHours < thresholdHours) {
+      continue;
+    }
+
+    const bytes = await calculateDirectorySize(fullPath);
+    if (dryRun) {
       deleted.push(name);
       freedBytes += bytes;
+    } else {
+      try {
+        await rm(fullPath, { recursive: true, force: true });
+        deleted.push(name);
+        freedBytes += bytes;
+      } catch {
+        failed.push(name);
+      }
     }
   }
 
-  return { deleted, freedBytes };
+  return { deleted, failed, freedBytes };
 }
 
 async function discoverBackups(
   destinationDir: string,
   candidateDirs: readonly string[],
   pinnedIds: readonly string[] | undefined,
-  cleanIncomplete: boolean,
-  dryRun: boolean,
-): Promise<{
-  discovered: DiscoveredBackup[];
-  corruptedDeleted: string[];
-  corruptedFreed: number;
-}> {
+): Promise<DiscoveredBackup[]> {
   const discovered: DiscoveredBackup[] = [];
-  const corruptedDeleted: string[] = [];
-  let corruptedFreed = 0;
 
   for (const name of candidateDirs) {
     const fullPath = join(destinationDir, name);
@@ -232,21 +232,11 @@ async function discoverBackups(
         isPinned,
       });
     } catch {
-      if (
-        cleanIncomplete &&
-        (name.startsWith('orbit-backup-') || name.endsWith('.incomplete') || name.endsWith('.tmp'))
-      ) {
-        const bytes = await calculateDirectorySize(fullPath);
-        if (!dryRun) {
-          await rm(fullPath, { recursive: true, force: true }).catch(() => undefined);
-        }
-        corruptedDeleted.push(name);
-        corruptedFreed += bytes;
-      }
+      undefined;
     }
   }
 
-  return { discovered, corruptedDeleted, corruptedFreed };
+  return discovered;
 }
 
 function applyTimeAndCountRules(
@@ -361,12 +351,14 @@ async function executePruning(
   deletedBackups: string[];
   retainedBackups: string[];
   pinnedBackups: string[];
+  failedDeletions: string[];
   freedBytes: number;
   totalRemainingBytes: number;
 }> {
   const deletedBackups: string[] = [];
   const retainedBackups: string[] = [];
   const pinnedBackups: string[] = [];
+  const failedDeletions: string[] = [];
   let freedBytes = 0;
   let totalRemainingBytes = 0;
 
@@ -377,16 +369,29 @@ async function executePruning(
       if (item.isPinned) {
         pinnedBackups.push(item.id);
       }
-    } else {
+    } else if (dryRun) {
       deletedBackups.push(item.id);
       freedBytes += item.size;
-      if (!dryRun) {
-        await rm(item.path, { recursive: true, force: true }).catch(() => undefined);
+    } else {
+      try {
+        await rm(item.path, { recursive: true, force: true });
+        deletedBackups.push(item.id);
+        freedBytes += item.size;
+      } catch {
+        failedDeletions.push(item.id);
+        totalRemainingBytes += item.size;
       }
     }
   }
 
-  return { deletedBackups, retainedBackups, pinnedBackups, freedBytes, totalRemainingBytes };
+  return {
+    deletedBackups,
+    retainedBackups,
+    pinnedBackups,
+    failedDeletions,
+    freedBytes,
+    totalRemainingBytes,
+  };
 }
 
 export async function pruneBackups(options: BackupPruneOptions): Promise<BackupPruneResult> {
@@ -419,6 +424,7 @@ export async function pruneBackups(options: BackupPruneOptions): Promise<BackupP
 
   let totalFreedBytes = 0;
   const deletedIncomplete: string[] = [];
+  const allFailedDeletions: string[] = [];
 
   if (cleanIncomplete) {
     const incResult = await cleanIncompleteDirectories(
@@ -428,18 +434,11 @@ export async function pruneBackups(options: BackupPruneOptions): Promise<BackupP
       dryRun,
     );
     deletedIncomplete.push(...incResult.deleted);
+    allFailedDeletions.push(...incResult.failed);
     totalFreedBytes += incResult.freedBytes;
   }
 
-  const { discovered, corruptedDeleted, corruptedFreed } = await discoverBackups(
-    destinationDir,
-    candidateDirs,
-    options.pinnedBackupIds,
-    cleanIncomplete,
-    dryRun,
-  );
-  deletedIncomplete.push(...corruptedDeleted);
-  totalFreedBytes += corruptedFreed;
+  const discovered = await discoverBackups(destinationDir, candidateDirs, options.pinnedBackupIds);
 
   if (discovered.length === 0) {
     return {
@@ -448,10 +447,11 @@ export async function pruneBackups(options: BackupPruneOptions): Promise<BackupP
       retainedBackups: [],
       pinnedBackups: [],
       deletedIncomplete,
+      failedDeletions: allFailedDeletions,
       freedBytes: totalFreedBytes,
       totalRemainingBytes: 0,
       newestGoodBackupId: undefined,
-      isStale: options.staleAlertHours !== undefined,
+      isStale: false,
       staleAgeHours: undefined,
       dryRun,
     };
@@ -472,6 +472,7 @@ export async function pruneBackups(options: BackupPruneOptions): Promise<BackupP
 
   const execution = await executePruning(discovered, toRetain, dryRun);
   totalFreedBytes += execution.freedBytes;
+  allFailedDeletions.push(...execution.failedDeletions);
 
   return {
     evaluatedCount: discovered.length,
@@ -479,6 +480,7 @@ export async function pruneBackups(options: BackupPruneOptions): Promise<BackupP
     retainedBackups: execution.retainedBackups,
     pinnedBackups: execution.pinnedBackups,
     deletedIncomplete,
+    failedDeletions: allFailedDeletions,
     freedBytes: totalFreedBytes,
     totalRemainingBytes: execution.totalRemainingBytes,
     newestGoodBackupId: newestGoodBackup.id,
