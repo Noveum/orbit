@@ -22,7 +22,7 @@ import {
 } from '@/features/docs/editor/rich-text-editor.tsx';
 import { assertUploadable, uploadAttachment } from '@/features/docs/upload.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
-import type { Cycle, Issue, Project, WorkflowState } from '@/lib/query/schemas.ts';
+import type { Cycle, Issue, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import { useDuplicateIssues } from '@/lib/query/use-duplicate-issues.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { sprintOptions } from '@/lib/sprint-options.ts';
@@ -45,6 +45,7 @@ export interface QuickCreateDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly defaultTeamId: string | null;
   readonly defaultStateId?: string | null;
+  readonly defaultAssigneeId?: string | null;
 }
 
 const chipClassName =
@@ -66,6 +67,10 @@ function initialState(
   defaultStateId: string | null | undefined,
 ): string | null {
   return statesForTeam(states, teamId).find((state) => state.id === defaultStateId)?.id ?? null;
+}
+
+function initialAssignee(members: readonly Member[], defaultAssigneeId: string | null | undefined) {
+  return members.find((member) => member.id === defaultAssigneeId)?.id ?? null;
 }
 
 function compatibleTeamId(
@@ -177,6 +182,7 @@ export function QuickCreateDialog({
   onOpenChange,
   defaultTeamId,
   defaultStateId,
+  defaultAssigneeId,
 }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
@@ -208,8 +214,17 @@ export function QuickCreateDialog({
   const update = useUpdateIssue();
 
   const firstStateId = initialState(states, firstTeamId, defaultStateId);
-  const defaultsRef = useRef({ teamId: firstTeamId, stateId: firstStateId });
-  defaultsRef.current = { teamId: firstTeamId, stateId: firstStateId };
+  const firstAssigneeId = initialAssignee(members, defaultAssigneeId);
+  const defaultsRef = useRef({
+    teamId: firstTeamId,
+    stateId: firstStateId,
+    assigneeId: firstAssigneeId,
+  });
+  defaultsRef.current = {
+    teamId: firstTeamId,
+    stateId: firstStateId,
+    assigneeId: firstAssigneeId,
+  };
   const heldRef = useRef<readonly PendingAttachment[]>(pending);
   heldRef.current = pending;
 
@@ -224,7 +239,7 @@ export function QuickCreateDialog({
     setDescription('');
     setStateId(defaultsRef.current.stateId);
     setPriority(0);
-    setAssigneeId(null);
+    setAssigneeId(defaultsRef.current.assigneeId);
     setReviewerIds([]);
     setLabelIds([]);
     setProjectId(null);

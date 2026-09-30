@@ -141,6 +141,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
   const [createStateId, setCreateStateId] = useState<string | null>(null);
+  const [createAssigneeId, setCreateAssigneeId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   useIssuePropertyUndo();
 
@@ -165,9 +166,12 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!canCreate) return;
       setCreateTeamId(teamId ?? null);
       setCreateStateId(stateId ?? null);
+      const person =
+        pathname === '/standup' ? new URLSearchParams(window.location.search).get('person') : null;
+      setCreateAssigneeId(data?.members.find((member) => member.id === person)?.id ?? null);
       setCreateOpen(true);
     },
-    [canCreate],
+    [canCreate, data?.members, pathname],
   );
 
   const value = useMemo<WorkspaceData>(
@@ -189,6 +193,7 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
         onOpenChange={setCreateOpen}
         defaultTeamId={createTeamId ?? routeTeamId}
         defaultStateId={createStateId}
+        defaultAssigneeId={createAssigneeId}
       />
     </WorkspaceContext.Provider>
   );

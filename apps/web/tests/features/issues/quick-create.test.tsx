@@ -288,6 +288,30 @@ async function settle(): Promise<void> {
 }
 
 describe('creating from a board column', () => {
+  it('prefills and submits the supplied standup assignee with the column status', () => {
+    workspace = buildWorkspace();
+    render(
+      <ToastProvider>
+        <QuickCreateDialog
+          open
+          onOpenChange={() => undefined}
+          defaultTeamId="team_eng"
+          defaultStateId="state_todo"
+          defaultAssigneeId="reviewer_2"
+        />
+      </ToastProvider>,
+    );
+    expect(screen.getByTestId('quick-create-assignee')).toHaveTextContent('Ada Reviewer');
+    fireEvent.change(screen.getByTestId('quick-create-title'), {
+      target: { value: 'Created for the selected person' },
+    });
+    fireEvent.click(screen.getByTestId('quick-create-submit'));
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      assigneeId: 'reviewer_2',
+      stateId: 'state_todo',
+    });
+  });
+
   it('submits the supplied status for its team', async () => {
     workspace = buildWorkspace();
     render(

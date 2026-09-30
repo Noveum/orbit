@@ -24,13 +24,25 @@ await restoreModulesAfterThisFile(['next/navigation']);
 mock.module('next/navigation', () => ({
   ...nextNavigation,
   useRouter: () => ({ push: mock(), replace: mock(), refresh: mock(), prefetch: mock() }),
-  usePathname: () => '/team/eng/issues',
+  usePathname: () => pathname,
 }));
+
+let pathname = '/team/eng/issues';
 
 const realQuickCreate = { ...(await import('@/features/issues/quick-create.tsx')) };
 mock.module('@/features/issues/quick-create.tsx', () => ({
-  QuickCreateDialog: ({ open }: { readonly open: boolean }) =>
-    open ? <span data-testid="quick-create-probe">Create issue</span> : null,
+  QuickCreateDialog: ({
+    open,
+    defaultAssigneeId,
+  }: {
+    readonly open: boolean;
+    readonly defaultAssigneeId: string | null;
+  }) =>
+    open ? (
+      <span data-testid="quick-create-probe" data-assignee={defaultAssigneeId ?? 'none'}>
+        Create issue
+      </span>
+    ) : null,
 }));
 
 afterAll(() => {
@@ -54,7 +66,16 @@ function bootstrap(role: string): Bootstrap {
     activeTeamId: null,
     states: [],
     labels: [],
-    members: [],
+    members: [
+      {
+        id: 'user_1',
+        name: 'Alex',
+        email: 'alex@orbit.example',
+        image: null,
+        handle: 'alex',
+        role: 'member',
+      },
+    ],
     projects: [],
     cycles: [],
     issues: [],
@@ -100,6 +121,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  pathname = '/team/eng/issues';
+  window.history.replaceState(null, '', '/');
   globalThis.fetch = originalFetch;
   setSystemTime();
 });
@@ -116,6 +139,35 @@ function SprintProbe() {
 }
 
 describe('the issue workspace shell', () => {
+  it('uses the standup person selected at the time creation opens', async () => {
+    pathname = '/standup';
+    mountShell(true);
+    window.history.replaceState(null, '', '/standup?person=user_1');
+    await userEvent.setup().keyboard('c');
+    expect(screen.getByTestId('quick-create-probe')).toHaveAttribute('data-assignee', 'user_1');
+  });
+
+  for (const person of [null, 'unassigned', 'unknown']) {
+    it(`leaves the assignee empty for standup selection ${person}`, async () => {
+      pathname = '/standup';
+      window.history.replaceState(
+        null,
+        '',
+        person === null ? '/standup' : `/standup?person=${person}`,
+      );
+      mountShell(true);
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Open create' }));
+      expect(screen.getByTestId('quick-create-probe')).toHaveAttribute('data-assignee', 'none');
+    });
+  }
+
+  it('ignores a person query parameter outside standup', async () => {
+    window.history.replaceState(null, '', '/team/eng/issues?person=user_1');
+    mountShell(true);
+    await userEvent.setup().keyboard('c');
+    expect(screen.getByTestId('quick-create-probe')).toHaveAttribute('data-assignee', 'none');
+  });
+
   it('does not open quick create for guests through a shortcut or a button', async () => {
     mountShell(true, 'guest');
     const user = userEvent.setup();
