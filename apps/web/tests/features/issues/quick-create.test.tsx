@@ -179,9 +179,11 @@ afterEach(() => {
 function DialogHarness({
   onOpenChange,
   defaultTeamId,
+  defaultAssigneeId,
 }: {
   readonly onOpenChange: ((next: boolean) => void) | undefined;
   readonly defaultTeamId: string | null;
+  readonly defaultAssigneeId: string | null;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -199,15 +201,24 @@ function DialogHarness({
           onOpenChange?.(next);
         }}
         defaultTeamId={defaultTeamId}
+        defaultAssigneeId={defaultAssigneeId}
       />
     </>
   );
 }
 
-function dialog(onOpenChange?: (next: boolean) => void, defaultTeamId: string | null = 'team_eng') {
+function dialog(
+  onOpenChange?: (next: boolean) => void,
+  defaultTeamId: string | null = 'team_eng',
+  defaultAssigneeId: string | null = null,
+) {
   return (
     <ToastProvider>
-      <DialogHarness onOpenChange={onOpenChange} defaultTeamId={defaultTeamId} />
+      <DialogHarness
+        onOpenChange={onOpenChange}
+        defaultTeamId={defaultTeamId}
+        defaultAssigneeId={defaultAssigneeId}
+      />
     </ToastProvider>
   );
 }
@@ -500,6 +511,32 @@ describe('attaching a file from the create dialog', () => {
 });
 
 describe('the new issue dialog', () => {
+  it('refreshes the standup assignee when an untouched dialog is reopened for another person', async () => {
+    workspace = buildWorkspace();
+    const harness = render(dialog(undefined, 'team_eng', 'me'));
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    expect(screen.getByTestId('quick-create-assignee')).toHaveTextContent('Shashank');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
+    harness.rerender(dialog(undefined, 'team_eng', 'reviewer_2'));
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-assignee')).toHaveTextContent('Ada Reviewer');
+  });
+
+  it('retains a property-only draft when the standup person changes', async () => {
+    workspace = buildWorkspace();
+    const harness = render(dialog(undefined, 'team_eng', 'me'));
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.click(screen.getByRole('button', { name: /No priority/ }));
+    await user.click(await screen.findByText('High'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
+    harness.rerender(dialog(undefined, 'team_eng', 'reviewer_2'));
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-assignee')).toHaveTextContent('Shashank');
+    expect(screen.getByRole('button', { name: /High/ })).toBeInTheDocument();
+  });
+
   it('preserves every unfinished field and held file across closing and reopening', async () => {
     workspace = buildWorkspaceWithDesign();
     open();

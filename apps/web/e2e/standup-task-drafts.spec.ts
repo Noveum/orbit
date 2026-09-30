@@ -27,6 +27,8 @@ test('standup creation keeps its assignee and draft while inspecting similar tas
       issue.parentId === null,
   );
   if (existing === undefined) throw new Error('Missing active demo task');
+  await expect(page.getByTestId(`issue-card-${existing.identifier}`)).toBeVisible();
+  await page.locator('[data-testid^="issue-card-"] a').first().scrollIntoViewIfNeeded();
   await page.keyboard.press('c');
   const modal = page.getByTestId('quick-create');
   await expect(modal).toBeVisible();
@@ -74,4 +76,11 @@ test('standup creation keeps its assignee and draft while inspecting similar tas
     path: testInfo.outputPath('restored-task-draft.png'),
     style: 'nextjs-portal { display: none; }',
   });
+  await suggestion.click();
+  await expect(sidebar).toBeVisible();
+  await sidebar.getByRole('link', { name: 'Open full page' }).click();
+  await page.waitForURL(`${BASE}/issue/${existing.identifier}`);
+  await expect(sidebar).toBeHidden();
+  await page.keyboard.press('c');
+  await expect(page.getByTestId('quick-create-title')).toHaveValue(existing.title);
 });

@@ -9,6 +9,7 @@ import {
 import { sprintLabel } from '@orbit/shared/utils';
 import type { Editor, JSONContent } from '@tiptap/core';
 import { Box, ChevronRight, RefreshCw, Tag, Users } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -33,7 +34,7 @@ import type {
   WorkflowState,
 } from '@/lib/query/schemas.ts';
 import { useDuplicateIssues } from '@/lib/query/use-duplicate-issues.ts';
-import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { type CreateIssueInput, useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { sprintOptions } from '@/lib/sprint-options.ts';
 import { DuplicateSuggestions } from './duplicate-suggestions.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
@@ -85,6 +86,31 @@ function initialAssignee(members: readonly Member[], defaultAssigneeId: string |
 
 function initialTeam(teams: readonly Team[], defaultTeamId: string | null) {
   return teams.find((team) => team.id === defaultTeamId)?.id ?? teams[0]?.id ?? null;
+}
+
+type DraftDefaults = {
+  readonly teamId: string | null;
+  readonly stateId: string | null;
+  readonly assigneeId: string | null;
+};
+
+function hasDraftChanges(
+  draft: Omit<CreateIssueInput, 'teamId' | 'stateId'> & DraftDefaults,
+  defaults: DraftDefaults,
+) {
+  return (
+    draft.teamId !== defaults.teamId ||
+    draft.stateId !== defaults.stateId ||
+    draft.assigneeId !== defaults.assigneeId ||
+    draft.title.length > 0 ||
+    draft.description.length > 0 ||
+    draft.priority !== 0 ||
+    (draft.reviewerIds?.length ?? 0) > 0 ||
+    draft.labelIds.length > 0 ||
+    draft.projectId !== null ||
+    draft.cycleId !== null ||
+    draft.estimate !== null
+  );
 }
 
 function compatibleTeamId(
@@ -200,6 +226,7 @@ export function QuickCreateDialog({
 }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
+  const pathname = usePathname();
   const firstTeamId = initialTeam(teams, defaultTeamId);
   const [teamId, setTeamId] = useState<string | null>(firstTeamId);
   const [title, setTitle] = useState('');
@@ -222,6 +249,7 @@ export function QuickCreateDialog({
   const draftInitialized = useRef(false);
   const editorRef = useRef<Editor | null>(null);
   const descriptionDocument = useRef<JSONContent | null>(null);
+  const previewPath = useRef(pathname);
 
   const { duplicates } = useDuplicateIssues(teamId, title);
 
@@ -240,6 +268,7 @@ export function QuickCreateDialog({
     stateId: firstStateId,
     assigneeId: firstAssigneeId,
   };
+  const draftDefaults = useRef(defaultsRef.current);
   const heldRef = useRef<readonly PendingAttachment[]>(pending);
   heldRef.current = pending;
 
@@ -252,8 +281,15 @@ export function QuickCreateDialog({
   }, [open]);
 
   useEffect(() => {
+    if (previewPath.current === pathname) return;
+    previewPath.current = pathname;
+    setPreview(null);
+  }, [pathname]);
+
+  useEffect(() => {
     if (!open || draftInitialized.current) return;
     draftInitialized.current = true;
+    draftDefaults.current = defaultsRef.current;
     setTeamId(defaultsRef.current.teamId);
     setTitle('');
     setDescription('');
@@ -408,8 +444,34 @@ export function QuickCreateDialog({
     );
   };
 
+  const changeOpen = (next: boolean) => {
+    if (
+      !next &&
+      pending.length === 0 &&
+      !hasDraftChanges(
+        {
+          teamId,
+          stateId,
+          assigneeId,
+          title,
+          description,
+          priority,
+          reviewerIds,
+          labelIds,
+          projectId,
+          cycleId,
+          estimate,
+        },
+        draftDefaults.current,
+      )
+    ) {
+      draftInitialized.current = false;
+    }
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent
         data-testid="quick-create"
         className="flex max-w-xl flex-col overflow-y-hidden"
