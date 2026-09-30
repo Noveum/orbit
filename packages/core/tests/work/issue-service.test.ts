@@ -1800,6 +1800,7 @@ describe('createSubIssues atomicity and concurrency', () => {
       startsAt: new Date('2030-05-01').toISOString(),
       endsAt: new Date('2030-05-15').toISOString(),
     });
+    const targetState = stateNamed(workspace, 'Todo');
     const parent = await newIssue('Parent in sprint', { cycleId: cycle.id });
 
     for (let round = 0; round < 5; round += 1) {
@@ -1818,6 +1819,7 @@ describe('createSubIssues atomicity and concurrency', () => {
         }),
         moveIssue(workspace.admin, toMove.issue.id, {
           teamId: workspace.teamId,
+          stateId: targetState.id,
           cycleId: cycle.id,
         }),
       ]);
