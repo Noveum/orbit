@@ -43,16 +43,20 @@ test('analytics is useful by default and preserves planning choices on reload', 
   const page = await signIn(context);
 
   await page.goto(`${BASE}/analytics`);
+  const main = page.getByRole('main');
+  await expect(main).toHaveCount(1);
+  const reportingRange = main.getByRole('button', { name: /Reporting range/ });
+  await expect(reportingRange).toHaveCount(1);
   await expect(page.getByRole('heading', { name: 'Analytics' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
-  await expect(page.getByLabel(/Reporting range/)).toContainText('Active sprint');
+  await expect(reportingRange).toContainText('Active sprint');
 
-  await page.getByLabel('Measure').click();
+  await main.getByRole('combobox', { name: 'Measure', exact: true }).click();
   await page.getByRole('option', { name: 'Points' }).click();
-  await page.getByLabel(/Reporting range/).click();
+  await reportingRange.click();
   await page.getByRole('button', { name: 'Last 90 days' }).click();
   await page.getByRole('tab', { name: 'People' }).click();
 
@@ -63,6 +67,7 @@ test('analytics is useful by default and preserves planning choices on reload', 
   await page.reload();
   await expect(page.getByRole('tab', { name: 'People' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('combobox', { name: 'Measure' })).toContainText('Points');
+  await expect(reportingRange).toContainText('Last 90 days');
 
   await context.close();
 });

@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { act, render } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { RealtimeProvider, useDeltaHandler, useScopeSubscription } from '../src/react.tsx';
+import {
+  RealtimeProvider,
+  useDeltaHandler,
+  useDeniedHandler,
+  useScopeSubscription,
+} from '../src/react.tsx';
 
 type Handler = (() => void) | null;
 type CloseHandler = ((event: { code: number }) => void) | null;
@@ -47,6 +52,16 @@ function flush() {
 function Subscriber() {
   useScopeSubscription(['team:team_1']);
   useDeltaHandler(() => undefined);
+  return null;
+}
+
+function DeniedSubscriber({
+  onDenied,
+}: {
+  readonly onDenied: (scopes: readonly string[]) => void;
+}) {
+  useScopeSubscription(['doc:doc_1']);
+  useDeniedHandler(onDenied);
   return null;
 }
 
@@ -135,5 +150,34 @@ describe('RealtimeProvider under StrictMode', () => {
 
     expect(socket?.closed).toBe(true);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('delivers initial subscription denials once and removes unmounted listeners', async () => {
+    const denied: (readonly string[])[] = [];
+    const view = render(
+      <StrictMode>
+        <RealtimeProvider
+          url="ws://localhost:3100"
+          organizationId="org_1"
+          fetchTicket={() => Promise.resolve('ticket_1')}
+        >
+          <DeniedSubscriber onDenied={(scopes) => denied.push(scopes)} />
+        </RealtimeProvider>
+      </StrictMode>,
+    );
+    await flush();
+    const socket = FakeWebSocket.instances[0];
+    const frame = {
+      data: JSON.stringify({ type: 'subscribed', scopes: [], denied: ['doc:doc_1'] }),
+    };
+    act(() => {
+      socket?.open();
+      deliverReady(socket);
+      socket?.onmessage?.(frame);
+    });
+    expect(denied).toEqual([['doc:doc_1']]);
+    view.unmount();
+    act(() => socket?.onmessage?.(frame));
+    expect(denied).toHaveLength(1);
   });
 });

@@ -269,9 +269,13 @@ test('OAuth consent creates an agent that can be managed from MCP settings', asy
     `agent for ${seed.name}`,
   );
   await board.goto(`${BASE}/inbox`);
-  await expect(board.getByTestId('inbox-detail')).toBeVisible();
-  await board.getByRole('button', { name: 'Status' }).click();
-  const notification = board
+  const inbox = board.getByRole('main');
+  await expect(inbox).toHaveCount(1);
+  const detail = inbox.getByTestId('inbox-detail').filter({ visible: true });
+  await expect(detail).toHaveCount(1);
+  await expect(detail).toBeVisible();
+  await inbox.getByRole('button', { name: 'Status' }).click();
+  const notification = inbox
     .getByRole('button')
     .filter({ hasText: `Assigned you ${issue.identifier}` });
   await expect(notification).toContainText('Agent');

@@ -7,6 +7,7 @@ import { BASE } from './base-url.ts';
 const subscriptionResultSchema = z.object({
   type: z.literal('subscribed'),
   denied: z.array(z.string()),
+  scopes: z.array(z.string()),
 });
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
@@ -17,7 +18,11 @@ async function signIn(context: BrowserContext, email: string): Promise<Page> {
   return page;
 }
 
-function waitForDeniedDocSubscription(page: Page, docId: string): Promise<void> {
+function waitForDocSubscription(
+  page: Page,
+  docId: string,
+  result: 'accepted' | 'denied',
+): Promise<void> {
   const docScope = scopes.doc(docId);
   return new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -30,7 +35,7 @@ function waitForDeniedDocSubscription(page: Page, docId: string): Promise<void> 
       else reject(error);
     };
     const timeout = setTimeout(
-      () => finish(new Error(`realtime did not deny the revoked scope ${docScope}`)),
+      () => finish(new Error(`realtime did not report ${result} for scope ${docScope}`)),
       15_000,
     );
     const handleWebSocket = (socket: import('@playwright/test').WebSocket) => {
@@ -43,58 +48,78 @@ function waitForDeniedDocSubscription(page: Page, docId: string): Promise<void> 
           return;
         }
         const parsed = subscriptionResultSchema.safeParse(value);
-        if (parsed.success && parsed.data.denied.includes(docScope)) finish();
+        if (
+          parsed.success &&
+          (result === 'denied' ? parsed.data.denied : parsed.data.scopes).includes(docScope)
+        )
+          finish();
       });
     };
     page.on('websocket', handleWebSocket);
   });
 }
 
-test('private access requires an invitation even for admins and revocation clears an open page', async ({
-  browser,
-}) => {
-  const ownerContext = await browser.newContext();
-  const readerContext = await browser.newContext();
-  const owner = await signIn(ownerContext, 'jordan@orbit.example');
-  const reader = await signIn(readerContext, 'alex@orbit.example');
-  const doc = await createDoc(owner, 'Private launch decisions', 'private');
-  expect(await statusOf(reader, `/api/docs/${doc.id}`)).toBe(404);
-  await owner.goto(`${BASE}/docs/${doc.id}`);
-  await owner.getByTestId('doc-share').filter({ visible: true }).click();
-  await owner.getByTestId('doc-access-search').fill('Alex');
-  await owner.locator('[data-testid^="doc-access-add-"]').first().click();
-  await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(1);
-  await reader.goto(`${BASE}/docs/${doc.id}`);
-  await expect(
-    reader.getByRole('heading', { name: 'Private launch decisions', exact: true }),
-  ).toBeVisible();
-  await reader.getByTestId('doc-share').filter({ visible: true }).click();
-  await expect(reader.getByTestId('doc-visibility-link')).toBeDisabled();
-  await reader.keyboard.press('Escape');
-  const revokedAccess = owner.waitForResponse(
-    (response) =>
-      response.url() === `${BASE}/api/docs/${doc.id}/access` &&
-      response.request().method() === 'PUT',
-  );
-  const revokedRead = reader.waitForResponse(
-    (response) =>
-      response.url() === `${BASE}/api/docs/${doc.id}` &&
-      response.request().method() === 'GET' &&
-      response.status() === 404,
-  );
-  await owner.locator('[data-testid^="doc-access-remove-"]').first().click();
-  expect((await revokedAccess).status()).toBe(200);
-  await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(0);
-  expect((await revokedRead).status()).toBe(404);
-  await expect(reader.getByTestId('doc-reader')).toHaveCount(0);
-  expect(await statusOf(reader, `/api/docs/${doc.id}`)).toBe(404);
-  const deniedSubscription = waitForDeniedDocSubscription(reader, doc.id);
-  await reader.reload();
-  await deniedSubscription;
-  await expect(reader.getByTestId('doc-reader')).toHaveCount(0);
-  await ownerContext.close();
-  await readerContext.close();
-});
+for (const connection of ['ready', 'connecting'] as const) {
+  test(`private access requires an invitation even for admins and revocation clears an open page while ${connection}`, async ({
+    browser,
+  }) => {
+    const ownerContext = await browser.newContext();
+    const readerContext = await browser.newContext();
+    const owner = await signIn(ownerContext, 'jordan@orbit.example');
+    const reader = await signIn(readerContext, 'alex@orbit.example');
+    const doc = await createDoc(owner, 'Private launch decisions', 'private');
+    expect(await statusOf(reader, `/api/docs/${doc.id}`)).toBe(404);
+    await owner.goto(`${BASE}/docs/${doc.id}`);
+    await owner.getByTestId('doc-share').filter({ visible: true }).click();
+    await owner.getByTestId('doc-access-search').fill('Alex');
+    await owner.locator('[data-testid^="doc-access-add-"]').first().click();
+    await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(1);
+    const ticketGate = Promise.withResolvers<void>();
+    if (connection === 'connecting') {
+      await reader.route('**/api/realtime/ticket', async (route) => {
+        await ticketGate.promise;
+        await route.continue();
+      });
+    }
+    const subscribed =
+      connection === 'ready' ? waitForDocSubscription(reader, doc.id, 'accepted') : null;
+    await reader.goto(`${BASE}/docs/${doc.id}`);
+    if (subscribed !== null) await subscribed;
+    await expect(
+      reader.getByRole('heading', { name: 'Private launch decisions', exact: true }),
+    ).toBeVisible();
+    await reader.getByTestId('doc-share').filter({ visible: true }).click();
+    await expect(reader.getByTestId('doc-visibility-link')).toBeDisabled();
+    await reader.keyboard.press('Escape');
+    const revokedAccess = owner.waitForResponse(
+      (response) =>
+        response.url() === `${BASE}/api/docs/${doc.id}/access` &&
+        response.request().method() === 'PUT',
+    );
+    const revokedRead = reader.waitForResponse(
+      (response) =>
+        response.url() === `${BASE}/api/docs/${doc.id}` &&
+        response.request().method() === 'GET' &&
+        response.status() === 404,
+    );
+    await owner.locator('[data-testid^="doc-access-remove-"]').first().click();
+    expect((await revokedAccess).status()).toBe(200);
+    await expect(owner.locator('[data-testid^="doc-access-row-"]')).toHaveCount(0);
+    ticketGate.resolve();
+    expect((await revokedRead).status()).toBe(404);
+    await expect(reader.getByTestId('doc-reader')).toHaveCount(0);
+    await expect(
+      reader.getByRole('heading', { name: 'Private launch decisions', exact: true }),
+    ).toHaveCount(0);
+    expect(await statusOf(reader, `/api/docs/${doc.id}`)).toBe(404);
+    const deniedSubscription = waitForDocSubscription(reader, doc.id, 'denied');
+    await reader.reload();
+    await deniedSubscription;
+    await expect(reader.getByTestId('doc-reader')).toHaveCount(0);
+    await ownerContext.close();
+    await readerContext.close();
+  });
+}
 
 test('folders, resized panes, writing, preview and published links work together', async ({
   browser,

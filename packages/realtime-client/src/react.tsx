@@ -16,6 +16,7 @@ import { createRealtimeClient, type RealtimeClient, type RealtimeStatus } from '
 
 export type DeltaHandler = (actions: SyncAction[]) => void;
 export type ResumeHandler = (since: number) => void;
+export type DeniedHandler = (scopes: readonly string[]) => void;
 
 type PresenceByScope = ReadonlyMap<string, readonly PresenceMessage[]>;
 
@@ -25,6 +26,7 @@ interface RealtimeContextValue {
   retainScopes: (scopes: readonly string[]) => () => void;
   addDeltaHandler: (handler: DeltaHandler) => () => void;
   addResumeHandler: (handler: ResumeHandler) => () => void;
+  addDeniedHandler: (handler: DeniedHandler) => () => void;
   observeSyncId: (syncId: number) => void;
   publishPresence: (scope: string, kind: PresenceKind) => void;
 }
@@ -67,6 +69,7 @@ export function RealtimeProvider({
   const configRef = useRef('');
   const handlersRef = useRef(new Set<DeltaHandler>());
   const resumeHandlersRef = useRef(new Set<ResumeHandler>());
+  const deniedHandlersRef = useRef(new Set<DeniedHandler>());
   const countsRef = useRef(new Map<string, number>());
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const onTerminalRef = useRef(onTerminal);
@@ -105,6 +108,9 @@ export function RealtimeProvider({
         onResume: (since) => {
           setPresence(new Map());
           for (const handler of resumeHandlersRef.current) handler(since);
+        },
+        onDenied: (scopes) => {
+          for (const handler of deniedHandlersRef.current) handler(scopes);
         },
         onPresence: (messages) => setPresence((current) => mergePresence(current, messages)),
         onTerminal: (code) => onTerminalRef.current?.(code),
@@ -163,6 +169,13 @@ export function RealtimeProvider({
     clientRef.current?.observe(syncId);
   }, []);
 
+  const addDeniedHandler = useCallback((handler: DeniedHandler) => {
+    deniedHandlersRef.current.add(handler);
+    return () => {
+      deniedHandlersRef.current.delete(handler);
+    };
+  }, []);
+
   const publishPresence = useCallback((scope: string, kind: PresenceKind) => {
     clientRef.current?.setPresence(scope, kind);
   }, []);
@@ -174,6 +187,7 @@ export function RealtimeProvider({
       retainScopes,
       addDeltaHandler,
       addResumeHandler,
+      addDeniedHandler,
       observeSyncId,
       publishPresence,
     }),
@@ -183,6 +197,7 @@ export function RealtimeProvider({
       retainScopes,
       addDeltaHandler,
       addResumeHandler,
+      addDeniedHandler,
       observeSyncId,
       publishPresence,
     ],
@@ -247,4 +262,13 @@ export function useResumeHandler(handler: ResumeHandler): void {
 
 export function useObserveSyncId(): (syncId: number) => void {
   return useRealtimeContext().observeSyncId;
+}
+
+export function useDeniedHandler(handler: DeniedHandler): void {
+  const { addDeniedHandler } = useRealtimeContext();
+  const handlerRef = useRef(handler);
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
+  useEffect(() => addDeniedHandler((scopes) => handlerRef.current(scopes)), [addDeniedHandler]);
 }
