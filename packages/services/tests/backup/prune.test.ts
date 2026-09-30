@@ -236,6 +236,31 @@ describe('backup retention and pruning', () => {
     }
   });
 
+  it('retains all backups when quota is the only option and size does not exceed quota', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-quota-under-'));
+    try {
+      await createMockBackup(tempDir, 'backup-1', '2026-09-01T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+      await createMockBackup(tempDir, 'backup-2', '2026-09-02T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+      await createMockBackup(tempDir, 'backup-3', '2026-09-03T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        maxTotalBytes: 50000,
+      });
+
+      expect(result.retainedBackups.sort()).toEqual(['backup-1', 'backup-2', 'backup-3'].sort());
+      expect(result.deletedBackups).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('performs dry run without deleting directories from disk', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-dry-'));
     try {

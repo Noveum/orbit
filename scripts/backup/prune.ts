@@ -231,9 +231,9 @@ async function main(): Promise<void> {
       printHumanReport(args, result);
     }
 
-    handleFailedDeletions(args, result.failedDeletions);
+    const hasFailures = handleFailedDeletions(args, result.failedDeletions);
 
-    if (result.isStale) {
+    if (result.isStale && !hasFailures) {
       process.exitCode = 2;
     }
   } catch (error) {
@@ -261,9 +261,9 @@ function printHumanReport(args: ParsedPruneArgs, result: BackupPruneResult): voi
   }
 }
 
-function handleFailedDeletions(args: ParsedPruneArgs, failedDeletions: readonly string[]): void {
+function handleFailedDeletions(args: ParsedPruneArgs, failedDeletions: readonly string[]): boolean {
   if (failedDeletions.length === 0) {
-    return;
+    return false;
   }
   if (args.json) {
     process.stderr.write(
@@ -282,7 +282,8 @@ function handleFailedDeletions(args: ParsedPruneArgs, failedDeletions: readonly 
       `Error: Failed to delete ${failedDeletions.length} backup directory(ies): ${failedDeletions.join(', ')}\n`,
     );
   }
-  process.exit(1);
+  process.exitCode = 1;
+  return true;
 }
 
 function handlePruneError(args: ParsedPruneArgs, error: unknown): void {

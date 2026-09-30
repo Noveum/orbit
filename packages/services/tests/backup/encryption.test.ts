@@ -64,6 +64,21 @@ describe('backup encryption', () => {
     }
   });
 
+  it('preserves key parsing error when key file contains invalid key format', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-key-invalid-'));
+    const filePath = join(tempDir, 'invalid-key.txt');
+    try {
+      await writeFile(filePath, 'not-a-valid-32-byte-hex-or-base64\n', 'utf8');
+      await expect(
+        resolveMasterEncryptionKey({
+          keyFile: filePath,
+        }),
+      ).rejects.toThrow('Encryption key must be a valid 32-byte key');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('resolves master key from secret command helper', async () => {
     const resolved = await resolveMasterEncryptionKey({
       command: `"${process.execPath}" -e "process.stdout.write('${hexKey}')"`,

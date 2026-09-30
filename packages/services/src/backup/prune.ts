@@ -314,8 +314,7 @@ function determineRetainedIds(
     options.keepHourly !== undefined ||
     options.keepDaily !== undefined ||
     options.keepWeekly !== undefined ||
-    options.keepMonthly !== undefined ||
-    options.maxTotalBytes !== undefined;
+    options.keepMonthly !== undefined;
 
   if (hasSpecificRule) {
     applyTimeAndCountRules(discovered, options, toRetain);
