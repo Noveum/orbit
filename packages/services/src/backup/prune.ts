@@ -206,6 +206,33 @@ async function cleanIncompleteDirectories(
   return { deleted, failed, freedBytes };
 }
 
+async function tryDiscoverBackup(
+  destinationDir: string,
+  name: string,
+  pinnedIds: readonly string[] | undefined,
+): Promise<DiscoveredBackup | undefined> {
+  const fullPath = join(destinationDir, name);
+  const manifestPath = join(fullPath, 'manifest.json');
+
+  try {
+    const rawText = await readFile(manifestPath, 'utf8');
+    const parsedManifest = backupManifestSchema.parse(JSON.parse(rawText));
+    const size = await calculateDirectorySize(fullPath);
+    const isPinned = await isPinnedBackup(fullPath, parsedManifest, pinnedIds);
+
+    return {
+      id: name,
+      path: fullPath,
+      manifest: parsedManifest,
+      createdAt: new Date(parsedManifest.createdAt),
+      size,
+      isPinned,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 async function discoverBackups(
   destinationDir: string,
   candidateDirs: readonly string[],
@@ -214,25 +241,9 @@ async function discoverBackups(
   const discovered: DiscoveredBackup[] = [];
 
   for (const name of candidateDirs) {
-    const fullPath = join(destinationDir, name);
-    const manifestPath = join(fullPath, 'manifest.json');
-
-    try {
-      const rawText = await readFile(manifestPath, 'utf8');
-      const parsedManifest = backupManifestSchema.parse(JSON.parse(rawText));
-      const size = await calculateDirectorySize(fullPath);
-      const isPinned = await isPinnedBackup(fullPath, parsedManifest, pinnedIds);
-
-      discovered.push({
-        id: name,
-        path: fullPath,
-        manifest: parsedManifest,
-        createdAt: new Date(parsedManifest.createdAt),
-        size,
-        isPinned,
-      });
-    } catch {
-      undefined;
+    const backup = await tryDiscoverBackup(destinationDir, name, pinnedIds);
+    if (backup !== undefined) {
+      discovered.push(backup);
     }
   }
 
