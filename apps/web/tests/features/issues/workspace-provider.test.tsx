@@ -37,12 +37,18 @@ mock.module('@/features/issues/quick-create.tsx', () => ({
   }: {
     readonly open: boolean;
     readonly defaultAssigneeId: string | null;
-  }) =>
-    open ? (
-      <span data-testid="quick-create-probe" data-assignee={defaultAssigneeId ?? 'none'}>
+  }) => {
+    const deletion = useIssueDeletion();
+    return open ? (
+      <span
+        data-testid="quick-create-probe"
+        data-assignee={defaultAssigneeId ?? 'none'}
+        data-deletion={deletion === null ? 'missing' : 'provided'}
+      >
         Create issue
       </span>
-    ) : null,
+    ) : null;
+  },
 }));
 
 afterAll(() => {
@@ -241,6 +247,7 @@ describe('the issue workspace shell', () => {
     await userEvent.setup().keyboard('c');
 
     expect(screen.getByTestId('quick-create-probe')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-create-probe')).toHaveAttribute('data-deletion', 'provided');
     expect(fetchBootstrap).not.toHaveBeenCalled();
   });
 });

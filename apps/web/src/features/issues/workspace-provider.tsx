@@ -187,14 +187,16 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceContext.Provider value={value}>
-      <IssueDeletionProvider>{children}</IssueDeletionProvider>
-      <QuickCreateDialog
-        open={createOpen && canCreate}
-        onOpenChange={setCreateOpen}
-        defaultTeamId={createTeamId ?? routeTeamId}
-        defaultStateId={createStateId}
-        defaultAssigneeId={createAssigneeId}
-      />
+      <IssueDeletionProvider>
+        {children}
+        <QuickCreateDialog
+          open={createOpen && canCreate}
+          onOpenChange={setCreateOpen}
+          defaultTeamId={createTeamId ?? routeTeamId}
+          defaultStateId={createStateId}
+          defaultAssigneeId={createAssigneeId}
+        />
+      </IssueDeletionProvider>
     </WorkspaceContext.Provider>
   );
 }
