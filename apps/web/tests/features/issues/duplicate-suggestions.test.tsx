@@ -51,8 +51,13 @@ describe('DuplicateSuggestions', () => {
     expect(screen.getByText('Done')).toBeInTheDocument();
 
     const link = screen.getByRole('link', { name: /Safari passkey failure/i });
-    expect(link).toHaveAttribute('href', '/issues/ENG-10');
+    expect(link).toHaveAttribute('href', '/issue/ENG-10');
+    expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getByRole('link', { name: /Passkey login broken on Safari/i })).toHaveAttribute(
+      'href',
+      '/issue/ENG-12',
+    );
   });
 
   it('calls onDismiss when the close button is clicked', async () => {

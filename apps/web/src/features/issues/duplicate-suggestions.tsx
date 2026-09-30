@@ -4,6 +4,7 @@ import { ExternalLink, X } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover, tabHover } from '@/lib/interaction.ts';
 import type { DuplicateIssueMatch } from '@/lib/query/schemas.ts';
+import { issueHref } from './issue-link.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 
 export interface DuplicateSuggestionsProps {
@@ -35,7 +36,7 @@ export function DuplicateSuggestions({ duplicates, onDismiss }: DuplicateSuggest
         {duplicates.map((issue) => (
           <li key={issue.id} className="flex items-center justify-between gap-2">
             <a
-              href={`/issues/${issue.identifier}`}
+              href={issueHref(issue.identifier)}
               target="_blank"
               rel="noopener noreferrer"
               className="group flex min-w-0 items-center gap-1.5 truncate font-medium text-text hover:text-accent"

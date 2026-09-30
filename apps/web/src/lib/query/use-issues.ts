@@ -2,6 +2,7 @@
 
 import { decodeFilter, hasCurrentSprintFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
+import type { IssueExpectedProperties } from '@orbit/shared/validators';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import {
   keepPreviousData,
@@ -12,12 +13,19 @@ import {
 } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
+import {
+  getTabUndoStack,
+  nextActionSequence,
+  type PropertyUndoEntry,
+  recordTabPropertyChange,
+} from '@/features/issues/use-issue-property-undo.ts';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
-  issueCacheResetGeneration,
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
+  issueQueryResetMarks,
+  issueQueryWasReset,
   issueRevisionGeneration,
   recordIssueDeletions,
   recordIssueListRevisions,
@@ -82,7 +90,7 @@ import {
   withoutSubIssue,
 } from './sync.ts';
 
-export type { IssueQuery };
+export type { Issue, IssueQuery };
 export {
   ALL_ISSUES_QUERY,
   allIssuesSearch,
@@ -391,6 +399,7 @@ export interface IssuePatch {
   readonly dueDate?: string | null;
   readonly estimate?: number | null;
   readonly labelIds?: readonly string[];
+  readonly expected?: IssueExpectedProperties;
 }
 
 function reconcile(
@@ -663,6 +672,258 @@ function resortTeamIssueLists(client: QueryClient, teamId: string): void {
   );
 }
 
+const SUPPORTED_PROPERTY_KEYS = [
+  'stateId',
+  'priority',
+  'assigneeId',
+  'estimate',
+  'projectId',
+  'milestoneId',
+  'cycleId',
+  'dueDate',
+  'labelIds',
+  'reviewerIds',
+  'parentId',
+] as const;
+
+export function hasSupportedProperty(patch: IssuePatch): boolean {
+  return SUPPORTED_PROPERTY_KEYS.some((key) => patch[key] !== undefined);
+}
+
+export function filterSupportedPatch(patch: IssuePatch): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const key of SUPPORTED_PROPERTY_KEYS) {
+    if (patch[key] !== undefined) {
+      filtered[key] = patch[key];
+    }
+  }
+  return filtered;
+}
+
+interface ActiveIssueMutation {
+  readonly sequence: number;
+  readonly patch: IssuePatch;
+  entry: PropertyUndoEntry | undefined;
+  status: 'pending' | 'succeeded' | 'failed';
+}
+
+interface IssueMutationTracker {
+  readonly rootBase: Issue;
+  readonly active: ActiveIssueMutation[];
+}
+
+const mutationTrackers = new Map<string, IssueMutationTracker>();
+
+function applyPatchToIssue(base: Issue, patch: IssuePatch): Issue {
+  const next: Issue = Object.assign({}, base);
+  if (patch.stateId !== undefined) next.stateId = patch.stateId;
+  if (patch.priority !== undefined) next.priority = patch.priority;
+  if (patch.assigneeId !== undefined) next.assigneeId = patch.assigneeId;
+  if (patch.estimate !== undefined) next.estimate = patch.estimate;
+  if (patch.projectId !== undefined) next.projectId = patch.projectId;
+  if (patch.milestoneId !== undefined) next.milestoneId = patch.milestoneId;
+  if (patch.cycleId !== undefined) next.cycleId = patch.cycleId;
+  if (patch.dueDate !== undefined) next.dueDate = patch.dueDate;
+  if (patch.labelIds !== undefined) next.labelIds = [...patch.labelIds];
+  if (patch.reviewerIds !== undefined) next.reviewerIds = [...patch.reviewerIds];
+  if (patch.parentId !== undefined) next.parentId = patch.parentId;
+  return next;
+}
+
+function reconcileTracker(tracker: IssueMutationTracker): void {
+  let currentBase = tracker.rootBase;
+
+  for (const mutation of [...tracker.active].sort((a, b) => a.sequence - b.sequence)) {
+    if (mutation.status === 'failed') {
+      continue;
+    }
+
+    const nextEntry = captureIssueHistory(currentBase, mutation.patch, mutation.sequence);
+
+    if (mutation.status === 'succeeded' && nextEntry !== undefined) {
+      const existing = getTabUndoStack().find((entry) => entry.sequence === mutation.sequence);
+
+      if (existing !== undefined) {
+        Object.assign(existing.inversePatch, nextEntry.inversePatch);
+        Object.assign(existing.expectedForUndo, nextEntry.expectedForUndo);
+        Object.assign(existing.expectedForRedo, nextEntry.expectedForRedo);
+      }
+    }
+
+    mutation.entry = nextEntry;
+    currentBase = applyPatchToIssue(currentBase, mutation.patch);
+  }
+}
+
+function markTrackedMutationFailed(issueId: string, sequence: number): void {
+  const tracker = mutationTrackers.get(issueId);
+  if (tracker === undefined) return;
+  const mutation = tracker.active.find((item) => item.sequence === sequence);
+  if (mutation !== undefined) mutation.status = 'failed';
+  reconcileTracker(tracker);
+  if (!hasPendingMutation(tracker)) mutationTrackers.delete(issueId);
+}
+
+function hasPendingMutation(tracker: IssueMutationTracker): boolean {
+  return tracker.active.some((mutation) => mutation.status === 'pending');
+}
+
+function assignScalarDelta(
+  field: string,
+  patchValue: unknown,
+  issueValue: unknown,
+  inversePatch: Record<string, unknown>,
+  expectedForUndo: Record<string, unknown>,
+  expectedForRedo: Record<string, unknown>,
+): void {
+  if (patchValue === undefined) return;
+  inversePatch[field] = issueValue;
+  expectedForUndo[field] = patchValue;
+  expectedForRedo[field] = issueValue;
+}
+
+function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
+  const inversePatch: Record<string, unknown> = {};
+  const expectedForUndo: Record<string, unknown> = {
+    labelIds: [...issue.labelIds],
+    reviewerIds: [...(issue.reviewerIds ?? [])],
+    parentId: issue.parentId,
+  };
+  const expectedForRedo: Record<string, unknown> = {
+    labelIds: [...issue.labelIds],
+    reviewerIds: [...(issue.reviewerIds ?? [])],
+    parentId: issue.parentId,
+  };
+
+  assignScalarDelta(
+    'stateId',
+    patch.stateId,
+    issue.stateId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'priority',
+    patch.priority,
+    issue.priority,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'assigneeId',
+    patch.assigneeId,
+    issue.assigneeId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'estimate',
+    patch.estimate,
+    issue.estimate,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'cycleId',
+    patch.cycleId,
+    issue.cycleId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'dueDate',
+    patch.dueDate,
+    issue.dueDate,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+  assignScalarDelta(
+    'milestoneId',
+    patch.milestoneId,
+    issue.milestoneId,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  );
+
+  if (patch.projectId !== undefined) {
+    inversePatch['projectId'] = issue.projectId;
+    expectedForUndo['projectId'] = patch.projectId;
+    expectedForRedo['projectId'] = issue.projectId;
+
+    if (issue.milestoneId !== null) {
+      inversePatch['milestoneId'] = issue.milestoneId;
+      expectedForUndo['milestoneId'] = null;
+      expectedForRedo['milestoneId'] = issue.milestoneId;
+    }
+  }
+
+  if (patch.labelIds !== undefined) {
+    inversePatch['labelIds'] = [...issue.labelIds];
+    expectedForUndo['labelIds'] = [...patch.labelIds];
+    expectedForRedo['labelIds'] = [...issue.labelIds];
+  }
+
+  if (patch.reviewerIds !== undefined) {
+    inversePatch['reviewerIds'] = [...(issue.reviewerIds ?? [])];
+    expectedForUndo['reviewerIds'] = [...patch.reviewerIds];
+    expectedForRedo['reviewerIds'] = [...(issue.reviewerIds ?? [])];
+  }
+
+  if (patch.parentId !== undefined) {
+    inversePatch['parentId'] = issue.parentId;
+    expectedForUndo['parentId'] = patch.parentId;
+    expectedForRedo['parentId'] = issue.parentId;
+  }
+
+  return { inversePatch, expectedForUndo, expectedForRedo };
+}
+
+function resolvePropertyLabel(patch: IssuePatch): string {
+  if (patch.stateId !== undefined) return 'Status';
+  if (patch.priority !== undefined) return 'Priority';
+  if (patch.assigneeId !== undefined) return 'Assignee';
+  if (patch.estimate !== undefined) return 'Estimate';
+  if (patch.projectId !== undefined) return 'Project';
+  if (patch.milestoneId !== undefined) return 'Milestone';
+  if (patch.cycleId !== undefined) return 'Sprint';
+  if (patch.dueDate !== undefined) return 'Due date';
+  if (patch.labelIds !== undefined) return 'Labels';
+  if (patch.reviewerIds !== undefined) return 'Reviewers';
+  if (patch.parentId !== undefined) return 'Parent';
+  return 'Property';
+}
+
+export function captureIssueHistory(
+  issue: Issue,
+  patch: IssuePatch,
+  sequence: number,
+): PropertyUndoEntry | undefined {
+  const supportedForwardPatch = filterSupportedPatch(patch);
+
+  if (patch.expected !== undefined || Object.keys(supportedForwardPatch).length === 0) {
+    return undefined;
+  }
+
+  const { inversePatch, expectedForUndo, expectedForRedo } = buildUndoDeltas(issue, patch);
+
+  return {
+    sequence,
+    issue,
+    propertyLabel: resolvePropertyLabel(patch),
+    patch: supportedForwardPatch,
+    inversePatch,
+    expectedForUndo,
+    expectedForRedo,
+  };
+}
+
 export function useUpdateIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -676,6 +937,34 @@ export function useUpdateIssue() {
       return result.issue;
     },
     onMutate: async (input) => {
+      let tracker = mutationTrackers.get(input.issue.id);
+      if (tracker === undefined) {
+        const detailKey = queryKeys.issue(input.issue.identifier);
+        const heldDetail = client.getQueryData<IssueDetail>(detailKey);
+        const fallbackBase = heldDetail?.issue ?? input.issue;
+        tracker = { rootBase: fallbackBase, active: [] };
+        mutationTrackers.set(input.issue.id, tracker);
+      }
+
+      let currentBase = tracker.rootBase;
+      for (const m of tracker.active) {
+        if (m.status === 'failed') {
+          continue;
+        }
+        currentBase = applyPatchToIssue(currentBase, m.patch);
+      }
+
+      const sequence = nextActionSequence();
+      const undoEntry = captureIssueHistory(currentBase, input.patch, sequence);
+
+      const activeRecord: ActiveIssueMutation = {
+        sequence,
+        patch: input.patch,
+        entry: undoEntry,
+        status: 'pending',
+      };
+      tracker.active.push(activeRecord);
+
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
         client.cancelQueries({ queryKey: [ISSUES_ROOT] }),
@@ -685,11 +974,11 @@ export function useUpdateIssue() {
 
       const { reviewerIds, ...patch } = input.patch;
       const optimistic: Issue = {
-        ...input.issue,
+        ...currentBase,
         ...patch,
         ...(reviewerIds === undefined ? {} : { reviewerIds: [...reviewerIds] }),
         labelIds:
-          input.patch.labelIds === undefined ? input.issue.labelIds : [...input.patch.labelIds],
+          input.patch.labelIds === undefined ? currentBase.labelIds : [...input.patch.labelIds],
       };
       placeIssue(client, optimistic, false);
       let optimisticDetail: IssueDetail | undefined;
@@ -703,34 +992,61 @@ export function useUpdateIssue() {
         });
       }
       return {
+        sequence,
+        undoEntry,
         previousDetail,
         optimisticDetail,
         identifier: input.issue.identifier,
-        resetGeneration: issueCacheResetGeneration(client),
+        detailResetMarks: issueQueryResetMarks(client, [detailKey]),
         issueRevision: issueRevisionGeneration(client, input.issue.id),
       };
     },
     onError: (error, input, context) => {
+      if (context !== undefined) {
+        markTrackedMutationFailed(input.issue.id, context.sequence);
+      }
+
       const currentDetail =
         context === undefined
           ? undefined
           : client.getQueryData<IssueDetail>(queryKeys.issue(context.identifier));
-      const canRestore =
+      const detailWasReset =
+        context?.previousDetail !== undefined &&
+        issueQueryWasReset(client, context.detailResetMarks, queryKeys.issue(context.identifier));
+      const serverMovedOn =
+        currentDetail !== undefined &&
+        currentDetail !== context?.optimisticDetail &&
+        currentDetail.issue.syncId > input.issue.syncId;
+      const canRestoreList =
         context !== undefined &&
-        issueCacheResetGeneration(client) === context.resetGeneration &&
-        issueRevisionGeneration(client, input.issue.id) === context.issueRevision &&
-        currentDetail === context.optimisticDetail;
-      if (canRestore) {
-        placeIssue(client, input.issue);
-        if (context.previousDetail !== undefined) {
-          client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
-        }
-      } else {
+        !serverMovedOn &&
+        issueRevisionGeneration(client, input.issue.id) === context.issueRevision;
+      const canRestoreDetail =
+        canRestoreList && !detailWasReset && currentDetail === context?.optimisticDetail;
+      if (canRestoreList) placeIssue(client, input.issue);
+      if (canRestoreDetail && context?.previousDetail !== undefined) {
+        client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+      }
+      if (!canRestoreList || (context?.previousDetail !== undefined && !canRestoreDetail)) {
         invalidateIssueCaches(client).catch(() => undefined);
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
-    onSuccess: (issue) => {
+    onSuccess: (issue, input, context) => {
+      const tracker = mutationTrackers.get(input.issue.id);
+      const activeRecord = tracker?.active.find(
+        (mutation) => mutation.sequence === context?.sequence,
+      );
+
+      if (activeRecord !== undefined) {
+        activeRecord.status = 'succeeded';
+      }
+      const entryToCommit = activeRecord?.entry ?? context?.undoEntry;
+
+      if (entryToCommit !== undefined) {
+        recordTabPropertyChange(entryToCommit);
+      }
+
       placeIssue(client, issue);
       refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
@@ -739,8 +1055,23 @@ export function useUpdateIssue() {
           : { ...current, issue },
       );
     },
-    onSettled: (_issue, _error, input) => {
+    onSettled: (_issue, _error, input, context) => {
+      const tracker = mutationTrackers.get(input.issue.id);
+
+      if (tracker !== undefined && context !== undefined) {
+        const mutation = tracker.active.find((item) => item.sequence === context.sequence);
+
+        if (mutation !== undefined && _error === undefined) {
+          mutation.status = 'succeeded';
+        }
+
+        if (!hasPendingMutation(tracker)) {
+          mutationTrackers.delete(input.issue.id);
+        }
+      }
+
       if (input.patch.parentId === undefined) return;
+
       client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
     },
   });
@@ -775,7 +1106,7 @@ interface MoveMutationContext {
   readonly lists: readonly MoveListSnapshot[];
   readonly deletionGeneration: number;
   readonly issueRevision: number;
-  readonly resetGeneration: number;
+  readonly resetMarks: ReadonlyMap<string, number>;
 }
 
 export interface IssueMoveSettlement {
@@ -823,8 +1154,7 @@ function failedMoveRollbackFenced(
 ): boolean {
   return (
     context !== undefined &&
-    (issueCacheResetGeneration(client) !== context.resetGeneration ||
-      issueRevisionGeneration(client, input.issue.id) !== context.issueRevision)
+    issueRevisionGeneration(client, input.issue.id) !== context.issueRevision
   );
 }
 
@@ -840,9 +1170,11 @@ async function rollbackFailedMove(
       snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
     ),
   );
+  const resetMarks = context?.resetMarks ?? new Map<string, number>();
   const current = client
     .getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })
-    .flatMap(([, pages]) => {
+    .flatMap(([key, pages]) => {
+      if (issueQueryWasReset(client, resetMarks, key)) return [];
       const found = issueFromPages(pages, input.issue.id);
       return found === undefined ? [] : [found];
     });
@@ -850,6 +1182,10 @@ async function rollbackFailedMove(
   const intervening = current.some((issue) => !expected.has(issueFingerprint(issue)));
 
   for (const snapshot of lists) {
+    if (issueQueryWasReset(client, resetMarks, snapshot.key)) {
+      refreshKeys.push(snapshot.key);
+      continue;
+    }
     const pages = client.getQueryData<IssuePages>(snapshot.key);
     const found = issueFromPages(pages, input.issue.id);
     const stillOptimistic =
@@ -914,7 +1250,10 @@ export function useMoveIssue() {
         deletionGeneration:
           moveDeletionGenerations.get(input) ?? issueDeletionGeneration(client, input.issue.id),
         issueRevision: issueRevisionGeneration(client, input.issue.id),
-        resetGeneration: issueCacheResetGeneration(client),
+        resetMarks: issueQueryResetMarks(
+          client,
+          before.map(([key]) => key),
+        ),
       };
     },
     onError: async (error, input, context) => {
@@ -996,7 +1335,7 @@ interface DeleteListSnapshot {
 interface DeleteMutationContext {
   readonly lists: readonly DeleteListSnapshot[];
   readonly issueRevisions: ReadonlyMap<string, number>;
-  readonly resetGeneration: number;
+  readonly resetMarks: ReadonlyMap<string, number>;
 }
 
 function dropFromIssueLists(client: QueryClient, removed: ReadonlySet<string>): void {
@@ -1130,6 +1469,7 @@ function restoreIssueList(
 
 function restoreIssueLists(client: QueryClient, context: DeleteMutationContext): void {
   for (const snapshot of context.lists) {
+    if (issueQueryWasReset(client, context.resetMarks, snapshot.key)) continue;
     client.setQueryData<IssuePages>(snapshot.key, (current) =>
       restoreIssueList(client, context, snapshot, current),
     );
@@ -1183,7 +1523,10 @@ export function useDeleteIssues() {
         issueRevisions: new Map(
           [...changedIds].map((issueId) => [issueId, issueRevisionGeneration(client, issueId)]),
         ),
-        resetGeneration: issueCacheResetGeneration(client),
+        resetMarks: issueQueryResetMarks(
+          client,
+          lists.map((snapshot) => snapshot.key),
+        ),
       };
     },
     onError: async (error, _issues, context) => {
@@ -1194,8 +1537,10 @@ export function useDeleteIssues() {
         await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
       }
       const resetChanged =
-        context !== undefined && issueCacheResetGeneration(client) !== context.resetGeneration;
-      if (context !== undefined && !resetChanged) restoreIssueLists(client, context);
+        context?.lists.some((snapshot) =>
+          issueQueryWasReset(client, context.resetMarks, snapshot.key),
+        ) ?? false;
+      if (context !== undefined) restoreIssueLists(client, context);
       if (resetChanged) await invalidateIssueCaches(client);
       if (partiallyDeleted) {
         dropFromIssueLists(client, new Set(error.gone));

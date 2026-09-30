@@ -173,7 +173,7 @@ function SavedViewBody({ view }: { view: View }) {
         keepBoardMounted={boardVisibility.held}
         onVisibilityActivityStart={boardVisibility.start}
         loading={issues.isPending}
-        failed={issues.isError}
+        failed={issues.isLoadingError}
         onRetry={() => {
           issues.refetch().catch(() => undefined);
         }}
