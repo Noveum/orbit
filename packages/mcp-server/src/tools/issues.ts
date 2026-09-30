@@ -21,7 +21,7 @@ import {
   setRelation,
   updateIssue,
 } from '@orbit/core';
-import { db, eq, inArray, schema } from '@orbit/db';
+import { and, db, eq, inArray, schema } from '@orbit/db';
 import {
   base64LengthFor,
   ISSUE_DESCRIPTION_MAX_LENGTH,
@@ -29,7 +29,7 @@ import {
   MAX_INLINE_UPLOAD_BYTES,
   STATE_CATEGORIES,
 } from '@orbit/shared/constants';
-import { notFound, validationFailed } from '@orbit/shared/errors';
+import { DomainError, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { branchName } from '@orbit/shared/utils';
 import { z } from 'zod';
@@ -236,8 +236,13 @@ function registerCreateSubIssues(server: McpServer, principal: Principal): void 
         try {
           items.push(await resolveSubIssueItem(principal, parent.teamId, item));
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw validationFailed(`Failed on item ${index}: ${message}`);
+          if (error instanceof DomainError) {
+            throw new DomainError(error.code, `Failed on item ${index}: ${error.message}`, {
+              cause: error,
+              ...(error.details === undefined ? {} : { details: error.details }),
+            });
+          }
+          throw error;
         }
       }
 
@@ -324,6 +329,76 @@ function registerUpdateIssue(server: McpServer, principal: Principal): void {
   );
 }
 
+async function resolveIssuesForBulk(
+  principal: Principal,
+  refs: readonly string[],
+): Promise<IssueRow[]> {
+  const resolved: IssueRow[] = [];
+  let index = 0;
+  for (const ref of refs) {
+    index += 1;
+    try {
+      const issue = await getIssue(principal, ref);
+      resolved.push(issue);
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw new DomainError(error.code, `Failed on item ${index} (${ref}): ${error.message}`, {
+          cause: error,
+          ...(error.details === undefined ? {} : { details: error.details }),
+        });
+      }
+      throw error;
+    }
+  }
+  return resolved;
+}
+
+function assertBulkStateTeam(
+  issues: readonly IssueRow[],
+  refs: readonly string[],
+  teamId: string,
+): void {
+  for (let index = 0; index < issues.length; index += 1) {
+    const issue = issues[index];
+    if (issue !== undefined && issue.teamId !== teamId) {
+      const ref = refs[index] ?? issue.identifier;
+      throw validationFailed(
+        `Failed on item ${index + 1} (${ref}): That status belongs to another team.`,
+      );
+    }
+  }
+}
+
+async function assertBulkLabelsTeam(
+  principal: Principal,
+  issues: readonly IssueRow[],
+  refs: readonly string[],
+  firstTeamId: string,
+  labelIds: unknown,
+): Promise<void> {
+  if (!Array.isArray(labelIds) || labelIds.length === 0) return;
+  const teamLabels = await db
+    .select({ id: schema.label.id, teamId: schema.label.teamId })
+    .from(schema.label)
+    .where(
+      and(
+        eq(schema.label.organizationId, principal.organizationId),
+        inArray(schema.label.id, labelIds as string[]),
+      ),
+    );
+  if (!teamLabels.some((l) => l.teamId !== null)) return;
+
+  for (let index = 0; index < issues.length; index += 1) {
+    const issue = issues[index];
+    if (issue !== undefined && issue.teamId !== firstTeamId) {
+      const ref = refs[index] ?? issue.identifier;
+      throw validationFailed(
+        `Failed on item ${index + 1} (${ref}): Some of those labels are not available on that team.`,
+      );
+    }
+  }
+}
+
 function registerBulkUpdateIssues(server: McpServer, principal: Principal): void {
   defineTool(
     server,
@@ -369,22 +444,26 @@ function registerBulkUpdateIssues(server: McpServer, principal: Principal): void
       },
     },
     async (args) => {
-      const resolvedIssues: IssueRow[] = [];
-      let index = 0;
-      for (const ref of args.issues) {
-        index += 1;
-        try {
-          const issue = await getIssue(principal, ref);
-          resolvedIssues.push(issue);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw validationFailed(`Failed on item ${index} (${ref}): ${message}`);
-        }
-      }
-
+      const resolvedIssues = await resolveIssuesForBulk(principal, args.issues);
       const firstIssue = resolvedIssues[0];
       if (firstIssue === undefined) throw validationFailed('No issues provided.');
+
+      if (args.patch.state !== undefined) {
+        assertBulkStateTeam(resolvedIssues, args.issues, firstIssue.teamId);
+      }
+
       const patch = await buildIssuePatch(principal, firstIssue.teamId, args.patch);
+
+      if (args.patch.labels !== undefined) {
+        await assertBulkLabelsTeam(
+          principal,
+          resolvedIssues,
+          args.issues,
+          firstIssue.teamId,
+          patch['labelIds'],
+        );
+      }
+
       const result = await bulkUpdateIssues(principal, {
         issueIds: resolvedIssues.map((issue) => issue.id),
         patch,

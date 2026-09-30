@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { db, eq, schema } from '@orbit/db';
+import { asc, db, eq, schema } from '@orbit/db';
 import {
   addMember,
   connect,
@@ -54,11 +54,13 @@ describe('create_sub_issues', () => {
         id: schema.issue.id,
         identifier: schema.issue.identifier,
         parentId: schema.issue.parentId,
+        number: schema.issue.number,
       })
       .from(schema.issue)
-      .where(eq(schema.issue.parentId, parent.id));
+      .where(eq(schema.issue.parentId, parent.id))
+      .orderBy(asc(schema.issue.number));
     expect(rows).toHaveLength(3);
-    expect(rows.map((r) => r.identifier).sort()).toEqual([...identifiers].sort());
+    expect(identifiers).toEqual(rows.map((r) => r.identifier));
   });
 
   it('fails atomically when the seventh item is invalid and writes nothing', async () => {
@@ -121,7 +123,7 @@ describe('bulk_update_issues', () => {
 
     const result = await admin.result('bulk_update_issues', {
       issues: [issue1.identifier, issue2.identifier],
-      patch: { priority: 'urgent' },
+      patch: { priority: 'urgent', state: 'Done' },
     });
 
     expect(result['count']).toBe(2);
@@ -129,28 +131,60 @@ describe('bulk_update_issues', () => {
 
     const updated1 = (await admin.result('get_issue', { issue: issue1.identifier }))['issue'] as {
       priority: string;
+      state: string;
     };
     const updated2 = (await admin.result('get_issue', { issue: issue2.identifier }))['issue'] as {
       priority: string;
+      state: string;
     };
     expect(updated1.priority).toBe('Urgent');
+    expect(updated1.state).toBe('Done');
     expect(updated2.priority).toBe('Urgent');
+    expect(updated2.state).toBe('Done');
   });
 
-  it('stops a guest from bulk updating issues on a team they cannot read', async () => {
-    const secretTeam = await admin.result('create_team', { name: 'Secret Ops', key: 'SEC' });
-    const secretKey = (secretTeam['team'] as { key: string }).key;
+  it('stops a member from bulk updating issues on a team they cannot read', async () => {
+    const member = await addMember(workspace, 'member', 'Mindy Member');
+    const memberClient = await connect(await mintToken(workspace.organizationId, member.user.id));
+    try {
+      const secretTeam = await admin.result('create_team', { name: 'Secret Ops', key: 'SEC' });
+      const secretKey = (secretTeam['team'] as { key: string }).key;
 
-    const secretIssue = (
-      await admin.result('create_issue', { team: secretKey, title: 'Top secret issue' })
+      const secretIssue = (
+        await admin.result('create_issue', { team: secretKey, title: 'Top secret issue' })
+      )['issue'] as { identifier: string };
+
+      const denied = await memberClient.call('bulk_update_issues', {
+        issues: [secretIssue.identifier],
+        patch: { priority: 'low' },
+      });
+
+      expect(denied.isError).toBe(true);
+    } finally {
+      await memberClient.close();
+    }
+  });
+
+  it('refuses cross-team bulk update when setting state and reports the item', async () => {
+    const otherTeam = await admin.result('create_team', { name: 'Other Team', key: 'OTH' });
+    const otherKey = (otherTeam['team'] as { key: string }).key;
+
+    const issue1 = (
+      await admin.result('create_issue', { team: workspace.teamKey, title: 'Team 1 issue' })
     )['issue'] as { identifier: string };
+    const issue2 = (await admin.result('create_issue', { team: otherKey, title: 'Team 2 issue' }))[
+      'issue'
+    ] as { identifier: string };
 
-    const denied = await guest.call('bulk_update_issues', {
-      issues: [secretIssue.identifier],
-      patch: { priority: 'low' },
+    const failed = await admin.call('bulk_update_issues', {
+      issues: [issue1.identifier, issue2.identifier],
+      patch: { state: 'Done' },
     });
 
-    expect(denied.isError).toBe(true);
+    expect(failed.isError).toBe(true);
+    const text = (failed.content[0] as { text: string }).text;
+    expect(text).toContain('Failed on item 2');
+    expect(text).toContain(issue2.identifier);
   });
 
   it('refuses more than 50 issues in bulk update', async () => {

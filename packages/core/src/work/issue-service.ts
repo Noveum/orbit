@@ -8,7 +8,7 @@ import {
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
 } from '@orbit/shared/constants';
-import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
+import { conflict, DomainError, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
@@ -977,9 +977,9 @@ async function insertSubIssue(
   }
   await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
   await assertAssignableToTeam(tx, principal.organizationId, team.id, {
-    cycleId: item.cycleId ?? parent.cycleId,
-    projectId: item.projectId ?? parent.projectId,
-    milestoneId: item.milestoneId ?? parent.milestoneId,
+    cycleId: item.cycleId ?? null,
+    projectId: item.projectId ?? null,
+    milestoneId: item.milestoneId ?? null,
   });
   await assertLabelsUsable(tx, principal.organizationId, team.id, item.labelIds);
 
@@ -998,9 +998,9 @@ async function insertSubIssue(
       priority: item.priority,
       creatorId: principal.userId,
       assigneeId,
-      projectId: item.projectId ?? parent.projectId,
-      milestoneId: item.milestoneId ?? parent.milestoneId,
-      cycleId: item.cycleId ?? parent.cycleId,
+      projectId: item.projectId ?? null,
+      milestoneId: item.milestoneId ?? null,
+      cycleId: item.cycleId ?? null,
       parentId: parent.id,
       estimate: item.estimate,
       dueDate: toDateString(item.dueDate) ?? null,
@@ -1060,8 +1060,11 @@ export async function createSubIssues(
   assertCan(principal, 'issue:create');
   const parsed = createSubIssuesSchema.parse(input);
 
+  const parent = await loadIssue(db, principal, parsed.parentId);
+  const allocationTeam = await requireTeam(principal, parent.teamId);
+  const numbers = await allocateIssueNumbers(db, allocationTeam, parsed.issues.length);
+
   return await db.transaction(async (tx) => {
-    const parent = await loadIssue(tx, principal, parsed.parentId);
     const team = await requireTeam(principal, parent.teamId, tx);
     await assertParentAllowed(tx, principal, newId(), parent.id);
 
@@ -1069,7 +1072,6 @@ export async function createSubIssues(
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const now = new Date();
-    const numbers = await allocateIssueNumbers(tx, team, parsed.issues.length);
     const context: SubIssueContext = {
       tx,
       principal,
@@ -1096,8 +1098,13 @@ export async function createSubIssues(
         createdIssues.push(created.issue);
         allActions.push(...created.actions);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw validationFailed(`Failed on item ${index}: ${message}`);
+        if (error instanceof DomainError) {
+          throw new DomainError(error.code, `Failed on item ${index}: ${error.message}`, {
+            cause: error,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        }
+        throw error;
       }
     }
 

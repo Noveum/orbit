@@ -174,6 +174,8 @@ and Orbit resolves them.
 | `list_my_issues` | read | Assigned to the caller or awaiting their review |
 | `copy_branch_name` | read | The git branch name for an issue |
 | `create_issue` | write | Create one with assignee and reviewers, returns `ENG-42`. Name a label by id when two share a name |
+| `create_sub_issues` | write | Create up to 50 sub-issues in one call under a parent issue |
+| `bulk_update_issues` | write | Update state, assignee, labels, priority, sprint or project across up to 50 issues |
 | `update_issue` | write | Title, description, state, priority, assignee, reviewers, labels, estimate |
 | `move_issue` | write | Move between states or teams. A team move drops the labels the new team cannot use |
 | `add_comment` | write | Comment |

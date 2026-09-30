@@ -18,6 +18,7 @@ import {
   bulkUpdateIssues,
   columnFacetsSql,
   createIssue,
+  createSubIssues,
   deleteIssue,
   getIssue,
   getIssueCounts,
@@ -1729,5 +1730,121 @@ describe('allocating an issue number under concurrency', () => {
     const after = await createIssue(workspace.admin, { teamId: workspace.teamId, title: 'Next' });
 
     expect(after.issue.number).toBeGreaterThan(before.issue.number + 1);
+  });
+});
+
+describe('createSubIssues atomicity and concurrency', () => {
+  it('rolls back completely when an item fails inside the transaction', async () => {
+    const { states: otherStates } = await createTeam(workspace.admin, {
+      name: 'Other',
+      key: 'OTH',
+    });
+    const otherState = otherStates[0];
+    if (otherState === undefined) throw new Error('No state found for other team');
+    const parent = await newIssue('Parent for atomicity');
+
+    const counter = async (): Promise<number> => {
+      const [row] = await db
+        .select({ value: schema.team.issueCounter })
+        .from(schema.team)
+        .where(eq(schema.team.id, workspace.teamId));
+      return row?.value ?? 0;
+    };
+    const beforeCounter = await counter();
+
+    const batch = Array.from({ length: 10 }, (_, i) => ({
+      title: `Sub ${i + 1}`,
+      ...(i === 6 ? { stateId: otherState.id } : {}),
+    }));
+
+    await expect(
+      createSubIssues(workspace.admin, {
+        parentId: parent.id,
+        issues: batch,
+      }),
+    ).rejects.toThrow(DomainError);
+
+    const rows = await db.select().from(schema.issue).where(eq(schema.issue.parentId, parent.id));
+    expect(rows).toHaveLength(0);
+    expect(await counter()).toBe(beforeCounter + 10);
+  });
+
+  it('leaves a gap rather than reusing issue numbers when createSubIssues rolls back', async () => {
+    const { states: otherStates } = await createTeam(workspace.admin, {
+      name: 'Other 2',
+      key: 'OT2',
+    });
+    const otherState = otherStates[0];
+    if (otherState === undefined) throw new Error('No state found for other team');
+    const parent = await newIssue('Parent for gap test');
+
+    const batch = Array.from({ length: 5 }, (_, i) => ({
+      title: `Sub ${i + 1}`,
+      ...(i === 2 ? { stateId: otherState.id } : {}),
+    }));
+
+    await expect(
+      createSubIssues(workspace.admin, {
+        parentId: parent.id,
+        issues: batch,
+      }),
+    ).rejects.toThrow(DomainError);
+
+    const next = await newIssue('After failed batch');
+    expect(next.number).toBeGreaterThan(parent.number + 1);
+  });
+
+  it('does not deadlock against moveIssue into the same team under concurrency', async () => {
+    const { team: otherTeam } = await createTeam(workspace.admin, { name: 'Ops', key: 'OPS' });
+    const { cycle } = await createCycle(workspace.admin, {
+      startsAt: new Date('2030-05-01').toISOString(),
+      endsAt: new Date('2030-05-15').toISOString(),
+    });
+    const parent = await newIssue('Parent in sprint', { cycleId: cycle.id });
+
+    for (let round = 0; round < 5; round += 1) {
+      const toMove = await createIssue(workspace.admin, {
+        teamId: otherTeam.id,
+        title: `To move ${round}`,
+      });
+
+      const [subResult, moveResult] = await Promise.all([
+        createSubIssues(workspace.admin, {
+          parentId: parent.id,
+          issues: [
+            { title: `Sub A ${round}`, cycleId: cycle.id },
+            { title: `Sub B ${round}`, cycleId: cycle.id },
+          ],
+        }),
+        moveIssue(workspace.admin, toMove.issue.id, {
+          teamId: workspace.teamId,
+          cycleId: cycle.id,
+        }),
+      ]);
+
+      expect(subResult.issues).toHaveLength(2);
+      expect(moveResult.issue.teamId).toBe(workspace.teamId);
+    }
+  });
+});
+
+describe('bulkUpdateIssues permissions', () => {
+  it('stops a member from bulk updating issues on a team they are not a member of', async () => {
+    const { team: otherTeam } = await createTeam(workspace.admin, {
+      name: 'Restricted',
+      key: 'RES',
+    });
+    const otherIssue = await createIssue(workspace.admin, {
+      teamId: otherTeam.id,
+      title: 'Restricted team issue',
+    });
+    const { principal: member } = await addMember(workspace, 'member');
+
+    await expect(
+      bulkUpdateIssues(member, {
+        issueIds: [otherIssue.issue.id],
+        patch: { priority: 1 },
+      }),
+    ).rejects.toThrow(DomainError);
   });
 });
