@@ -23,6 +23,7 @@ describe('ProjectUpdatesFeed', () => {
           name: 'Alex Rivera',
           image: null,
         },
+        staleDays: undefined,
       },
       {
         id: 'update_2',
@@ -37,6 +38,7 @@ describe('ProjectUpdatesFeed', () => {
           name: 'Sam Chen',
           image: 'https://example.com/sam.png',
         },
+        staleDays: undefined,
       },
     ];
 
@@ -60,5 +62,29 @@ describe('ProjectUpdatesFeed', () => {
 
     const link = screen.getByRole('link', { name: 'Realtime Sync' });
     expect(link).toHaveAttribute('href', '/projects/realtime-sync');
+    expect(screen.queryByText(/days ago/)).not.toBeInTheDocument();
+  });
+
+  it('renders a muted stale marker next to the health chip when the project is stale', () => {
+    render(
+      <ProjectUpdatesFeed
+        updates={[
+          {
+            id: 'update_3',
+            projectId: 'proj_3',
+            projectName: 'Payments',
+            projectSlug: 'payments',
+            health: 'at_risk' as const,
+            body: 'No movement this month.',
+            createdAt: '2026-08-01T10:00:00.000Z',
+            author: null,
+            staleDays: 21,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('At risk')).toBeInTheDocument();
+    expect(screen.getByText('21 days ago')).toBeInTheDocument();
   });
 });

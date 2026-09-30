@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROJECT_STALENESS_DAYS,
   listMilestones,
   listProjects,
   listProjectUpdates,
@@ -33,6 +34,7 @@ export interface ProjectSummary {
   readonly lead: PersonRef | null;
   readonly issueCount: number;
   readonly completedCount: number;
+  readonly staleDays: number | null | undefined;
 }
 
 function toHealth(value: string): ProjectHealth {
@@ -41,6 +43,29 @@ function toHealth(value: string): ProjectHealth {
 
 function toStatus(value: string): ProjectStatus {
   return PROJECT_STATUSES.find((entry) => entry === value) ?? 'backlog';
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function projectStalenessWindowDays(organizationId: string): Promise<number> {
+  const [settings] = await db
+    .select({ stalenessDays: schema.organization.projectStalenessDays })
+    .from(schema.organization)
+    .where(eq(schema.organization.id, organizationId))
+    .limit(1);
+  return settings?.stalenessDays ?? DEFAULT_PROJECT_STALENESS_DAYS;
+}
+
+function staleDaysFor(
+  lastUpdateAt: Date | string | null,
+  windowDays: number,
+  now: Date,
+): number | null | undefined {
+  if (windowDays <= 0) return undefined;
+  if (lastUpdateAt === null) return null;
+  const updated = new Date(lastUpdateAt);
+  if (updated.getTime() >= now.getTime() - windowDays * DAY_MS) return undefined;
+  return Math.floor((now.getTime() - updated.getTime()) / DAY_MS);
 }
 
 async function loadPeople(userIds: readonly string[]): Promise<Map<string, PersonRef>> {
@@ -72,6 +97,17 @@ export async function listProjectSummaries(principal: Principal): Promise<Projec
   const people = await loadPeople(
     projects.flatMap((project) => (project.leadId === null ? [] : [project.leadId])),
   );
+  const windowDays = await projectStalenessWindowDays(principal.organizationId);
+  const lastUpdates = await db
+    .select({
+      projectId: schema.projectUpdate.projectId,
+      lastUpdateAt: sql<Date | string | null>`max(${schema.projectUpdate.createdAt})`,
+    })
+    .from(schema.projectUpdate)
+    .where(inArray(schema.projectUpdate.projectId, projectIds))
+    .groupBy(schema.projectUpdate.projectId);
+  const lastUpdateByProject = new Map(lastUpdates.map((row) => [row.projectId, row.lastUpdateAt]));
+  const now = new Date();
 
   return projects.map((project) => {
     const tally = byProject.get(project.id);
@@ -86,6 +122,7 @@ export async function listProjectSummaries(principal: Principal): Promise<Projec
       lead: project.leadId === null ? null : (people.get(project.leadId) ?? null),
       issueCount: Number(tally?.total ?? 0),
       completedCount: Number(tally?.completed ?? 0),
+      staleDays: staleDaysFor(lastUpdateByProject.get(project.id) ?? null, windowDays, now),
     };
   });
 }
@@ -151,6 +188,7 @@ export async function getProjectDetail(principal: Principal, slug: string): Prom
     ...updates.map((update) => update.authorId),
   ]);
   const milestoneProgress = new Map(progress.milestones.map((entry) => [entry.milestoneId, entry]));
+  const windowDays = await projectStalenessWindowDays(principal.organizationId);
 
   return {
     summary: {
@@ -164,6 +202,7 @@ export async function getProjectDetail(principal: Principal, slug: string): Prom
       lead: project.leadId === null ? null : (people.get(project.leadId) ?? null),
       issueCount: progress.scope,
       completedCount: progress.completed,
+      staleDays: staleDaysFor(updates[0]?.createdAt ?? null, windowDays, new Date()),
     },
     description: renderPlainText(project.description),
     startDate: project.startDate,
@@ -213,6 +252,7 @@ export interface WorkspaceProjectUpdateView {
   readonly body: string;
   readonly createdAt: string;
   readonly author: PersonRef | null;
+  readonly staleDays: number | null | undefined;
 }
 
 export async function listWorkspaceProjectUpdateViews(
@@ -220,6 +260,21 @@ export async function listWorkspaceProjectUpdateViews(
 ): Promise<WorkspaceProjectUpdateView[]> {
   const updates = await listWorkspaceProjectUpdates(principal);
   const people = await loadPeople(updates.map((update) => update.authorId));
+  const projectIds = [...new Set(updates.map((update) => update.projectId))];
+  const windowDays = await projectStalenessWindowDays(principal.organizationId);
+  const lastUpdates =
+    projectIds.length === 0
+      ? []
+      : await db
+          .select({
+            projectId: schema.projectUpdate.projectId,
+            lastUpdateAt: sql<Date | string | null>`max(${schema.projectUpdate.createdAt})`,
+          })
+          .from(schema.projectUpdate)
+          .where(inArray(schema.projectUpdate.projectId, projectIds))
+          .groupBy(schema.projectUpdate.projectId);
+  const lastUpdateByProject = new Map(lastUpdates.map((row) => [row.projectId, row.lastUpdateAt]));
+  const now = new Date();
 
   return updates.map((update) => ({
     id: update.id,
@@ -230,5 +285,6 @@ export async function listWorkspaceProjectUpdateViews(
     body: renderPlainText(update.body),
     createdAt: update.createdAt.toISOString(),
     author: people.get(update.authorId) ?? null,
+    staleDays: staleDaysFor(lastUpdateByProject.get(update.projectId) ?? null, windowDays, now),
   }));
 }
