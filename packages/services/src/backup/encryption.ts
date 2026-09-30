@@ -104,14 +104,15 @@ export function parseEncryptionKey(raw: string): Buffer {
 }
 
 async function resolveFileKey(filePath: string): Promise<Buffer> {
+  let fileContent: string;
   try {
-    const fileContent = await readFile(filePath.trim(), 'utf8');
-    return parseEncryptionKey(fileContent);
+    fileContent = await readFile(filePath.trim(), 'utf8');
   } catch (error) {
     throw validationFailed(`Failed to read backup encryption key file: ${filePath}`, {
       cause: error,
     });
   }
+  return parseEncryptionKey(fileContent);
 }
 
 function resolveCommandKey(command: string): Buffer {
