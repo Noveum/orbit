@@ -186,6 +186,7 @@ jobs:
             unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL ORBIT_PASSWORD_AUTH
             unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
             unset RESEND_API_KEY EMAIL_FROM ORBIT_DEV_LOGIN
+            unset DATABASE_URL DIRECT_URL
             PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
           ) > "$log_path" 2>&1 &
           server_pid=$!
@@ -214,6 +215,7 @@ jobs:
             unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL ORBIT_PASSWORD_AUTH
             unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
             unset RESEND_API_KEY EMAIL_FROM ORBIT_DEV_LOGIN
+            unset DATABASE_URL DIRECT_URL
             PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
           ) > "$log_path" 2>&1 &
           server_pid=$!

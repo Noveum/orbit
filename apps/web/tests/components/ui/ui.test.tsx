@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { Avatar } from '../../../src/components/ui/avatar.tsx';
 import { Badge } from '../../../src/components/ui/badge.tsx';
 import { Button } from '../../../src/components/ui/button.tsx';
+import { Input } from '../../../src/components/ui/input.tsx';
 
 describe('Button', () => {
   it('renders a button with the primary variant styles', () => {
@@ -118,5 +119,12 @@ describe('Button aria-disabled', () => {
     render(<Button onClick={onClick}>Save</Button>);
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Input', () => {
+  it('does not carry outline-none so the global focus ring remains visible', () => {
+    render(<Input placeholder="Title" />);
+    expect(screen.getByPlaceholderText('Title').className).not.toContain('outline-none');
   });
 });

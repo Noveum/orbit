@@ -784,6 +784,16 @@ describe('the new issue dialog', () => {
     expect(screen.getByTestId('quick-create-title').className).toContain('shrink-0');
   });
 
+  it('renders the title input seamlessly without border or outline to avoid overflow', () => {
+    workspace = buildWorkspace();
+    open();
+
+    const titleInput = screen.getByTestId('quick-create-title');
+    expect(titleInput.className).toContain('border-0');
+    expect(titleInput.className).toContain('outline-none');
+    expect(titleInput.className).toContain('bg-transparent');
+  });
+
   it('shows no formatting toolbar above the description, the way Linear does not', () => {
     workspace = buildWorkspace();
     open();

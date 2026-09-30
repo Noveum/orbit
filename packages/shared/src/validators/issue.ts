@@ -47,24 +47,41 @@ export const issueCreateSchema = z.object({
   labelIds: z.array(idSchema).max(50).default([]),
 });
 
+export const issueExpectedPropertiesSchema = z
+  .object({
+    stateId: idSchema.optional(),
+    assigneeId: idSchema.nullable().optional(),
+    priority: prioritySchema.optional(),
+    estimate: z.number().int().min(0).max(100).nullable().optional(),
+    projectId: idSchema.nullable().optional(),
+    milestoneId: idSchema.nullable().optional(),
+    cycleId: idSchema.nullable().optional(),
+    dueDate: calendarDateSchema.nullable().optional(),
+    parentId: idSchema.nullable().optional(),
+    labelIds: z.array(idSchema).max(50).optional(),
+    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).optional(),
+  })
+  .strict();
+
 export const issueUpdateSchema = z
   .object({
-    title: titleSchema,
-    description: issueDescriptionSchema,
-    stateId: idSchema,
-    priority: prioritySchema,
-    assigneeId: idSchema.nullable(),
-    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT),
-    projectId: idSchema.nullable(),
-    milestoneId: idSchema.nullable(),
-    cycleId: idSchema.nullable(),
-    parentId: idSchema.nullable(),
-    estimate: z.number().int().min(0).max(100).nullable(),
-    dueDate: calendarDateSchema.nullable(),
-    labelIds: z.array(idSchema).max(50),
-    sortOrder: z.number(),
+    title: titleSchema.optional(),
+    description: issueDescriptionSchema.optional(),
+    stateId: idSchema.optional(),
+    assigneeId: idSchema.nullable().optional(),
+    priority: prioritySchema.optional(),
+    estimate: z.number().int().min(0).max(100).nullable().optional(),
+    projectId: idSchema.nullable().optional(),
+    milestoneId: idSchema.nullable().optional(),
+    cycleId: idSchema.nullable().optional(),
+    dueDate: calendarDateSchema.nullable().optional(),
+    labelIds: z.array(idSchema).max(50).optional(),
+    reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).optional(),
+    parentId: idSchema.nullable().optional(),
+    sortOrder: z.number().optional(),
+    expected: issueExpectedPropertiesSchema.optional(),
   })
-  .partial();
+  .strict();
 
 export const issueMoveSchema = z.object({
   stateId: idSchema.optional(),
@@ -158,4 +175,5 @@ export type IssueUpdateInput = z.infer<typeof issueUpdateSchema>;
 export type IssueFilterInput = z.infer<typeof issueFilterSchema>;
 export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
 export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
+export type IssueExpectedProperties = z.infer<typeof issueExpectedPropertiesSchema>;
 export type IssueMarkDuplicateInput = z.infer<typeof issueMarkDuplicateSchema>;
