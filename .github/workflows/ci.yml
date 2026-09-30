@@ -186,6 +186,7 @@ jobs:
             unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL ORBIT_PASSWORD_AUTH
             unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
             unset RESEND_API_KEY EMAIL_FROM ORBIT_DEV_LOGIN
+            unset DATABASE_URL DIRECT_URL
             PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
           ) > "$log_path" 2>&1 &
           server_pid=$!
@@ -214,6 +215,7 @@ jobs:
             unset BETTER_AUTH_SECRET BETTER_AUTH_URL NEXT_PUBLIC_APP_URL ORBIT_PASSWORD_AUTH
             unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
             unset RESEND_API_KEY EMAIL_FROM ORBIT_DEV_LOGIN
+            unset DATABASE_URL DIRECT_URL
             PORT=3001 HOSTNAME=127.0.0.1 exec bun run start
           ) > "$log_path" 2>&1 &
           server_pid=$!
@@ -310,11 +312,11 @@ jobs:
           docker run -d --name orbit-minio -p 9010:9000 \
             -e MINIO_ROOT_USER=orbitminio \
             -e MINIO_ROOT_PASSWORD=orbitminio \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+            docker.io/pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 server /data
           for attempt in $(seq 1 60); do
             if curl -fsS http://localhost:9010/minio/health/live >/dev/null; then
               echo "minio is up after ${attempt} attempts"
-              docker run --rm --network host --entrypoint sh quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727 -c \
+              docker run --rm --network host --entrypoint sh docker.io/pgsty/mc@sha256:cfc83108c3abb371f8fb84d99c1fdc88f8c237e022409b0081fb7c0a3be634dd -c \
                 "mc alias set orbit http://localhost:9010 orbitminio orbitminio && mc mb --ignore-existing orbit/orbit-uploads"
               exit 0
             fi

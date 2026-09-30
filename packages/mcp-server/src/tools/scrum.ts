@@ -131,6 +131,7 @@ function registerSprintTools(server: McpServer, principal: Principal): void {
       description:
         'Close a sprint. Whatever is unfinished rolls into the next sprint rather than being left behind.',
       readOnly: false,
+      destructive: true,
       inputSchema: { cycleId: z.string().min(1) },
     },
     async (input) => {

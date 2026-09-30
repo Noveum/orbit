@@ -173,6 +173,7 @@ function registerStateTools(server: McpServer, principal: Principal): void {
       description:
         'Rename a status, recolour it, or move it to another category. Changing the category re-derives the started, completed and canceled timestamps of every issue sitting in it.',
       readOnly: false,
+      destructive: true,
       inputSchema: {
         team: teamRef,
         state: stateRef,

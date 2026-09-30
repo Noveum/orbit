@@ -237,7 +237,7 @@ export function StandupBoard() {
       <StandupBody
         key={boardVisibility.key}
         loading={active.isPending}
-        failed={active.isError}
+        failed={active.isLoadingError}
         onRetry={() => {
           active.refetch().catch(() => undefined);
         }}

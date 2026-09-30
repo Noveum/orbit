@@ -1,3 +1,4 @@
+import { SLACK_BOT_SCOPES } from '@orbit/shared/constants';
 import { validationFailed } from '@orbit/shared/errors';
 import { assertCan } from '@orbit/shared/policy';
 import { apiContext, handleRoute } from '@/lib/api/handler.ts';
@@ -9,9 +10,6 @@ import {
   slackIntegrationUnavailable,
   slackRolloutConfigured,
 } from '@/lib/integrations/slack-capability.ts';
-
-const SLACK_BOT_SCOPES =
-  'channels:read,groups:read,chat:write,links:read,links:write,im:write,users:read,users:read.email';
 
 export async function GET(): Promise<Response> {
   if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
@@ -28,7 +26,7 @@ export async function GET(): Promise<Response> {
     );
     const url = new URL('https://slack.com/oauth/v2/authorize');
     url.searchParams.set('client_id', slackAppConfig().clientId);
-    url.searchParams.set('scope', SLACK_BOT_SCOPES);
+    url.searchParams.set('scope', SLACK_BOT_SCOPES.join(','));
     url.searchParams.set('state', state);
     url.searchParams.set('redirect_uri', absoluteUrl('/api/integrations/slack/callback'));
     return Response.redirect(url.toString(), 302);

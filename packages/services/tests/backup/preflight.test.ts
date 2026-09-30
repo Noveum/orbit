@@ -8,7 +8,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url)
 
 describe('verifyPreflight', () => {
   it('succeeds against compatible live database', async () => {
-    const databaseUrl = process.env['DATABASE_URL'] ?? resolveTestDatabaseUrl('orbit_test_svc');
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
 
     await releaseDatabase(databaseUrl, MIGRATIONS);
 
