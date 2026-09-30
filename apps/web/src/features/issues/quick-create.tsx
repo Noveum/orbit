@@ -7,6 +7,7 @@ import {
 } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
+import type { Editor, JSONContent } from '@tiptap/core';
 import { Box, ChevronRight, RefreshCw, Tag, Users } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
@@ -207,6 +208,9 @@ export function QuickCreateDialog({
   const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const draftInitialized = useRef(false);
+  const editorRef = useRef<Editor | null>(null);
+  const descriptionDocument = useRef<JSONContent | null>(null);
 
   const { duplicates } = useDuplicateIssues(teamId, title);
 
@@ -229,14 +233,16 @@ export function QuickCreateDialog({
   heldRef.current = pending;
 
   useEffect(() => {
-    if (!open) {
-      releasePending(heldRef.current);
-      setPending([]);
-      return;
-    }
+    return () => releasePending(heldRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!open || draftInitialized.current) return;
+    draftInitialized.current = true;
     setTeamId(defaultsRef.current.teamId);
     setTitle('');
     setDescription('');
+    descriptionDocument.current = null;
     setStateId(defaultsRef.current.stateId);
     setPriority(0);
     setAssigneeId(defaultsRef.current.assigneeId);
@@ -368,14 +374,17 @@ export function QuickCreateDialog({
         },
         onSuccess: (issue) => {
           submittingRef.current = false;
+          heldRef.current = heldRef.current.filter((entry) => !held.includes(entry));
           setPending((current) => current.filter((entry) => !held.includes(entry)));
           finalize(issue, body, held);
           if (!createMore) {
+            draftInitialized.current = false;
             onOpenChange(false);
             return;
           }
           setTitle('');
           setDescription('');
+          descriptionDocument.current = null;
           setLabelIds([]);
           setComposerKey((value) => value + 1);
           titleRef.current?.focus();
@@ -444,7 +453,14 @@ export function QuickCreateDialog({
               key={composerKey}
               className="shrink-0"
               value={description}
-              onChange={setDescription}
+              initialDocument={descriptionDocument.current}
+              onChange={(markdown) => {
+                setDescription(markdown);
+                descriptionDocument.current = editorRef.current?.getJSON() ?? null;
+              }}
+              onReady={(editor) => {
+                editorRef.current = editor;
+              }}
               members={members}
               placeholder="Add a description, markdown works."
               ariaLabel="Issue description"

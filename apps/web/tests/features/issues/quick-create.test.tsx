@@ -178,14 +178,19 @@ function DialogHarness({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <QuickCreateDialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        onOpenChange?.(next);
-      }}
-      defaultTeamId={defaultTeamId}
-    />
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Reopen create
+      </button>
+      <QuickCreateDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          onOpenChange?.(next);
+        }}
+        defaultTeamId={defaultTeamId}
+      />
+    </>
   );
 }
 
@@ -485,6 +490,79 @@ describe('attaching a file from the create dialog', () => {
 });
 
 describe('the new issue dialog', () => {
+  it('preserves every unfinished field and held file across closing and reopening', async () => {
+    workspace = buildWorkspaceWithDesign();
+    open();
+    stubAttachmentApi();
+    stubPut();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await holdOneFile();
+    await user.click(screen.getByTestId('quick-create-status'));
+    await user.click(await screen.findByText('Todo'));
+    await user.click(screen.getByRole('button', { name: /No priority/ }));
+    await user.click(await screen.findByText('High'));
+    await user.click(screen.getByTestId('quick-create-assignee'));
+    await user.click(await screen.findByText('Ada Reviewer'));
+    await user.click(screen.getByTestId('quick-create-reviewers'));
+    await user.click(await screen.findByText('Shashank'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-labels'));
+    await user.click(await screen.findByText('Bug'));
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('quick-create-project'));
+    await user.click(await screen.findByText('API market'));
+    await user.click(screen.getByTestId('quick-create-estimate'));
+    await user.click(await screen.findByText('5 points'));
+    await user.click(screen.getByTestId('quick-create-cycle'));
+    await user.click(await screen.findByText('Sprint 3'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-title')).toHaveValue('Ship the thing');
+    expect(screen.getByTestId('quick-create-pending')).toHaveTextContent('1 file');
+    await user.click(screen.getByTestId('quick-create-submit'));
+    expect(created.mock.calls[0]?.[0]).toMatchObject({
+      teamId: 'team_eng',
+      title: 'Ship the thing',
+      stateId: 'state_todo',
+      priority: 2,
+      assigneeId: 'reviewer_2',
+      reviewerIds: ['me'],
+      labelIds: ['label_bug'],
+      projectId: 'proj_1',
+      cycleId: 'cycle_1',
+      estimate: 5,
+    });
+    expect(created.mock.calls[0]?.[0]?.['description']).toContain('blob:');
+    await waitFor(() => expect(patched).toHaveBeenCalledTimes(1));
+  });
+
+  it('starts a fresh issue with new defaults only after the previous issue was created', async () => {
+    workspace = buildWorkspaceWithDesign();
+    const harness = open();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.type(screen.getByTestId('quick-create-title'), 'Finished draft');
+    await user.click(screen.getByTestId('quick-create-submit'));
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
+    harness.rerender(dialog(undefined, 'team_des'));
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-title')).toHaveValue('');
+    expect(screen.getByTestId('quick-create-crumb')).toHaveTextContent('DES');
+  });
+
+  it('keeps the draft team when reopened from a different creation context', async () => {
+    workspace = buildWorkspaceWithDesign();
+    const harness = open();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.type(screen.getByTestId('quick-create-title'), 'Unfinished draft');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
+    harness.rerender(dialog(undefined, 'team_des'));
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-title')).toHaveValue('Unfinished draft');
+    expect(screen.getByTestId('quick-create-crumb')).toHaveTextContent('ENG');
+  });
+
   it('creates an issue with multiple reviewers from the new field', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspace();
@@ -1123,7 +1201,7 @@ describe('the property chips on the new issue dialog', () => {
     await settle();
   });
 
-  it('resets dismissed suggestions when the dialog reopens', async () => {
+  it('preserves dismissed suggestions until the draft title changes', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     workspace = buildWorkspace();
     mockDuplicates = [
@@ -1143,7 +1221,12 @@ describe('the property chips on the new issue dialog', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss similar issues' }));
     expect(screen.queryByTestId('duplicate-suggestions')).toBeNull();
 
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('quick-create')).toBeNull());
     harness.rerender(dialog(undefined, 'team_eng'));
+    await user.click(screen.getByRole('button', { name: 'Reopen create' }));
+    expect(screen.getByTestId('quick-create-title')).toHaveValue('Duplicate found');
+    expect(screen.queryByTestId('duplicate-suggestions')).toBeNull();
     await user.type(screen.getByTestId('quick-create-title'), 'Duplicate again');
     expect(await screen.findByTestId('duplicate-suggestions')).toBeInTheDocument();
   });
