@@ -792,6 +792,7 @@ describe('the new issue dialog', () => {
     expect(titleInput.className).toContain('border-0');
     expect(titleInput.className).toContain('outline-none');
     expect(titleInput.className).toContain('bg-transparent');
+    expect(titleInput.className).not.toContain('focus-visible:outline-none');
   });
 
   it('shows no formatting toolbar above the description, the way Linear does not', () => {
