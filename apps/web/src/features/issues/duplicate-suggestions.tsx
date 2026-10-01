@@ -1,6 +1,6 @@
 'use client';
 
-import { ExternalLink, X } from 'lucide-react';
+import { PanelRight, X } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover, tabHover } from '@/lib/interaction.ts';
 import type { DuplicateIssueMatch } from '@/lib/query/schemas.ts';
@@ -45,7 +45,7 @@ export function DuplicateSuggestions({ duplicates, onDismiss, onOpen }: Duplicat
                 {issue.identifier}
               </span>
               <span className="truncate">{issue.title}</span>
-              <ExternalLink className={cn('size-2.5 shrink-0', revealOnHover)} aria-hidden="true" />
+              <PanelRight className={cn('size-2.5 shrink-0', revealOnHover)} aria-hidden="true" />
             </IssueLink>
             <div className="flex shrink-0 items-center gap-1 text-faint">
               <StateGlyph category={issue.state.category} color={issue.state.color} />

@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useHotkey } from '@/lib/keyboard/index.ts';
@@ -139,6 +140,10 @@ export function workspaceFrom(
 export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const bootstrap = useBootstrap(null);
   const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
   const [createStateId, setCreateStateId] = useState<string | null>(null);
   const [createAssigneeId, setCreateAssigneeId] = useState<string | null>(null);
@@ -167,11 +172,13 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
       setCreateTeamId(teamId ?? null);
       setCreateStateId(stateId ?? null);
       const person =
-        pathname === '/standup' ? new URLSearchParams(window.location.search).get('person') : null;
+        pathnameRef.current === '/standup'
+          ? new URLSearchParams(window.location.search).get('person')
+          : null;
       setCreateAssigneeId(data?.members.find((member) => member.id === person)?.id ?? null);
       setCreateOpen(true);
     },
-    [canCreate, data?.members, pathname],
+    [canCreate, data?.members],
   );
 
   const value = useMemo<WorkspaceData>(

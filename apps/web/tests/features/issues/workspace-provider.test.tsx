@@ -13,6 +13,7 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import * as nextNavigation from 'next/navigation';
 import { ToastProvider } from '@/components/ui/toast.tsx';
+import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { Bootstrap } from '@/lib/query/schemas.ts';
@@ -93,9 +94,12 @@ function stubBootstrap(): void {
   globalThis.fetch = fetchBootstrap as unknown as typeof fetch;
 }
 
+const observedWorkspaces: WorkspaceData[] = [];
+
 function Probe() {
   const deletion = useIssueDeletion();
   const workspace = useWorkspace();
+  observedWorkspaces.push(workspace);
   return (
     <>
       <span data-testid="probe">{deletion === null ? 'no provider' : 'provided'}</span>
@@ -109,7 +113,7 @@ function Probe() {
 function mountShell(seedBootstrap = false, role = 'member') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (seedBootstrap) client.setQueryData(queryKeys.bootstrap(null), bootstrap(role));
-  render(
+  const shell = () => (
     <QueryClientProvider client={client}>
       <ToastProvider>
         <HotkeyProvider>
@@ -118,11 +122,14 @@ function mountShell(seedBootstrap = false, role = 'member') {
           </IssueWorkspaceProvider>
         </HotkeyProvider>
       </ToastProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(shell());
+  return { rerenderShell: () => view.rerender(shell()), client };
 }
 
 beforeEach(() => {
+  observedWorkspaces.length = 0;
   stubBootstrap();
 });
 
@@ -145,6 +152,25 @@ function SprintProbe() {
 }
 
 describe('the issue workspace shell', () => {
+  it('keeps workspace metadata stable across navigation and reads the current creation route', async () => {
+    const { rerenderShell, client } = mountShell(true);
+    const initial = observedWorkspaces.at(-1);
+    expect(initial).toBeDefined();
+    pathname = '/standup';
+    window.history.replaceState(null, '', '/standup?person=user_1');
+    rerenderShell();
+    expect(observedWorkspaces.at(-1)).toBe(initial);
+    await userEvent.setup().keyboard('c');
+    expect(screen.getByTestId('quick-create-probe')).toHaveAttribute('data-assignee', 'user_1');
+    pathname = '/my-issues';
+    window.history.replaceState(null, '', '/my-issues?person=user_1');
+    rerenderShell();
+    expect(observedWorkspaces.at(-1)).toBe(initial);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Open create' }));
+    expect(screen.getByTestId('quick-create-probe')).toHaveAttribute('data-assignee', 'none');
+    client.clear();
+  });
+
   it('uses the standup person selected at the time creation opens', async () => {
     pathname = '/standup';
     mountShell(true);
