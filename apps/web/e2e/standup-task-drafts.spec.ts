@@ -84,3 +84,50 @@ test('standup creation keeps its assignee and draft while inspecting similar tas
   await page.keyboard.press('c');
   await expect(page.getByTestId('quick-create-title')).toHaveValue(existing.title);
 });
+
+test('similar-task preview owns shortcuts while a different issue page stays mounted', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await page.goto(`${BASE}/login`);
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
+  await page.waitForURL(`${BASE}/my-issues`);
+  const bootstrap = bootstrapSchema.parse(await (await page.request.get('/api/bootstrap')).json());
+  const { issues } = issueListSchema.parse(
+    await (await page.request.get('/api/issues?limit=100')).json(),
+  );
+  const background = issues[0];
+  const preview = issues.find(
+    (issue) => issue.id !== background?.id && issue.teamId === background?.teamId,
+  );
+  if (background === undefined || preview === undefined) throw new Error('Missing demo tasks');
+  const team = bootstrap.teams.find((entry) => entry.id === preview.teamId);
+  if (team === undefined) throw new Error('Missing demo team');
+  await page.goto(`${BASE}/issue/${background.identifier}`);
+  const backgroundDetail = page.getByTestId('issue-detail');
+  await expect(backgroundDetail.getByTestId('issue-title')).toHaveValue(background.title);
+  await page.keyboard.press('c');
+  await page.getByTestId('quick-create-team').click();
+  await page.getByRole('menuitemradio', { name: team.name, exact: true }).click();
+  await page.getByTestId('quick-create-title').fill(preview.title);
+  await page
+    .getByTestId('duplicate-suggestions')
+    .getByRole('link', { name: `${preview.identifier} ${preview.title}`, exact: true })
+    .click();
+  const sidebar = page.getByTestId('issue-peek');
+  await expect(sidebar.getByTestId('issue-title')).toHaveValue(preview.title);
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('p');
+  await expect(sidebar.getByTestId('property-priority')).toHaveAttribute('aria-expanded', 'true');
+  await expect(
+    page.getByTestId('issue-detail').first().getByTestId('property-priority'),
+  ).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('Escape');
+  await sidebar.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(sidebar).toBeHidden();
+  await page.keyboard.press('p');
+  await expect(backgroundDetail.getByTestId('property-priority')).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+});

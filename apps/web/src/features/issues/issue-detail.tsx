@@ -41,6 +41,7 @@ export interface IssueDetailViewProps {
   readonly onDeleted?: (() => void) | undefined;
   readonly focusCommentId?: string | null;
   readonly focusActivity?: boolean;
+  readonly hotkeyPriority?: number;
 }
 
 export function teamIssuesPath(teams: readonly Team[], teamId: string): string {
@@ -197,6 +198,7 @@ export function IssueDetailView({
   onDeleted,
   focusCommentId = null,
   focusActivity = false,
+  hotkeyPriority = HOTKEY_PRIORITY.surface,
 }: IssueDetailViewProps) {
   const { toast } = useToast();
   const router = useRouter();
@@ -257,7 +259,7 @@ export function IssueDetailView({
     label: 'Delete issue',
     section: 'Issues',
     scope: 'issues',
-    priority: HOTKEY_PRIORITY.layer,
+    priority: hotkeyPriority,
     enabled: issue !== undefined && deletion?.allowed === true,
   });
 
@@ -267,7 +269,7 @@ export function IssueDetailView({
     label: 'Mark as duplicate of...',
     section: 'Issues',
     scope: 'issues',
-    priority: HOTKEY_PRIORITY.layer,
+    priority: hotkeyPriority,
     enabled: issue !== undefined && canMarkDuplicate,
   });
 
@@ -412,7 +414,12 @@ export function IssueDetailView({
         </div>
       </div>
 
-      <IssueProperties issue={issue} parent={detail.data.parent} onDeleted={leave} />
+      <IssueProperties
+        issue={issue}
+        parent={detail.data.parent}
+        onDeleted={leave}
+        hotkeyPriority={hotkeyPriority}
+      />
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import { estimateLabel } from '@/features/issues/estimate-glyph.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
-import { HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Member, Milestone } from '@/lib/query/schemas.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
@@ -20,11 +20,13 @@ await restoreModulesAfterThisFile([
 ]);
 
 const patches: Record<string, unknown>[] = [];
+const patchedIssueIds: string[] = [];
 
 mock.module('@/lib/query/use-issues.ts', () => ({
   useUpdateIssue: () => ({
     mutate: (input: { issue: Issue; patch: Record<string, unknown> }) => {
       patches.push(input.patch);
+      patchedIssueIds.push(input.issue.id);
     },
   }),
 }));
@@ -222,6 +224,7 @@ function mountProperties(row: Issue) {
 
 beforeEach(() => {
   patches.length = 0;
+  patchedIssueIds.length = 0;
   requested.length = 0;
   Object.assign(workspace, {
     role: 'admin',
@@ -233,6 +236,71 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe('issue property shortcuts with a preview open', () => {
+  for (const [binding, property] of [
+    ['s', 'status'],
+    ['p', 'priority'],
+    ['a', 'assignee'],
+    ['r', 'reviewers'],
+    ['i', 'project'],
+    ['l', 'labels'],
+    ['m', 'milestone'],
+    ['{Shift>}e{/Shift}', 'estimate'],
+    ['{Shift>}d{/Shift}', 'due-date'],
+  ] as const) {
+    it(`opens ${property} on the preview instead of the background issue`, async () => {
+      render(
+        <Providers>
+          <div data-testid="background-properties">
+            <IssueProperties issue={issue()} />
+          </div>
+          <div data-testid="preview-properties">
+            <IssueProperties
+              issue={issue({ id: 'issue_2', identifier: 'ENG-2' })}
+              hotkeyPriority={HOTKEY_PRIORITY.layer}
+            />
+          </div>
+        </Providers>,
+      );
+      await userEvent.setup().keyboard(binding);
+      await waitFor(() =>
+        expect(
+          within(screen.getByTestId('preview-properties')).getByTestId(`property-${property}`),
+        ).toHaveAttribute('aria-expanded', 'true'),
+      );
+      expect(
+        within(screen.getByTestId('background-properties')).getByTestId(`property-${property}`),
+      ).toHaveAttribute('aria-expanded', 'false');
+    });
+  }
+
+  it('edits the preview and restores background shortcuts after it closes', async () => {
+    function Panels({ previewOpen }: { readonly previewOpen: boolean }) {
+      return (
+        <>
+          <IssueProperties issue={issue()} />
+          {previewOpen ? (
+            <IssueProperties
+              issue={issue({ id: 'issue_2', identifier: 'ENG-2' })}
+              hotkeyPriority={HOTKEY_PRIORITY.layer}
+            />
+          ) : null}
+        </>
+      );
+    }
+    const view = render(<Panels previewOpen />, { wrapper: Providers });
+    const user = userEvent.setup();
+    await user.keyboard('p');
+    await user.click(await screen.findByRole('menuitemradio', { name: 'High' }));
+    expect(patchedIssueIds).toEqual(['issue_2']);
+    view.rerender(<Panels previewOpen={false} />);
+    document.body.focus();
+    await user.keyboard('p');
+    await user.click(await screen.findByRole('menuitemradio', { name: 'High' }));
+    expect(patchedIssueIds).toEqual(['issue_2', 'issue_1']);
+  });
 });
 
 describe('the milestone row on the issue properties panel', () => {

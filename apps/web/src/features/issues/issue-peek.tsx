@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { HOTKEY_PRIORITY } from '@/lib/keyboard/index.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { IssueDetailView } from './issue-detail.tsx';
 import { IssueLink } from './issue-link.tsx';
@@ -147,6 +148,7 @@ export function IssuePeek({
               identifier={summary.identifier}
               {...(shown === null ? {} : { known: shown })}
               onDeleted={onClose}
+              hotkeyPriority={HOTKEY_PRIORITY.layer}
             />
           </div>
           <button
