@@ -11,7 +11,8 @@ import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { permissionsFor } from '@orbit/shared/policy';
 import { z } from 'zod';
-import { resolveTeam } from '../resolve.ts';
+import { layerInstructions } from '../instructions.ts';
+import { resolveProject, resolveTeam } from '../resolve.ts';
 import { defineTool } from './support.ts';
 
 const teamRef = z.string().min(1).describe('A team key like "ENG", a team name, or a team id.');
@@ -25,11 +26,28 @@ export function registerIdentityTools(server: McpServer, principal: Principal): 
       description:
         'Return the current workspace guidance for connected agents. This is advisory context, not a permission boundary.',
       readOnly: true,
-      inputSchema: {},
+      inputSchema: {
+        team: teamRef.optional().describe('Optional team key like "ENG", team name, or team id.'),
+        project: z.string().min(1).optional().describe('Optional project name, slug, or id.'),
+      },
     },
-    async () => {
+    async (args) => {
       const organization = await getOrganization(principal.organizationId);
-      return { agentInstructions: organization.agentInstructions };
+      if (args.team === undefined && args.project === undefined) {
+        return { agentInstructions: organization.agentInstructions };
+      }
+      const [team, project] = await Promise.all([
+        args.team === undefined ? Promise.resolve(null) : resolveTeam(principal, args.team),
+        args.project === undefined
+          ? Promise.resolve(null)
+          : resolveProject(principal, args.project),
+      ]);
+      const agentInstructions = layerInstructions({
+        workspace: organization.agentInstructions,
+        team: team?.instructions,
+        project: project?.instructions,
+      });
+      return { agentInstructions };
     },
   );
 

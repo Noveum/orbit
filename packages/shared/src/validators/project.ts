@@ -1,11 +1,16 @@
 import { z } from 'zod';
-import { PROJECT_HEALTHS, PROJECT_STATUSES } from '../constants/index.ts';
+import {
+  AGENT_INSTRUCTIONS_MAX_LENGTH,
+  PROJECT_HEALTHS,
+  PROJECT_STATUSES,
+} from '../constants/index.ts';
 import { calendarDateSchema, colorSchema, idSchema, markdownSchema } from './common.ts';
 
 export const projectCreateSchema = z.object({
   name: z.string().trim().min(2).max(120),
   summary: z.string().max(500).default(''),
   description: markdownSchema.default(''),
+  instructions: z.string().max(AGENT_INSTRUCTIONS_MAX_LENGTH).default(''),
   status: z.enum(PROJECT_STATUSES).default('backlog'),
   health: z.enum(PROJECT_HEALTHS).default('no_update'),
   leadId: idSchema.nullable().default(null),
@@ -21,6 +26,7 @@ export const projectUpdateSchema = z
     name: z.string().trim().min(2).max(120),
     summary: z.string().max(500),
     description: markdownSchema,
+    instructions: z.string().max(AGENT_INSTRUCTIONS_MAX_LENGTH),
     status: z.enum(PROJECT_STATUSES),
     health: z.enum(PROJECT_HEALTHS),
     leadId: idSchema.nullable(),
