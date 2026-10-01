@@ -140,13 +140,19 @@ export function IssueProperties({
     section: 'Issues',
     scope: 'issues',
   });
-  useHotkey('m', () => setOpenMenu('milestone'), {
-    priority: hotkeyPriority,
-    label: 'Change milestone',
-    section: 'Issues',
-    scope: 'issues',
-    enabled: issue.projectId !== null,
-  });
+  useHotkey(
+    'm',
+    () => {
+      if (issue.projectId !== null) setOpenMenu('milestone');
+    },
+    {
+      priority: hotkeyPriority,
+      label: 'Change milestone',
+      section: 'Issues',
+      scope: 'issues',
+      advertised: issue.projectId !== null,
+    },
+  );
 
   return (
     <aside

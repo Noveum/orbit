@@ -276,6 +276,21 @@ describe('issue property shortcuts with a preview open', () => {
     });
   }
 
+  it('keeps an unavailable milestone shortcut from reaching the background issue', async () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue()} />
+        <IssueProperties
+          issue={issue({ id: 'issue_2', identifier: 'ENG-2', projectId: null })}
+          hotkeyPriority={HOTKEY_PRIORITY.layer}
+        />
+      </Providers>,
+    );
+    await userEvent.setup().keyboard('m');
+    expect(screen.getByTestId('property-milestone')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('menu-milestone')).toBeNull();
+  });
+
   it('edits the preview and restores background shortcuts after it closes', async () => {
     function Panels({ previewOpen }: { readonly previewOpen: boolean }) {
       return (
