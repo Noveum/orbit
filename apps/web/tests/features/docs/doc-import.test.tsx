@@ -1,13 +1,26 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
+import type { ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@/test/render.tsx';
+import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
+
+await restoreModulesAfterThisFile([
+  'next/navigation',
+  '@/lib/query/use-docs.ts',
+  '@/components/ui/toast.tsx',
+]);
 
 const push = mock((_href: string) => undefined);
 const created = mock(async (input: Record<string, unknown>) => ({ id: 'doc_new', ...input }));
+const toast = mock((_options: Record<string, unknown>) => undefined);
 
 mock.module('next/navigation', () => ({ useRouter: () => ({ push }) }));
 mock.module('@/lib/query/use-docs.ts', () => ({
   useCreateDoc: () => ({ mutateAsync: created }),
+}));
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast, dismiss: mock() }),
+  ToastProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
 const { DocImport } = await import('../../../src/features/docs/doc-import.tsx');
@@ -26,6 +39,7 @@ afterEach(() => {
   cleanup();
   push.mockClear();
   created.mockClear();
+  toast.mockClear();
 });
 
 describe('importing a markdown file', () => {
@@ -55,10 +69,11 @@ describe('importing a markdown file', () => {
     expect(read).not.toHaveBeenCalled();
     expect(created).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
-    expect(
-      screen.getByText('That file is too long to import. Split it into linked pages.'),
-    ).toBeDefined();
-    expect(screen.getByText('Could not import that file')).toHaveClass('text-danger');
+    expect(toast).toHaveBeenCalledWith({
+      title: 'Could not import that file',
+      description: 'That file is too long to import. Split it into linked pages.',
+      tone: 'danger',
+    });
   });
 
   it('says so when the doc cannot be created rather than navigating', async () => {
