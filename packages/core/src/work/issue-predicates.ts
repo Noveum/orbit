@@ -77,6 +77,29 @@ function setPredicate(column: AnyColumn, values: readonly string[], negate: bool
   return negate ? negateWithNulls(positive, column, matchesUnset) : positive;
 }
 
+function assigneePredicate(values: readonly string[], negate: boolean): SQL | null {
+  if (values.length === 0) return null;
+  const user = sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId})`;
+  const parts: SQL[] = [];
+  const userIds = values.filter(
+    (value) => value !== UNSET_FILTER_VALUE && !value.startsWith('agent:'),
+  );
+  const agentIds = values
+    .filter((value) => value.startsWith('agent:'))
+    .map((value) => value.slice(6));
+  if (userIds.length > 0)
+    parts.push(
+      sql`coalesce(${user} in ${userIds}, false) and ${schema.issue.assigneeAgentId} is null`,
+    );
+  if (agentIds.length > 0)
+    parts.push(sql`coalesce(${schema.issue.assigneeAgentId} in ${agentIds}, false)`);
+  if (values.includes(UNSET_FILTER_VALUE))
+    parts.push(sql`${user} is null and ${schema.issue.assigneeAgentId} is null`);
+  const positive = anyOf(parts);
+  if (positive === null) return null;
+  return negate ? not(positive) : positive;
+}
+
 function cyclePredicate(
   values: readonly string[],
   negate: boolean,
@@ -397,7 +420,7 @@ function setSql(condition: FilterCondition, context: FilterContext): SQL | null 
     case 'state':
       return setPredicate(schema.issue.stateId, values, negate);
     case 'assignee':
-      return setPredicate(schema.issue.assigneeId, values, negate);
+      return assigneePredicate(values, negate);
     case 'creator':
       return setPredicate(schema.issue.creatorId, values, negate);
     case 'project':

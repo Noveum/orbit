@@ -1,12 +1,59 @@
 import { expect, type Page, test } from '@playwright/test';
+import { z } from 'zod';
 import { BASE } from './base-url.ts';
 
 const SHOTS = process.env['ORBIT_E2E_SHOTS'] ?? 'test-results';
 const PROPAGATION_TIMEOUT = 20_000;
+const SUBSCRIPTION_TIMEOUT = 15_000;
+
+const subscribedFrameSchema = z.object({
+  type: z.literal('subscribed'),
+  scopes: z.array(z.string()),
+});
+
+function teamSubscription(page: Page): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const handleWebSocket = (socket: import('@playwright/test').WebSocket) => {
+      socket.on('framereceived', ({ payload }) => {
+        if (settled || typeof payload !== 'string') return;
+        let value: unknown;
+        try {
+          value = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        const parsed = subscribedFrameSchema.safeParse(value);
+        if (!(parsed.success && parsed.data.scopes.some((scope) => scope.startsWith('team:')))) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        page.off('websocket', handleWebSocket);
+        resolve();
+      });
+    };
+    const timeout = setTimeout(() => {
+      settled = true;
+      page.off('websocket', handleWebSocket);
+      reject(new Error('realtime did not subscribe to a team scope'));
+    }, SUBSCRIPTION_TIMEOUT);
+    page.on('websocket', handleWebSocket);
+  });
+}
 
 async function openBoard(page: Page): Promise<void> {
+  const subscribed = teamSubscription(page);
   await page.goto(`${BASE}/team/eng/board`);
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
+  await subscribed;
+}
+
+async function openIssue(page: Page, identifier: string): Promise<void> {
+  const subscribed = teamSubscription(page);
+  await page.goto(`${BASE}/issue/${identifier}`);
+  await expect(page.getByTestId('issue-detail')).toBeVisible();
+  await subscribed;
 }
 
 test('one user in two tabs of the same browser sees issues, comments and reactions live', async ({
@@ -42,10 +89,8 @@ test('one user in two tabs of the same browser sees issues, comments and reactio
   const identifier = ((await card.getAttribute('data-testid')) ?? '').replace('issue-card-', '');
   expect(identifier).not.toBe('');
 
-  await tabA.goto(`${BASE}/issue/${identifier}`);
-  await expect(tabA.getByTestId('issue-detail')).toBeVisible();
-  await tabB.goto(`${BASE}/issue/${identifier}`);
-  await expect(tabB.getByTestId('issue-detail')).toBeVisible();
+  await openIssue(tabA, identifier);
+  await openIssue(tabB, identifier);
 
   const body = `Comment from the other tab ${Date.now() % 1000000}`;
   await tabA.getByTestId('comment-composer').locator('.ProseMirror').fill(body);

@@ -4,22 +4,15 @@ import {
   passkeyVerifiedWithin,
   userHasPasskey,
 } from '@orbit/core';
+import { agentFeatureEnabled } from '@orbit/shared';
 import { toDomainError } from '@orbit/shared/errors';
-import { z } from 'zod';
+import { mcpConsentDecisionSchema } from '@orbit/shared/validators';
 import { getSession } from '@/lib/auth/session.ts';
 import { publicAppUrl } from '@/lib/env.ts';
 import { FRESH_SESSION_WINDOW_MS, PASSKEY_STEP_UP_WINDOW_MS, signedInWithin } from '../step-up.ts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const decisionSchema = z.object({
-  decision: z.enum(['allow', 'deny']),
-  consentCode: z.string().min(1),
-  clientId: z.string().min(1).optional(),
-  scope: z.string().optional(),
-  organizationId: z.string().min(1),
-});
 
 export async function POST(request: Request): Promise<Response> {
   const origin = request.headers.get('origin');
@@ -36,9 +29,9 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return Response.json({ error: 'invalid_request' }, { status: 400 });
   }
-  const parsed = decisionSchema.safeParse(body);
+  const parsed = mcpConsentDecisionSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-  const { decision, consentCode, organizationId } = parsed.data;
+  const { decision, consentCode } = parsed.data;
   const userId = session.user.id;
 
   try {
@@ -47,12 +40,17 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ redirectUri: denied.redirectUri });
     }
 
+    if (!(agentFeatureEnabled('agent_identity_read') && agentFeatureEnabled('agent_consent'))) {
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    }
+
     const justSignedIn = signedInWithin(session.session.createdAt, FRESH_SESSION_WINDOW_MS);
     if (!justSignedIn && (await userHasPasskey(userId))) {
       const fresh = await passkeyVerifiedWithin(userId, PASSKEY_STEP_UP_WINDOW_MS);
       if (!fresh) return Response.json({ status: 'passkey_required' });
     }
 
+    const { organizationId, identitySelection } = parsed.data;
     const organizations = await listOrganizationsForUser(userId);
     if (!organizations.some((entry) => entry.organization.id === organizationId)) {
       return Response.json({ error: 'invalid_workspace' }, { status: 400 });
@@ -63,6 +61,7 @@ export async function POST(request: Request): Promise<Response> {
       consentCode,
       accept: true,
       organizationId,
+      identitySelection,
     });
     return Response.json({ redirectUri: approved.redirectUri });
   } catch (error) {

@@ -55,7 +55,10 @@ function item(overrides: Partial<InboxItem> = {}): InboxItem {
     type: 'comment_created',
     entityType: 'issue',
     entityId: 'issue_1',
+    actorType: 'user',
     actorName: 'Ada',
+    actorAvatar: null,
+    principalName: null,
     title: 'New comment on ENG-3',
     body: '',
     bodyHtml: '',
@@ -124,6 +127,21 @@ describe('the Activity tab', () => {
     expect(titles.some((text) => text.includes('New comment on ENG-3'))).toBe(true);
     expect(titles.some((text) => text.includes('moved to In Progress'))).toBe(false);
     expect(titles.some((text) => text.includes('assigned to you'))).toBe(false);
+  });
+
+  it('labels Agent and Human actors explicitly', () => {
+    renderInbox([
+      comment,
+      item({
+        id: 'notification_agent',
+        actorType: 'agent',
+        actorName: 'Researcher',
+        title: 'Agent updated ENG-3',
+      }),
+    ]);
+
+    expect(screen.getByRole('button', { name: /Agent · Researcher/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Human · Ada/ })).toBeInTheDocument();
   });
 });
 

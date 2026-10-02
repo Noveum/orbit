@@ -100,11 +100,13 @@ describe('project health migration', () => {
     });
   });
 
-  it('creates health check constraints during releaseDatabase when baselining a legacy database', async () => {
+  it('creates health check constraints from an exact upstream migration prefix', async () => {
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
-    const previous = migrations.filter(
-      (entry) => !entry.sql.some((s) => s.includes('project_health_check')),
+    const healthMigrationIndex = migrations.findIndex((entry) =>
+      entry.sql.some((statement) => statement.includes('project_health_check')),
     );
+    if (healthMigrationIndex < 0) throw new Error('project health migration not found');
+    const previous = migrations.slice(0, healthMigrationIndex);
 
     await run(urlFor('postgres'), async (sql) => {
       await sql.unsafe(`drop database if exists "${SCRATCH}"`);
@@ -135,11 +137,21 @@ describe('project health migration', () => {
         insert into public.project_update (id, organization_id, project_id, author_id, health, body)
         values ('update-baseline', 'org-baseline', 'proj-baseline', 'user-baseline', 'legacy_bad_health', 'Legacy update')
       `;
-      await sql`drop schema if exists drizzle cascade`;
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (
+        id serial primary key,
+        hash text not null,
+        created_at bigint
+      )`;
+      for (const entry of previous) {
+        await sql`insert into drizzle.__drizzle_migrations (hash, created_at)
+          values (${entry.hash}, ${entry.folderMillis})`;
+      }
     });
 
     const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
-    expect(result.mode).toBe('baselined');
+    expect(result.mode).toBe('migrated');
+    expect(result.applied).toBe(migrations.length - previous.length);
 
     await run(urlFor(SCRATCH), async (sql) => {
       const [proj] = await sql<{ health: string }[]>`

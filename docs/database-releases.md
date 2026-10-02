@@ -29,8 +29,21 @@ applies pending migrations transactionally, and checks the resulting catalog.
 
 The catalog check covers required tables, columns, PostgreSQL types, nullability,
 database defaults, generated columns, primary keys, index definitions, foreign-key
-targets and delete actions, enum values, and check constraints. Additional tables,
-indexes, foreign keys and check constraints are reported but preserved.
+targets and delete actions, CHECK constraints, required lifecycle guard functions
+and triggers, and enum values. Additional tables, indexes and foreign keys are
+and check constraints are reported but preserved.
+
+Agent upgrades have specific historical ordering and binding repairs. Read
+[Agent migration compatibility](agent-migration-compatibility.md) before
+upgrading a database that issued MCP credentials. The
+[Agent release runbook](issue-215-release-runbook.md) covers legacy grant
+invalidation, deployment gates and Actor-compatible rollback.
+
+The Agent schema is appended after the official upstream journal through
+`0029_material_psynapse`. The previous #215 development migration lineage is
+not a supported database starting point. Its timestamps and hashes are rejected
+as a non-contiguous prefix; do not rewrite its ledger. Begin from a fresh
+database or an exact upstream ledger prefix.
 
 ## Existing databases without a ledger
 
@@ -41,15 +54,20 @@ historical data migration. Attachment expiry values are restored to the exact
 historical result derived from the original creation timestamp, while cycle numbering must already match the
 historical deterministic backfill. A data migration without an explicit legacy
 reconciliation makes the release fail closed. A partial catalog or an unsafe data
-invariant is refused and must be brought forward with the applicable scripts in
-`packages/db/catchup` before retrying.
+invariant is refused. Apply a catch-up only when its documented starting state
+matches the target, then rerun the release and drift checks. The Agent
+compatibility catch-up repairs a current Agent schema; it does not apply missing
+upstream migrations or create migration history.
 
 The same reconciliation applies when the ledger is a valid prefix but the live
 catalog already contains the complete pending schema. This supports upgrades
 that previously materialized schema through an approved catchup without
 replaying destructive or conflicting DDL. The release records only the verified
 missing ledger suffix. A partial pending schema is migrated normally or refused
-if its catalog is incompatible.
+if its catalog is incompatible. Migration 0030 contains Agent attribution and
+credential data changes without an empty-catalog reconciliation path. If that
+migration is pending while the full schema is already present, release fails
+closed instead of recording a fabricated history.
 
 ## Deployment guard
 

@@ -100,6 +100,7 @@ export async function seedWorkspace(name: string): Promise<SeededWorkspace> {
       title: 'On the core team',
       stateId,
       creatorId: adminUserId,
+      creatorUserId: adminUserId,
     },
     {
       id: issueOnOther,
@@ -110,6 +111,7 @@ export async function seedWorkspace(name: string): Promise<SeededWorkspace> {
       title: 'On the other team',
       stateId: otherStateId,
       creatorId: adminUserId,
+      creatorUserId: adminUserId,
     },
   ]);
 

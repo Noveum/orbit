@@ -154,7 +154,7 @@ describe('DELETE /api/issues/[id]', () => {
     expect(response.status).toBe(200);
     expect(await rowsLeft()).toEqual([child.id]);
 
-    const actions = published[0] ?? [];
+    const actions = published.flat();
     expect(actions.map((action) => [action.action, action.modelId])).toEqual([
       ['delete', parent.id],
       ['update', child.id],

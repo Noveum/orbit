@@ -1,14 +1,70 @@
+import { createHash } from 'node:crypto';
+import { newId } from '@orbit/core';
+import { and, asc, db, eq, isNull, schema } from '@orbit/db';
+import { mcpTokenResponseSchema } from '@orbit/shared/validators';
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { z } from 'zod';
+import {
+  connect,
+  mintToken,
+  type TestClient,
+} from '../../../packages/mcp-server/src/test-helpers.ts';
 import { BASE } from './base-url.ts';
 
+test.use({ trace: 'off' });
+
 const DEMO_EMAIL = 'alex@orbit.example';
+const subscribedFrameSchema = z.object({
+  type: z.literal('subscribed'),
+  scopes: z.array(z.string()),
+});
+
+function teamSubscription(page: Page): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const handleWebSocket = (socket: import('@playwright/test').WebSocket) => {
+      socket.on('framereceived', ({ payload }) => {
+        if (settled || typeof payload !== 'string') return;
+        let value: unknown;
+        try {
+          value = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        const parsed = subscribedFrameSchema.safeParse(value);
+        if (!(parsed.success && parsed.data.scopes.some((scope) => scope.startsWith('team:')))) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        page.off('websocket', handleWebSocket);
+        resolve();
+      });
+    };
+    const timeout = setTimeout(() => {
+      settled = true;
+      page.off('websocket', handleWebSocket);
+      reject(new Error('realtime did not subscribe to a team scope'));
+    }, 15_000);
+    page.on('websocket', handleWebSocket);
+  });
+}
 
 async function signIn(context: BrowserContext, email: string): Promise<Page> {
   const page = await context.newPage();
   await page.goto(`${BASE}/login`);
   await page.getByTestId(`dev-sign-in-${email}`).click();
-  await page.waitForURL(`${BASE}/my-issues`);
+  await page.waitForURL(`${BASE}/my-issues`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
   return page;
+}
+
+async function expectMcpRequestDenied(client: TestClient): Promise<void> {
+  const failure = await client.result('get_me').then(
+    () => null,
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
+  expect(failure).toMatch(/401|unauthorized|revoked|inactive|deleted|token is not valid/i);
 }
 
 test('the MCP server page is one click from the workspace menu', async ({ browser }) => {
@@ -30,6 +86,298 @@ test('the MCP server page is one click from the workspace menu', async ({ browse
     'href',
     /^cursor:\/\//,
   );
+
+  await context.close();
+});
+
+test('OAuth consent creates an agent that can be managed from MCP settings', async ({
+  browser,
+}) => {
+  const [seed] = await db
+    .select({ userId: schema.user.id, name: schema.user.name })
+    .from(schema.user)
+    .where(eq(schema.user.email, DEMO_EMAIL))
+    .limit(1);
+  if (seed === undefined) throw new Error('The E2E demo account has no workspace.');
+
+  const clientId = `e2e-${newId()}`;
+  const consentCode = `consent-${newId()}`;
+  const agentName = `E2E Researcher ${newId().slice(0, 8)}`;
+  const codeVerifier = `${newId()}${newId()}`.replaceAll('-', '');
+  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+  const redirectUri = 'http://127.0.0.1:9876/callback';
+  await db.insert(schema.oauthApplication).values({
+    id: newId(),
+    clientId,
+    name: 'Orbit E2E Client',
+    redirectUrls: redirectUri,
+    type: 'public',
+    userId: seed.userId,
+  });
+  await db.insert(schema.verification).values({
+    id: newId(),
+    identifier: consentCode,
+    value: JSON.stringify({
+      clientId,
+      redirectURI: redirectUri,
+      scope: ['orbit.read', 'orbit.write'],
+      userId: seed.userId,
+      requireConsent: true,
+      state: 'orbit-e2e',
+      codeChallenge,
+      codeChallengeMethod: 'S256',
+    }),
+    expiresAt: new Date(Date.now() + 600_000),
+  });
+
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await signIn(context, DEMO_EMAIL);
+  const bootstrapResponse = await page.request.get(`${BASE}/api/bootstrap`);
+  expect(bootstrapResponse.ok()).toBe(true);
+  const { organizationId: activeOrganizationId } = z
+    .object({ organizationId: z.string() })
+    .parse(await bootstrapResponse.json());
+  await context.route(/^http:\/\/127\.0\.0\.1:9876\/callback/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: 'OAuth callback received',
+    });
+  });
+  await page.goto(`${BASE}/oauth/authorize?consent_code=${encodeURIComponent(consentCode)}`);
+  const workspace = page.getByLabel('Workspace');
+  await workspace.selectOption(activeOrganizationId);
+  await expect(workspace).toHaveValue(activeOrganizationId);
+  const organizationId = await workspace.inputValue();
+  await page.getByLabel('Agent identity').selectOption({ label: 'Create a new agent' });
+  await page.getByLabel('Agent name').fill(agentName);
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await page.waitForURL(/127\.0\.0\.1:9876\/callback\?code=/);
+  await expect(page.getByText('OAuth callback received')).toBeVisible();
+  const authorizationCode = new URL(page.url()).searchParams.get('code');
+  if (authorizationCode === null)
+    throw new Error('OAuth consent did not return an authorization code.');
+
+  const identities = await db
+    .select()
+    .from(schema.agentIdentity)
+    .where(
+      and(
+        eq(schema.agentIdentity.ownerUserId, seed.userId),
+        eq(schema.agentIdentity.organizationId, organizationId),
+        eq(schema.agentIdentity.clientId, clientId),
+        eq(schema.agentIdentity.name, agentName),
+      ),
+    );
+  expect(identities).toHaveLength(1);
+  const identity = identities[0];
+  if (identity === undefined) throw new Error('OAuth consent did not create the selected agent.');
+  const grants = await db
+    .select()
+    .from(schema.mcpGrant)
+    .where(
+      and(
+        eq(schema.mcpGrant.agentIdentityId, identity.id),
+        eq(schema.mcpGrant.clientId, clientId),
+        eq(schema.mcpGrant.userId, seed.userId),
+        eq(schema.mcpGrant.organizationId, organizationId),
+        isNull(schema.mcpGrant.revokedAt),
+      ),
+    );
+  expect(grants).toHaveLength(1);
+  const grant = grants[0];
+  expect(grant?.scopes).toBe('orbit.read orbit.write');
+
+  const tokenResponse = await page.request.post(`${BASE}/api/auth/mcp/token`, {
+    form: {
+      grant_type: 'authorization_code',
+      code: authorizationCode,
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
+    },
+  });
+  if (!tokenResponse.ok()) {
+    throw new Error(`OAuth token exchange answered ${tokenResponse.status()}.`);
+  }
+  const token = mcpTokenResponseSchema.parse(await tokenResponse.json());
+  const agent = await connect(token.access_token);
+  const teams = await db
+    .select({ key: schema.team.key })
+    .from(schema.team)
+    .where(eq(schema.team.organizationId, organizationId))
+    .orderBy(asc(schema.team.key));
+  const team = teams[0];
+  if (team === undefined) throw new Error('The selected workspace has no team.');
+  const title = `OAuth agent issue ${newId().slice(0, 8)}`;
+  const identityDetails = await agent.result('get_me');
+  expect((identityDetails['agent'] as { id: string }).id).toBe(identity.id);
+  if (process.env['ORBIT_AGENT_ISSUE_WRITE'] !== 'true') {
+    const writeAttempt = await agent.call('create_issue', {
+      team: team.key,
+      title,
+      assignee: null,
+    });
+    expect(writeAttempt.isError).toBe(true);
+    await page.goto(`${BASE}/settings/mcp`);
+    await expect(page.getByTestId(`mcp-agent-${identity.id}`)).toContainText(agentName);
+    await agent.close();
+    await context.close();
+    return;
+  }
+
+  const board = await context.newPage();
+  const subscribed = teamSubscription(board);
+  await board.goto(`${BASE}/team/${team.key.toLowerCase()}/board`);
+  await expect(board.locator('[data-testid^="board-column-"]').first()).toBeVisible();
+  await subscribed;
+  const issueCountBefore = async (): Promise<number> => {
+    const counts = await board
+      .locator('[data-testid^="board-column-"] header [data-numeric]')
+      .allTextContents();
+    return counts.reduce((total, count) => total + Number(count), 0);
+  };
+  const countBefore = await issueCountBefore();
+
+  const created = await agent.result('create_issue', {
+    team: team.key,
+    title,
+    assignee: null,
+  });
+  const issue = created['issue'] as { id: string; identifier: string };
+  const assigned = await agent.result('update_issue', {
+    issue: issue.identifier,
+    assignee: 'agent',
+  });
+  expect(assigned['changed']).toContain('assignee');
+  expect((assigned['issue'] as { assigneeAgentId: string | null }).assigneeAgentId).toBe(
+    identity.id,
+  );
+  const queue = await agent.result('list_agent_issues');
+  expect((queue['issues'] as { id: string }[]).map((entry) => entry.id)).toContain(issue.id);
+  const searched = await agent.result('search_issues', { query: title, assignee: 'agent' });
+  expect((searched['issues'] as { id: string }[]).map((entry) => entry.id)).toContain(issue.id);
+  await expect.poll(issueCountBefore, { timeout: 20_000 }).toBe(countBefore + 1);
+  await expect(board.getByTestId(`issue-card-${issue.identifier}`)).toBeVisible();
+  await expect(
+    board.getByTestId(`issue-card-${issue.identifier}`).getByTestId('issue-creator-agent'),
+  ).toHaveText('Agent');
+
+  await board.goto(`${BASE}/issue/${issue.identifier}`);
+  await expect(board.getByTestId('issue-detail')).toBeVisible();
+  await expect(board.getByTestId('activity-agent-badge').first()).toContainText(
+    `agent for ${seed.name}`,
+  );
+  await board.goto(`${BASE}/inbox`);
+  const inbox = board.getByRole('main');
+  await expect(inbox).toHaveCount(1);
+  const detail = inbox.getByTestId('inbox-detail').filter({ visible: true });
+  await expect(detail).toHaveCount(1);
+  await expect(detail).toBeVisible();
+  await inbox.getByRole('button', { name: 'Status' }).click();
+  const notification = inbox
+    .getByRole('button')
+    .filter({ hasText: `Assigned you ${issue.identifier}` });
+  await expect(notification).toContainText('Agent');
+  await expect(notification).toContainText(agentName);
+
+  await page.goto(`${BASE}/settings/mcp`);
+  const card = page.getByTestId(`mcp-agent-${identity.id}`);
+  await expect(card).toContainText(agentName);
+  await card.getByRole('button', { name: 'Pause' }).click();
+  await expect(card).toContainText('Lifecycle: disabled');
+  await card.getByRole('button', { name: 'Resume' }).click();
+  await expect(card).toContainText('Lifecycle: active');
+  await card.getByRole('button', { name: 'Pause' }).click();
+  await expect(card).toContainText('Lifecycle: disabled');
+  await agent.close();
+  await context.close();
+});
+
+test('pause, revoke, and delete invalidate outstanding MCP requests', async ({ browser }) => {
+  const [seed] = await db
+    .select({ userId: schema.user.id, organizationId: schema.member.organizationId })
+    .from(schema.user)
+    .innerJoin(schema.member, eq(schema.member.userId, schema.user.id))
+    .where(eq(schema.user.email, DEMO_EMAIL))
+    .limit(1);
+  if (seed === undefined) throw new Error('The E2E demo account has no workspace.');
+
+  const pauseName = `E2E pause ${newId().slice(0, 8)}`;
+  const revokeName = `E2E revoke ${newId().slice(0, 8)}`;
+  const deleteName = `E2E delete ${newId().slice(0, 8)}`;
+  const [pauseToken, revokeToken, deleteToken] = await Promise.all([
+    mintToken(seed.organizationId, seed.userId, pauseName),
+    mintToken(seed.organizationId, seed.userId, revokeName),
+    mintToken(seed.organizationId, seed.userId, deleteName),
+  ]);
+  const clients = await Promise.all([
+    connect(pauseToken),
+    connect(revokeToken),
+    connect(deleteToken),
+  ]);
+  const [pauseClient, revokeClient, deleteClient] = clients;
+  const [pauseIdentity, revokeIdentity, deleteIdentity] = await Promise.all(
+    [pauseName, revokeName, deleteName].map(async (name) => {
+      const [identity] = await db
+        .select({ id: schema.agentIdentity.id })
+        .from(schema.agentIdentity)
+        .where(
+          and(
+            eq(schema.agentIdentity.ownerUserId, seed.userId),
+            eq(schema.agentIdentity.organizationId, seed.organizationId),
+            eq(schema.agentIdentity.name, `${name} Agent`),
+          ),
+        )
+        .limit(1);
+      if (identity === undefined) throw new Error(`Could not find ${name}.`);
+      return identity;
+    }),
+  );
+  if (pauseIdentity === undefined || revokeIdentity === undefined || deleteIdentity === undefined) {
+    throw new Error('The E2E lifecycle identities are incomplete.');
+  }
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  try {
+    for (const client of clients) {
+      expect((await client.result('get_me'))['agent']).toBeTruthy();
+    }
+    const page = await signIn(context, DEMO_EMAIL);
+    await page.goto(`${BASE}/settings/mcp`);
+
+    const pauseCard = page.getByTestId(`mcp-agent-${pauseIdentity.id}`).first();
+    await pauseCard.getByRole('button', { name: 'Pause' }).click();
+    await expect(pauseCard).toContainText('Lifecycle: disabled');
+    await expectMcpRequestDenied(pauseClient);
+
+    const revokeCard = page.getByTestId(`mcp-agent-${revokeIdentity.id}`).first();
+    await revokeCard.getByRole('button', { name: 'Revoke connection' }).click();
+    await expect(revokeCard).toContainText('Connection: disconnected');
+    await expectMcpRequestDenied(revokeClient);
+
+    const deleteCard = page.getByTestId(`mcp-agent-${deleteIdentity.id}`).first();
+    await deleteCard.getByLabel(`Reason for deleting ${deleteName} Agent`).fill('release drill');
+    await deleteCard.getByRole('button', { name: 'Delete' }).click();
+    await expect(deleteCard).toContainText('Lifecycle: deleted');
+    await expectMcpRequestDenied(deleteClient);
+  } finally {
+    await Promise.all(clients.map(async (client) => await client.close()));
+    await context.close();
+  }
+});
+
+test('Human issue creation continues to work through the Web board', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await signIn(context, DEMO_EMAIL);
+  await page.goto(`${BASE}/team/eng/board`);
+  await expect(page.getByTestId('board-column-Todo')).toBeVisible();
+
+  const title = `Human rollback ${newId().slice(0, 8)}`;
+  await page.keyboard.press('c');
+  await expect(page.getByTestId('quick-create')).toBeVisible();
+  await page.getByTestId('quick-create-title').fill(title);
+  await page.getByTestId('quick-create-submit').click();
+  await expect(page.getByText(title, { exact: true })).toBeVisible();
 
   await context.close();
 });

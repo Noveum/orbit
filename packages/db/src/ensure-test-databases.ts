@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { prepareTestDatabase } from './prepare-test-database.ts';
 
 const TEST_DATABASES = [
   'orbit_test_core',
@@ -68,26 +69,12 @@ for (const name of TEST_DATABASES) {
 
 await admin.end();
 
-for (const name of TEST_DATABASES) {
-  const url = databaseUrl(connectionString, name);
-  const sql = postgres(url, connectionOptions);
-  await sql`create extension if not exists pg_trgm`;
-  await sql.end();
-}
-
-console.log(`\n${TEST_DATABASES.length} test databases ready. Applying the schema to each.`);
+console.log(
+  `\n${TEST_DATABASES.length} test databases ready. Applying release migrations to each.`,
+);
 
 for (const name of TEST_DATABASES) {
   const url = databaseUrl(connectionString, name);
-  const push = Bun.spawn(['bunx', 'drizzle-kit', 'push', '--force'], {
-    env: { ...process.env, DATABASE_URL: url },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const code = await push.exited;
-  if (code !== 0) {
-    console.error(await new Response(push.stderr).text());
-    throw new Error(`Could not push the schema to ${name}.`);
-  }
+  await prepareTestDatabase(url);
   console.log(`schema applied to ${name}`);
 }

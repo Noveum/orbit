@@ -262,6 +262,7 @@ describe('POST /api/cycles/[id]/complete', () => {
       title: 'Carried',
       stateId: state.id,
       creatorId: workspace.adminUser.id,
+      creatorUserId: workspace.adminUser.id,
       cycleId: runningCycleId,
     });
 

@@ -200,11 +200,13 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
   const boardStatus = page.getByTestId('board-drag-status');
 
   await cardLocator.focus();
+  await expect(cardLocator).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(boardStatus).toHaveText(
     new RegExp(`Picked up ${moving}: .+ in column Todo, position \\d+ of \\d+\\.`),
     { timeout: 10_000 },
   );
+  await waitForKeyboardDragReady(page, moving);
   await page.keyboard.press('ArrowRight');
   await expect(boardStatus).toHaveText(
     new RegExp(`Moved ${moving} to column In Progress, position \\d+ of \\d+\\.`),
@@ -232,6 +234,8 @@ test('a card moved with the keyboard updates the aria-live region and lands in t
     .poll(async () => await cardsIn(page, 'In Progress'), { timeout: 15_000 })
     .toContain(moving);
   await expect(cardLocator).toBeFocused();
+  const inProgress = await stateIdByName(page, teamId, 'In Progress');
+  await expect.poll(async () => await stateIdOf(page, moving)).toBe(inProgress);
   await page.reload();
   await expect(page.getByTestId('board-column-Todo')).toBeVisible();
   await expect
@@ -320,8 +324,10 @@ test('a keyboard drag can be cancelled with Escape and returns to the original p
   });
 
   await cardLocator.focus();
+  await expect(cardLocator).toBeFocused();
   await page.keyboard.press('Space');
   await expect(boardStatus).toContainText(`Picked up ${moving}`, { timeout: 10_000 });
+  await waitForKeyboardDragReady(page, moving);
   await page.keyboard.press('ArrowRight');
   await expect(boardStatus).toContainText(`Moved ${moving}`, { timeout: 10_000 });
   await page.keyboard.press('Escape');

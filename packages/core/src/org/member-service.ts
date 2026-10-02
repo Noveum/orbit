@@ -1,5 +1,5 @@
 import { and, asc, count, db, eq, inArray, isNull, ne, notExists, schema } from '@orbit/db';
-import { OPEN_STATE_CATEGORIES, type OrgRole } from '@orbit/shared/constants';
+import type { OrgRole } from '@orbit/shared/constants';
 import { conflict, forbidden } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
@@ -7,6 +7,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan, canAssignRole } from '@orbit/shared/policy';
 import { memberUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
+import { deletePersonalAgentsForRemovedMember } from '../auth/agent-identity-service.ts';
 import { type Executor, requireRow } from '../internal.ts';
 import {
   lockNotificationPolicyMutation,
@@ -14,6 +15,11 @@ import {
 } from '../notifications/access-sync.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { canonicalIssueReads } from '../work/issue-actor-view.ts';
+import {
+  clearAgentIssuesForOwnerAccessLoss,
+  clearHumanIssueResponsibility,
+} from '../work/issue-responsibility.ts';
 import { issueScopes } from '../work/issue-service.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
@@ -191,6 +197,42 @@ export async function updateMemberRole(
       .where(eq(schema.member.id, memberId))
       .returning();
     const member = requireRow(updated, 'That member does not exist.');
+    let changedAgentIssues: (typeof schema.issue.$inferSelect)[] = [];
+    if (current.role === 'admin' && member.role !== 'admin') {
+      const inaccessibleTeams = await tx
+        .select({ id: schema.team.id })
+        .from(schema.team)
+        .where(
+          and(
+            eq(schema.team.organizationId, principal.organizationId),
+            notExists(
+              tx
+                .select({ teamId: schema.teamMember.teamId })
+                .from(schema.teamMember)
+                .where(
+                  and(
+                    eq(schema.teamMember.userId, current.userId),
+                    eq(schema.teamMember.teamId, schema.team.id),
+                  ),
+                ),
+            ),
+          ),
+        );
+      changedAgentIssues = await clearAgentIssuesForOwnerAccessLoss(
+        tx,
+        principal.organizationId,
+        current.userId,
+        inaccessibleTeams.map((team) => team.id),
+        syncId,
+        principal.userId,
+      );
+    }
+    const issueViews = await canonicalIssueReads(tx, changedAgentIssues);
+    const changedIssueIds = issueViews.map((row) => row.id);
+    const [labels, reviewers] = await Promise.all([
+      labelIdsByIssue(tx, changedIssueIds),
+      reviewerIdsByIssue(tx, changedIssueIds),
+    ]);
     const notificationActions = await synchronizeNotificationAccess(
       tx,
       principal.organizationId,
@@ -212,6 +254,22 @@ export async function updateMemberRole(
           data: member,
           actor,
         }),
+        ...issueViews.map((row) =>
+          buildSyncAction({
+            syncId,
+            organizationId: principal.organizationId,
+            scopes: issueScopes(row),
+            action: 'update',
+            model: 'issue',
+            modelId: row.id,
+            data: {
+              ...row,
+              labelIds: labels.get(row.id) ?? [],
+              reviewerIds: reviewers.get(row.id) ?? [],
+            },
+            actor: { type: 'system', id: 'system', name: 'System' },
+          }),
+        ),
       ],
     };
   });
@@ -252,56 +310,25 @@ export async function removeMember(
     const actor = await principalActor(tx, principal);
     const nextAssignee = options.reassignToUserId ?? null;
 
-    const openStateIds = tx
-      .select({ id: schema.workflowState.id })
-      .from(schema.workflowState)
-      .where(
-        and(
-          eq(schema.workflowState.organizationId, principal.organizationId),
-          inArray(schema.workflowState.category, [...OPEN_STATE_CATEGORIES]),
-        ),
-      );
+    const deletedAgentIds = await deletePersonalAgentsForRemovedMember(
+      tx,
+      principal.organizationId,
+      current.userId,
+      principal.userId,
+    );
 
-    const reassigned = await tx
-      .update(schema.issue)
-      .set({ assigneeId: nextAssignee, updatedAt: new Date(), syncId })
-      .where(
-        and(
-          eq(schema.issue.organizationId, principal.organizationId),
-          eq(schema.issue.assigneeId, current.userId),
-          inArray(schema.issue.stateId, openStateIds),
-        ),
-      )
-      .returning();
-
-    const organizationIssueIds = tx
-      .select({ id: schema.issue.id })
-      .from(schema.issue)
-      .where(eq(schema.issue.organizationId, principal.organizationId));
-    const removedReviews = await tx
-      .delete(schema.issueReviewer)
-      .where(
-        and(
-          eq(schema.issueReviewer.userId, current.userId),
-          inArray(schema.issueReviewer.issueId, organizationIssueIds),
-        ),
-      )
-      .returning({ issueId: schema.issueReviewer.issueId });
-    const reviewedIssueIds = [...new Set(removedReviews.map((row) => row.issueId))];
-    const reviewed =
-      reviewedIssueIds.length === 0
-        ? []
-        : await tx
-            .update(schema.issue)
-            .set({ updatedAt: new Date(), syncId })
-            .where(
-              and(
-                eq(schema.issue.organizationId, principal.organizationId),
-                inArray(schema.issue.id, reviewedIssueIds),
-              ),
-            )
-            .returning();
-
+    const responsibility = await clearHumanIssueResponsibility(
+      tx,
+      principal.organizationId,
+      current.userId,
+      syncId,
+      {
+        nextAssignee,
+        agentIdentityIds: deletedAgentIds,
+        cause: 'membership_removed',
+        causeActorId: principal.userId,
+      },
+    );
     await tx
       .delete(schema.teamMember)
       .where(
@@ -328,7 +355,8 @@ export async function removeMember(
     await tx.delete(schema.member).where(eq(schema.member.id, memberId));
     await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 
-    const changedIssues = new Map([...reassigned, ...reviewed].map((row) => [row.id, row]));
+    const views = await canonicalIssueReads(tx, responsibility.changed);
+    const changedIssues = new Map(views.map((row) => [row.id, row]));
     const changedIssueIds = [...changedIssues.keys()];
     const [labels, reviewers] = await Promise.all([
       labelIdsByIssue(tx, changedIssueIds),
@@ -364,11 +392,11 @@ export async function removeMember(
             labelIds: labels.get(row.id) ?? [],
             reviewerIds: reviewers.get(row.id) ?? [],
           },
-          actor,
+          actor: { type: 'system', id: 'system', name: 'System' },
         }),
       ),
     ];
 
-    return { reassignedIssueIds: reassigned.map((row) => row.id), actions };
+    return { reassignedIssueIds: responsibility.reassigned, actions };
   });
 }

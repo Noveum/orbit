@@ -1,5 +1,8 @@
 import {
+  type ActorView,
+  canonicalIssueReads,
   type IssueListRow,
+  type IssueRow,
   listMembers,
   listWorkflowStates,
   reviewerIdsByIssue,
@@ -19,7 +22,13 @@ export interface IssueView {
   readonly state: string | null;
   readonly stateId: string;
   readonly priority: string;
-  readonly assignee: string | null;
+  readonly creator: ActorView;
+  readonly owner: ActorView | null;
+  readonly assignee: ActorView | null;
+  readonly creatorId: string | null;
+  readonly creatorAgentId: string | null;
+  readonly assigneeAgentId: string | null;
+  readonly ownerId: string | null;
   readonly assigneeId: string | null;
   readonly reviewers: readonly string[];
   readonly reviewerIds: readonly string[];
@@ -47,8 +56,20 @@ export function deltaViews(actions: readonly SyncAction[]): DeltaView[] {
   }));
 }
 
+type IssueDescriptionRow = IssueListRow | IssueRow;
+
 function toView(
-  row: IssueListRow,
+  row: IssueDescriptionRow,
+  actors: {
+    creator: ActorView;
+    assignee: ActorView | null;
+    owner: ActorView | null;
+    creatorId: string | null;
+    assigneeId: string | null;
+    creatorAgentId: string | null;
+    assigneeAgentId: string | null;
+    ownerId: string | null;
+  },
   stateNames: ReadonlyMap<string, string>,
   userNames: ReadonlyMap<string, string>,
   reviewerIds: readonly string[],
@@ -61,8 +82,7 @@ function toView(
     state: stateNames.get(row.stateId) ?? null,
     stateId: row.stateId,
     priority: PRIORITY_NAMES[row.priority] ?? 'No priority',
-    assignee: row.assigneeId === null ? null : (userNames.get(row.assigneeId) ?? null),
-    assigneeId: row.assigneeId,
+    ...actors,
     reviewers: reviewerIds.map((id) => userNames.get(id) ?? id),
     reviewerIds: [...reviewerIds],
     projectId: row.projectId,
@@ -78,7 +98,7 @@ function toView(
 
 export async function describeIssues(
   principal: Principal,
-  rows: readonly IssueListRow[],
+  rows: readonly IssueDescriptionRow[],
 ): Promise<IssueView[]> {
   if (rows.length === 0) return [];
 
@@ -99,10 +119,33 @@ export async function describeIssues(
   const userNames = new Map<string, string>();
   for (const member of members) userNames.set(member.user.id, member.user.name);
 
-  return rows.map((row) => toView(row, stateNames, userNames, reviewers.get(row.id) ?? []));
+  const views = await canonicalIssueReads(db, rows);
+  return rows.map((row, index) => {
+    const view = views[index];
+    if (!view) throw new Error('Missing canonical issue view');
+    return toView(
+      row,
+      {
+        creator: view.creator,
+        assignee: view.assignee,
+        owner: view.owner,
+        creatorId: view.creatorId,
+        assigneeId: view.assigneeId,
+        creatorAgentId: view.creatorAgentId,
+        assigneeAgentId: view.assigneeAgentId,
+        ownerId: view.ownerId,
+      },
+      stateNames,
+      userNames,
+      reviewers.get(row.id) ?? [],
+    );
+  });
 }
 
-export async function describeIssue(principal: Principal, row: IssueListRow): Promise<IssueView> {
+export async function describeIssue(
+  principal: Principal,
+  row: IssueDescriptionRow,
+): Promise<IssueView> {
   const [view] = await describeIssues(principal, [row]);
   if (view === undefined) throw new Error('The issue could not be described.');
   return view;

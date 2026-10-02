@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { SYNC_MODELS, scopes } from '@orbit/shared/events';
+import {
+  manageAgentIdentity,
+  preparePersonalAgentConsent,
+} from '../../src/auth/agent-identity-service.ts';
 import { createComment, toggleReaction } from '../../src/content/comment-service.ts';
 import { createDoc, createDocCollection, setDocAccess } from '../../src/content/doc-service.ts';
 import { newId } from '../../src/internal.ts';
@@ -64,6 +68,38 @@ describe('catchUp', () => {
 
   it('covers every synced model so no model silently misses a backfill', () => {
     expect([...SYNC_CATCHUP_MODELS].sort()).toEqual([...SYNC_MODELS].sort());
+  });
+
+  it('replays an agent management event without internal grant data', async () => {
+    const clientId = newId();
+    await db.insert(schema.oauthApplication).values({
+      id: newId(),
+      clientId,
+      name: 'Assistant',
+      redirectUrls: 'https://example.com/callback',
+      type: 'public',
+    });
+    const { identity } = await db.transaction(async (tx) =>
+      preparePersonalAgentConsent(tx, {
+        userId: workspace.adminUser.id,
+        organizationId: workspace.organizationId,
+        clientId,
+        selection: { createAgent: { name: 'Researcher', avatar: null } },
+      }),
+    );
+    const cursor = (await catchUp(workspace.admin, 0)).syncId;
+    await manageAgentIdentity(workspace.admin, identity.id, {
+      action: 'update_profile',
+      profile: { name: 'Planner', avatar: null },
+    });
+    const result = await catchUp(workspace.admin, cursor);
+    const events = result.actions.filter((action) => action.model === 'agent_identity');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      modelId: identity.id,
+      data: { id: identity.id, name: 'Planner', lifecycle: 'active' },
+    });
+    expect(JSON.stringify(events)).not.toContain('grantId');
   });
 
   it('returns only rows newer than the cursor and reports the new high water mark', async () => {

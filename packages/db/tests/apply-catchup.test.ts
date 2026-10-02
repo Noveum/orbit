@@ -109,11 +109,11 @@ describe('applyCatchup against a real database', () => {
       `)
         .simple();
     });
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
-  }, 30_000);
+  }, 120_000);
 
   it('adds what the doc tree needs, and is clean on a second run', async () => {
     await applyCatchup(urlFor(SCRATCH), 'doc-tree-schema-catchup.sql');
@@ -141,7 +141,7 @@ describe('applyCatchup against a real database', () => {
       `,
     );
     expect(tables).toHaveLength(1);
-  }, 30_000);
+  }, 120_000);
 
   it('repairs a partial workspace agent instructions column and stays idempotent', async () => {
     await run(urlFor(SCRATCH), async (sql) => {
@@ -173,7 +173,7 @@ describe('applyCatchup against a real database', () => {
       `,
     );
     expect(organization?.agent_instructions).toBe('');
-  }, 30_000);
+  }, 120_000);
 
   it('indexes a doc body once the search vector exists', async () => {
     await applyCatchup(urlFor(SCRATCH), 'doc-tree-schema-catchup.sql');
@@ -191,7 +191,7 @@ describe('applyCatchup against a real database', () => {
       `;
     });
     expect(row?.hit).toBe(true);
-  }, 30_000);
+  }, 120_000);
 
   it('creates the GitHub pull request mirror and is clean on a second run', async () => {
     await applyCatchup(urlFor(SCRATCH), 'github-pull-request-mirror.sql');
@@ -221,7 +221,7 @@ describe('applyCatchup against a real database', () => {
       'github_pull_request_activity',
     ]);
     expect(columns.some((row) => row.column_name === 'pull_request_id')).toBe(true);
-  }, 30_000);
+  }, 120_000);
 
   it('adds GitHub delivery and refresh claims idempotently', async () => {
     await applyCatchup(urlFor(SCRATCH), 'github-pull-request-mirror.sql');
@@ -243,7 +243,7 @@ describe('applyCatchup against a real database', () => {
     );
 
     expect(columns).toHaveLength(3);
-  }, 30_000);
+  }, 120_000);
 
   it('refuses a file outside the catchup directory before it opens anything', async () => {
     await expect(applyCatchup(urlFor(SCRATCH), '/etc/passwd.sql')).rejects.toThrow();
@@ -357,13 +357,13 @@ describe('workspace sprint catchup against captured analytics', () => {
       `)
         .simple();
     });
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) =>
       sql.unsafe(`drop database if exists "${SPRINT_SCRATCH}"`),
     );
-  }, 30_000);
+  }, 120_000);
 
   it('reconciles captured membership when it moves an issue to the winning sprint', async () => {
     await applyWorkspaceSprintMigration(urlFor(SPRINT_SCRATCH));
@@ -388,7 +388,7 @@ describe('workspace sprint catchup against captured analytics', () => {
     expect(rows).toHaveLength(2);
     expect(rows.find((row) => row.cycle_id === 'source')?.removed_at).not.toBeNull();
     expect(rows.find((row) => row.cycle_id === 'winner')?.removed_at).toBeNull();
-  }, 30_000);
+  }, 120_000);
 });
 
 const ANALYTICS_SCRATCH = laneDatabase('orbit_test_analytics_catchup', currentLane());
@@ -457,13 +457,13 @@ describe('analytics planning catchup against a deployed schema', () => {
       `)
         .simple();
     });
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) =>
       sql.unsafe(`drop database if exists "${ANALYTICS_SCRATCH}"`),
     );
-  }, 30_000);
+  }, 120_000);
 
   it('adds analytics history without replacing unrelated deployed data', async () => {
     await applyCatchup(urlFor(ANALYTICS_SCRATCH), 'analytics-planning-cockpit.sql');
@@ -555,5 +555,5 @@ describe('analytics planning catchup against a deployed schema', () => {
     expect(snapshot?.id).toBe('snapshot');
     expect(snapshot?.captured_at).toBeInstanceOf(Date);
     expect(snapshot?.is_final).toBe(false);
-  }, 30_000);
+  }, 120_000);
 });

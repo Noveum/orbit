@@ -6,10 +6,11 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun --watch --env-file=../../.env src/index.ts",
-    "build": "bun build src/index.ts --target=bun --outdir=dist --minify",
+    "build": "bun build src/index.ts src/outbox-worker.ts --target=bun --outdir=dist --minify",
     "start": "bun dist/index.js",
+    "start:outbox": "bun dist/outbox-worker.js",
     "typecheck": "tsc --noEmit",
-    "test": "bun --env-file=../../.env test --timeout 20000"
+    "test": "bun --env-file=../../.env ../../scripts/run-workspace-tests.ts orbit_test_rt --timeout 20000"
   },
   "dependencies": {
     "@orbit/core": "workspace:*",

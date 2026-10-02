@@ -27,6 +27,17 @@ describe('issue property undo preconditions', () => {
     expect(parsed.success).toBe(false);
   });
 
+  it('preserves agent responsibility fields alongside undo preconditions', () => {
+    const parsed = issueUpdateSchema.parse({
+      assigneeAgentId: 'identity_1',
+      ownerUserId: 'user_1',
+      expected: { stateId: 'state_in_progress' },
+    });
+    expect(parsed.assigneeAgentId).toBe('identity_1');
+    expect(parsed.ownerUserId).toBe('user_1');
+    expect(parsed.expected?.stateId).toBe('state_in_progress');
+  });
+
   it('allows clearing nullable fields in expected preconditions', () => {
     const parsed = issueExpectedPropertiesSchema.parse({
       assigneeId: null,

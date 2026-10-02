@@ -1,28 +1,46 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { and, db, eq, schema } from '@orbit/db';
 import { DEDUPE_WINDOW_MS } from '@orbit/services/notifications';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
+import { recordMcpGrant } from '../../src/auth/mcp-token.ts';
 import { createComment } from '../../src/content/comment-service.ts';
 import { createDocComment } from '../../src/content/doc-comment-service.ts';
 import { createDoc, updateDoc } from '../../src/content/doc-service.ts';
+import { newId } from '../../src/internal.ts';
 import {
   addMember,
   createWorkspace,
   resetDatabase,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createAgentIssue, createIssue, updateIssue } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
 let grace: Awaited<ReturnType<typeof addMember>>;
 let linus: Awaited<ReturnType<typeof addMember>>;
+const GATES = [
+  'ORBIT_AGENT_IDENTITY_READ',
+  'ORBIT_AGENT_CONSENT',
+  'ORBIT_AGENT_ISSUE_WRITE',
+  'ORBIT_ISSUE_OUTBOX_DISPATCH',
+] as const;
+const originalGates = new Map(GATES.map((gate) => [gate, process.env[gate]]));
 
 beforeEach(async () => {
+  for (const gate of GATES) process.env[gate] = 'true';
   await resetDatabase();
   workspace = await createWorkspace('Nova');
   grace = await addMember(workspace, 'member', { name: 'Grace' });
   linus = await addMember(workspace, 'member', { name: 'Linus' });
+});
+
+afterEach(() => {
+  for (const gate of GATES) {
+    const original = originalGates.get(gate);
+    if (original === undefined) delete process.env[gate];
+    else process.env[gate] = original;
+  }
 });
 
 function notificationActions(actions: readonly SyncAction[]): SyncAction[] {
@@ -396,5 +414,112 @@ describe('preferences', () => {
     const issue = await newIssue();
     await createComment(workspace.admin, issue.id, { body: `Ping @${grace.user.handle}` });
     expect(await inboxOf(grace.user.id)).toHaveLength(1);
+  });
+});
+
+describe('agent attribution on notifications', () => {
+  const AGENT_AVATAR = '/api/avatars/agent.png?v=1';
+
+  async function agentFixture() {
+    const owner = await addMember(workspace, 'member', { name: 'Owner Person' });
+    await db
+      .update(schema.user)
+      .set({ image: AGENT_AVATAR })
+      .where(eq(schema.user.id, owner.user.id));
+    const clientId = newId();
+    const identityId = newId();
+    await db.insert(schema.oauthApplication).values({
+      id: newId(),
+      clientId,
+      name: 'Agent client',
+      redirectUrls: 'https://example.com',
+      type: 'public',
+    });
+    await db.insert(schema.agentIdentity).values({
+      id: identityId,
+      organizationId: workspace.organizationId,
+      ownerUserId: owner.user.id,
+      ownerNameSnapshot: owner.user.name,
+      clientId,
+      clientNameSnapshot: 'Agent client',
+      name: 'Researcher',
+      avatar: AGENT_AVATAR,
+    });
+    const grantId = await recordMcpGrant({
+      clientId,
+      userId: owner.user.id,
+      organizationId: workspace.organizationId,
+      scopes: 'orbit.read orbit.write',
+      agentIdentityId: identityId,
+    });
+    return {
+      owner,
+      identityId,
+      grantId,
+      binding: {
+        principal: owner.principal,
+        clientId,
+        agentIdentityId: identityId,
+        grantId,
+        scopes: 'orbit.read orbit.write',
+      },
+    };
+  }
+
+  it('P0-ATTR-1 carries the agent snapshot on the notification row and hides the grant from the payload', async () => {
+    const { owner, identityId, grantId, binding } = await agentFixture();
+    const { actions } = await createAgentIssue(binding, {
+      teamId: workspace.teamId,
+      title: 'Agent filed this',
+      assigneeAgentId: identityId,
+    });
+
+    const rows = await inboxOf(owner.user.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: 'issue_assigned',
+      actorType: 'agent',
+      actorId: identityId,
+      actorName: 'Researcher',
+      actorAvatar: AGENT_AVATAR,
+      principalUserId: owner.user.id,
+      principalName: 'Owner Person',
+      principalAvatar: AGENT_AVATAR,
+      grantId,
+    });
+
+    const published = notificationActions(actions);
+    expect(published).toHaveLength(1);
+    const action = published[0];
+    expect(action?.attribution?.actor).toMatchObject({
+      type: 'agent',
+      id: identityId,
+      name: 'Researcher',
+      avatar: AGENT_AVATAR,
+    });
+    expect(action?.attribution?.principal).toMatchObject({
+      type: 'user',
+      id: owner.user.id,
+      name: 'Owner Person',
+    });
+    const payload = JSON.stringify(action);
+    expect(payload).not.toContain('grantId');
+    expect(payload).not.toContain('grant_id');
+    expect(payload).not.toContain(grantId);
+  });
+
+  it('P0-ATTR-1 leaves the grant empty on a human notification', async () => {
+    const { actions } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Human filed this',
+      assigneeId: grace.user.id,
+    });
+    const rows = await inboxOf(grace.user.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.grantId).toBeNull();
+    expect(rows[0]?.actorType).toBe('user');
+    const action = notificationActions(actions)[0];
+    expect(action?.attribution).toBeUndefined();
+    expect(JSON.stringify(action)).not.toContain('grantId');
   });
 });

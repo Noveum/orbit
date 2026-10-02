@@ -42,16 +42,22 @@ The flow when a client connects:
 2. It registers itself dynamically. No manual client setup.
 3. You are sent to `/oauth/authorize`, where you pick the workspace and
    re-verify a passkey.
-4. You approve the scopes.
-5. The client gets an access token bound to you, that client, and the workspace
-   you chose.
+4. You explicitly select an existing Personal Agent for this client or create
+   one, then approve the scopes. Replacing an active connection requires confirmation.
+5. The client gets an access token bound to that exact grant, your Agent
+   identity, you, the client and the chosen workspace.
 
 PKCE throughout. The grant is a row in the database, so revoking it takes effect
 immediately.
 
-**An agent never has more permission than you do.** Every tool runs against the
-same policy that governs your account, so an agent authorised by a guest can
-read and comment, and nothing else.
+**An agent never has more permission than you do.** Effective access is the
+intersection of granted scopes, your current permissions and the resource's
+access policy. Role and team membership changes are not frozen at consent time.
+An Agent authorised by a guest cannot gain issue-write rights through OAuth.
+
+Agent capabilities default off for deployment safety. Operators must follow the
+[release runbook](issue-215-release-runbook.md) before enabling Consent or issue
+writes. A granted `orbit.write` scope alone does not enable the Agent Writer.
 
 ## Scopes
 
@@ -141,19 +147,20 @@ Point at `http://localhost:3000/mcp` instead. Everything else is the same.
 
 ## What the tools do
 
-Seventy odd tools across seven groups. Read tools need `orbit.read`, write tools
+Tools are grouped by product area. Read tools need `orbit.read`, write tools
 need `orbit.write`.
 
-Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, an
-assignee or reviewer is a name, handle, email or the literal `"me"`, and a
-project is a name or a slug. Assistants are much better at names than at UUIDs,
-and Orbit resolves them.
+Most tools take names rather than ids. A team is `"ENG"` or `"Engineering"`, a
+Human assignee or reviewer is a name, handle, email or the literal `"me"`, and a
+project is a name or a slug. In issue assignment and search, `"agent"` refers to
+the current Agent identity. It is not a Human reviewer reference. `"me"` always
+means the authorising Human, not the Agent. Orbit resolves the names for you.
 
 ### Identity and workspace
 
 | Tool | Scope | Does |
 | --- | --- | --- |
-| `get_me` | read | Who the token belongs to, and their role |
+| `get_me` | read | Current Agent Actor, Human principal, exact grant, granted scopes and workspace-level effective permissions, alongside the existing Human identity fields |
 | `get_workspace_instructions` | read | Current workspace guidance for connected agents |
 | `list_teams` | read | Teams in the workspace |
 | `list_users` | read | Members |
@@ -171,9 +178,10 @@ and Orbit resolves them.
 | `get_issue` | read | One issue by identifier |
 | `list_issue_comments` | read | The comment thread on an issue, oldest first |
 | `search_issues` | read | Search and filter, including work assigned to or reviewed by a participant |
-| `list_my_issues` | read | Assigned to the caller or awaiting their review |
+| `list_my_issues` | read | Assigned to the authorising Human or awaiting that Human's review |
+| `list_agent_issues` | read | Assigned to the current Agent identity, subject to current resource access |
 | `copy_branch_name` | read | The git branch name for an issue |
-| `create_issue` | write | Create one with assignee and reviewers, returns `ENG-42`. Name a label by id when two share a name |
+| `create_issue` | write | Create one with assignee and reviewers, returns `ENG-42`. Supports optional `idempotencyKey`. Name a label by id when two share a name |
 | `update_issue` | write | Title, description, state, priority, assignee, reviewers, labels, estimate |
 | `move_issue` | write | Move between states or teams. A team move drops the labels the new team cannot use |
 | `add_comment` | write | Comment |
@@ -184,6 +192,40 @@ and Orbit resolves them.
 | `list_attachments` | read | Files on one issue, comment, doc or project |
 | `read_attachment` | read | The contents of an attached file |
 | `attach_file` | write | Upload a file and attach it to an issue, a comment, a doc or a project |
+
+### Agent assignment and attribution
+
+An issue has at most one assignee, either a Human or an Agent. Agent-assigned
+issues also retain a Human Issue Owner. That owner can differ from the Agent's
+owner. Only the Personal Agent's owner or that Agent itself can assign work to
+it, subject to issue permissions. Other authorized editors may clear or replace
+the assignment.
+
+For `create_issue`, omitting `assignee` or passing `null` creates an unassigned
+issue. Pass `"agent"` explicitly to assign it to this connection's Agent. An
+Agent must be active, connected and have `orbit.read` to be assignable. For example:
+
+```json
+{
+  "team": "ENG",
+  "title": "Investigate the reconnect failure",
+  "assignee": "agent",
+  "idempotencyKey": "reconnect-investigation-1"
+}
+```
+
+`create_issue` retains idempotency records for 24 hours, scoped to the exact
+grant, tool and key. Retrying the same request returns the saved creation result
+without creating another issue. Reusing that key for different input returns
+`conflict` with reason `idempotency_conflict`. Reauthorization changes the grant,
+so the old key does not deduplicate a request under the new grant. This contract
+does not extend to other mutation tools.
+
+Issue mutations record the Agent Actor and authorising Human separately, with
+historical names preserved. Comments, attachments, documents and other non-issue
+operations still use Human attribution. `get_me` describes workspace-level
+effective permissions; each operation also checks its resource, so it is not a
+promise of access to every team or issue.
 
 ### Files
 
@@ -280,13 +322,39 @@ prepare the update nobody wants to compile by hand.
 
 ## Managing access
 
-Grants live under **Settings**, **Integrations**, **MCP**, where you can see
-which clients are connected, which workspace and scopes each got, and revoke
-any of them. Revocation is immediate.
+Open **Settings**, **MCP server** (`/settings/mcp`). With Identity Read enabled,
+**Your agents** shows your identities and Active quota. Workspace administrators
+also see **Workspace agents**. Cards show the owner, bound client, lifecycle,
+connection, separate Owner/Admin locks, granted scopes, effective permissions,
+open issue count and recent activity.
+
+You can have at most two Active Personal Agents per workspace. Disconnecting
+one does not free an Active slot; pausing or deleting it does. An identity stays
+bound to its original client and owner, while grants can rotate. Selecting it
+again during consent replaces only that identity's active connection, leaving
+other identities untouched.
+
+The owner can rename an identity and use or remove their uploaded profile
+avatar. Owners and workspace administrators can manage its lifecycle:
+
+| Action | Effect |
+| --- | --- |
+| Pause | Sets the caller's Owner or Admin lock and invalidates the active connection. |
+| Resume | Clears only the caller's own lock, subject to the Active quota. Another person's lock remains. A fresh OAuth consent is still required. |
+| Revoke connection | Invalidates the grant and its credentials but retains the identity for reconnection. |
+| Delete | Requires a reason, permanently disables the identity and preserves its historical attribution. It cannot be restored. |
+
+Pause, Revoke and Delete clear Agent assignments on open issues while retaining
+their Human Issue Owner. Closed history stays attributed to the Agent. Removing
+the authorising member deletes their Personal Agents; a remaining Human Issue
+Owner is preserved, while responsibility held by the departing member is cleared.
+Removing only team access clears affected open assignments in that team.
 
 When upgrading from a build that issued unbound MCP credentials, existing
-clients must reconnect once. Orbit intentionally refuses those older raw
-credentials, so operators should notify users before deploying the upgrade.
+clients must reconnect once and select or create an identity. Orbit freezes
+unbound grants with `agent_identity_required` and does not fall back to Human
+impersonation. Operators should notify users before the migration, not only
+before opening the feature gates.
 
 ## When it does not work
 
@@ -298,6 +366,14 @@ was revoked. Reconnect, and the client will re-run the OAuth flow.
 
 **Write tools are missing.** The token only has `orbit.read`. That is working as
 intended. Reauthorise with `orbit.write` if you want it.
+
+**"Agent issue writes are unavailable in this release."** The deployment has
+not enabled every supporting Agent gate and the Writer gate. Ask the operator
+to check the release sequence. Reauthorizing with more scopes cannot bypass it.
+
+**An Agent remains unavailable after Resume.** Check both locks. The Human who
+set a lock must clear it; then reconnect through OAuth. Resume does not revive
+old credentials or restore cleared assignments.
 
 **The client cannot discover the server.** Check `NEXT_PUBLIC_APP_URL` matches
 the origin you are actually serving from, since discovery documents are built

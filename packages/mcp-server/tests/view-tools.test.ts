@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { db, eq, schema, sql } from '@orbit/db';
 import {
-  connect,
   createWorkspace,
   errorPayload,
   mintToken,
@@ -9,6 +8,7 @@ import {
   type TestClient,
   type TestWorkspace,
 } from '../src/test-helpers.ts';
+import { connectHuman } from './human-client.ts';
 
 let workspace: TestWorkspace;
 let admin: TestClient;
@@ -37,7 +37,7 @@ function savedOf(payload: Record<string, unknown>): { id: string; conditions: nu
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
 });
 
 afterAll(async () => {

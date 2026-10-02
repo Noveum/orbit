@@ -9,6 +9,7 @@ export interface IssueFixture {
   readonly cycleId?: string | null;
   readonly projectId?: string | null;
   readonly assigneeId?: string | null;
+  readonly assigneeAgentId?: string | null;
   readonly estimate?: number | null;
   readonly priority?: number;
   readonly createdAt?: Date;
@@ -28,7 +29,12 @@ export async function insertIssue(workspace: Workspace, fixture: IssueFixture): 
     stateId: stateNamed(workspace, fixture.state).id,
     priority: fixture.priority ?? 0,
     creatorId: workspace.adminUser.id,
+    creatorUserId: workspace.adminUser.id,
     assigneeId: fixture.assigneeId ?? null,
+    assigneeUserId: fixture.assigneeId ?? null,
+    assigneeAgentId: fixture.assigneeAgentId ?? null,
+    ownerUserId:
+      fixture.assigneeAgentId === undefined ? (fixture.assigneeId ?? null) : workspace.adminUser.id,
     projectId: fixture.projectId ?? null,
     cycleId: fixture.cycleId ?? null,
     estimate: fixture.estimate ?? null,
@@ -37,6 +43,28 @@ export async function insertIssue(workspace: Workspace, fixture: IssueFixture): 
     createdAt: fixture.createdAt ?? new Date(),
   });
   return id;
+}
+
+export async function insertAgentIdentity(workspace: Workspace, name: string): Promise<string> {
+  const clientId = newId();
+  const identityId = newId();
+  await db.insert(schema.oauthApplication).values({
+    id: newId(),
+    clientId,
+    name: `${name} client`,
+    redirectUrls: 'https://example.com',
+    type: 'public',
+  });
+  await db.insert(schema.agentIdentity).values({
+    id: identityId,
+    organizationId: workspace.organizationId,
+    ownerUserId: workspace.adminUser.id,
+    ownerNameSnapshot: workspace.adminUser.name,
+    clientId,
+    clientNameSnapshot: `${name} client`,
+    name,
+  });
+  return identityId;
 }
 
 export function insertLabelOn(issueId: string, labelId: string): Promise<unknown> {

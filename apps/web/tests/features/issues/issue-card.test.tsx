@@ -130,6 +130,18 @@ describe('IssueCard', () => {
     expect(screen.getByRole('img', { name: member.name })).toBeInTheDocument();
   });
 
+  it('labels an agent creator when the issue has no human creator id', () => {
+    render(
+      <IssueCard
+        issue={issue({ creatorId: null, creatorAgentId: 'agent_1' })}
+        labels={[]}
+        assignee={undefined}
+      />,
+    );
+
+    expect(screen.getByTestId('issue-creator-agent')).toHaveTextContent('Agent');
+  });
+
   it('keeps pointer presses on property controls out of a parent drag listener', () => {
     const parentPointerDown = mock();
     render(

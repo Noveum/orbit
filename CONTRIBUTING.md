@@ -118,7 +118,7 @@ CI will almost never surprise you.
 
 ```
 apps/web                  Next.js app: UI, REST handlers, auth, /api/ws, /mcp
-apps/realtime             Local-only WebSocket host, never deployed
+apps/realtime             Local WebSocket host and separate production Outbox Worker
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
 packages/core             Domain operations shared by REST, MCP and the hub
@@ -131,6 +131,9 @@ scripts/                  Repo tooling, TypeScript, run with bun
 If two apps need a piece of code it belongs in `packages/shared`, never copied
 into both. [docs/architecture.md](docs/architecture.md) explains how a single
 keystroke travels from the browser to Postgres to every other open tab.
+
+The production Worker does not serve WebSockets. Agent issue writes require its
+persistent delivery process; see [Outbox worker deployment](docs/outbox-worker-deployment.md).
 
 ## The rules that are not negotiable
 
@@ -217,6 +220,12 @@ That is the bar, and it is the one thing reviewers push back on most.
 - End to end tests are Playwright, in `apps/web/e2e`.
 
 [docs/testing.md](docs/testing.md) has the longer version.
+
+Changes to Agent identity, OAuth or issue delivery also need the
+[Agent release checks](docs/testing.md#agent-release-checks), including separate
+Writer-on and Writer-off HTTP runs. `bun run verify` does not run Playwright or
+build the documentation site. For documentation changes, run
+`bun test docs/tests/navigation.test.ts` and `bun run docs:build` as well.
 
 ## Editor and assistant setup
 

@@ -3,14 +3,14 @@ import { db, eq, schema } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
   addMember,
-  connect,
   createWorkspace,
   errorPayload,
   mintToken,
   resetDatabase,
 } from '../../src/test-helpers.ts';
+import { connectHuman } from '../human-client.ts';
 
-type TestClient = Awaited<ReturnType<typeof connect>>;
+type TestClient = Awaited<ReturnType<typeof connectHuman>>;
 type TestWorkspace = Awaited<ReturnType<typeof createWorkspace>>;
 
 let workspace: TestWorkspace;
@@ -69,9 +69,9 @@ async function installRepository(fullName: string, externalId: string): Promise<
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
   const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(await mintToken(workspace.organizationId, guestMember.user.id));
+  guest = await connectHuman(await mintToken(workspace.organizationId, guestMember.user.id));
 
   const created = await admin.result('create_project', { name: 'Platform' });
   projectId = (created['project'] as { id: string }).id;

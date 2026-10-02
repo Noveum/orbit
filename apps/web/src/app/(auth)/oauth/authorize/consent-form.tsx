@@ -17,6 +17,14 @@ export interface ConsentOrganization {
   readonly name: string;
 }
 
+export interface ConsentAgent {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly name: string;
+  readonly avatar: string | null;
+  readonly hasActiveGrant: boolean;
+}
+
 export interface ConsentFormProps {
   readonly consentCode: string;
   readonly clientId: string;
@@ -24,11 +32,13 @@ export interface ConsentFormProps {
   readonly scope: string;
   readonly scopes: readonly string[];
   readonly organizations: readonly ConsentOrganization[];
+  readonly agents?: readonly ConsentAgent[];
   readonly requirePasskey: boolean;
   readonly userEmail: string;
 }
 
 type Pending = 'allow' | 'deny' | null;
+const CREATE_AGENT_CHOICE = '__create_agent__';
 
 interface DecisionResponse {
   readonly status?: string;
@@ -43,26 +53,54 @@ function messageOf(error: unknown): string {
 
 export function ConsentForm({
   consentCode,
-  clientId,
   clientName,
-  scope,
   scopes,
   organizations,
+  agents = [],
   requirePasskey,
   userEmail,
 }: ConsentFormProps) {
   const { toast } = useToast();
-  const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
+  const initialOrganizationId = organizations[0]?.id ?? '';
+  const [organizationId, setOrganizationId] = useState(initialOrganizationId);
+  const [agentIdentityId, setAgentIdentityId] = useState('');
+  const [agentName, setAgentName] = useState('');
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
 
   const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
+  const selectableAgents = agents.filter((agent) => agent.organizationId === organizationId);
+  const selectedAgent = selectableAgents.find((agent) => agent.id === agentIdentityId);
+  const replacingConnection = selectedAgent?.hasActiveGrant === true;
+
+  function allowSelection():
+    | { createAgent: { name: string; avatar: null } }
+    | { agentIdentityId: string; replaceActiveGrant: boolean } {
+    if (agentIdentityId === CREATE_AGENT_CHOICE && agentName.trim().length > 0) {
+      return { createAgent: { name: agentName.trim(), avatar: null } };
+    }
+    if (selectedAgent !== undefined && (!replacingConnection || replaceConfirmed)) {
+      return { agentIdentityId: selectedAgent.id, replaceActiveGrant: replacingConnection };
+    }
+    throw new Error('Choose an agent identity and confirm any connection replacement.');
+  }
 
   async function post(decision: 'allow' | 'deny'): Promise<DecisionResponse> {
+    const identitySelection = decision === 'allow' ? allowSelection() : null;
     const response = await fetch('/oauth/authorize/decision', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, consentCode, clientId, scope, organizationId }),
+      body: JSON.stringify(
+        decision === 'deny'
+          ? { decision, consentCode }
+          : {
+              decision,
+              consentCode,
+              organizationId,
+              identitySelection,
+            },
+      ),
     });
     const data = (await response.json().catch(() => ({}))) as DecisionResponse;
     if (response.status === 200) return data;
@@ -123,7 +161,12 @@ export function ConsentForm({
         Workspace
         <select
           value={organizationId}
-          onChange={(event) => setOrganizationId(event.target.value)}
+          onChange={(event) => {
+            const nextOrganizationId = event.target.value;
+            setOrganizationId(nextOrganizationId);
+            setAgentIdentityId('');
+            setReplaceConfirmed(false);
+          }}
           disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
         >
@@ -134,6 +177,55 @@ export function ConsentForm({
           ))}
         </select>
       </label>
+
+      <label className="flex flex-col gap-1.5 text-2xs text-faint">
+        Agent identity
+        <select
+          value={agentIdentityId}
+          onChange={(event) => {
+            setAgentIdentityId(event.target.value);
+            setReplaceConfirmed(false);
+          }}
+          disabled={pending !== null}
+          className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+        >
+          <option value="" disabled>
+            Choose an agent identity
+          </option>
+          <option value={CREATE_AGENT_CHOICE}>Create a new agent</option>
+          {selectableAgents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
+              {agent.hasActiveGrant ? ' (connected)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {agentIdentityId === CREATE_AGENT_CHOICE ? (
+        <label className="flex flex-col gap-1.5 text-2xs text-faint">
+          Agent name
+          <input
+            value={agentName}
+            onChange={(event) => setAgentName(event.target.value)}
+            maxLength={64}
+            disabled={pending !== null}
+            className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+          />
+        </label>
+      ) : null}
+
+      {replacingConnection ? (
+        <label className="flex items-start gap-2 text-dense text-text">
+          <input
+            type="checkbox"
+            checked={replaceConfirmed}
+            onChange={(event) => setReplaceConfirmed(event.target.checked)}
+            disabled={pending !== null}
+          />
+          Replace the existing connection for this agent and revoke its current tokens
+        </label>
+      ) : null}
 
       {permissions.length > 0 ? (
         <div className="flex flex-col gap-1.5">
@@ -163,7 +255,13 @@ export function ConsentForm({
           type="button"
           variant="primary"
           block
-          disabled={pending !== null || organizationId === ''}
+          disabled={
+            pending !== null ||
+            organizationId === '' ||
+            agentIdentityId === '' ||
+            (agentIdentityId === CREATE_AGENT_CHOICE && agentName.trim() === '') ||
+            (replacingConnection && !replaceConfirmed)
+          }
           onClick={() => run('allow')}
         >
           {pending === 'allow' ? (

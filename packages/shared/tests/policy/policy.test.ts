@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { OrgRole } from '../../src/constants/index.ts';
 import { DomainError } from '../../src/errors/index.ts';
 import {
+  agentIdentityAuthority,
   assertCan,
   assertInTeam,
   atLeast,
@@ -110,6 +111,35 @@ describe('assertCan', () => {
     expect(() => {
       assertCan(principal('admin'), 'issue:delete');
     }).not.toThrow();
+  });
+});
+
+describe('agent identity authority', () => {
+  const identity = { organizationId: 'org_1', ownerUserId: 'user_1' };
+
+  it('distinguishes the owner from a workspace administrator', () => {
+    expect(agentIdentityAuthority(principal('member'), identity)).toBe('owner');
+    expect(
+      agentIdentityAuthority(
+        { userId: 'admin_1', organizationId: 'org_1', role: 'admin', teamIds: [] },
+        identity,
+      ),
+    ).toBe('admin');
+  });
+
+  it('denies ordinary members and every role across workspace boundaries', () => {
+    expect(
+      agentIdentityAuthority(
+        { userId: 'member_2', organizationId: 'org_1', role: 'member', teamIds: [] },
+        identity,
+      ),
+    ).toBeNull();
+    expect(
+      agentIdentityAuthority(
+        { userId: 'user_1', organizationId: 'org_2', role: 'admin', teamIds: [] },
+        identity,
+      ),
+    ).toBeNull();
   });
 });
 

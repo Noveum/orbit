@@ -13,15 +13,31 @@ async function grant(userId: string, revoked: boolean): Promise<void> {
     name: 'Claude',
     clientId,
     redirectUrls: 'https://claude.ai/callback',
-    type: 'web',
+    type: 'public',
+    userId: workspace.adminUser.id,
   });
+  const agentIdentityId = revoked
+    ? undefined
+    : (
+        await db.transaction((tx) =>
+          core.preparePersonalAgentConsent(tx, {
+            userId,
+            organizationId: workspace.admin.organizationId,
+            clientId,
+            selection: { createAgent: { name: 'Claude', avatar: null } },
+          }),
+        )
+      ).identity.id;
   await db.insert(schema.mcpGrant).values({
     id: crypto.randomUUID(),
     clientId,
     userId,
     organizationId: workspace.admin.organizationId,
+    principalNameSnapshot: workspace.adminUser.name,
     scopes: 'orbit.read orbit.write',
-    ...(revoked ? { revokedAt: new Date() } : {}),
+    ...(agentIdentityId === undefined
+      ? { revokedAt: new Date(), revokeReason: 'agent_identity_required' }
+      : { agentIdentityId }),
   });
 }
 

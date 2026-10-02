@@ -88,6 +88,54 @@ export function conversationSummary(row: ConversationRow): InboxConversation {
   };
 }
 
+interface ConversationActorSnapshot {
+  readonly actorType: string;
+  readonly actorAvatar: string | null;
+  readonly principalName: string | null;
+}
+
+async function latestActorSnapshots(
+  executor: Transaction,
+  principal: Principal,
+  rows: readonly ConversationRow[],
+): Promise<Map<string, ConversationActorSnapshot>> {
+  const eventIds = rows.flatMap((row) => (row.latestEventId === null ? [] : [row.latestEventId]));
+  if (eventIds.length === 0) return new Map();
+  const n = schema.notification;
+  const actors = await executor
+    .select({
+      id: n.id,
+      actorType: n.actorType,
+      actorAvatar: n.actorAvatar,
+      principalName: n.principalName,
+    })
+    .from(n)
+    .where(
+      and(
+        eq(n.organizationId, principal.organizationId),
+        eq(n.userId, principal.userId),
+        inArray(n.id, eventIds),
+      ),
+    );
+  return new Map(actors.map((actor) => [actor.id, actor]));
+}
+
+function conversationSummaries(
+  rows: readonly ConversationRow[],
+  actors: ReadonlyMap<string, ConversationActorSnapshot>,
+): InboxConversation[] {
+  return rows.map((row) => {
+    const summary = conversationSummary(row);
+    const actor = row.latestEventId === null ? undefined : actors.get(row.latestEventId);
+    return {
+      ...summary,
+      actorType: actor?.actorType ?? 'user',
+      actorAvatar: actor?.actorAvatar ?? null,
+      principalName: actor?.principalName ?? null,
+    };
+  });
+}
+
 async function counterSnapshot(
   executor: Executor,
   principal: Principal,
@@ -172,8 +220,9 @@ export async function listInboxConversations(
       .limit(query.limit + 1);
     const page = rows.slice(0, query.limit);
     const last = page.at(-1);
+    const actors = await latestActorSnapshots(tx, principal, page);
     return {
-      conversations: page.map(conversationSummary),
+      conversations: conversationSummaries(page, actors),
       ...(await counterSnapshot(tx, principal)),
       nextCursor:
         rows.length > query.limit && last !== undefined
@@ -209,7 +258,11 @@ export async function getInboxConversation(
   return await db.transaction(async (tx) => {
     await refreshNotificationConversationAccess(tx, principal.organizationId, principal.userId);
     const row = await authorizedConversation(tx, principal, id);
-    return { conversations: [conversationSummary(row)], ...(await counterSnapshot(tx, principal)) };
+    const actors = await latestActorSnapshots(tx, principal, [row]);
+    return {
+      conversations: conversationSummaries([row], actors),
+      ...(await counterSnapshot(tx, principal)),
+    };
   });
 }
 
@@ -250,7 +303,10 @@ export async function listInboxConversationEvents(
       events: page.map((row) => ({
         id: row.id,
         type: notificationType(row.type),
+        actorType: row.actorType,
         actorName: row.actorName,
+        actorAvatar: row.actorAvatar,
+        principalName: row.principalName,
         title: row.title,
         body: row.body,
         bodyHtml: renderMarkdown(row.body),
@@ -313,6 +369,7 @@ async function mutateConversations(principal: Principal, input: ConversationMuta
     });
     const snapshot = await counterSnapshot(tx, principal);
     const actor = await principalActor(tx, principal);
+    const actorSnapshots = await latestActorSnapshots(tx, principal, rows);
     const actions: SyncAction[] = rows.map((row) =>
       buildSyncAction({
         syncId: row.syncId,
@@ -334,7 +391,7 @@ async function mutateConversations(principal: Principal, input: ConversationMuta
         actor,
       }),
     );
-    return { conversations: rows.map(conversationSummary), ...snapshot, actions };
+    return { conversations: conversationSummaries(rows, actorSnapshots), ...snapshot, actions };
   });
 }
 

@@ -30,6 +30,7 @@ import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
 let capturedResume: ((since: number) => void) | null = null;
+let capturedDenied: ((scopes: readonly string[]) => void) | null = null;
 let realtimeStatus: 'connecting' | 'open' | 'reconnecting' | 'closed' = 'open';
 const observed: number[] = [];
 
@@ -41,6 +42,9 @@ mock.module('@orbit/realtime-client/react', () => ({
   },
   useResumeHandler: (handler: (since: number) => void) => {
     capturedResume = handler;
+  },
+  useDeniedHandler: (handler: (scopes: readonly string[]) => void) => {
+    capturedDenied = handler;
   },
   useObserveSyncId: () => (syncId: number) => observed.push(syncId),
 }));
@@ -1266,6 +1270,16 @@ describe('DeltaBridge workspace sprint membership', () => {
 });
 
 describe('DeltaBridge root invalidation', () => {
+  it('clears cached document access when the first subscription is denied', () => {
+    const client = mount();
+    const keys = [[DOCS_ROOT, ''], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']];
+    for (const key of keys) client.setQueryData(key, { id: 'doc_1', title: 'Private notes' });
+    client.setQueryData([DOC_ROOT, 'doc_2'], { id: 'doc_2' });
+    act(() => capturedDenied?.(['doc:doc_1', 'team:team_1']));
+    for (const key of keys) expect(client.getQueryData(key)).toBeUndefined();
+    expect(client.getQueryData<{ id: string }>([DOC_ROOT, 'doc_2'])).toEqual({ id: 'doc_2' });
+  });
+
   it('clears document metadata immediately when access is revoked', () => {
     const client = mount();
     const keys = [[DOCS_ROOT, ''], [DOCS_HOME_ROOT], [DOC_ROOT, 'doc_1']];

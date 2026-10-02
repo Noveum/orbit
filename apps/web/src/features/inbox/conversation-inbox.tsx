@@ -30,6 +30,7 @@ import {
   ConversationHeader,
   ConversationRow,
   ConversationToolbar,
+  conversationActorLabel,
 } from './conversation-controls.tsx';
 import {
   currentConversationRows,
@@ -82,8 +83,13 @@ function ConversationHistory({ row }: { readonly row: InboxConversation }) {
           <li key={event.id} className="px-5 py-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <p className="text-xs text-muted">
-                <span className="font-medium text-text">{event.actorName}</span> ·{' '}
-                <RelativeTime at={event.occurredAt} />
+                <span className="font-medium text-text">
+                  {conversationActorLabel(event.actorType)} · {event.actorName}
+                  {event.principalName === null || event.principalName === undefined
+                    ? ''
+                    : ` for ${event.principalName}`}
+                </span>{' '}
+                · <RelativeTime at={event.occurredAt} />
               </p>
               {event.externalUrl === null ? null : (
                 <a
@@ -176,7 +182,10 @@ function ConversationDetail({
             type: row.type,
             entityType: row.subjectType,
             entityId: row.subjectId,
+            actorType: row.actorType ?? 'user',
             actorName: row.actorName,
+            actorAvatar: row.actorAvatar ?? null,
+            principalName: row.principalName ?? null,
             title: row.title,
             body: row.body,
             bodyHtml: row.bodyHtml,

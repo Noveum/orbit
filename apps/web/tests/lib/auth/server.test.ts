@@ -1,11 +1,43 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { auth, passwordAuthEnabled } from '../../../src/lib/auth/server.ts';
+import { fileURLToPath } from 'node:url';
+import { auth } from '../../../src/lib/auth/server.ts';
 
 describe('password authentication', () => {
-  it('stays off unless ORBIT_PASSWORD_AUTH is set', () => {
-    expect(process.env['ORBIT_PASSWORD_AUTH']).toBeUndefined();
-    expect(passwordAuthEnabled).toBe(false);
-    expect(auth.options.emailAndPassword?.enabled).toBe(false);
+  it.each([
+    { value: undefined, enabled: false },
+    { value: 'false', enabled: false },
+    { value: '0', enabled: false },
+    { value: 'true', enabled: true },
+    { value: '1', enabled: true },
+  ])('configures password authentication for $value', async ({ value, enabled }) => {
+    const source = `
+      const value = ${JSON.stringify(value) ?? 'undefined'};
+      if (value === undefined) delete process.env['ORBIT_PASSWORD_AUTH'];
+      else process.env['ORBIT_PASSWORD_AUTH'] = value;
+      const { auth, passwordAuthEnabled } = await import('./src/lib/auth/server.ts');
+      console.log(JSON.stringify({
+        flag: passwordAuthEnabled,
+        enabled: auth.options.emailAndPassword?.enabled,
+        plugins: auth.options.plugins?.map((plugin) => plugin.id),
+      }));
+    `;
+    const child = Bun.spawn([process.execPath, '--eval', source], {
+      cwd: fileURLToPath(new URL('../../../', import.meta.url)),
+      env: process.env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({
+      flag: enabled,
+      enabled,
+      plugins: expect.arrayContaining(['passkey', 'email-otp', 'organization', 'mcp']),
+    });
   });
 
   it('keeps the passwordless methods available', () => {
@@ -59,8 +91,7 @@ describe('open signup rate limits', () => {
     return paths;
   }
 
-  it('caps sign in codes even though password auth is off', () => {
-    expect(passwordAuthEnabled).toBe(false);
+  it('caps sign in codes independently of password authentication', () => {
     expect(rules['/email-otp/send-verification-otp']).toEqual({ window: 600, max: 10 });
   });
 
@@ -75,9 +106,10 @@ describe('open signup rate limits', () => {
     for (const path of Object.keys(rules)) expect(served).toContain(path);
   });
 
-  it('matches rules against the path better-auth strips the base from', async () => {
-    const context = await auth.$context;
-    expect(new URL(context.baseURL).pathname).toBe('/api/auth');
+  it('matches rules against the path better-auth strips the base from', () => {
+    return auth.$context.then((context) => {
+      expect(context.options).toHaveProperty('basePath', '/api/auth');
+    });
   });
 });
 

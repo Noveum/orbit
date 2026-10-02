@@ -1,3 +1,4 @@
+import { type CanonicalIssueRead, canonicalIssueReads, type IssueActorColumns } from '@orbit/core';
 import { db, inArray, schema } from '@orbit/db';
 
 export type DecoratedIssue<T> = T & {
@@ -5,12 +6,13 @@ export type DecoratedIssue<T> = T & {
   readonly reviewerIds: string[];
 };
 
-export async function attachIssueDecorations<T extends { id: string }>(
+export async function attachIssueDecorations<T extends IssueActorColumns & { id: string }>(
   issues: readonly T[],
-): Promise<DecoratedIssue<T>[]> {
+): Promise<DecoratedIssue<CanonicalIssueRead<T>>[]> {
   if (issues.length === 0) return [];
   const issueIds = issues.map((issue) => issue.id);
-  const [links, reviewerLinks] = await Promise.all([
+  const [views, links, reviewerLinks] = await Promise.all([
+    canonicalIssueReads(db, issues),
     db
       .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
       .from(schema.issueLabel)
@@ -36,7 +38,7 @@ export async function attachIssueDecorations<T extends { id: string }>(
   }
   for (const bucket of reviewersByIssue.values()) bucket.sort();
 
-  return issues.map((issue) => ({
+  return views.map((issue) => ({
     ...issue,
     labelIds: byIssue.get(issue.id) ?? [],
     reviewerIds: reviewersByIssue.get(issue.id) ?? [],

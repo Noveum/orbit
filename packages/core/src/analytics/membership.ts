@@ -30,7 +30,11 @@ function membershipValues(input: OpenMembershipInput) {
     addedAt: input.occurredAt,
     entryKind: input.entryKind,
     estimateAtAdd: input.issue.estimate,
-    assigneeIdAtAdd: input.issue.assigneeId,
+    assigneeIdAtAdd:
+      input.issue.assigneeAgentId === null
+        ? (input.issue.assigneeUserId ?? input.issue.assigneeId)
+        : null,
+    assigneeAgentIdAtAdd: input.issue.assigneeAgentId,
     projectIdAtAdd: input.issue.projectId,
     milestoneIdAtAdd: input.issue.milestoneId,
     coverage: input.coverage,
@@ -191,7 +195,11 @@ export async function captureCycleCloseOutcomes(
         planned: plannedMembership !== undefined,
         estimateAtCommitment: plannedMembership?.estimateAtAdd ?? null,
         estimateAtClose: issue?.estimate ?? null,
-        assigneeIdAtClose: issue?.assigneeId ?? null,
+        assigneeIdAtClose:
+          issue?.assigneeAgentId == null
+            ? (issue?.assigneeUserId ?? issue?.assigneeId ?? null)
+            : null,
+        assigneeAgentIdAtClose: issue?.assigneeAgentId ?? null,
         projectIdAtClose: issue?.projectId ?? null,
         milestoneIdAtClose: issue?.milestoneId ?? null,
         outcome,

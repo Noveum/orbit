@@ -34,6 +34,7 @@ export async function seedReadableNotificationIssues(
       teamId,
       stateId,
       creatorId,
+      creatorUserId: creatorId,
       number: index + 1,
       identifier: `NOT-${index + 1}`,
       title: id,

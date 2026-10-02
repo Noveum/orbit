@@ -150,7 +150,7 @@ describe('list and search indexes', () => {
     ]);
     expect(predicateOf(outcome)).toContain(`outcome" = 'completed'`);
     expect(columnNamesOf(activity)).toEqual(['organization_id', 'issue_id', 'created_at']);
-    expect(predicateOf(activity)).toContain(`field" = 'assigneeId'`);
+    expect(predicateOf(activity)).toContain(`field" = any (array['assigneeId', 'assignee'])`);
   });
 
   it('resolves membership and project teams from their own indexes', () => {

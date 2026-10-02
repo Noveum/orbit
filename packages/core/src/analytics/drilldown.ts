@@ -311,7 +311,10 @@ function otherDimensionPredicate(
 function sliceCohortPredicate(cohort: AnalyticsDrilldownCohort): SQL<unknown> | null {
   if (cohort.cohort.startsWith('assignee:')) {
     const id = cohort.cohort.slice('assignee:'.length);
-    return id === 'none' ? isNull(schema.issue.assigneeId) : eq(schema.issue.assigneeId, id);
+    if (id === 'none')
+      return sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) is null and ${schema.issue.assigneeAgentId} is null`;
+    if (id.startsWith('agent:')) return eq(schema.issue.assigneeAgentId, id.slice(6));
+    return sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) = ${id} and ${schema.issue.assigneeAgentId} is null`;
   }
   if (cohort.cohort.startsWith('label:')) {
     const id = cohort.cohort.slice('label:'.length);
@@ -392,6 +395,7 @@ function validDimensionCohort(value: string): boolean {
   if (validIdCohort(value, 'project', new Set(['none', 'other']))) return true;
   if (validIdCohort(value, 'outlier', new Set())) return true;
   if (validIdCohort(value, 'assignee', new Set(['none']))) return true;
+  if (value.startsWith('assignee:agent:') && UUID_PATTERN.test(value.slice(15))) return true;
   if (validIdCohort(value, 'label', new Set(['none']))) return true;
   if (validIdCohort(value, 'sprint', new Set(['none']))) return true;
   if (validWeekCohort(value)) return true;
@@ -699,9 +703,9 @@ function personSelection(query: AnalyticsQuery): string | null {
 }
 
 function currentPersonPredicate(personId: string): SQL<unknown> {
-  return personId === UNASSIGNED_PERSON_ID
-    ? isNull(schema.issue.assigneeId)
-    : eq(schema.issue.assigneeId, personId);
+  if (personId === UNASSIGNED_PERSON_ID)
+    return sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) is null and ${schema.issue.assigneeAgentId} is null`;
+  return sql`coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) = ${personId} and ${schema.issue.assigneeAgentId} is null`;
 }
 
 function personGroupDimension(group: PersonGroupCohort): SQL<unknown> {
@@ -801,7 +805,8 @@ function personCohortPredicate(
       return sql`exists (
         select 1 from issue_activity person_assignment
         where person_assignment.issue_id = ${schema.issue.id}
-          and person_assignment.field = 'assigneeId'
+          and person_assignment.field in ('assigneeId', 'assignee')
+          and person_assignment.to_value ->> 'type' is distinct from 'agent'
           and person_assignment.created_at >= ${from.toISOString()}::timestamptz
           and person_assignment.created_at < ${to.toISOString()}::timestamptz
           and ${personMatches(person.id, activityPerson)}

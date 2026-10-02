@@ -27,14 +27,39 @@ each role can do everything the one below it can.
 | **Member** | Everything a contributor can, plus delete issues, delete anyone's comments, manage projects, cycles, milestones, labels, workflows, and write and publish docs |
 | **Admin** | Everything, plus invite and manage members, manage integrations and manage the workspace |
 
-Every authorization decision goes through `packages/shared/src/policy`, which is
-one file that both the server and the UI read. The server enforces it. The UI
+Every authorization decision goes through `packages/shared/src/policy`, which
+both the server and the UI use. The server enforces it. The UI
 uses it to hide buttons you cannot use, never as the only gate.
 
 Guests are the useful one to understand: a contractor or a stakeholder can be in
 the workspace, read the board and comment, without being able to change work.
 
 > **Analytics Visibility Rule:** Analytics totals and aggregate charts span the entire workspace for every role (including guests and contributors) to prevent misleading partial dashboards. Issue-level drilldown rows follow team membership and report a withheld count. The longest cycle time list ranks the workspace candidates first, then removes rows outside the reader's team scope and reports how many ranked candidates were withheld.
+
+## Agents
+
+A Personal Agent is an Actor with its own stable identity, name and avatar,
+visibly distinguished from a Human. It is not a workspace member, a seat or a
+new role. A member creates it during OAuth consent for an MCP client.
+
+| Term | Meaning |
+| --- | --- |
+| Agent Owner / principal | The Human who authorises the Agent. Their current permissions bound its access. |
+| Agent Actor | The identity recorded as performing an issue operation. |
+| Grant | A revocable connection binding the identity, owner, client, workspace and scopes. An identity has at most one active grant. |
+| Issue Owner | The Human responsible for an Agent-assigned issue. This may differ from the Agent Owner. |
+| Assignee | The single Human or Agent currently assigned the work. |
+
+Each member can have two Active Personal Agents per workspace. This is a
+lifecycle limit, not a paid seat or a permission tier. A disconnected but
+unpaused identity still counts as Active. Owners and administrators have
+independent pause locks; clearing one does not clear the other. Deleting an
+identity leaves a tombstone so historical attribution remains readable.
+
+The Agent's effective access is its grant scopes intersected with its owner's
+current permissions and the resource policy. Leaving a workspace invalidates
+the owner's connections and deletes their Personal Agents. See
+[MCP server](mcp.md#managing-access) for management and reconnection behavior.
 
 ## Teams
 
@@ -60,6 +85,19 @@ The unit of work. An issue has a title, a markdown description, a state, a
 priority, an assignee, multiple reviewers, labels, an estimate, and relations
 to other issues. Reviewers are subscribed automatically, and reviewed work
 appears in their My issues page alongside work assigned to them.
+
+An assignee can be an Agent, but that issue must also have a Human Issue Owner.
+Only the Agent's owner or the Agent itself can assign the Personal Agent;
+other authorized issue editors can remove or replace it. Creating an issue
+without an assignee leaves it unassigned. Human My issues and the MCP
+`list_my_issues` tool remain Human-oriented; `list_agent_issues` is the Agent's
+own queue.
+
+Pausing, revoking or deleting an Agent clears its open assignments and retains
+the Human Issue Owner. Closed assignments and historical Actor records remain.
+If the Human Issue Owner leaves, their open responsibility is also cleared.
+Agent-assigned work stays in workspace, project and sprint totals, but is not
+counted as a Human assignee or as unassigned work in people analytics.
 
 Its **identifier** is the team key plus a number, like `ENG-42`. Identifiers are
 allocated atomically, so two people creating issues at the same moment never

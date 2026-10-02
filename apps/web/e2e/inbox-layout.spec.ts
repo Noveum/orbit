@@ -67,7 +67,9 @@ test('the inbox fills the shell without inventing scroll of its own', async ({ b
   await comment(author, watched.id, WIDE_COMMENT);
 
   await reader.goto(`${BASE}/inbox`);
-  await expect(reader.getByTestId('inbox-detail')).toBeVisible();
+  const details = reader.getByTestId('inbox-detail').filter({ visible: true });
+  await expect(details).toHaveCount(1);
+  await expect(details).toBeVisible();
 
   const settled = await overflowOf(reader);
   expect(settled.documentY).toBe(0);
@@ -91,7 +93,9 @@ test('a list longer than the pane never pushes the shell off the page', async ({
   }
 
   await reader.goto(`${BASE}/inbox`);
-  await expect(reader.getByTestId('inbox-detail')).toBeVisible();
+  const details = reader.getByTestId('inbox-detail').filter({ visible: true });
+  await expect(details).toHaveCount(1);
+  await expect(details).toBeVisible();
 
   const list = reader.locator('main ul').first();
   await expect

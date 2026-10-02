@@ -1,4 +1,4 @@
-import { publishDeltas } from '@orbit/core';
+import { drainIssueOutbox, publishDeltas } from '@orbit/core';
 import {
   conflict,
   internal,
@@ -129,6 +129,12 @@ async function originClientId(): Promise<string | null> {
 export async function publish(actions: readonly SyncAction[]): Promise<void> {
   if (actions.length === 0) return;
   try {
+    if (actions.some((action) => action.eventId !== undefined)) {
+      await dispatchIssueOutbox(
+        actions.flatMap((action) => (action.eventId === undefined ? [] : [action.eventId])),
+      );
+      return;
+    }
     const origin = await originClientId();
     const stamped =
       origin === null
@@ -137,6 +143,30 @@ export async function publish(actions: readonly SyncAction[]): Promise<void> {
     await publishDeltas(stamped);
   } catch (error: unknown) {
     console.error('Could not publish realtime deltas, the write is already committed.', error);
+  }
+}
+
+export async function dispatchIssueOutbox(eventIds?: readonly string[]): Promise<void> {
+  try {
+    const batches =
+      eventIds === undefined
+        ? [undefined]
+        : Array.from({ length: Math.ceil(eventIds.length / 200) }, (_, index) =>
+            eventIds.slice(index * 200, (index + 1) * 200),
+          );
+    for (const ids of batches) {
+      await drainIssueOutbox({
+        publish: async (batch) => {
+          if (!process.env['REDIS_URL'])
+            throw new Error('REDIS_URL is required for outbox delivery');
+          await publishDeltas(batch);
+        },
+        batchSize: 200,
+        ...(ids === undefined ? {} : { eventIds: ids }),
+      });
+    }
+  } catch (error: unknown) {
+    console.error('Could not dispatch issue outbox, recovery will retry.', error);
   }
 }
 

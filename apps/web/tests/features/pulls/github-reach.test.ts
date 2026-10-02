@@ -239,6 +239,7 @@ describe('loadPullRequests', () => {
         title: 'Keep direct pull request context',
         stateId: stateNamed(workspace, 'Todo').id,
         creatorId: workspace.adminUser.id,
+        creatorUserId: workspace.adminUser.id,
       },
       {
         id: dualIssueId,
@@ -249,6 +250,7 @@ describe('loadPullRequests', () => {
         title: 'Deduplicate migrated pull request context',
         stateId: stateNamed(workspace, 'Todo').id,
         creatorId: workspace.adminUser.id,
+        creatorUserId: workspace.adminUser.id,
       },
     ]);
     await db.insert(schema.gitLink).values([
@@ -318,7 +320,10 @@ describe('loadPullRequests', () => {
       title: 'Keep pull request access current',
       stateId: stateNamed(workspace, 'Todo').id,
       creatorId: teammate.user.id,
+      creatorUserId: teammate.user.id,
       assigneeId: teammate.user.id,
+      assigneeUserId: teammate.user.id,
+      ownerUserId: teammate.user.id,
     });
     await db.insert(schema.gitLink).values({
       id: `git_${randomUUIDv7()}`,
@@ -356,6 +361,7 @@ describe('loadPullRequests', () => {
       title: 'Keep admin pull request access current',
       stateId: stateNamed(workspace, 'Todo').id,
       creatorId: workspace.adminUser.id,
+      creatorUserId: workspace.adminUser.id,
     });
     await db.insert(schema.gitLink).values({
       id: `git_${randomUUIDv7()}`,

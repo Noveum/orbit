@@ -465,6 +465,7 @@ function issueFingerprint(issue: Issue): string {
       issue.stateId,
       issue.priority,
       issue.creatorId,
+      issue.creatorAgentId,
       issue.assigneeId,
       [...(issue.reviewerIds ?? [])].sort(),
       issue.projectId,

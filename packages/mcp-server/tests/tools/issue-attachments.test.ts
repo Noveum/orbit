@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, mock } from 'bun:test';
 import type { StorageDriver, StoredObject } from '@orbit/services/storage';
+import { connectHuman } from '../human-client.ts';
 
 const storageModule = await import('@orbit/services/storage');
 
@@ -48,14 +49,13 @@ mock.module('@orbit/services/storage', () => ({
 
 const {
   addMember,
-  connect,
   createWorkspace,
   errorPayload,
   mintToken,
   resetDatabase,
 }: typeof import('../../src/test-helpers.ts') = await import('../../src/test-helpers.ts');
 
-type TestClient = Awaited<ReturnType<typeof connect>>;
+type TestClient = Awaited<ReturnType<typeof connectHuman>>;
 type TestWorkspace = Awaited<ReturnType<typeof createWorkspace>>;
 
 const REPORT = '# Weekly report\n\nRevenue is up.\n';
@@ -72,7 +72,7 @@ let binaryAttachmentId: string;
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
 
   const created = await admin.result('create_issue', {
     team: workspace.teamKey,
@@ -188,7 +188,7 @@ describe('read_attachment', () => {
 
   it('refuses an attachment from another workspace', async () => {
     const other = await createWorkspace('Rival');
-    const outsider = await connect(await mintToken(other.organizationId, other.adminUser.id));
+    const outsider = await connectHuman(await mintToken(other.organizationId, other.adminUser.id));
     const result = await outsider.call('read_attachment', { attachment: issueAttachmentId });
     expect(result.isError).toBe(true);
     expect(errorPayload(result).code).toBe('not_found');
@@ -213,7 +213,7 @@ describe('read_attachment', () => {
     const secretAttachmentId = (stored['attachment'] as { id: string }).id;
 
     const outsider = await addMember(workspace, 'contributor', 'Otto Outsider');
-    const client = await connect(await mintToken(workspace.organizationId, outsider.user.id));
+    const client = await connectHuman(await mintToken(workspace.organizationId, outsider.user.id));
 
     const listed = await client.call('list_issue_attachments', { issue: secretIssue.identifier });
     expect(listed.isError).toBe(true);

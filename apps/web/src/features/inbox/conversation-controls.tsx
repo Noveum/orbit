@@ -7,11 +7,18 @@ import {
   type InboxTab,
 } from '@orbit/shared/validators';
 import { CheckCheck, Clock, FileText, GitPullRequest, MessageSquare, Trash2 } from 'lucide-react';
+import { Avatar } from '@/components/ui/avatar.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { RelativeTime } from '@/components/ui/relative-time.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover, tabHover } from '@/lib/interaction.ts';
+
+export function conversationActorLabel(actorType: string | undefined): string {
+  if (actorType === 'agent') return 'Agent';
+  if (actorType === 'system') return 'System';
+  return 'Human';
+}
 
 const TAB_LABELS: Record<InboxTab, string> = {
   activity: 'Activity',
@@ -133,7 +140,17 @@ export function ConversationRow({
           aria-hidden="true"
         />
         <span className="sr-only">{row.read ? 'Read' : 'Unread'}</span>
-        <Icon className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
+        <span className="relative mt-0.5 shrink-0">
+          <Icon className="size-4 text-accent" aria-hidden="true" />
+          {row.actorType === 'agent' ? (
+            <Avatar
+              name={row.actorName}
+              src={row.actorAvatar ?? null}
+              size="xs"
+              className="absolute -right-1 -bottom-1"
+            />
+          ) : null}
+        </span>
         <span className="min-w-0 flex-1">
           <span
             className={cn(
@@ -144,8 +161,11 @@ export function ConversationRow({
             {row.title}
           </span>
           <span className="mt-1 flex items-center gap-1.5 text-2xs text-faint">
-            <span className="truncate">{row.actorName}</span> ·{' '}
-            {row.occurredAt === null ? null : <RelativeTime at={row.occurredAt} />}
+            <span className="truncate">
+              {conversationActorLabel(row.actorType)} · {row.actorName}
+              {row.principalName ? ` for ${row.principalName}` : ''}
+            </span>{' '}
+            · {row.occurredAt === null ? null : <RelativeTime at={row.occurredAt} />}
             <span className="ml-auto shrink-0 rounded bg-surface-2 px-1.5 py-0.5 tabular-nums">
               {row.eventCount} {row.eventCount === 1 ? 'update' : 'updates'}
             </span>

@@ -141,6 +141,37 @@ describe('conversation inbox', () => {
     expect(older.events[0]?.title).toBe('Document update 1');
   });
 
+  it('preserves Agent attribution in conversation summaries and history', async () => {
+    const { recipient, doc } = await fixture();
+    await emit(doc.id, recipient.user.id, 1);
+    const [notification] = await db
+      .select()
+      .from(schema.notification)
+      .where(eq(schema.notification.userId, recipient.user.id));
+    if (notification === undefined) throw new Error('The notification fixture is missing.');
+    await db
+      .update(schema.notification)
+      .set({
+        actorType: 'agent',
+        actorAvatar: '/api/avatars/agent.png?v=1',
+        principalName: recipient.user.name,
+      })
+      .where(eq(schema.notification.id, notification.id));
+
+    const conversation = (await listInboxConversations(recipient.principal)).conversations[0];
+    expect(conversation).toMatchObject({
+      actorType: 'agent',
+      actorAvatar: '/api/avatars/agent.png?v=1',
+      principalName: recipient.user.name,
+    });
+    const history = await listInboxConversationEvents(recipient.principal, conversation?.id ?? '');
+    expect(history.events[0]).toMatchObject({
+      actorType: 'agent',
+      actorAvatar: '/api/avatars/agent.png?v=1',
+      principalName: recipient.user.name,
+    });
+  });
+
   it('uses manual unread without inventing events or mentions and keeps legacy rows compatible', async () => {
     const { recipient, doc } = await fixture();
     await emit(doc.id, recipient.user.id, 1, 'mention');

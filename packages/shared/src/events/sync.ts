@@ -3,6 +3,7 @@ import { actorSchema } from './actor.ts';
 
 export const SYNC_MODELS = [
   'organization',
+  'agent_identity',
   'issue',
   'issue_relation',
   'issue_subscription',
@@ -37,6 +38,7 @@ export const ORIGIN_CLIENT_ID_HEADER = 'x-orbit-client-id';
 export const originClientIdSchema = z.string().min(1).max(64);
 
 export const syncActionSchema = z.object({
+  eventId: z.string().min(1).optional(),
   syncId: z.number().int().nonnegative(),
   organizationId: z.string().min(1),
   scopes: z.array(z.string().min(1)).min(1),
@@ -45,6 +47,26 @@ export const syncActionSchema = z.object({
   modelId: z.string().min(1),
   data: z.record(z.string(), z.unknown()),
   actor: actorSchema,
+  attribution: z
+    .object({
+      actor: z.object({
+        type: z.enum(['user', 'agent', 'integration', 'system']),
+        id: z.string(),
+        name: z.string(),
+        avatar: z.string().nullable(),
+        deleted: z.boolean(),
+      }),
+      principal: z
+        .object({
+          type: z.literal('user'),
+          id: z.string().nullable(),
+          name: z.string(),
+          avatar: z.string().nullable(),
+          deleted: z.boolean(),
+        })
+        .nullable(),
+    })
+    .optional(),
   at: z.string().datetime(),
   originClientId: originClientIdSchema.optional(),
 });

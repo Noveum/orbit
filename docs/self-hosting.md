@@ -9,6 +9,10 @@ Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
 plus a usable sign-in method. A Docker Compose preview packages the standalone
 application and those dependencies for local evaluation.
 
+Enabling Agent issue writes also requires a persistent Outbox Worker connected
+to the same Postgres and Redis. The Worker image is separate from the Web
+deployment; Cron is only its recovery path.
+
 Everything below has a free tier, so a small team can run Orbit for nothing.
 
 ## Pick your route
@@ -20,6 +24,9 @@ Everything below has a free tier, so a small team can run Orbit for nothing.
 | [Docker Compose (Preview)](docker-preview.md) | Local image build and setup | Evaluation with bundled infrastructure, realtime and maintenance |
 
 All routes need the same infrastructure plus one complete first-login method.
+For Agent capabilities, also follow the
+[Agent release runbook](issue-215-release-runbook.md). Keep the four Agent gates
+off until their rollout prerequisites are met.
 
 ## What Orbit needs
 
@@ -251,6 +258,19 @@ persistent volumes. The root `docker-compose.yml` is for local development only;
 its published passwords must never be used for a deployed installation.
 
 ## Keeping it running
+
+### Agent issue delivery
+
+Deploy the [Outbox Worker](outbox-worker-deployment.md) on a host that supports
+a supervised persistent process. This Worker does not replace `/api/ws` or
+enable WebSocket support for standalone Node. Apply migrations, deploy
+Actor-compatible Web code, start the Worker and enable Cron recovery before
+opening Consent and then Agent Writer.
+
+An upgrade freezes legacy unbound MCP grants and invalidates their credentials
+even if the release gates stay off. Notify users before migrating and provide
+the [reconnection steps](mcp.md#managing-access). A Writer rollback keeps the
+additive schema, Actor-compatible readers and delivery of pending events.
 
 ### Upgrading
 

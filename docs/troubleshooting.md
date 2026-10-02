@@ -151,6 +151,38 @@ Should not happen. Signing out publishes a revocation and the hub closes the
 connection, and the hub also sweeps sessions on an interval as a backstop. If
 you see it, that is worth reporting.
 
+### Agent issue changes commit but live updates are delayed
+
+Check that the persistent Outbox Worker is running with
+`ORBIT_ISSUE_OUTBOX_DISPATCH=true` and the same Postgres and Redis as Web.
+Cron is recovery, not a replacement for that process. Inspect backlog, retry
+and redaction failures using the [Worker monitoring guide](outbox-worker-deployment.md#monitoring).
+Do not delete pending outbox rows to clear the backlog. The local WebSocket
+server and the production Worker are different entry points.
+
+## MCP and Agents
+
+### An old MCP connection stops after an upgrade
+
+Legacy unbound grants are intentionally frozen. Reconnect from the MCP client,
+complete OAuth consent and select or create an Agent identity. The migration
+invalidates these credentials even while release gates remain off, so the
+operator must enable Consent before reconnection can succeed. See
+[Managing access](mcp.md#managing-access).
+
+### Resume does not make an Agent usable
+
+Check Owner and Admin locks separately. A caller can clear only the lock they
+set. Resume does not revive revoked credentials, so reconnect after both locks
+are clear. Cleared issue assignments are not restored automatically.
+
+### Agent issue writes are unavailable despite a write scope
+
+All four [Agent release gates](configuration.md#agent-release-gates) must be
+enabled on Web. A write scope cannot bypass a disabled Writer, current Human
+permissions or resource policy. Keep Writer off if the migration or Worker
+checks have not passed.
+
 ## Database
 
 ### `bun run db:push` hangs or times out
@@ -233,6 +265,14 @@ aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///tmp
 MinIO is not running, or the bucket was not created. `bun run infra:up` does
 both. The console is on <http://localhost:9011> with `orbitminio` and
 `orbitminio`.
+
+### The S3 test accepts an oversized signed upload
+
+If the target is LocalStack 4.5.0, check the emulator's signature-validation
+configuration. It must run with `S3_SKIP_SIGNATURE_VALIDATION=0`. A setting on
+the test process alone has no effect. Retry the unchanged storage test after
+restarting the emulator. A default-emulator pass of other upload tests does not
+prove rejection of tampered requests. See [Storage integration](testing.md#storage-integration).
 
 ## Building and CI
 

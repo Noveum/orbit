@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../../scripts/test-env.ts';
+import { releaseDatabase } from '../../src/migration-release.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_workspace_sprint_migrations', currentLane());
@@ -32,8 +31,8 @@ describe('workspace sprint migration', () => {
     });
     await run(urlFor(SCRATCH), async (sql) => {
       await sql`create extension if not exists pg_trgm`;
-      await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS });
     });
+    await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
   }, 30_000);
 
   afterAll(async () => {
@@ -118,7 +117,7 @@ describe('workspace sprint migration', () => {
       '(organization_id, issue_id, created_at)',
     );
     expect(named.get('issue_activity_assignee_attribution_idx')).toContain(
-      "WHERE (field = 'assigneeId'::text)",
+      "WHERE (field = ANY (ARRAY['assigneeId'::text, 'assignee'::text]))",
     );
   });
 });

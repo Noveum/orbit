@@ -49,7 +49,7 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 
 | Variable | Notes |
 | --- | --- |
-| `CRON_SECRET` | Protects the scheduled sprint rollover, sprint snapshot, operational pruning, and notification worker routes. Use a long random value in every deployed environment |
+| `CRON_SECRET` | Protects scheduled sprint rollover, sprint snapshots, operational pruning, notification workers and issue-outbox recovery. Use a long random value in every deployed environment |
 | `NOTIFICATION_PROVIDERS_PAUSED` | Set `true` to stop Slack and notification-email claims during migration or incident response. Defaults to false |
 | `NOTIFICATION_CONVERSATIONS_ENABLED` | Set `true` after conversation backfill and verification to select the grouped inbox. False or unset retains the legacy view |
 
@@ -102,12 +102,18 @@ explicitly so it cannot block other snapshots or prevent the sprint from closing
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | **Local development only.** Set it to `ws://localhost:3100` locally; the app connects to `/api/ws` under it |
-| `REALTIME_PORT` | `3100` | Port for `apps/realtime`, which is never deployed |
+| `REALTIME_PORT` | `3100` | Port for the local development websocket host |
 
 `NEXT_PUBLIC_REALTIME_URL` is ignored whenever `NODE_ENV` is `production`, where
 the socket is always served from the page's own origin at `/api/ws`. Setting it
 on a deployed environment does nothing useful and risks confusing whoever reads
 the config next, so leave it unset there.
+
+Agent issue delivery requires a persistent worker built from
+`apps/realtime/Dockerfile`. Give it the production `DATABASE_URL` and `REDIS_URL`,
+and set `ORBIT_ISSUE_OUTBOX_DISPATCH=true` on both the worker and web app. The
+Vercel issue-outbox Cron remains a recovery path; it does not replace the
+persistent worker. See [Outbox worker deployment](outbox-worker-deployment.md).
 
 ## Authentication
 
@@ -262,6 +268,28 @@ launch sequence and Slack-side configuration.
 
 You almost never need this. It exists for deployments that put the MCP endpoint
 behind a different hostname. See [MCP server](mcp.md).
+
+### Agent release gates
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `ORBIT_AGENT_IDENTITY_READ` | `false` | Exposes Agent identity and settings read paths. |
+| `ORBIT_AGENT_CONSENT` | `false` | Allows consent to select or create an Agent identity. |
+| `ORBIT_AGENT_ISSUE_WRITE` | `false` | Enables Agent issue mutations only when all three supporting gates are also enabled. |
+| `ORBIT_ISSUE_OUTBOX_DISPATCH` | `false` | Enables outbox dispatch on Web and is required to start the persistent Worker. |
+
+Only the exact value `true` enables a gate. These settings apply to the entire
+process, not to an individual workspace. Deploy or restart processes after
+changing them. They never bypass scopes, current membership or resource policy.
+
+The Worker needs only the dispatch gate, plus its database and Redis settings.
+Web needs dispatch and `CRON_SECRET` for Cron recovery. Open Identity Read and
+Consent before Writer, and keep Writer off until migrations, delivery and user
+flows are verified. Follow the [release runbook](issue-215-release-runbook.md).
+
+Closing gates does not undo migrations, restore legacy credentials or remove
+Agent rows. Keep an Actor-compatible application and the delivery Worker when
+rolling back Writer availability.
 
 ## Testing
 

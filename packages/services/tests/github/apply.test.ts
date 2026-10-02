@@ -135,6 +135,9 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
     stateId,
     creatorId,
     assigneeId,
+    creatorUserId: creatorId,
+    assigneeUserId: assigneeId,
+    ownerUserId: assigneeId,
   });
   await tx.insert(issueReviewer).values({ issueId, userId: creatorId });
 
@@ -157,6 +160,20 @@ async function seed(tx: TestTransaction, startState = 'Backlog'): Promise<Fixtur
 
   return { organizationId, teamId, issueId, creatorId, assigneeId, states };
 }
+
+it('keeps controlled GitHub issue fixtures in the canonical Human model', async () => {
+  await withRollback(async (tx) => {
+    const fixture = await seed(tx);
+    const [row] = await tx.select().from(issue).where(eq(issue.id, fixture.issueId));
+    expect(row).toMatchObject({
+      creatorUserId: fixture.creatorId,
+      assigneeUserId: fixture.assigneeId,
+      ownerUserId: fixture.assigneeId,
+      creatorAgentId: null,
+      assigneeAgentId: null,
+    });
+  });
+});
 
 function prEvent(overrides: {
   action?: string;
@@ -943,6 +960,7 @@ describe('applyGithubEvent', () => {
         title: 'Related checks',
         stateId,
         creatorId: fixture.assigneeId,
+        creatorUserId: fixture.assigneeId,
       });
 
       await applyGithubEvent(
@@ -1297,6 +1315,7 @@ describe('applyGithubEvent', () => {
         title: 'Shared head work',
         stateId,
         creatorId: fixture.creatorId,
+        creatorUserId: fixture.creatorId,
         assigneeId: fixture.assigneeId,
       });
       await applyGithubEvent(tx, prEvent({ body: 'Fixes ENG-3', headSha: SHARED_HEAD_SHA }));
@@ -1627,6 +1646,7 @@ describe('applyGithubEvent', () => {
         title: 'Related dashboard work',
         stateId,
         creatorId: fixture.creatorId,
+        creatorUserId: fixture.creatorId,
         assigneeId: fixture.assigneeId,
       });
 

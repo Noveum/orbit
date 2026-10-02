@@ -31,6 +31,7 @@
     "test": "bun test scripts && bun test ./tests/*.test.ts && bun run test:catalogs && bun run --filter '*' test",
     "test:catalogs": "bun test ./tests/deploy/catalog-database-password.test.ts ./tests/deploy/container-migration.test.ts ./tests/deploy/storage-initializer.test.ts",
     "test:e2e": "bun run --filter '@orbit/web' test:e2e",
+    "test:e2e:agent-release": "bun --env-file=.env scripts/run-agent-release-e2e.ts",
     "test:docker-gateway": "bun test tests/deploy/docker-gateway.test.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

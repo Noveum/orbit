@@ -6,4 +6,4 @@ await ensureLaneDatabase(databaseUrl, 'orbit_test_core');
 process.env['DATABASE_URL'] = databaseUrl;
 process.env['ORBIT_TEST_REDIS_URL'] = process.env['REDIS_URL'] ?? '';
 process.env['REDIS_URL'] = '';
-process.env['DATABASE_POOL_MAX'] = '1';
+process.env['DATABASE_POOL_MAX'] = '5';

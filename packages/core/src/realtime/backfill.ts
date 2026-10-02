@@ -5,6 +5,7 @@ import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
 import type { Executor } from '../internal.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
+import { canonicalIssueReads } from '../work/issue-actor-view.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import { viewReadFilter, viewScopes } from '../work/view-service.ts';
@@ -30,6 +31,16 @@ type Loader = (
   since: number,
   limit: number,
 ) => Promise<BackfilledRow[]>;
+
+function agentLifecycleForBackfill(row: {
+  readonly deletedAt: Date | null;
+  readonly ownerDisabledAt: Date | null;
+  readonly adminDisabledAt: Date | null;
+}): 'active' | 'disabled' | 'deleted' {
+  if (row.deletedAt !== null) return 'deleted';
+  if (row.ownerDisabledAt !== null || row.adminDisabledAt !== null) return 'disabled';
+  return 'active';
+}
 
 const CATCHUP_ACTOR = { type: 'system', id: 'sync', name: 'Catch up' } as const;
 
@@ -210,6 +221,41 @@ async function teamsByProject(
 }
 
 const LOADERS: Record<SyncModel, Loader> = {
+  agent_identity: async (executor, principal, since, limit) =>
+    (
+      await executor
+        .select({
+          id: schema.agentIdentity.id,
+          organizationId: schema.agentIdentity.organizationId,
+          name: schema.agentIdentity.name,
+          avatar: schema.agentIdentity.avatar,
+          ownerDisabledAt: schema.agentIdentity.ownerDisabledAt,
+          adminDisabledAt: schema.agentIdentity.adminDisabledAt,
+          deletedAt: schema.agentIdentity.deletedAt,
+          syncId: schema.agentIdentity.syncId,
+        })
+        .from(schema.agentIdentity)
+        .where(
+          and(
+            eq(schema.agentIdentity.organizationId, principal.organizationId),
+            gt(schema.agentIdentity.syncId, since),
+          ),
+        )
+        .orderBy(asc(schema.agentIdentity.syncId))
+        .limit(limit)
+    ).map((row) => {
+      return {
+        modelId: row.id,
+        syncId: row.syncId,
+        scopes: [scopes.organization(row.organizationId)],
+        data: {
+          id: row.id,
+          name: row.name,
+          avatar: row.avatar,
+          lifecycle: agentLifecycleForBackfill(row),
+        },
+      };
+    }),
   organization: async (executor, principal, since, limit) =>
     (
       await executor
@@ -445,11 +491,12 @@ const LOADERS: Record<SyncModel, Loader> = {
       .orderBy(asc(schema.issue.syncId))
       .limit(limit);
     const issueIds = rows.map((row) => row.id);
-    const [labels, reviewers] = await Promise.all([
+    const [views, labels, reviewers] = await Promise.all([
+      canonicalIssueReads(executor, rows),
       labelIdsByIssue(executor, issueIds),
       reviewerIdsByIssue(executor, issueIds),
     ]);
-    return rows.map((row) => ({
+    return views.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
       scopes: [
@@ -781,7 +828,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       scopes: [
         scopes.issue(row.issueId),
         scopes.team(teamId),
-        scopes.user(creatorId),
+        ...(creatorId === null ? [] : [scopes.user(creatorId)]),
         ...(assigneeId === null ? [] : [scopes.user(assigneeId)]),
       ],
       data: row,

@@ -1,6 +1,7 @@
 # Architecture
 
-Orbit is one Next.js app, plus Postgres, Redis and a bucket. The interesting
+Orbit's Web app uses Postgres, Redis and a bucket. Agent issue delivery also
+uses a persistent outbox worker. The interesting
 part is how a change reaches every other open screen in well under a second, and
 how it reaches only the people entitled to see it.
 
@@ -20,14 +21,15 @@ how it reaches only the people entitled to see it.
                        └─────────┘ └─────────┘ └────────┘
 ```
 
-Everything ships as a single Vercel project. Nothing is containerised, and
-nothing runs in Kubernetes.
+The web app ships as one Vercel project. Agent issue outbox delivery also needs
+a persistent worker process, built from `apps/realtime/Dockerfile`; Vercel Cron
+only recovers delayed events.
 
 ## The workspace
 
 ```
 apps/web                  Next.js app: UI, REST handlers, auth, /api/ws, /mcp
-apps/realtime             Bun.serve websocket host, local development only
+apps/realtime             Local websocket host and persistent issue outbox worker
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/realtime-client   Browser client: subscribe, patch, reconnect
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
@@ -41,9 +43,10 @@ The hub and the MCP tools live in packages rather than in the app for two
 reasons: the app stays thin, and both keep their own test suites that run
 without booting Next.
 
-`apps/realtime` exists only because a Vercel function cannot upgrade a
-connection under `next dev`. It is never deployed. In production the socket is
-served from the app itself.
+`apps/realtime/src/index.ts` hosts local WebSockets because a Vercel function
+cannot upgrade a connection under `next dev`. Production sockets are served
+from the Web app itself. `apps/realtime/src/outbox-worker.ts` is a separate
+production entry point for durable issue delivery, not a WebSocket server.
 
 If two apps need a piece of code it belongs in `packages/shared`, never copied.
 
@@ -82,6 +85,22 @@ selection.
 
 The originating client is identified by `x-orbit-client-id` and skips its own
 echo, so the optimistic update is not overwritten by its own result.
+
+### Durable issue delivery
+
+Issue runtime operations stage `issue_outbox` rows in the database transaction
+alongside their issue changes and attribution. A persistent worker claims
+eligible rows with leases, publishes to Redis, then acknowledges delivery.
+`/api/cron/issue-outbox` is a recovery dispatcher if the worker falls behind.
+
+Delivery is at least once. Public events carry an `eventId` for client
+deduplication and may include Actor/principal attribution, but never the
+internal grant ID. Failed publishes remain queued for retry; a process exit
+does not discard the committed event. This does not make Redis pub/sub a
+durable browser replay log or close the reconnect limitations described below.
+
+See [Outbox worker deployment](outbox-worker-deployment.md) for its entry point,
+delivery limits, queue metrics and supervision requirements.
 
 ## Scopes decide delivery
 
@@ -184,6 +203,25 @@ Migrations are applied from a developer machine against the target database,
 never by a job in the platform, so any schema change must be pushed before the
 code that depends on it ships.
 
+### Actor and responsibility records
+
+`agent_identity` retains stable Agent identity and lifecycle history. An
+`mcp_grant` binds that identity to its authorising Human, client and workspace;
+access and refresh credentials reference the exact grant rather than a mutable
+client/user lookup. Identities can reconnect without replacing their history.
+
+Issues use separate Human and Agent creator/assignee references with database
+exclusivity checks. An Agent assignee requires a Human `ownerUserId`. Canonical
+Actor readers prefer these references and retain compatibility with legacy
+Human columns during migration. Activity and audit records preserve Actor and
+principal snapshots; public attribution excludes the internal grant reference.
+
+Agent mutations recheck current authority inside the transaction and serialize
+against identity lifecycle changes. `mcp_idempotency` retains successful
+`create_issue` results for 24 hours per grant, tool and key. The responsibility
+module centralizes assignment and access-loss cleanup so open work does not
+stay assigned to a disabled identity while closed history remains intact.
+
 ## Authorization
 
 One place: `packages/shared/src/policy`. It exports a permission list and the
@@ -192,10 +230,12 @@ roles that hold each one.
 - **Server routes enforce it.** This is the gate.
 - **The UI reads the same policy** to hide what you cannot do. Courtesy, never
   a gate.
-- **MCP tools run through it too**, so an agent inherits exactly the permissions
-  of whoever authorised it.
+- **MCP tools run through it too.** Agent access is the intersection of the
+  grant's scopes, the Human principal's current permissions and the resource
+  policy. Agent identity does not add a role or confer membership.
 
-One file means an audit is reading one file.
+Shared policy modules keep these decisions inspectable without duplicating
+authorization logic in each transport.
 
 ## Auth
 
@@ -206,7 +246,9 @@ a replacement for the passwordless methods.
 The web app also hosts the OAuth server for MCP, through the better-auth `mcp`
 plugin: discovery under `/.well-known/oauth-*`, dynamic client registration,
 PKCE, and a consent screen at `/oauth/authorize` where the user picks a
-workspace and re-verifies a passkey. See [MCP server](mcp.md).
+workspace, re-verifies a passkey and selects or creates an Agent identity.
+Legacy unbound grants are frozen, not silently treated as Human sessions.
+See [MCP server](mcp.md).
 
 ## The front end
 

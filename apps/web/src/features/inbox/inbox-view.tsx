@@ -35,6 +35,7 @@ import {
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
+import { Avatar } from '@/components/ui/avatar.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
@@ -105,6 +106,12 @@ function openLabel(item: InboxItem): string {
   return item.entityType === 'github_pull_request' ? 'Open pull request' : 'Open issue';
 }
 
+function actorTypeLabel(actorType: string): string {
+  if (actorType === 'agent') return 'Agent';
+  if (actorType === 'system') return 'System';
+  return 'Human';
+}
+
 const SNOOZE_HOURS = 24;
 
 const FAILED_SAVE = 'That did not save. Check your connection and try again.';
@@ -122,7 +129,10 @@ const inboxPageSchema = z.object({
       type: z.string(),
       entityType: z.string().default(''),
       entityId: z.string().default(''),
+      actorType: z.string().default('user'),
       actorName: z.string(),
+      actorAvatar: z.string().nullable().default(null),
+      principalName: z.string().nullable().default(null),
       title: z.string(),
       body: z.string(),
       bodyHtml: z.string().default(''),
@@ -248,13 +258,23 @@ function NotificationRow({
           aria-hidden="true"
         />
         <span className="sr-only">{row.read ? 'Read' : 'Unread'}</span>
-        <span
-          className={cn(
-            'flex size-6 shrink-0 items-center justify-center rounded-md bg-surface-2',
-            notificationIconTone(row.type),
-          )}
-        >
-          <Icon className="size-3.5" aria-hidden="true" />
+        <span className="relative shrink-0">
+          <span
+            className={cn(
+              'flex size-6 items-center justify-center rounded-md bg-surface-2',
+              notificationIconTone(row.type),
+            )}
+          >
+            <Icon className="size-3.5" aria-hidden="true" />
+          </span>
+          {row.actorType === 'agent' ? (
+            <Avatar
+              name={row.actorName}
+              src={row.actorAvatar}
+              size="xs"
+              className="absolute -right-1 -bottom-1"
+            />
+          ) : null}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
@@ -263,7 +283,10 @@ function NotificationRow({
             {row.title}
           </span>
           <span className="truncate text-2xs text-faint">
-            {row.actorName} · <RelativeTime at={row.createdAt} />
+            <span className="font-medium text-muted">{actorTypeLabel(row.actorType)}</span> ·{' '}
+            {row.actorName}
+            {row.principalName === null ? '' : ` for ${row.principalName}`} ·{' '}
+            <RelativeTime at={row.createdAt} />
           </span>
         </span>
       </button>
@@ -340,8 +363,11 @@ function NotificationDetail({
   return (
     <>
       <div className="flex items-center gap-3 border-border border-b px-5 py-2">
+        <Avatar name={item.actorName} src={item.actorAvatar} size="xs" />
         <p className="min-w-0 flex-1 truncate text-2xs text-faint">
-          <span className="text-muted">{item.title}</span> · {item.actorName} ·{' '}
+          <span className="text-muted">{item.title}</span> · {actorTypeLabel(item.actorType)} ·{' '}
+          {item.actorName}
+          {item.principalName === null ? '' : ` for ${item.principalName}`} ·{' '}
           <RelativeTime at={item.createdAt} />
           {item.snoozedUntil === null ? '' : ' · snoozed'}
         </p>

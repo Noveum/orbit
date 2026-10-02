@@ -10,7 +10,7 @@ import {
   resolvePrincipal,
   unbindMcpCredential,
 } from '@orbit/core';
-import { db, schema, sql } from '@orbit/db';
+import { db, eq, schema, sql } from '@orbit/db';
 import type { OrgRole } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
 import { handleMcpRequest, MCP_PATH } from './server.ts';
@@ -117,7 +117,30 @@ export async function mintToken(
     type: 'public',
     userId,
   });
-  const grantId = await recordMcpGrant({ clientId, userId, organizationId, scopes });
+  const [owner] = await db
+    .select({ name: schema.user.name })
+    .from(schema.user)
+    .where(eq(schema.user.id, userId))
+    .limit(1);
+  if (owner === undefined) throw new Error('The test agent owner does not exist.');
+  const agentIdentityId = randomUUID();
+  await db.insert(schema.agentIdentity).values({
+    id: agentIdentityId,
+    organizationId,
+    ownerUserId: userId,
+    ownerNameSnapshot: owner.name,
+    clientId,
+    clientNameSnapshot: name,
+    name: `${name} Agent`,
+    avatar: null,
+  });
+  const grantId = await recordMcpGrant({
+    clientId,
+    userId,
+    organizationId,
+    scopes,
+    agentIdentityId,
+  });
   const accessToken = token('at_');
   await db.insert(schema.oauthAccessToken).values({
     id: randomUUID(),
@@ -127,6 +150,7 @@ export async function mintToken(
     refreshTokenExpiresAt: new Date(Date.now() + 86_400_000),
     clientId,
     userId,
+    mcpGrantId: grantId,
     scopes,
   });
   return bindMcpCredential(accessToken, grantId, secret);
@@ -143,6 +167,22 @@ export interface TestClient {
   call(name: string, args?: Record<string, unknown>): Promise<CallToolResult>;
   result(name: string, args?: Record<string, unknown>): Promise<Record<string, unknown>>;
   close(): Promise<void>;
+}
+
+function testClient(client: Client): TestClient {
+  return {
+    client,
+    call: (name, args = {}) =>
+      client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
+    async result(name, args = {}) {
+      const called = (await client.callTool({ name, arguments: args })) as CallToolResult;
+      if (called.isError === true) {
+        throw new Error(`tool ${name} failed: ${JSON.stringify(called.content)}`);
+      }
+      return payloadOf(called);
+    },
+    close: () => client.close(),
+  };
 }
 
 function payloadOf(result: CallToolResult): Record<string, unknown> {
@@ -174,19 +214,27 @@ export async function connect(accessToken: string): Promise<TestClient> {
     fetch: directFetch,
   });
   await client.connect(transport as unknown as Transport);
-  return {
-    client,
-    call: (name, args = {}) =>
-      client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
-    async result(name, args = {}) {
-      const called = (await client.callTool({ name, arguments: args })) as CallToolResult;
-      if (called.isError === true) {
-        throw new Error(`tool ${name} failed: ${JSON.stringify(called.content)}`);
-      }
-      return payloadOf(called);
+  return testClient(client);
+}
+
+export async function connectOverHttp(accessToken: string, mcpUrl: string): Promise<TestClient> {
+  const client = new Client({ name: 'orbit-http-test', version: '0.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+    requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      console.info(
+        JSON.stringify({
+          mcpHttpMethod: init?.method ?? 'GET',
+          bearerPresent: new Headers(init?.headers).has('authorization'),
+          mcpHttpStatus: response.status,
+        }),
+      );
+      return response;
     },
-    close: () => client.close(),
-  };
+  });
+  await client.connect(transport as unknown as Transport);
+  return testClient(client);
 }
 
 export function errorPayload(result: CallToolResult): { code: string; message: string } {

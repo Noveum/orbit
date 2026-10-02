@@ -7,6 +7,7 @@ import {
   check,
   date,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -17,6 +18,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
+import { agentIdentity, mcpGrant } from './oauth.ts';
 import { organization, team } from './org.ts';
 
 const healthListSql = sql.raw(PROJECT_HEALTHS.map((health) => `'${health}'`).join(', '));
@@ -286,6 +288,9 @@ export const cycleIssueMembership = pgTable(
     entryKind: text('entry_kind').notNull(),
     estimateAtAdd: integer('estimate_at_add'),
     assigneeIdAtAdd: text('assignee_id_at_add').references(() => user.id, { onDelete: 'set null' }),
+    assigneeAgentIdAtAdd: text('assignee_agent_id_at_add').references(() => agentIdentity.id, {
+      onDelete: 'restrict',
+    }),
     projectIdAtAdd: text('project_id_at_add').references(() => project.id, {
       onDelete: 'set null',
     }),
@@ -326,6 +331,9 @@ export const cycleIssueOutcome = pgTable(
     assigneeIdAtClose: text('assignee_id_at_close').references(() => user.id, {
       onDelete: 'set null',
     }),
+    assigneeAgentIdAtClose: text('assignee_agent_id_at_close').references(() => agentIdentity.id, {
+      onDelete: 'restrict',
+    }),
     projectIdAtClose: text('project_id_at_close').references(() => project.id, {
       onDelete: 'set null',
     }),
@@ -365,10 +373,17 @@ export const issue = pgTable(
       .notNull()
       .references(() => workflowState.id, { onDelete: 'restrict' }),
     priority: smallint('priority').notNull().default(0),
-    creatorId: text('creator_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    creatorId: text('creator_id').references(() => user.id, { onDelete: 'restrict' }),
     assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
+    creatorUserId: text('creator_user_id').references(() => user.id, { onDelete: 'restrict' }),
+    creatorAgentId: text('creator_agent_id').references(() => agentIdentity.id, {
+      onDelete: 'restrict',
+    }),
+    assigneeUserId: text('assignee_user_id').references(() => user.id, { onDelete: 'set null' }),
+    assigneeAgentId: text('assignee_agent_id').references(() => agentIdentity.id, {
+      onDelete: 'restrict',
+    }),
+    ownerUserId: text('owner_user_id').references(() => user.id, { onDelete: 'restrict' }),
     projectId: text('project_id').references(() => project.id, { onDelete: 'set null' }),
     milestoneId: text('milestone_id').references(() => milestone.id, { onDelete: 'set null' }),
     cycleId: text('cycle_id').references(() => cycle.id, { onDelete: 'set null' }),
@@ -393,6 +408,9 @@ export const issue = pgTable(
     uniqueIndex('issue_org_identifier_unique').on(table.organizationId, table.identifier),
     index('issue_board_idx').on(table.teamId, table.stateId, table.sortOrder),
     index('issue_assignee_idx').on(table.assigneeId, table.updatedAt),
+    index('issue_assignee_user_idx').on(table.assigneeUserId, table.updatedAt),
+    index('issue_assignee_agent_idx').on(table.assigneeAgentId, table.updatedAt),
+    index('issue_owner_user_idx').on(table.ownerUserId),
     index('issue_project_idx').on(table.projectId),
     index('issue_cycle_idx').on(table.cycleId),
     index('issue_parent_idx').on(table.parentId),
@@ -412,6 +430,28 @@ export const issue = pgTable(
     index('issue_milestone_idx').on(table.milestoneId).where(sql`${table.archivedAt} is null`),
     index('issue_title_trgm_idx').using('gin', table.title.op('gin_trgm_ops')),
     index('issue_description_trgm_idx').using('gin', table.description.op('gin_trgm_ops')),
+    check(
+      'issue_creator_actor_check',
+      sql`(${table.creatorUserId} is not null and ${table.creatorAgentId} is null) or (${table.creatorUserId} is null and ${table.creatorAgentId} is not null)`,
+    ),
+    check(
+      'issue_assignee_actor_check',
+      sql`${table.assigneeUserId} is null or ${table.assigneeAgentId} is null`,
+    ),
+    check(
+      'issue_agent_assignee_owner_check',
+      sql`${table.assigneeAgentId} is null or ${table.ownerUserId} is not null`,
+    ),
+    foreignKey({
+      name: 'issue_organization_creator_agent_fk',
+      columns: [table.organizationId, table.creatorAgentId],
+      foreignColumns: [agentIdentity.organizationId, agentIdentity.id],
+    }),
+    foreignKey({
+      name: 'issue_organization_assignee_agent_fk',
+      columns: [table.organizationId, table.assigneeAgentId],
+      foreignColumns: [agentIdentity.organizationId, agentIdentity.id],
+    }),
   ],
 );
 
@@ -577,6 +617,13 @@ export const issueActivity = pgTable(
     actorType: text('actor_type').notNull().default('user'),
     actorId: text('actor_id').notNull(),
     actorName: text('actor_name').notNull(),
+    principalUserId: text('principal_user_id').references(() => user.id, { onDelete: 'set null' }),
+    principalName: text('principal_name'),
+    actorAvatar: text('actor_avatar'),
+    principalAvatar: text('principal_avatar'),
+    grantId: text('grant_id').references(() => mcpGrant.id, { onDelete: 'restrict' }),
+    cause: text('cause'),
+    causeActorId: text('cause_actor_id'),
     field: text('field').notNull(),
     fromValue: jsonb('from_value'),
     toValue: jsonb('to_value'),
@@ -590,7 +637,7 @@ export const issueActivity = pgTable(
       .where(sql`${table.field} = 'cycleId'`),
     index('issue_activity_assignee_attribution_idx')
       .on(table.organizationId, table.issueId, table.createdAt)
-      .where(sql`${table.field} = 'assigneeId'`),
+      .where(sql`${table.field} = any (array['assigneeId', 'assignee'])`),
   ],
 );
 

@@ -4,16 +4,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { z } from 'zod';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
+import { applyCatchup } from '../src/apply-catchup.ts';
 import { releaseDatabase } from '../src/migration-release.ts';
 
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_migration_release', currentLane());
 const MIGRATIONS = fileURLToPath(new URL('../drizzle', import.meta.url));
+const MIGRATION_ENTRIES = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+const AGENT_SCHEMA_MIGRATION = MIGRATION_ENTRIES.at(-1)?.folderMillis;
+const UPSTREAM_MIGRATION_COUNT = MIGRATION_ENTRIES.length - 1;
+
+if (AGENT_SCHEMA_MIGRATION === undefined) {
+  throw new Error('The final Agent schema migration is missing.');
+}
 
 function urlFor(database: string): string {
   const url = new URL(BASE);
@@ -39,9 +45,38 @@ async function resetScratch(): Promise<void> {
 }
 
 async function migrateScratch(): Promise<void> {
-  await run(urlFor(SCRATCH), async (sql) => {
-    await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS });
-  });
+  await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+}
+
+async function migrationPrefixDirectory(throughTag: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'orbit-p3-migration-prefix-'));
+  const metaDirectory = join(MIGRATIONS, 'meta');
+  const journal = JSON.parse(await readFile(join(metaDirectory, '_journal.json'), 'utf8')) as {
+    entries: { tag: string }[];
+  };
+  const entries = journal.entries.filter((entry) => entry.tag <= throughTag);
+  await cp(metaDirectory, join(directory, 'meta'), { recursive: true });
+  await writeFile(
+    join(directory, 'meta', '_journal.json'),
+    JSON.stringify({ ...journal, entries }),
+  );
+  await Promise.all(
+    entries.map(async ({ tag }) => {
+      await cp(join(MIGRATIONS, `${tag}.sql`), join(directory, `${tag}.sql`));
+    }),
+  );
+  return directory;
+}
+
+async function withOfficialUpstreamMigrations<T>(
+  work: (directory: string) => Promise<T>,
+): Promise<T> {
+  const directory = await migrationPrefixDirectory('0029_material_psynapse');
+  try {
+    return await work(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 const migrationJournalEntrySchema = z.object({
@@ -79,6 +114,211 @@ async function migrationsFolderWithTrailer(): Promise<string> {
 }
 
 describe('database release', () => {
+  it('retries Agent migration finalization from the official upstream ledger', async () => {
+    await resetScratch();
+    const historical = MIGRATION_ENTRIES.slice(0, UPSTREAM_MIGRATION_COUNT);
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql.begin(async (tx) => {
+        await tx`create schema drizzle`;
+        await tx`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+        for (const migration of historical) {
+          for (const statement of migration.sql) await tx.unsafe(statement);
+          await tx`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+        }
+      });
+      await sql`insert into "user" (id, name, email, handle) values ('upgrade-owner', 'Owner', 'upgrade@example.com', 'upgrade-owner')`;
+      await sql`insert into organization (id, name, slug) values ('upgrade-org', 'Org', 'upgrade-org')`;
+      await sql`insert into oauth_application (id, client_id, name, redirect_urls, type) values ('upgrade-client', 'upgrade-client', 'Client', 'https://example.com', 'web')`;
+      await sql`insert into mcp_grant (id, client_id, user_id, organization_id, scopes) values ('upgrade-grant', 'upgrade-client', 'upgrade-owner', 'upgrade-org', 'orbit.read')`;
+      await sql`insert into oauth_consent (id, client_id, user_id, scopes, consent_given) values ('upgrade-consent', 'upgrade-client', 'upgrade-owner', 'orbit.read', true)`;
+      await sql`insert into oauth_access_token (id, client_id, user_id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, scopes) values ('upgrade-token', 'upgrade-client', 'upgrade-owner', 'upgrade-access', 'upgrade-refresh', now(), now(), 'orbit.read')`;
+      await sql`create function reject_upgrade() returns trigger as $$ begin raise exception 'upgrade interrupted'; end; $$ language plpgsql`;
+      await sql`create trigger reject_upgrade_trigger before update on mcp_grant for each row execute function reject_upgrade()`;
+    });
+    const originalLedger = await run(
+      urlFor(SCRATCH),
+      (sql) => sql`select * from drizzle.__drizzle_migrations order by id`,
+    );
+    const originalConsent = await run(urlFor(SCRATCH), (sql) => sql`select * from oauth_consent`);
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'upgrade interrupted',
+    );
+    expect([
+      ...(await run(
+        urlFor(SCRATCH),
+        (sql) => sql`select * from drizzle.__drizzle_migrations order by id`,
+      )),
+    ]).toEqual([...originalLedger]);
+    expect(
+      await run(urlFor(SCRATCH), (sql) => sql`select id from oauth_access_token`),
+    ).toHaveLength(1);
+    expect(
+      await run(
+        urlFor(SCRATCH),
+        (sql) =>
+          sql`select migration_id from drizzle.__drizzle_migration_state where migration_id = ${AGENT_SCHEMA_MIGRATION}`,
+      ),
+    ).toHaveLength(1);
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`drop trigger reject_upgrade_trigger on mcp_grant`;
+      await sql`drop function reject_upgrade()`;
+    });
+    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).applied).toBe(1);
+    expect([
+      ...(await run(
+        urlFor(SCRATCH),
+        (sql) =>
+          sql`select * from drizzle.__drizzle_migrations order by id limit ${UPSTREAM_MIGRATION_COUNT}`,
+      )),
+    ]).toEqual([...originalLedger]);
+    expect([...(await run(urlFor(SCRATCH), (sql) => sql`select * from oauth_consent`))]).toEqual([
+      ...originalConsent,
+    ]);
+    expect(
+      await run(urlFor(SCRATCH), (sql) => sql`select id from oauth_access_token`),
+    ).toHaveLength(0);
+    expect(
+      (await run(urlFor(SCRATCH), (sql) => sql`select revoke_reason from mcp_grant`))[0]?.[
+        'revoke_reason'
+      ],
+    ).toBe('agent_identity_required');
+    expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('current');
+  }, 60_000);
+
+  it('commits Agent backfill batches and resumes after an interrupted batch', async () => {
+    await resetScratch();
+    const prefixDirectory = await migrationPrefixDirectory('0029_material_psynapse');
+    try {
+      await expect(releaseDatabase(urlFor(SCRATCH), prefixDirectory)).rejects.toThrow(
+        'Migrations completed, but the database is still incompatible with the schema.',
+      );
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`insert into "user" (id, name, email, handle)
+          values ('batch-owner', 'Batch owner', 'batch@example.com', 'batch-owner')`;
+        await sql`insert into organization (id, name, slug)
+          values ('batch-org', 'Batch org', 'batch-org')`;
+        await sql`insert into team (id, organization_id, name, key)
+          values ('batch-team', 'batch-org', 'Batch team', 'BAT')`;
+        await sql`insert into workflow_state (id, organization_id, team_id, name, category, color)
+          values ('batch-state', 'batch-org', 'batch-team', 'Todo', 'unstarted', '#000')`;
+        await sql`insert into issue (
+          id, organization_id, team_id, number, identifier, title, state_id, creator_id, assignee_id
+        )
+        select
+          'batch-issue-' || lpad(number::text, 4, '0'),
+          'batch-org', 'batch-team', number, 'BAT-' || number::text, 'Batch issue',
+          'batch-state', 'batch-owner', 'batch-owner'
+        from generate_series(1, 1005) as generated(number)`;
+        await sql`create function reject_second_agent_schema_batch() returns trigger as $$
+          begin
+            if new.id = 'batch-issue-1001' then raise exception 'agent batch interrupted'; end if;
+            return new;
+          end;
+        $$ language plpgsql`;
+        await sql`create trigger reject_second_agent_schema_batch_trigger
+          before update on issue for each row execute function reject_second_agent_schema_batch()`;
+      });
+
+      await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+        'agent batch interrupted',
+      );
+      const [afterFailure] = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<{ backfilled: number; migration_rows: number; pending_markers: number }[]>`
+          select
+            (select count(*)::integer from issue where creator_user_id is not null) as backfilled,
+            (select count(*)::integer from drizzle.__drizzle_migrations where created_at = ${AGENT_SCHEMA_MIGRATION}) as migration_rows,
+            (select count(*)::integer from drizzle.__drizzle_migration_state where migration_id = ${AGENT_SCHEMA_MIGRATION}) as pending_markers
+        `,
+      );
+      expect(afterFailure).toEqual({ backfilled: 1000, migration_rows: 0, pending_markers: 1 });
+
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`drop trigger reject_second_agent_schema_batch_trigger on issue`;
+        await sql`drop function reject_second_agent_schema_batch()`;
+      });
+      const retried = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      const [afterRetry] = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<
+          {
+            backfilled: number;
+            complete: number;
+            migration_rows: number;
+            pending_markers: number;
+          }[]
+        >`
+          select
+            (select count(*)::integer from issue where creator_user_id is not null) as backfilled,
+            (select count(*)::integer from issue where creator_user_id = 'batch-owner'
+              and assignee_user_id = 'batch-owner' and owner_user_id = 'batch-owner') as complete,
+            (select count(*)::integer from drizzle.__drizzle_migrations where created_at = ${AGENT_SCHEMA_MIGRATION}) as migration_rows,
+            (select count(*)::integer from drizzle.__drizzle_migration_state where migration_id = ${AGENT_SCHEMA_MIGRATION}) as pending_markers
+        `,
+      );
+      expect(retried.mode).toBe('migrated');
+      expect(afterRetry).toEqual({
+        backfilled: 1005,
+        complete: 1005,
+        migration_rows: 1,
+        pending_markers: 0,
+      });
+    } finally {
+      await rm(prefixDirectory, { recursive: true });
+    }
+  }, 120_000);
+
+  it('rolls back Agent schema preparation DDL when an object already exists', async () => {
+    const target = `${SCRATCH}_p3_interrupt`;
+    const prefixDirectory = await migrationPrefixDirectory('0029_material_psynapse');
+    await run(urlFor('postgres'), async (sql) => {
+      await sql.unsafe(`drop database if exists "${target}"`);
+      await sql.unsafe(`create database "${target}"`);
+    });
+    try {
+      await expect(releaseDatabase(urlFor(target), prefixDirectory)).rejects.toThrow(
+        'Migrations completed, but the database is still incompatible with the schema.',
+      );
+      await run(
+        urlFor(target),
+        (sql) => sql`create table public.mcp_idempotency (id text primary key)`,
+      );
+
+      await expect(releaseDatabase(urlFor(target), MIGRATIONS)).rejects.toThrow();
+      const [afterFailure] = await run(
+        urlFor(target),
+        (sql) => sql<{ outbox: string | null; ledger_count: number }[]>`
+          select
+            to_regclass('public.issue_outbox')::text as outbox,
+            (select count(*)::integer from drizzle.__drizzle_migrations) as ledger_count
+        `,
+      );
+      expect(afterFailure).toEqual({ outbox: null, ledger_count: UPSTREAM_MIGRATION_COUNT });
+
+      await run(urlFor(target), (sql) => sql`drop table public.mcp_idempotency`);
+      const retried = await releaseDatabase(urlFor(target), MIGRATIONS);
+      expect(retried.mode).toBe('migrated');
+      expect(retried.applied).toBe(1);
+      const [afterRetry] = await run(
+        urlFor(target),
+        (sql) => sql<{ outbox: string | null; ledger_count: number }[]>`
+          select
+            to_regclass('public.issue_outbox')::text as outbox,
+            (select count(*)::integer from drizzle.__drizzle_migrations) as ledger_count
+        `,
+      );
+      expect(afterRetry).toEqual({
+        outbox: 'issue_outbox',
+        ledger_count: MIGRATION_ENTRIES.length,
+      });
+    } finally {
+      await Promise.all([
+        run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${target}"`)),
+        rm(prefixDirectory, { recursive: true }),
+      ]);
+    }
+  }, 120_000);
+
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);
@@ -129,8 +369,10 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
-    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const { result, migrations } = await withOfficialUpstreamMigrations(async (directory) => ({
+      result: await releaseDatabase(urlFor(SCRATCH), directory),
+      migrations: readMigrationFiles({ migrationsFolder: directory }),
+    }));
     const ledger = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ hash: string; created_at: string }[]>`
@@ -331,7 +573,9 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const result = await withOfficialUpstreamMigrations((directory) =>
+      releaseDatabase(urlFor(SCRATCH), directory),
+    );
     const triggers = await run(
       urlFor(SCRATCH),
       (sql) => sql<
@@ -414,7 +658,9 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const result = await withOfficialUpstreamMigrations((directory) =>
+      releaseDatabase(urlFor(SCRATCH), directory),
+    );
     const [attachment] = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ upload_expires_at: string | null }[]>`
@@ -489,7 +735,9 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    const result = await withOfficialUpstreamMigrations((directory) =>
+      releaseDatabase(urlFor(SCRATCH), directory),
+    );
     const jobs = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ head_sha: string; status: string; trigger_kind: string; attempts: number }[]>`
@@ -553,9 +801,23 @@ describe('database release', () => {
       await sql`drop schema drizzle cascade`;
     });
 
-    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
-      'historical cycle numbering backfill',
+    await withOfficialUpstreamMigrations(async (directory) => {
+      await expect(releaseDatabase(urlFor(SCRATCH), directory)).rejects.toThrow(
+        'historical cycle numbering backfill',
+      );
+      await applyCatchup(urlFor(SCRATCH), 'cycle-numbering-baseline.sql');
+      expect((await releaseDatabase(urlFor(SCRATCH), directory)).mode).toBe('baselined');
+    });
+    const cycles = await run(
+      urlFor(SCRATCH),
+      (sql) => sql<{ id: string; number: number }[]>`
+        select id, number from cycle where organization_id = 'numbering-org' order by number
+      `,
     );
+    expect([...cycles]).toEqual([
+      { id: 'earlier-cycle', number: 1 },
+      { id: 'later-cycle', number: 2 },
+    ]);
   }, 60_000);
 
   it('rejects a changed hash in an applied migration', async () => {
@@ -573,6 +835,32 @@ describe('database release', () => {
     await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
       'does not match the committed migration',
     );
+  }, 60_000);
+
+  it('rejects an unpublished #215 ledger without repairing it', async () => {
+    await resetScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      await sql`insert into drizzle.__drizzle_migrations (hash, created_at)
+        values ('unpublished-feature-migration', 1790178834499)`;
+    });
+    const originalLedger = await run(
+      urlFor(SCRATCH),
+      (sql) =>
+        sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at, id`,
+    );
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'not a contiguous prefix',
+    );
+    expect([
+      ...(await run(
+        urlFor(SCRATCH),
+        (sql) =>
+          sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at, id`,
+      )),
+    ]).toEqual([...originalLedger]);
   }, 60_000);
 
   it('fails promptly when another database release holds the advisory lock', async () => {
@@ -634,13 +922,14 @@ describe('database release', () => {
     expect(issue?.exists).toBe(true);
   }, 60_000);
 
-  it('repairs an empty legacy ledger without replaying migrations', async () => {
+  it('does not baseline the unpublished Agent schema from an empty ledger', async () => {
     await resetScratch();
     await migrateScratch();
     await run(urlFor(SCRATCH), (sql) => sql`truncate drizzle.__drizzle_migrations`);
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
-    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      `Legacy baseline has no reconciliation for data migration ${AGENT_SCHEMA_MIGRATION}.`,
+    );
     const [ledger] = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ count: number }[]>`
@@ -648,11 +937,10 @@ describe('database release', () => {
       `,
     );
 
-    expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
-    expect(ledger?.count).toBe(migrations.length);
+    expect(ledger?.count).toBe(0);
   }, 60_000);
 
-  it('repairs a catalog-complete ledger prefix without replaying the pending migration', async () => {
+  it('refuses a catalog-complete schema with a missing Agent migration marker', async () => {
     await resetScratch();
     await migrateScratch();
     await run(
@@ -663,8 +951,7 @@ describe('database release', () => {
       `,
     );
 
-    const result = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
-    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow('issue_outbox');
     const [ledger] = await run(
       urlFor(SCRATCH),
       (sql) => sql<{ count: number }[]>`
@@ -672,8 +959,19 @@ describe('database release', () => {
       `,
     );
 
-    expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
-    expect(ledger?.count).toBe(migrations.length);
+    expect(ledger?.count).toBe(UPSTREAM_MIGRATION_COUNT);
+  }, 60_000);
+
+  it('refuses a missing historical constraint without inventing a ledger repair', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`alter table mcp_grant drop constraint mcp_grant_agent_binding_fk`;
+    });
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'database is still incompatible',
+    );
   }, 60_000);
 
   it('runs a pending table-drop migration instead of baselining it away', async () => {

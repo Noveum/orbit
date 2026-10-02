@@ -3,7 +3,6 @@ import { updateOrganization } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import {
   addMember,
-  connect,
   createWorkspace,
   errorPayload,
   mintToken,
@@ -11,6 +10,7 @@ import {
   type TestClient,
   type TestWorkspace,
 } from '../src/test-helpers.ts';
+import { connectHuman } from './human-client.ts';
 
 let workspace: TestWorkspace;
 let admin: TestClient;
@@ -22,7 +22,13 @@ interface IssueShape {
   readonly title: string;
   readonly state: string | null;
   readonly priority: string;
-  readonly assignee: string | null;
+  readonly assignee: {
+    readonly type: string;
+    readonly id: string;
+    readonly name: string;
+    readonly avatar: string | null;
+    readonly deleted: boolean;
+  } | null;
   readonly reviewers: readonly string[];
   readonly reviewerIds: readonly string[];
   readonly cycleId: string | null;
@@ -72,9 +78,9 @@ async function newIssue(title: string, extra: Record<string, unknown> = {}): Pro
 beforeAll(async () => {
   await resetDatabase();
   workspace = await createWorkspace('Nova');
-  admin = await connect(await mintToken(workspace.organizationId, workspace.adminUser.id));
+  admin = await connectHuman(await mintToken(workspace.organizationId, workspace.adminUser.id));
   const guestMember = await addMember(workspace, 'guest', 'Gus Guest');
-  guest = await connect(await mintToken(workspace.organizationId, guestMember.user.id));
+  guest = await connectHuman(await mintToken(workspace.organizationId, guestMember.user.id));
 });
 
 afterAll(async () => {
@@ -151,7 +157,7 @@ describe('discovery', () => {
     const initial = 'Initial workspace guidance.';
     const latest = 'Latest workspace guidance.';
     await updateOrganization(workspace.admin, { agentInstructions: initial });
-    const connected = await connect(
+    const connected = await connectHuman(
       await mintToken(workspace.organizationId, workspace.adminUser.id, 'Refresh behavior'),
     );
     try {
@@ -170,7 +176,7 @@ describe('discovery', () => {
   it('delivers exactly four thousand characters without truncation', async () => {
     const instructions = '界'.repeat(4000);
     await updateOrganization(workspace.admin, { agentInstructions: instructions });
-    const connected = await connect(
+    const connected = await connectHuman(
       await mintToken(workspace.organizationId, workspace.adminUser.id, 'Maximum instructions'),
     );
     try {
@@ -215,7 +221,13 @@ describe('issues', () => {
     });
     expect(created.identifier).toMatch(new RegExp(`^${workspace.teamKey}-\\d+$`));
     expect(created.priority).toBe('High');
-    expect(created.assignee).toBe(workspace.adminUser.name);
+    expect(created.assignee).toEqual({
+      type: 'user',
+      id: workspace.adminUser.id,
+      name: workspace.adminUser.name,
+      avatar: null,
+      deleted: false,
+    });
 
     const fetched = await admin.result('get_issue', { issue: created.identifier });
     const issue = issueOf(fetched) as IssueShape & { description: string; labels: string[] };
@@ -907,7 +919,7 @@ describe('sprints over mcp', () => {
 
 describe('what a token is allowed to do', () => {
   it('hides every write tool from a read only token, and keeps the read ones', async () => {
-    const readOnly = await connect(
+    const readOnly = await connectHuman(
       await mintToken(workspace.organizationId, workspace.adminUser.id, 'Reader', 'orbit.read'),
     );
     try {
@@ -934,7 +946,7 @@ describe('what a token is allowed to do', () => {
   });
 
   it('refuses a write call from a read only token rather than performing it', async () => {
-    const readOnly = await connect(
+    const readOnly = await connectHuman(
       await mintToken(workspace.organizationId, workspace.adminUser.id, 'Reader', 'orbit.read'),
     );
     try {

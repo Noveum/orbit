@@ -41,8 +41,10 @@ on a value import, a bare import, a `require` or a dynamic `import()` of `bun` o
 `bun:*` from anything the web app ships. A type-only import is allowed, because
 it is erased before it reaches the runtime: `packages/realtime-server/src/socket.ts`
 takes `ServerWebSocket` that way so `fromBunSocket` can adapt the development
-server's socket without the node build ever resolving `bun`. Dev runs Next under
-Bun and production runs it under node, so nothing else catches this before deploy.
+server's socket without the node build ever resolving `bun`. The Next command
+follows its node shebang in development and production. Playwright runs under
+Bun, but its WebServer environment preserves that Node runtime. The import check
+also covers packages whose unit tests only run under Bun.
 
 Bun does not implement `process.loadEnvFile`. Load the repository `.env` with `bun --env-file=../../.env` in the script, never from inside a config file.
 
@@ -53,7 +55,7 @@ Bun does not load a parent directory `.env`, so a script running with its cwd in
 ```
 apps/web                  Next.js 16 app: UI, REST route handlers, auth, webhooks,
                           the realtime socket at /api/ws and the MCP server at /mcp
-apps/realtime             Bun.serve WebSocket host, local development only, never deployed
+apps/realtime             Local WebSocket host and separate production Outbox Worker
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
 packages/db               Drizzle schema, migrations, client, seed
@@ -62,10 +64,10 @@ scripts/                  repo tooling, written in TypeScript and run with bun
 extras/                   working notes, task board, demo artifacts (not shipped)
 ```
 
-Everything ships as one Next.js app on a single Vercel project. The realtime hub
-and the MCP tools live in packages so the app stays thin and both keep their own
-test suites. `apps/realtime` exists only so local development has a socket server,
-because a Vercel function cannot upgrade a connection under `next dev`.
+The Web app ships as one Vercel project. The realtime hub and MCP tools live in
+packages so the app stays thin and both keep their own tests. `apps/realtime`
+has a local socket entry point because `next dev` cannot use Vercel's upgrade
+bridge, plus a separate persistent production Outbox Worker entry point.
 
 Cross-app code lives in `packages/shared`. If two apps need it, it belongs there, never duplicated.
 
@@ -76,7 +78,7 @@ bun install          install every workspace dependency
 bun run infra:up     start postgres, redis, minio
 bun run db:push      apply schema to the dev database
 bun run db:seed      load demo org, teams, members, issues, comments
-bun run db:test-setup create the per package test databases and push the schema
+bun run db:test-setup create per-package test databases from the release migrations
 bun run dev          run web, realtime, and mcp together
 bun run verify       lint + comment policy + typecheck + tests
 bun test             run one package's tests from inside that package
@@ -111,10 +113,10 @@ domain verified in Resend, otherwise every send fails.
   rate limited, and never a replacement for the passwordless methods.
 - **MCP auth.** OAuth only, no API keys. The web app hosts the OAuth server through the better-auth
   `mcp` plugin: discovery under `/.well-known/oauth-*`, dynamic client registration, PKCE, and a
-  consent screen at `/oauth/authorize` where the user picks a workspace and re-verifies a passkey. The
+  consent screen at `/oauth/authorize` where the user picks a workspace, re-verifies a passkey and selects or creates an Agent identity. The
   standalone MCP server validates the access token against the shared database (`verifyMcpAccessToken`)
   and returns a `WWW-Authenticate` challenge on `401`. A `mcp_grant` row binds a client and user to the
-  chosen workspace. The granted scopes decide the tool set: a read tool needs `orbit.read`, a write tool
+  chosen workspace and Agent identity. Credentials bind to that exact grant. Effective access is grant scopes intersected with current Human permissions and resource policy. The granted scopes decide the tool set: a read tool needs `orbit.read`, a write tool
   needs `orbit.write`, and a token carrying neither is refused with a `403` before any tool is registered.
 - **Email domains.** `ALLOWED_EMAIL_DOMAINS` is a comma-separated allowlist enforced on invite
   creation and on user creation, so it covers every provider. Empty means no restriction. A
@@ -146,15 +148,27 @@ domain verified in Resend, otherwise every send fails.
 - Each package owns an isolated database (`orbit_test_core`, `orbit_test_svc`, `orbit_test_rt`, `orbit_test_rts`, `orbit_test_mcp`, `orbit_test_web`). Run `bun run db:test-setup` once after `bun run infra:up`, otherwise `bun run verify` fails on a clean checkout with connection errors rather than test failures.
 - Two test runs at once need two lanes. Set `ORBIT_TEST_LANE` to anything unique and the suite uses `orbit_test_core_<lane>` instead, where the lane is a readable stub plus a digest of the raw value so two lanes that normalise alike stay apart, cloned from the base database on first use, so a `resetDatabase` in one run cannot truncate tables out from under another. Without the variable nothing changes. This matters whenever several agents or worktrees run tests against the same Postgres: sharing one database shows up as deadlocks and foreign key violations that look like real failures. `ORBIT_TEST_LANE=<lane> bun run db:test-lanes-drop` removes the databases of that one lane and nothing else. With no `ORBIT_TEST_LANE` set it refuses and says so rather than guessing, because the old behaviour of dropping every lane deleted lanes other worktrees were running against. `bun run db:test-lanes-drop --all` is the explicit way back to a clean slate, and it takes every lane on that Postgres with it, including live ones. The six base databases are never dropped in either mode.
 - End to end: Playwright in `apps/web/e2e`.
+- Documentation: `bun test docs/tests/navigation.test.ts` and `bun run docs:build`. Neither is part of `bun run verify`.
 - A feature is not done until it has tests that would fail if the feature broke.
 
 ## Deployment
 
-Orbit is one Vercel project. The root directory is `apps/web`, the build runs
-`bun run build` there, and functions serve on the node runtime. The Docker Compose
-template in `deploy/docker` packages standalone Node with Postgres, Redis and
-MinIO, a Node realtime host, an HTTP gateway routing `/api/ws`, and a maintenance
-scheduler. See `docs/docker-preview.md`. Nothing runs in Kubernetes.
+The Web deployment is one Vercel project. Its root is `apps/web`, the build runs
+`bun run build` there, and functions serve on the node runtime. Agent issue
+delivery additionally requires the persistent Bun Worker built from
+`apps/realtime/Dockerfile`; it is not the local WebSocket server. Cron is recovery,
+not the primary dispatcher. See [Worker deployment](docs/outbox-worker-deployment.md).
+
+`ORBIT_AGENT_IDENTITY_READ`, `ORBIT_AGENT_CONSENT`, `ORBIT_AGENT_ISSUE_WRITE` and
+`ORBIT_ISSUE_OUTBOX_DISPATCH` are process-wide gates, off unless exactly `true`.
+Agent Writer needs all four. The Worker needs dispatch plus the same Postgres
+and Redis as Web. Follow the [release runbook](docs/issue-215-release-runbook.md);
+never roll back to readers that cannot understand existing Agent Actor rows.
+
+The Docker Compose template in `deploy/docker` packages standalone Node with
+Postgres, Redis and MinIO, a Node realtime host, an HTTP gateway routing `/api/ws`,
+and a maintenance scheduler. See `docs/docker-preview.md`. Nothing runs in
+Kubernetes.
 
 The node runtime is not optional. `/api/ws` upgrades through
 `experimental_upgradeWebSocket` from `@vercel/functions`, and Vercel only injects
@@ -180,8 +194,8 @@ Migrations are applied locally against the target database, never by a job in th
 platform. Run `DIRECT_URL="postgres://..." bun run db:release` before merging code
 that depends on a schema change. The command verifies the migration ledger, applies
 pending migrations under a database lock and then compares columns, types,
-nullability, defaults, generated columns, primary keys, indexes, foreign keys and
-enum values against the declared schema. A production Vercel build fails closed if
+nullability, defaults, generated columns, primary keys, indexes, foreign keys,
+CHECK constraints, required lifecycle guards and enum values against the declared schema. A production Vercel build fails closed if
 that verification cannot run or finds the database behind.
 
 ## Git

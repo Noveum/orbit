@@ -1,9 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { publishDeltas } from '@orbit/core';
+import { drainIssueOutbox, publishDeltas } from '@orbit/core';
+import { agentIssueWritesEnabled } from '@orbit/shared';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
+import { assertHumanIssueWriter } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { errorFields, logger } from '../logger.ts';
 
@@ -40,6 +42,21 @@ export function failed(name: string, error: unknown): CallToolResult {
 }
 
 export async function publish(actions: readonly SyncAction[]): Promise<void> {
+  if (actions.some((action) => action.eventId !== undefined)) {
+    const ids = actions.flatMap((action) => (action.eventId === undefined ? [] : [action.eventId]));
+    for (let index = 0; index < ids.length; index += 200) {
+      await drainIssueOutbox({
+        publish: async (batch) => {
+          if (!process.env['REDIS_URL'])
+            throw new Error('REDIS_URL is required for outbox delivery');
+          await publishDeltas(batch);
+        },
+        batchSize: 200,
+        eventIds: ids.slice(index, index + 200),
+      });
+    }
+    return;
+  }
   await publishDeltas([...actions]);
 }
 
@@ -57,11 +74,25 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
 export interface ToolAccess {
   readonly reads: boolean;
   readonly writes: boolean;
+  readonly actorType?: 'user' | 'agent';
+  readonly agentIssueWrite?: boolean;
 }
 
 const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
 
 const GRANTED = new WeakMap<McpServer, ToolAccess>();
+
+const ISSUE_MUTATION_TOOLS = new Set([
+  'archive_issue',
+  'create_issue',
+  'delete_issue',
+  'move_issue',
+  'move_to_cycle',
+  'remove_relation',
+  'set_relation',
+  'unarchive_issue',
+  'update_issue',
+]);
 
 export function allowTools(server: McpServer, access: ToolAccess): void {
   GRANTED.set(server, access);
@@ -95,6 +126,26 @@ export function defineTool<Shape extends z.ZodRawShape>(
     },
     async (args) => {
       try {
+        if (ISSUE_MUTATION_TOOLS.has(config.name)) {
+          const access = GRANTED.get(server);
+          if (
+            !(
+              (config.name === 'create_issue' ||
+                config.name === 'update_issue' ||
+                config.name === 'move_issue' ||
+                config.name === 'archive_issue' ||
+                config.name === 'unarchive_issue' ||
+                config.name === 'delete_issue' ||
+                config.name === 'set_relation' ||
+                config.name === 'remove_relation') &&
+              access?.actorType === 'agent' &&
+              access.agentIssueWrite &&
+              agentIssueWritesEnabled()
+            )
+          ) {
+            assertHumanIssueWriter(access?.actorType ?? 'user');
+          }
+        }
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {
         return failed(config.name, error);

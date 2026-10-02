@@ -99,6 +99,9 @@ test('account settings, passkeys, and workspace switching', async ({ browser }) 
   await page.getByTestId('add-passkey').click();
   await expect(page.getByTestId('passkey-list')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('Work laptop')).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId('passkey-list')).toBeVisible();
+  await expect(page.getByText('Work laptop')).toBeVisible();
   await page.screenshot({
     path: `${SHOTS}/03-passkey-added.png`,
     fullPage: true,

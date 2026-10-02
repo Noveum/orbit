@@ -14,7 +14,10 @@ export interface InboxItem {
   readonly type: NotificationType;
   readonly entityType: string;
   readonly entityId: string;
+  readonly actorType: string;
   readonly actorName: string;
+  readonly actorAvatar: string | null;
+  readonly principalName: string | null;
   readonly title: string;
   readonly body: string;
   readonly bodyHtml: string;
@@ -44,7 +47,10 @@ export function toInboxItem(row: NotificationRecord): InboxItem {
     type: toType(row.type),
     entityType: row.entityType,
     entityId: row.entityId,
+    actorType: row.actorType,
     actorName: row.actorName,
+    actorAvatar: row.actorAvatar,
+    principalName: row.principalName,
     title: row.title,
     body: row.body,
     bodyHtml: renderMarkdown(row.body),

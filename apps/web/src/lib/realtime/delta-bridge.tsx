@@ -2,6 +2,7 @@
 
 import {
   useDeltaHandler,
+  useDeniedHandler,
   useObserveSyncId,
   useRealtimeStatus,
   useResumeHandler,
@@ -581,12 +582,16 @@ function recordOwnIssueEcho(client: QueryClient, action: SyncAction): void {
   recordIssueGeneration(client, action, action.data['departure'] === true);
 }
 
-function resetDocAccess(client: QueryClient, action: SyncAction): void {
-  if (action.model !== 'doc' || action.data['revoked'] !== true) return;
+function resetDocAccess(client: QueryClient, docId: string): void {
   client.resetQueries({ queryKey: [DOCS_ROOT] }).catch(noop);
   client.resetQueries({ queryKey: [DOCS_HOME_ROOT] }).catch(noop);
-  client.resetQueries({ queryKey: [DOC_ROOT, action.modelId] }).catch(noop);
-  client.resetQueries({ queryKey: [DOC_COMMENTS_ROOT, action.modelId] }).catch(noop);
+  client.resetQueries({ queryKey: [DOC_ROOT, docId] }).catch(noop);
+  client.resetQueries({ queryKey: [DOC_COMMENTS_ROOT, docId] }).catch(noop);
+}
+
+function resetRevokedDocAccess(client: QueryClient, action: SyncAction): void {
+  if (action.model !== 'doc' || action.data['revoked'] !== true) return;
+  resetDocAccess(client, action.modelId);
 }
 
 function routeAction(
@@ -633,7 +638,7 @@ function routeAction(
   }
   if (DOC_MODELS.has(action.model)) {
     roots.docs = true;
-    resetDocAccess(client, action);
+    resetRevokedDocAccess(client, action);
     if (action.model === 'doc') roots.docIds.add(action.modelId);
     return;
   }
@@ -934,6 +939,17 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   );
 
   useDeltaHandler(applyActions);
+
+  useDeniedHandler(
+    useCallback(
+      (denied: readonly string[]) => {
+        for (const scope of denied) {
+          if (scope.startsWith('doc:') && scope.length > 4) resetDocAccess(client, scope.slice(4));
+        }
+      },
+      [client],
+    ),
+  );
 
   useResumeHandler(
     useCallback(

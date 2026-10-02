@@ -27,7 +27,9 @@ export async function applyCatchup(url: string, named: string): Promise<void> {
   const body = await readFile(catchupPath(named), 'utf8');
   const sql = postgres(url, { max: 1, prepare: false, idle_timeout: 10 });
   try {
-    await sql.unsafe(body).simple();
+    await sql.begin(async (tx) => {
+      await tx.unsafe(body).simple();
+    });
   } finally {
     await sql.end({ timeout: 10 });
   }

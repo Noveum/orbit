@@ -142,6 +142,7 @@ async function seedWorkspace(): Promise<void> {
       title: OPEN_ISSUE_TITLE,
       stateId: seeded.openStateId,
       creatorId: seeded.userId,
+      creatorUserId: seeded.userId,
       priority: 1,
     },
     {
@@ -153,6 +154,7 @@ async function seedWorkspace(): Promise<void> {
       title: GONE_ISSUE_TITLE,
       stateId: seeded.goneStateId,
       creatorId: seeded.userId,
+      creatorUserId: seeded.userId,
       priority: 1,
     },
   ]);

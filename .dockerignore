@@ -1,8 +1,10 @@
 .git
+.env
 .env*
 **/.env*
 **/node_modules
 **/.next
+**/dist
 **/*.tsbuildinfo
 .artifacts
 .vercel
@@ -14,6 +16,8 @@ storage
 **/coverage
 **/test-results
 **/playwright-report
+playwright-report
+test-results
 **/*.log
 **/*.bun-build
 docs/.vitepress/cache
