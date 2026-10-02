@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
-import { cleanup, fireEvent, render, screen, waitFor } from '@/test/render.tsx';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@/test/render.tsx';
 
 const push = mock((_href: string) => undefined);
 const created = mock(async (input: Record<string, unknown>) => ({ id: 'doc_new', ...input }));
@@ -46,12 +46,19 @@ describe('importing a markdown file', () => {
   it('refuses a file too large to be a doc, before it reads it', async () => {
     render(<DocImport collectionId={null} projectId={null} />);
     const huge = fileOf('huge.md', 'x');
+    const read = mock(async () => 'x');
+    Object.defineProperty(huge, 'text', { value: read, configurable: true });
     Object.defineProperty(huge, 'size', { value: DOC_CONTENT_LIMIT * 8, configurable: true });
-    pick(huge);
+    await act(async () => pick(huge));
 
     await waitFor(() => expect(screen.getByTestId('doc-import')).not.toBeDisabled());
+    expect(read).not.toHaveBeenCalled();
     expect(created).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
+    expect(
+      screen.getByText('That file is too long to import. Split it into linked pages.'),
+    ).toBeDefined();
+    expect(screen.getByText('Could not import that file')).toHaveClass('text-danger');
   });
 
   it('says so when the doc cannot be created rather than navigating', async () => {
