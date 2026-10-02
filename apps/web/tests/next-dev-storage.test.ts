@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { copyFile, link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, join, resolve } from 'node:path';
+import { fetch as runtimeFetch } from 'bun';
 import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 import { nodeRuntimePath } from '../../../scripts/next-dev-environment.ts';
 import nextConfig from '../next.config.ts';
@@ -108,7 +109,7 @@ export async function GET() {
         await Bun.sleep(20);
       }
       expect(output).toContain('Ready in');
-      const response = await fetch(`http://127.0.0.1:${port}/storage`, {
+      const response = await runtimeFetch(`http://127.0.0.1:${port}/storage`, {
         signal: AbortSignal.timeout(30_000),
       });
       expect(response.status).toBe(200);
