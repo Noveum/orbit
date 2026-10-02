@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ensureLaneDatabase } from '@orbit/db/test-lane';
 import { defineConfig, devices } from '@playwright/test';
+import { nodeRuntimePath } from '../../scripts/next-dev-environment.ts';
 import { resolveTestDatabaseUrl } from '../../scripts/test-env.ts';
 
 const { BASE } = await import('./e2e/base-url.ts');
@@ -8,6 +9,10 @@ process.env['ORBIT_E2E_BASE_URL'] = BASE;
 const WEB_PORT = new URL(BASE).port || '3000';
 const REALTIME_PORT = process.env['ORBIT_E2E_REALTIME_PORT'] ?? '3101';
 const REALTIME_URL = `ws://localhost:${REALTIME_PORT}`;
+const nextServerEnvironment =
+  process.versions['bun'] === undefined
+    ? {}
+    : { PATH: await nodeRuntimePath(process.env['PATH'] ?? '', process.execPath) };
 const databaseUrl = resolveTestDatabaseUrl('orbit_test_web');
 await ensureLaneDatabase(databaseUrl, 'orbit_test_web');
 const databaseTarget = new URL(databaseUrl);
@@ -51,6 +56,7 @@ export default defineConfig({
       url: `${BASE}/login`,
       reuseExistingServer: false,
       timeout: 180_000,
+      env: nextServerEnvironment,
     },
     {
       command: 'bun --env-file=../../.env ../../apps/realtime/src/index.ts',

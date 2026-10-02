@@ -243,7 +243,6 @@ test('real HTTP OAuth and MCP release flow uses the Next.js route', async ({ bro
     await signIn(page);
     const mainAgentName = `HTTP Researcher ${randomUUID().slice(0, 8)}`;
     const mainToken = await authorizeAgent(page, metadata, mainAgentName);
-    let writerToken = mainToken;
     const rawInitialize = await mcpRequest(mainToken.accessToken);
     expect(rawInitialize.status).toBe(200);
     const mcp = await connectOverHttp(mainToken.accessToken, MCP_URL);
@@ -291,11 +290,11 @@ test('real HTTP OAuth and MCP release flow uses the Next.js route', async ({ bro
     await expectTokenRejected(mainToken.accessToken);
     await mainAgentCard.getByRole('button', { name: 'Resume' }).click();
     await expect(mainAgentCard).toContainText('Lifecycle: active');
-    writerToken = await authorizeAgent(page, metadata, mainAgentName, {
+    const resumedToken = await authorizeAgent(page, metadata, mainAgentName, {
       clientId: mainToken.clientId,
       selectAgentName: mainAgentName,
     });
-    const resumedMain = await connectOverHttp(writerToken.accessToken, MCP_URL);
+    const resumedMain = await connectOverHttp(resumedToken.accessToken, MCP_URL);
     liveClients.push(resumedMain);
     expect(meSchema.parse(await resumedMain.result('get_me')).agent.id).toBe(me.agent.id);
     await resumedMain.close();
@@ -317,7 +316,7 @@ test('real HTTP OAuth and MCP release flow uses the Next.js route', async ({ bro
     await page.goto(`${BASE}/settings/mcp`);
     await mainAgentCard.getByRole('button', { name: 'Pause' }).click();
     await expect(mainAgentCard).toContainText('Lifecycle: disabled');
-    await expectTokenRejected(writerToken.accessToken);
+    await expectTokenRejected(resumedToken.accessToken);
 
     const deletedAgentName = `HTTP delete ${randomUUID().slice(0, 8)}`;
     const deletedConnection = await authorizeAgent(page, metadata, deletedAgentName);
@@ -336,7 +335,7 @@ test('real HTTP OAuth and MCP release flow uses the Next.js route', async ({ bro
     await page.goto(`${BASE}/settings/mcp`);
     await mainAgentCard.getByRole('button', { name: 'Resume' }).click();
     await expect(mainAgentCard).toContainText('Lifecycle: active');
-    writerToken = await authorizeAgent(page, metadata, mainAgentName, {
+    const writerToken = await authorizeAgent(page, metadata, mainAgentName, {
       clientId: mainToken.clientId,
       selectAgentName: mainAgentName,
     });
