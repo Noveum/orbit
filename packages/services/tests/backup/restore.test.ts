@@ -540,4 +540,67 @@ child.on('close', (code) => process.exit(code ?? 0));
       await setRecoveryState(databaseUrl, 'ready');
     }
   }, 30_000);
+
+  it('restores encrypted backups with correct key and refuses invalid or missing keys', async () => {
+    const tempBackupDir = await mkdtemp(join(tmpdir(), 'orbit-enc-restore-test-'));
+    const driver = createMockDriver(new Map());
+    const testKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const wrongKey = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+
+    try {
+      const backupResult = await createBackup({
+        destinationDir: tempBackupDir,
+        databaseUrl,
+        storageDriver: driver,
+        pgDumpPath: resolvedPgDump,
+        encrypt: true,
+        encryptionKey: testKey,
+        encryptionKeyId: 'vault-test',
+      });
+
+      const targetIdentity = computeRestoreTargetIdentity(
+        databaseUrl,
+        process.env['S3_BUCKET'],
+      ).identity;
+
+      await expect(
+        restoreBackup({
+          backupPath: backupResult.backupDir,
+          databaseUrl,
+          confirmDestructiveRestoreTarget: targetIdentity,
+          storageDriver: driver,
+          pgRestorePath: resolvedPgRestore,
+          skipRedisCheck: true,
+        }),
+      ).rejects.toThrow();
+
+      await expect(
+        restoreBackup({
+          backupPath: backupResult.backupDir,
+          databaseUrl,
+          confirmDestructiveRestoreTarget: targetIdentity,
+          storageDriver: driver,
+          pgRestorePath: resolvedPgRestore,
+          skipRedisCheck: true,
+          encryptionKey: wrongKey,
+        }),
+      ).rejects.toThrow();
+
+      const result = await restoreBackup({
+        backupPath: backupResult.backupDir,
+        databaseUrl,
+        confirmDestructiveRestoreTarget: targetIdentity,
+        storageDriver: driver,
+        pgRestorePath: resolvedPgRestore,
+        skipRedisCheck: true,
+        encryptionKey: testKey,
+      });
+
+      expect(result.databaseRestored).toBe(true);
+      expect(result.validation.valid).toBe(true);
+    } finally {
+      await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
+      await setRecoveryState(databaseUrl, 'ready');
+    }
+  }, 30_000);
 });

@@ -9,6 +9,8 @@ export interface ParsedRestoreArgs {
   readonly skipRedisCheck: boolean;
   readonly json: boolean;
   readonly help: boolean;
+  readonly encryptionKeyFile?: string | undefined;
+  readonly encryptionCommand?: string | undefined;
 }
 
 const BOOL_FLAGS: Record<string, string> = {
@@ -106,6 +108,10 @@ export function parseRestoreArgs(argv: readonly string[]): ParsedRestoreArgs {
   const databaseUrl =
     flags.get('--database-url') ?? process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'];
   const pgRestorePath = flags.get('--pg-restore-path') ?? process.env['PG_RESTORE_PATH'];
+  const encryptionKeyFile =
+    flags.get('--encryption-key-file') ?? process.env['ORBIT_BACKUP_ENCRYPTION_KEY_FILE'];
+  const encryptionCommand =
+    flags.get('--encryption-command') ?? process.env['ORBIT_BACKUP_ENCRYPTION_COMMAND'];
 
   return {
     backupPath,
@@ -116,6 +122,8 @@ export function parseRestoreArgs(argv: readonly string[]): ParsedRestoreArgs {
     skipRedisCheck,
     json,
     help,
+    encryptionKeyFile,
+    encryptionCommand,
   };
 }
 
@@ -131,6 +139,8 @@ Options:
   --pg-restore-path=<path>                        Path to local pg_restore binary
   --skip-object-restore                           Skip object storage restoration
   --skip-redis-check                              Skip Redis ping check
+  --encryption-key-file=<path>                    Path to operator encryption key file
+  --encryption-command=<cmd>                      Command to fetch encryption key
   --json                                          Emit machine-readable JSON output
   --help, -h                                      Show this help message
 `);
@@ -221,6 +231,8 @@ async function main(): Promise<void> {
       pgRestorePath: args.pgRestorePath,
       skipObjectRestore: args.skipObjectRestore,
       skipRedisCheck: args.skipRedisCheck,
+      encryptionKeyFile: args.encryptionKeyFile,
+      encryptionCommand: args.encryptionCommand,
     });
 
     printRestoreSuccess(result, args.json);

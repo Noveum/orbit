@@ -420,4 +420,60 @@ describe('createBackup', () => {
       }
     }
   });
+
+  it('creates an encrypted backup with AES-256-GCM envelope encryption', async () => {
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-backup-enc-create-'));
+    const driver = createMockDriver(new Map());
+    const testKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+    try {
+      const result = await createBackup({
+        destinationDir: tempDir,
+        databaseUrl,
+        storageDriver: driver,
+        pgDumpPath: resolvedPgDump,
+        encrypt: true,
+        encryptionKey: testKey,
+        encryptionKeyId: 'vault-test-1',
+      });
+
+      expect(result.manifest.encryption.enabled).toBe(true);
+      expect(result.manifest.encryption.algorithm).toBe('aes-256-gcm');
+      expect(result.manifest.encryption.keyId).toBe('vault-test-1');
+      expect(result.manifest.encryption.encryptedDek).toBeDefined();
+      expect(result.manifest.checksums.databaseDump.file).toBe('database.dump.enc');
+
+      const dumpPath = join(result.backupDir, 'database.dump.enc');
+      const dumpData = await readFile(dumpPath);
+      expect(dumpData.subarray(0, 8).toString('utf8')).toBe('ORBITENC');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails fast on invalid encryption key and cleans workingDir without leaving incomplete backup', async () => {
+    const databaseUrl = resolveTestDatabaseUrl('orbit_test_svc');
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-backup-enc-fail-'));
+    const driver = createMockDriver(new Map());
+
+    try {
+      await expect(
+        createBackup({
+          destinationDir: tempDir,
+          databaseUrl,
+          storageDriver: driver,
+          pgDumpPath: resolvedPgDump,
+          encrypt: true,
+          encryptionKey: 'invalid-too-short-key',
+        }),
+      ).rejects.toThrow();
+
+      const files = await readdir(tempDir);
+      expect(files.filter((f) => f.includes('incomplete')).length).toBe(0);
+      expect(files.filter((f) => f.includes('tmp')).length).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
