@@ -1,18 +1,19 @@
 'use client';
 
-import { ExternalLink, X } from 'lucide-react';
+import { PanelRight, X } from 'lucide-react';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover, tabHover } from '@/lib/interaction.ts';
 import type { DuplicateIssueMatch } from '@/lib/query/schemas.ts';
-import { issueHref } from './issue-link.tsx';
+import { IssueLink } from './issue-link.tsx';
 import { StateGlyph } from './state-glyph.tsx';
 
 export interface DuplicateSuggestionsProps {
   readonly duplicates: readonly DuplicateIssueMatch[];
   readonly onDismiss: () => void;
+  readonly onOpen: (issue: DuplicateIssueMatch) => void;
 }
 
-export function DuplicateSuggestions({ duplicates, onDismiss }: DuplicateSuggestionsProps) {
+export function DuplicateSuggestions({ duplicates, onDismiss, onOpen }: DuplicateSuggestionsProps) {
   if (duplicates.length === 0) return null;
 
   return (
@@ -35,18 +36,17 @@ export function DuplicateSuggestions({ duplicates, onDismiss }: DuplicateSuggest
       <ul className="flex flex-col gap-1">
         {duplicates.map((issue) => (
           <li key={issue.id} className="flex items-center justify-between gap-2">
-            <a
-              href={issueHref(issue.identifier)}
-              target="_blank"
-              rel="noopener noreferrer"
+            <IssueLink
+              identifier={issue.identifier}
+              onPlainClick={() => onOpen(issue)}
               className="group flex min-w-0 items-center gap-1.5 truncate font-medium text-text hover:text-accent"
             >
               <span className="shrink-0 text-faint group-hover:text-accent/80">
                 {issue.identifier}
               </span>
               <span className="truncate">{issue.title}</span>
-              <ExternalLink className={cn('size-2.5 shrink-0', revealOnHover)} aria-hidden="true" />
-            </a>
+              <PanelRight className={cn('size-2.5 shrink-0', revealOnHover)} aria-hidden="true" />
+            </IssueLink>
             <div className="flex shrink-0 items-center gap-1 text-faint">
               <StateGlyph category={issue.state.category} color={issue.state.color} />
               <span>{issue.state.name}</span>
