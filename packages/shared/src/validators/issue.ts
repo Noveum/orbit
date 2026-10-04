@@ -63,6 +63,13 @@ export const issueExpectedPropertiesSchema = z
   })
   .strict();
 
+export const issueMoveExpectedSchema = z
+  .object({
+    stateId: idSchema.optional(),
+    sortOrder: z.number().optional(),
+  })
+  .strict();
+
 export const issueUpdateSchema = z
   .object({
     title: titleSchema.optional(),
@@ -92,6 +99,7 @@ export const issueMoveSchema = z.object({
   priority: prioritySchema.optional(),
   beforeId: idSchema.nullable().default(null),
   afterId: idSchema.nullable().default(null),
+  expected: issueMoveExpectedSchema.optional(),
 });
 
 export const issueBulkUpdateSchema = z.object({
@@ -177,3 +185,4 @@ export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
 export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
 export type IssueExpectedProperties = z.infer<typeof issueExpectedPropertiesSchema>;
 export type IssueMarkDuplicateInput = z.infer<typeof issueMarkDuplicateSchema>;
+export type IssueMoveExpected = z.infer<typeof issueMoveExpectedSchema>;

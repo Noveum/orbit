@@ -4,6 +4,7 @@ import type { IssueRow } from '../../src/work/issue-fields.ts';
 import {
   assertExpectedIssueState,
   createIssue,
+  moveIssue,
   updateIssue,
 } from '../../src/work/issue-service.ts';
 
@@ -221,5 +222,52 @@ describe('service-level updateIssue CAS transaction integration', () => {
         },
       }),
     ).rejects.toThrow('Cannot undo: labels was changed by another update.');
+  });
+});
+
+describe('service-level moveIssue CAS transaction integration', () => {
+  let workspace: Workspace;
+
+  beforeEach(async () => {
+    await resetDatabase();
+    workspace = await createWorkspace('Nova');
+  });
+
+  it('rejects a move when the expected state is stale', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Move CAS state test',
+    });
+
+    await expect(
+      moveIssue(workspace.admin, issue.id, {
+        teamId: workspace.teamId,
+        stateId: issue.stateId,
+        beforeId: null,
+        afterId: null,
+        expected: {
+          stateId: 'stale_state_id',
+        },
+      }),
+    ).rejects.toThrow('Cannot undo: state was changed by another update.');
+  });
+
+  it('rejects a move when the expected position is stale', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Move CAS position test',
+    });
+
+    await expect(
+      moveIssue(workspace.admin, issue.id, {
+        teamId: workspace.teamId,
+        stateId: issue.stateId,
+        beforeId: null,
+        afterId: null,
+        expected: {
+          sortOrder: issue.sortOrder + 1,
+        },
+      }),
+    ).rejects.toThrow('Cannot undo: position was changed by another update.');
   });
 });

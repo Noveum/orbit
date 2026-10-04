@@ -1,11 +1,11 @@
 'use client';
 
-import type { IssueExpectedProperties } from '@orbit/shared/validators';
+import type { IssueExpectedProperties, IssueMoveExpected } from '@orbit/shared/validators';
 import { useCallback, useRef } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { useHotkey } from '@/lib/keyboard/use-hotkey.ts';
-import type { Issue } from '@/lib/query/use-issues.ts';
-import { useUpdateIssue } from '@/lib/query/use-issues.ts';
+import type { Issue, MoveInput } from '@/lib/query/use-issues.ts';
+import { useMoveIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 
 const MAX_HISTORY = 20;
 
@@ -19,8 +19,21 @@ export interface PropertyUndoEntry {
   readonly expectedForRedo: IssueExpectedProperties;
 }
 
-const tabUndoStack: PropertyUndoEntry[] = [];
-const tabRedoStack: PropertyUndoEntry[] = [];
+export interface MoveUndoEntry {
+  readonly sequence: number;
+  readonly issue: Issue;
+  readonly propertyLabel: 'Move';
+  readonly forward: MoveInput;
+  readonly inverse: MoveInput;
+  readonly expectedForUndo: IssueMoveExpected;
+  readonly expectedForRedo: IssueMoveExpected;
+}
+
+export type IssueUndoEntry = PropertyUndoEntry | MoveUndoEntry;
+
+const tabUndoStack: IssueUndoEntry[] = [];
+const tabRedoStack: IssueUndoEntry[] = [];
+
 let actionSequenceCounter = 0;
 
 export function nextActionSequence(): number {
@@ -28,8 +41,7 @@ export function nextActionSequence(): number {
   return actionSequenceCounter;
 }
 
-export function recordTabPropertyChange(entry: PropertyUndoEntry): void {
-  tabRedoStack.length = 0;
+function insertHistoryEntry(entry: IssueUndoEntry): void {
   const insertIndex = tabUndoStack.findIndex((item) => item.sequence > entry.sequence);
   if (insertIndex === -1) {
     tabUndoStack.push(entry);
@@ -41,12 +53,22 @@ export function recordTabPropertyChange(entry: PropertyUndoEntry): void {
   }
 }
 
+export function recordTabPropertyChange(entry: PropertyUndoEntry): void {
+  tabRedoStack.length = 0;
+  insertHistoryEntry(entry);
+}
+
+export function recordTabMove(entry: MoveUndoEntry): void {
+  tabRedoStack.length = 0;
+  insertHistoryEntry(entry);
+}
+
 export function getTabUndoStack(): readonly PropertyUndoEntry[] {
-  return tabUndoStack;
+  return tabUndoStack.filter((entry): entry is PropertyUndoEntry => !isMoveEntry(entry));
 }
 
 export function getTabRedoStack(): readonly PropertyUndoEntry[] {
-  return tabRedoStack;
+  return tabRedoStack.filter((entry): entry is PropertyUndoEntry => !isMoveEntry(entry));
 }
 
 export function clearTabHistory(): void {
@@ -59,19 +81,45 @@ export function pushTestRedoEntry(entry: PropertyUndoEntry): void {
   tabRedoStack.push(entry);
 }
 
+function isMoveEntry(entry: IssueUndoEntry): entry is MoveUndoEntry {
+  return entry.propertyLabel === 'Move';
+}
+
 export function useIssuePropertyUndo() {
   const inFlightRef = useRef(false);
-  const updateIssueMutation = useUpdateIssue();
+
+  const { mutateAsync: updateIssue } = useUpdateIssue();
+  const { mutateAsync: moveIssue } = useMoveIssue();
+
   const { toast } = useToast();
 
   const undo = useCallback(async () => {
     if (inFlightRef.current) return;
+
     const entry = tabUndoStack.pop();
+
     if (entry === undefined) return;
 
     inFlightRef.current = true;
+
     try {
-      await updateIssueMutation.mutateAsync({
+      if (isMoveEntry(entry)) {
+        await moveIssue({
+          ...entry.inverse,
+          expected: entry.expectedForUndo,
+        });
+
+        tabRedoStack.push(entry);
+
+        toast({
+          title: 'Reverted Move',
+          tone: 'neutral',
+        });
+
+        return;
+      }
+
+      await updateIssue({
         issue: entry.issue,
         patch: {
           ...entry.inversePatch,
@@ -80,6 +128,7 @@ export function useIssuePropertyUndo() {
       });
 
       tabRedoStack.push(entry);
+
       toast({
         title: `Reverted ${entry.propertyLabel}`,
         tone: 'neutral',
@@ -89,16 +138,35 @@ export function useIssuePropertyUndo() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [updateIssueMutation, toast]);
+  }, [moveIssue, toast, updateIssue]);
 
   const redo = useCallback(async () => {
     if (inFlightRef.current) return;
+
     const entry = tabRedoStack.pop();
+
     if (entry === undefined) return;
 
     inFlightRef.current = true;
+
     try {
-      await updateIssueMutation.mutateAsync({
+      if (isMoveEntry(entry)) {
+        await moveIssue({
+          ...entry.forward,
+          expected: entry.expectedForRedo,
+        });
+
+        tabUndoStack.push(entry);
+
+        toast({
+          title: 'Restored Move',
+          tone: 'neutral',
+        });
+
+        return;
+      }
+
+      await updateIssue({
         issue: entry.issue,
         patch: {
           ...entry.patch,
@@ -107,6 +175,7 @@ export function useIssuePropertyUndo() {
       });
 
       tabUndoStack.push(entry);
+
       toast({
         title: `Restored ${entry.propertyLabel}`,
         tone: 'neutral',
@@ -116,7 +185,7 @@ export function useIssuePropertyUndo() {
     } finally {
       inFlightRef.current = false;
     }
-  }, [updateIssueMutation, toast]);
+  }, [moveIssue, toast, updateIssue]);
 
   useHotkey('mod+z', undo, {
     label: 'Undo property change',
@@ -133,6 +202,7 @@ export function useIssuePropertyUndo() {
 
   return {
     recordPropertyChange: recordTabPropertyChange,
+    recordMoveChange: recordTabMove,
     undo,
     redo,
   };
