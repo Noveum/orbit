@@ -236,7 +236,7 @@ describe('database release', () => {
         if (ledgerState === 'missing') {
           await sql`drop schema drizzle cascade`;
         } else {
-          await sql`delete from drizzle.__drizzle_migrations where created_at = ${HUMAN_ACTOR_MIGRATION}`;
+          await sql`delete from drizzle.__drizzle_migrations where created_at >= ${HUMAN_ACTOR_MIGRATION}`;
         }
       });
 

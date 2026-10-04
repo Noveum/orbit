@@ -926,7 +926,7 @@ describe('what a token is allowed to do', () => {
       expect(names).not.toContain('invite_member');
 
       for (const tool of tools) {
-        expect(tool.annotations?.readOnlyHint).toBe(true);
+        expect(tool.annotations?.readOnlyHint).toBe(tool.name !== 'list_inbox_conversations');
       }
     } finally {
       await readOnly.close();
