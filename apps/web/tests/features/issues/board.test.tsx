@@ -17,7 +17,7 @@ import type { BoardColumnSource } from '@/features/issues/board.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-import { boardSearch } from '@/lib/query/issue-search.ts';
+import { boardSearch, summarySearch } from '@/lib/query/issue-search.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { BoardPage, Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { seedBoardColumns } from '@/lib/query/use-issues.ts';
@@ -177,9 +177,219 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
   useWorkspace: () => workspace,
 }));
 
-const { Board, boardVisibilityConfig, useBoardVisibilityHold } = await import(
+const { Board, actorBoardGroups, boardVisibilityConfig, useBoardVisibilityHold } = await import(
   '@/features/issues/board.tsx'
 );
+
+describe('Board actor columns outside the base page', () => {
+  function renderActorBoard(showSubIssues = true, truncated = false) {
+    const human = {
+      type: 'user' as const,
+      id: 'human_1',
+      name: 'Visible person',
+      avatar: null,
+      deleted: false,
+    };
+    const rows = Array.from({ length: 100 }, (_entry, index) =>
+      issue({
+        id: `visible_${index}`,
+        identifier: `ENG-${index + 1}`,
+        assigneeId: human.id,
+        assignee: human,
+      }),
+    );
+    const remoteAgent = issue({
+      id: 'outside_page_agent',
+      identifier: 'ENG-101',
+      parentId: 'parent_1',
+      assignee: { type: 'agent', id: 'agent_1', name: 'Deferred bot', avatar: null, deleted: true },
+    });
+    const remoteHuman = issue({
+      id: 'outside_page_human',
+      identifier: 'ENG-102',
+      assigneeId: 'outside_team',
+      assignee: {
+        type: 'user',
+        id: 'outside_team',
+        name: 'Outside person',
+        avatar: null,
+        deleted: false,
+      },
+    });
+    const column: BoardColumnSource = {
+      ...ownedColumnSource,
+      groupBy: 'assignee',
+      display: { ...ownedColumnSource.display, showSubIssues },
+    };
+    const page: BoardPage = {
+      groups: [
+        { id: human.id, total: 100, issues: rows.slice(0, 15), nextCursor: null },
+        { id: 'outside_team', total: 1, issues: [remoteHuman], nextCursor: null },
+        ...(truncated
+          ? Array.from({ length: 58 }, (_entry, index) => ({
+              id: `agent:capped_${index}`,
+              total: 1,
+              issues: [
+                issue({
+                  id: `capped_issue_${index}`,
+                  identifier: `CAP-${index}`,
+                  assignee: {
+                    type: 'agent' as const,
+                    id: `capped_${index}`,
+                    name: `Capped bot ${index}`,
+                    avatar: null,
+                    deleted: false,
+                  },
+                }),
+              ],
+              nextCursor: null,
+            }))
+          : [{ id: 'agent:agent_1', total: 1, issues: [remoteAgent], nextCursor: null }]),
+      ],
+      truncated,
+    };
+    const columnFetch = mock((input: RequestInfo | URL) => {
+      const params = new URL(String(input), 'http://localhost').searchParams;
+      return Promise.resolve(
+        Response.json({
+          issues: params.get('assigneeId') === 'agent:agent_1' ? [remoteAgent] : [],
+          nextCursor: null,
+        }),
+      );
+    });
+    if (truncated) {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: columnFetch,
+      });
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    });
+    client.setQueryData(
+      queryKeys.boardPage(boardSearch(column.query, column.groupBy, column.scope)),
+      page,
+    );
+    const summaryKey = queryKeys.issueSummary(
+      summarySearch(null, column.query, column.groupBy, column.scope),
+    );
+    client.setQueryData(summaryKey, {
+      total: truncated ? 160 : 102,
+      byState: {},
+      groupTotals: {
+        ...Object.fromEntries(page.groups.map((group) => [group.id, group.total])),
+        'agent:agent_1': 1,
+      },
+    });
+    seedBoardColumns(client, column, page, Date.now());
+    const groups = groupIssues(
+      rows,
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: false, ordering: 'manual' },
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <ToastProvider>
+            <HotkeyProvider>
+              <Board groups={groups} groupBy="assignee" draggable={false} columnSource={column} />
+            </HotkeyProvider>
+          </ToastProvider>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    return { client, summaryKey, columnFetch };
+  }
+
+  it('refreshes known human headers from server actors while retaining group metadata', () => {
+    const row = issue({
+      assigneeId: 'outside_team',
+      assignee: {
+        type: 'user',
+        id: 'outside_team',
+        name: 'Real person',
+        avatar: null,
+        deleted: true,
+      },
+    });
+    const group = {
+      id: 'outside_team',
+      title: 'Cached member name',
+      color: '#5a63c8',
+      category: 'started',
+      issues: [],
+      subGroups: [
+        { id: 'priority_1', title: 'Urgent', color: null, category: null, issues: [row] },
+      ],
+      total: 2,
+    };
+    const page: BoardPage = {
+      groups: [{ id: group.id, total: 2, issues: [row], nextCursor: null }],
+      truncated: false,
+    };
+
+    expect(actorBoardGroups([group], page, 'assignee')).toEqual([
+      { ...group, title: 'Real person (Deleted)' },
+    ]);
+  });
+
+  it('fetches an agent column known only to summary after the remote group cap', async () => {
+    const { columnFetch } = renderActorBoard(true, true);
+    expect(screen.getByTestId('board-column-Unknown agent (Agent)')).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('board-column-Deferred bot (Agent) (Deleted)') !== null).toBe(
+        true,
+      ),
+    );
+    expect(screen.getByTestId('issue-card-ENG-101')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-column-Unknown agent (Agent)')).toBeNull();
+    expect(
+      columnFetch.mock.calls.some(([input]) =>
+        String(input).includes('assigneeId=agent%3Aagent_1'),
+      ),
+    ).toBe(true);
+  });
+
+  it('discovers remote agent and missing-member human columns using their real actors', () => {
+    renderActorBoard();
+
+    expect(screen.getByTestId('board-column-Deferred bot (Agent) (Deleted)')).toBeInTheDocument();
+    expect(screen.getByTestId('issue-card-ENG-101')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-Outside person')).toBeInTheDocument();
+    expect(screen.getByTestId('issue-card-ENG-102')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-Visible person')).toBeInTheDocument();
+  });
+
+  it('applies existing display filters to remotely discovered actor columns', () => {
+    renderActorBoard(false);
+
+    expect(screen.queryByTestId('issue-card-ENG-101')).toBeNull();
+    expect(screen.getByTestId('issue-card-ENG-102')).toBeInTheDocument();
+  });
+
+  it('does not keep a stale remote agent column once its count reaches zero', async () => {
+    const { client, summaryKey } = renderActorBoard();
+    expect(screen.getByTestId('board-column-Deferred bot (Agent) (Deleted)')).toBeInTheDocument();
+
+    act(() =>
+      client.setQueryData(summaryKey, {
+        total: 101,
+        byState: {},
+        groupTotals: { human_1: 100, outside_team: 1 },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('board-column-Deferred bot (Agent) (Deleted)') === null).toBe(
+        true,
+      ),
+    );
+    expect(screen.getByTestId('board-column-Visible person')).toBeInTheDocument();
+  });
+});
 
 describe('Board visibility during drag settlement', () => {
   it('does not remount a board for cosmetic card property changes', () => {

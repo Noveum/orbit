@@ -63,6 +63,9 @@ const sprintColumns = groupIssues(
 );
 
 describe('regroupPatch', () => {
+  it('does not offer agent assignment through a human regrouping patch', () => {
+    expect(regroupPatch('assignee', 'agent:agent_1')).toBeNull();
+  });
   it('moves an issue into the sprint the column represents', () => {
     expect(regroupPatch('cycle', 'cycle_2')).toEqual({ cycleId: 'cycle_2' });
   });
@@ -91,6 +94,29 @@ describe('regroupPatch', () => {
     expect(regroupPatch('creator', 'member_1')).toBeNull();
     expect(regroupPatch('estimate', '3')).toBeNull();
     expect(regroupPatch('none', 'none')).toBeNull();
+  });
+});
+
+describe('agent board assignment display', () => {
+  it('preserves human reassignment while rejecting agent assignment and unsupported clearing', () => {
+    const agentIssue = issue({
+      id: 'agent_issue',
+      assignee: { type: 'agent', id: 'agent_1', name: 'Build bot', avatar: null, deleted: false },
+    });
+    const humanIssue = issue({ id: 'human_issue', assigneeId: 'member_1' });
+    const rows = [agentIssue, humanIssue];
+    const groups = groupIssues(
+      rows,
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+
+    expect(planDrop(groups, rows, humanIssue.id, 'agent:agent_1', 'assignee')).toBeNull();
+    expect(planDrop(groups, rows, agentIssue.id, 'none', 'assignee')).toBeNull();
+    expect(planDrop(groups, rows, agentIssue.id, humanIssue.id, 'assignee')).toMatchObject({
+      assigneeId: 'member_1',
+    });
   });
 });
 

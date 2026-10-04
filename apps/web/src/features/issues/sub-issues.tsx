@@ -7,9 +7,12 @@ import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { IssueActorDisplay } from './issue-actor.tsx';
 import { IssuePicker } from './issue-picker.tsx';
+import { useWorkspace } from './workspace-provider.tsx';
 
 export interface SubIssuesProps {
   readonly issue: Issue;
@@ -17,6 +20,7 @@ export interface SubIssuesProps {
 }
 
 export function SubIssues({ issue, subIssues }: SubIssuesProps) {
+  const workspace = useWorkspace();
   const create = useCreateIssue(issue.teamId);
   const update = useUpdateIssue();
   const [title, setTitle] = useState('');
@@ -90,6 +94,15 @@ export function SubIssues({ issue, subIssues }: SubIssuesProps) {
                   {child.identifier}
                 </span>
                 <span className="truncate text-text">{child.title}</span>
+                <span className="ml-auto">
+                  <IssueActorDisplay
+                    actor={resolveIssueActor(
+                      child,
+                      'assignee',
+                      workspace.memberById.get(child.assigneeUserId ?? child.assigneeId ?? ''),
+                    )}
+                  />
+                </span>
               </Link>
             </li>
           ))}
