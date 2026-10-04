@@ -61,7 +61,19 @@ release installs the migration's function and trigger and replays its original
 backfill SQL before recording completion. It does not baseline those artifacts
 away. Repeated releases verify the trigger's table, function, enabled state,
 events and legacy update columns, repairing a missing or disabled trigger.
-They do not rerun the historical Owner backfill for a completed migration.
+When that repair is necessary and the expansion is already recorded, release
+also realigns Human Creator and Assignee fields from their legacy IDs. Trigger
+installation and data repair share one transaction and its table lock, so old
+writes cannot race between them. Rows with either Agent ID are excluded. This
+also applies when later migrations need baselining after a recorded expansion.
+Repair preserves business timestamps, Sync IDs, and all Owner values, including
+NULL. It produces no Activity, notifications or realtime events.
+
+Release does not rerun the historical Owner backfill for a completed migration.
+Assignments made while the trigger was unavailable can leave an Owner missing
+or prevent its first initialization. Their history cannot be reconstructed from
+the current Assignee. Any Owner correction requires independent historical
+evidence and an explicit repair; release does not infer it.
 
 `db:push` does not install SQL functions or triggers. Compatibility acceptance
 therefore uses a dedicated test database upgraded from the official old chain,

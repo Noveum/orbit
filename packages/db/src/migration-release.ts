@@ -140,10 +140,26 @@ async function reconcileHumanActorBaseline(
 ): Promise<void> {
   const migration = migrations.find((entry) => entry.folderMillis === HUMAN_ACTOR_MIGRATION);
   if (migration === undefined) return;
+  const artifactsWereValid = await humanActorArtifactsAreValid(sql);
   await reconcileHumanActorArtifacts(sql, migration);
   if (pendingMigrations.includes(migration)) {
     await sql.unsafe(artifactStatement(migration, 'UPDATE "issue"'));
+  } else if (!artifactsWereValid) {
+    await reconcileHumanActorMirrors(sql);
   }
+}
+
+async function reconcileHumanActorMirrors(sql: postgres.TransactionSql): Promise<void> {
+  await sql`
+    update issue
+    set creator_user_id = creator_id, assignee_user_id = assignee_id
+    where creator_agent_id is null
+      and assignee_agent_id is null
+      and (
+        creator_user_id is distinct from creator_id
+        or assignee_user_id is distinct from assignee_id
+      )
+  `;
 }
 
 async function reconcileNotificationAuditArtifacts(
@@ -523,6 +539,7 @@ export async function releaseDatabase(
       await sql.begin(async (tx) => {
         if (!(await humanActorArtifactsAreValid(tx))) {
           await reconcileHumanActorArtifacts(tx, humanActorMigration);
+          await reconcileHumanActorMirrors(tx);
         }
       });
     }
