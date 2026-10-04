@@ -302,4 +302,157 @@ describe('backup retention and pruning', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('pins backups by directory name and prevents their deletion', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-dir-pinned-'));
+    try {
+      await createMockBackup(
+        tempDir,
+        'orbit-backup-2026-08-01T10-00-00-000Z-aaaaaaaa',
+        '2026-08-01T10:00:00.000Z',
+      );
+      await createMockBackup(
+        tempDir,
+        'orbit-backup-2026-09-01T10-00-00-000Z-bbbbbbbb',
+        '2026-09-01T10:00:00.000Z',
+      );
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+        pinnedBackupIds: ['orbit-backup-2026-08-01T10-00-00-000Z-aaaaaaaa'],
+      });
+
+      expect(result.pinnedBackups).toEqual(['orbit-backup-2026-08-01T10-00-00-000Z-aaaaaaaa']);
+      expect(result.retainedBackups).toContain('orbit-backup-2026-08-01T10-00-00-000Z-aaaaaaaa');
+      expect(result.retainedBackups).toContain('orbit-backup-2026-09-01T10-00-00-000Z-bbbbbbbb');
+      expect(result.deletedBackups).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('guarantees newest backup survives quota limit even when it exceeds maxTotalBytes alone', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-quota-newest-'));
+    try {
+      await createMockBackup(tempDir, 'backup-old', '2026-09-01T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+      await createMockBackup(tempDir, 'backup-newest', '2026-09-10T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        maxTotalBytes: 5000,
+      });
+
+      expect(result.retainedBackups).toEqual(['backup-newest']);
+      expect(result.deletedBackups).toEqual(['backup-old']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves pinned backups under quota pruning even when quota is exceeded', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-quota-pinned-'));
+    try {
+      await createMockBackup(tempDir, 'backup-pinned', '2026-09-01T10:00:00.000Z', {
+        pinned: true,
+        sizeBytes: 10000,
+      });
+      await createMockBackup(tempDir, 'backup-unpinned-old', '2026-09-02T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+      await createMockBackup(tempDir, 'backup-newest', '2026-09-03T10:00:00.000Z', {
+        sizeBytes: 10000,
+      });
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        maxTotalBytes: 15000,
+      });
+
+      expect(result.retainedBackups).toContain('backup-pinned');
+      expect(result.retainedBackups).toContain('backup-newest');
+      expect(result.deletedBackups).toEqual(['backup-unpinned-old']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not delete active temporary directory holding .backup.lock even with maxAgeHours 0', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-lock-'));
+    try {
+      const activeTmp = join(tempDir, 'orbit-backup-running.tmp');
+      await mkdir(activeTmp, { recursive: true });
+      await writeFile(
+        join(activeTmp, '.backup.lock'),
+        JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
+      );
+      await writeFile(join(activeTmp, 'database.dump'), Buffer.alloc(10000));
+
+      const oldTmp = join(tempDir, 'orbit-backup-old.tmp');
+      await mkdir(oldTmp, { recursive: true });
+      await writeFile(join(oldTmp, 'abandoned'), Buffer.alloc(5000));
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        cleanIncomplete: true,
+        incompleteMaxAgeHours: 0,
+      });
+
+      expect(result.deletedIncomplete).toContain('orbit-backup-old.tmp');
+      expect(result.deletedIncomplete).not.toContain('orbit-backup-running.tmp');
+      const activeStat = await stat(activeTmp).catch(() => null);
+      expect(activeStat).not.toBeNull();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat a backup with missing or mismatched dump as newest good backup', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-corrupt-'));
+    try {
+      await createMockBackup(tempDir, 'backup-healthy-old', '2026-09-01T10:00:00.000Z', {
+        sizeBytes: 1000,
+      });
+
+      const corruptDir = join(tempDir, 'backup-corrupt-newest');
+      await mkdir(corruptDir, { recursive: true });
+      const manifest = {
+        formatVersion: '1.0.0',
+        orbitVersion: '0.1.0',
+        sourceRevision: 'abc1234',
+        databaseVersion: 'PostgreSQL 18.0',
+        createdAt: '2026-09-10T10:00:00.000Z',
+        migrationLedger: [],
+        configuration: {},
+        checksums: {
+          databaseDump: {
+            file: 'database.dump',
+            sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            bytes: 5000,
+          },
+          objects: [],
+        },
+        counts: { workspaces: 1, users: 1, attachments: 0, issues: 0 },
+        encryption: { enabled: false },
+        metadata: {},
+      };
+      await writeFile(join(corruptDir, 'manifest.json'), JSON.stringify(manifest), 'utf8');
+      await writeFile(join(corruptDir, 'database.dump'), Buffer.alloc(100));
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+      });
+
+      expect(result.newestGoodBackupId).toBe('backup-healthy-old');
+      expect(result.retainedBackups).toEqual(['backup-healthy-old']);
+      expect(result.deletedBackups).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

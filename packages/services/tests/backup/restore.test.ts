@@ -243,6 +243,12 @@ describe('restoreBackup integration and readiness lifecycle', () => {
     resolvedPgDump = tools.pgDumpPath;
     resolvedPgRestore = tools.pgRestorePath;
     await releaseDatabase(databaseUrl, MIGRATIONS);
+    const cleanSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    try {
+      await cleanSql`delete from attachment`;
+    } finally {
+      await cleanSql.end({ timeout: 5 });
+    }
   });
 
   afterAll(async () => {
@@ -543,9 +549,30 @@ child.on('close', (code) => process.exit(code ?? 0));
 
   it('restores encrypted backups with correct key and refuses invalid or missing keys', async () => {
     const tempBackupDir = await mkdtemp(join(tmpdir(), 'orbit-enc-restore-test-'));
-    const driver = createMockDriver(new Map());
     const testKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
     const wrongKey = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const orgId = `org_enc_${stamp}`;
+    const userId = `usr_enc_${stamp}`;
+    const memberId = `mbr_enc_${stamp}`;
+    const attId = `att_enc_${stamp}`;
+    const storageKey = `${orgId}/issue/att_${stamp}/notes.txt`;
+    const attachmentContent = Buffer.from('confidential attachment payload');
+
+    const seedSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+    try {
+      await seedSql`insert into organization (id, name, slug) values (${orgId}, 'Enc Org', ${orgId})`;
+      await seedSql`insert into "user" (id, name, email, handle) values (${userId}, 'Enc User', ${`${userId}@orbit.test`}, ${userId})`;
+      await seedSql`insert into member (id, organization_id, user_id, role) values (${memberId}, ${orgId}, ${userId}, 'owner')`;
+      await seedSql`insert into attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, status, uploaded_by_id) values (${attId}, ${orgId}, 'issue', 'issue_1', 'notes.txt', 'text/plain', ${attachmentContent.byteLength}, ${storageKey}, 'ready', ${userId})`;
+    } finally {
+      await seedSql.end({ timeout: 5 });
+    }
+
+    const driverStore = new Map<string, Uint8Array>();
+    driverStore.set(storageKey, attachmentContent);
+    const driver = createMockDriver(driverStore);
 
     try {
       const backupResult = await createBackup({
@@ -557,6 +584,15 @@ child.on('close', (code) => process.exit(code ?? 0));
         encryptionKey: testKey,
         encryptionKeyId: 'vault-test',
       });
+
+      const mutateSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        await mutateSql`update organization set name = 'Mutated Enc Org' where id = ${orgId}`;
+      } finally {
+        await mutateSql.end({ timeout: 5 });
+      }
+
+      driverStore.delete(storageKey);
 
       const targetIdentity = computeRestoreTargetIdentity(
         databaseUrl,
@@ -572,7 +608,19 @@ child.on('close', (code) => process.exit(code ?? 0));
           pgRestorePath: resolvedPgRestore,
           skipRedisCheck: true,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/no encryption key or secret source was provided/);
+
+      const checkSql1 = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        const [row] = await checkSql1<
+          { name: string }[]
+        >`select name from organization where id = ${orgId}`;
+        expect(row?.name).toBe('Mutated Enc Org');
+      } finally {
+        await checkSql1.end({ timeout: 5 });
+      }
+      const state1 = await getRecoveryState(databaseUrl);
+      expect(state1?.status).not.toBe('restoring');
 
       await expect(
         restoreBackup({
@@ -584,7 +632,19 @@ child.on('close', (code) => process.exit(code ?? 0));
           skipRedisCheck: true,
           encryptionKey: wrongKey,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/invalid encryption key|tag mismatch/i);
+
+      const checkSql2 = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        const [row] = await checkSql2<
+          { name: string }[]
+        >`select name from organization where id = ${orgId}`;
+        expect(row?.name).toBe('Mutated Enc Org');
+      } finally {
+        await checkSql2.end({ timeout: 5 });
+      }
+      const state2 = await getRecoveryState(databaseUrl);
+      expect(state2?.status).not.toBe('restoring');
 
       const result = await restoreBackup({
         backupPath: backupResult.backupDir,
@@ -598,7 +658,34 @@ child.on('close', (code) => process.exit(code ?? 0));
 
       expect(result.databaseRestored).toBe(true);
       expect(result.validation.valid).toBe(true);
+
+      const checkSql3 = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        const [row] = await checkSql3<
+          { name: string }[]
+        >`select name from organization where id = ${orgId}`;
+        expect(row?.name).toBe('Enc Org');
+      } finally {
+        await checkSql3.end({ timeout: 5 });
+      }
+
+      const restoredData = driverStore.get(storageKey);
+      expect(restoredData).toBeDefined();
+      expect(Buffer.from(restoredData as Uint8Array).toString('utf8')).toBe(
+        'confidential attachment payload',
+      );
     } finally {
+      const cleanupSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
+      try {
+        await cleanupSql`delete from attachment where id = ${attId}`;
+        await cleanupSql`delete from member where id = ${memberId}`;
+        await cleanupSql`delete from "user" where id = ${userId}`;
+        await cleanupSql`delete from organization where id = ${orgId}`;
+      } catch {
+        undefined;
+      } finally {
+        await cleanupSql.end({ timeout: 5 });
+      }
       await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
       await setRecoveryState(databaseUrl, 'ready');
     }

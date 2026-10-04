@@ -88,4 +88,23 @@ describe('backup prune CLI args', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('emits formatted JSON error when invalid flag is passed with --json', () => {
+    const proc = Bun.spawnSync(
+      ['bun', 'scripts/backup/prune.ts', '--keep-count=invalid', '--json'],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+
+    expect(proc.exitCode).toBe(1);
+    const stderr = proc.stderr.toString();
+    const parsed = JSON.parse(stderr) as {
+      status: string;
+      error: string;
+    };
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('Flag --keep-count must be a non-negative integer');
+  });
 });

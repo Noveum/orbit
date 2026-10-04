@@ -24,6 +24,41 @@ async function isObjectAlreadyVerified(
   return existingSha256.toLowerCase() === targetSha256.toLowerCase();
 }
 
+function decryptAndValidatePlaintext(
+  data: Buffer,
+  expected: RestoreStorageOptions['expectedObjects'][number],
+  decrypt?: ((data: Buffer) => Buffer) | undefined,
+): Buffer {
+  if (
+    (expected.plaintextBytes !== undefined || expected.plaintextSha256 !== undefined) &&
+    decrypt === undefined
+  ) {
+    throw validationFailed(
+      `Backup object "${expected.key}" is encrypted but no decryption cipher was provided.`,
+    );
+  }
+
+  if (decrypt === undefined) {
+    return data;
+  }
+
+  const decrypted = decrypt(data);
+  if (expected.plaintextBytes !== undefined && decrypted.byteLength !== expected.plaintextBytes) {
+    throw validationFailed(
+      `Backup object "${expected.key}" plaintext size mismatch: expected ${expected.plaintextBytes} bytes, found ${decrypted.byteLength} bytes.`,
+    );
+  }
+  if (expected.plaintextSha256 !== undefined) {
+    const decSha256 = createHash('sha256').update(decrypted).digest('hex');
+    if (decSha256.toLowerCase() !== expected.plaintextSha256.toLowerCase()) {
+      throw validationFailed(
+        `Backup object "${expected.key}" plaintext checksum mismatch: expected ${expected.plaintextSha256}, found ${decSha256}.`,
+      );
+    }
+  }
+  return decrypted;
+}
+
 async function readAndValidateBackupObject(
   objectsDir: string,
   safeKey: string,
@@ -50,25 +85,7 @@ async function readAndValidateBackupObject(
     );
   }
 
-  if (decrypt !== undefined) {
-    const decrypted = decrypt(data);
-    if (expected.plaintextBytes !== undefined && decrypted.byteLength !== expected.plaintextBytes) {
-      throw validationFailed(
-        `Backup object "${expected.key}" plaintext size mismatch: expected ${expected.plaintextBytes} bytes, found ${decrypted.byteLength} bytes.`,
-      );
-    }
-    if (expected.plaintextSha256 !== undefined) {
-      const decSha256 = createHash('sha256').update(decrypted).digest('hex');
-      if (decSha256.toLowerCase() !== expected.plaintextSha256.toLowerCase()) {
-        throw validationFailed(
-          `Backup object "${expected.key}" plaintext checksum mismatch: expected ${expected.plaintextSha256}, found ${decSha256}.`,
-        );
-      }
-    }
-    return decrypted;
-  }
-
-  return data;
+  return decryptAndValidatePlaintext(data, expected, decrypt);
 }
 
 export async function restoreStorageObjects(

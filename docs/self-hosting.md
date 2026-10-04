@@ -375,14 +375,28 @@ bun run backup:create --destination /var/backups/orbit
 ##### Key rotation and custody
 
 - **Key rotation:** When rotating to a new master key, new backups are encrypted
-  with the new key ID. Existing backups remain restorable because each archive
-  records `keyId` in `manifest.json`.
+  with the new key ID. Restore does not look up keys automatically by `keyId`,
+  so the operator must supply the corresponding master key that matches the archive's
+  encryption key ID when restoring an older backup.
 - **Recovery custody:** Store recovery keys in an offsite secret manager (e.g.
   AWS KMS, HashiCorp Vault, 1Password, or hardware security module). Orbit never
   uploads backups or keys to Noveum infrastructure.
 - **Distinction from image signatures:** Encrypted backup archives protect customer
   data at rest. Container image provenance and signatures (e.g. Cosign) protect
   executable code and supply-chain integrity, and operate independently.
+
+#### Backup limitations
+
+- **Online object capture:** The database snapshot guarantees consistent relational
+  state, and object storage capture fetches all attachments present when the
+  snapshot began. If external tooling deletes an object from storage while Orbit
+  is running, the backup fails rather than publishing a partial archive.
+- **Local scratch disk space:** The destination directory must have enough disk
+  capacity to hold the uncompressed PostgreSQL dump and all attachment objects.
+  When encryption is enabled, additional temporary scratch space is required while
+  the raw dump and the encrypted ciphertext file (`database.dump.enc`) coexist during
+  encryption. Similarly, restore decrypts the full database dump into a temporary
+  directory before passing it to `pg_restore`.
 
 #### Guarded restore and validation
 
@@ -431,21 +445,10 @@ bun run backup:prune --destination ./backups --keep-count 10 --dry-run
 4. **Stale backup monitoring:** When `--stale-alert-hours=<N>` is set, `backup:prune`
    exits with code 2 and writes an alert if the newest backup exceeds the threshold.
 
-#### Platform-neutral scheduling examples
+#### Automated scheduling with systemd
 
-Do not run cron jobs inside every web replica. Use one explicit external
-orchestration job:
-
-##### 1. Docker Compose runner
-
-See `deploy/backup/compose.backup.yaml` for a dedicated container service:
-
-```bash
-# Run backup and retention via Docker Compose
-docker compose -f deploy/backup/compose.backup.yaml run --rm backup-runner
-```
-
-##### 2. Systemd timers
+Do not run backup cron jobs inside every web replica. Use an external
+orchestration mechanism such as systemd timers on the host running the backup tools.
 
 Install `deploy/backup/systemd/orbit-backup.timer` and `orbit-backup-prune.timer`:
 
@@ -456,13 +459,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now orbit-backup.timer orbit-backup-prune.timer
 ```
 
-##### 3. Kubernetes CronJob
-
-Deploy `deploy/backup/kubernetes/cronjob.yaml`:
-
-```bash
-kubectl apply -f deploy/backup/kubernetes/cronjob.yaml
-```
+Alternatively, invoke `deploy/backup/run-backup-and-prune.sh` from a single external
+cron job on a dedicated administration host.
 
 ### Scaling
 

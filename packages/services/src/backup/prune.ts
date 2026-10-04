@@ -86,16 +86,16 @@ async function calculateDirectorySize(dirPath: string): Promise<number> {
 
 async function isPinnedBackup(
   backupDir: string,
+  backupId: string,
   manifest: BackupManifest,
   pinnedIds: readonly string[] | undefined,
 ): Promise<boolean> {
+  if (pinnedIds?.includes(backupId)) {
+    return true;
+  }
+
   const ownId = manifest.metadata['backupId'];
-  const fallbackId = manifest.sourceRevision;
-  if (
-    pinnedIds !== undefined &&
-    ((ownId !== undefined && ownId.length > 0 && pinnedIds.includes(ownId)) ||
-      pinnedIds.includes(fallbackId))
-  ) {
+  if (ownId !== undefined && ownId.length > 0 && pinnedIds?.includes(ownId)) {
     return true;
   }
 
@@ -165,6 +165,29 @@ function retainGfsSlots(
   }
 }
 
+async function shouldCleanCandidate(
+  fullPath: string,
+  name: string,
+  maxAgeHours: number | undefined,
+): Promise<boolean> {
+  const itemStat = await stat(fullPath).catch(() => null);
+  if (itemStat === null) {
+    return false;
+  }
+
+  const lockStat = await stat(join(fullPath, '.backup.lock')).catch(() => null);
+  if (lockStat !== null) {
+    const lockAgeHours = (Date.now() - lockStat.mtime.getTime()) / (1000 * 60 * 60);
+    if (lockAgeHours < 24) {
+      return false;
+    }
+  }
+
+  const ageHours = (Date.now() - itemStat.mtime.getTime()) / (1000 * 60 * 60);
+  const thresholdHours = maxAgeHours ?? (name.endsWith('.tmp') ? 24 : 0);
+  return ageHours >= thresholdHours;
+}
+
 async function cleanIncompleteDirectories(
   destinationDir: string,
   candidates: readonly string[],
@@ -177,14 +200,7 @@ async function cleanIncompleteDirectories(
 
   for (const name of candidates) {
     const fullPath = join(destinationDir, name);
-    const itemStat = await stat(fullPath).catch(() => null);
-    if (itemStat === null) {
-      continue;
-    }
-
-    const ageHours = (Date.now() - itemStat.mtime.getTime()) / (1000 * 60 * 60);
-    const thresholdHours = maxAgeHours ?? (name.endsWith('.tmp') ? 24 : 0);
-    if (ageHours < thresholdHours) {
+    if (!(await shouldCleanCandidate(fullPath, name, maxAgeHours))) {
       continue;
     }
 
@@ -217,8 +233,15 @@ async function tryDiscoverBackup(
   try {
     const rawText = await readFile(manifestPath, 'utf8');
     const parsedManifest = backupManifestSchema.parse(JSON.parse(rawText));
+    const dumpMeta = parsedManifest.checksums.databaseDump;
+    const dumpFilePath = join(fullPath, dumpMeta.file);
+    const dumpStat = await stat(dumpFilePath);
+    if (!dumpStat.isFile() || dumpStat.size !== dumpMeta.bytes) {
+      return undefined;
+    }
+
     const size = await calculateDirectorySize(fullPath);
-    const isPinned = await isPinnedBackup(fullPath, parsedManifest, pinnedIds);
+    const isPinned = await isPinnedBackup(fullPath, name, parsedManifest, pinnedIds);
 
     return {
       id: name,

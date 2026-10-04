@@ -200,7 +200,14 @@ Options:
 }
 
 async function main(): Promise<void> {
-  const args = parsePruneArgs(process.argv);
+  let args: ParsedPruneArgs;
+  try {
+    args = parsePruneArgs(process.argv);
+  } catch (error) {
+    const isJson = process.argv.includes('--json');
+    handlePruneError({ json: isJson } as ParsedPruneArgs, error);
+    return;
+  }
 
   if (args.help) {
     printHelp();

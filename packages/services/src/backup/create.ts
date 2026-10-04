@@ -160,6 +160,11 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
   const incompleteDir = join(destinationDir, `${backupId}.incomplete`);
 
   await mkdir(workingDir, { recursive: true, mode: 0o700 });
+  const lockFilePath = join(workingDir, '.backup.lock');
+  await writeFile(lockFilePath, JSON.stringify({ pid: process.pid, createdAt: Date.now() }), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
 
   try {
     const preflight = await verifyPreflight(databaseUrl, options.migrationsFolder);
@@ -210,6 +215,7 @@ export async function createBackup(options: BackupCreateOptions): Promise<Backup
       mode: 0o600,
     });
 
+    await rm(lockFilePath, { force: true });
     await rename(workingDir, targetDir);
 
     return {
@@ -273,6 +279,7 @@ async function cleanupFailedWorkingDir(
   incompleteDir: string,
   encryptionRequested: boolean,
 ): Promise<void> {
+  await rm(join(workingDir, '.backup.lock'), { force: true }).catch(() => undefined);
   if (encryptionRequested) {
     await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
     return;
