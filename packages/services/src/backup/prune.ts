@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { createReadStream, type Dirent } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import {
@@ -8,6 +7,7 @@ import {
   backupManifestSchema,
   validationFailed,
 } from '@orbit/shared';
+import { verifyPreMutationChecksums } from './checksums.ts';
 
 export interface BackupPruneOptions {
   readonly destinationDir: string;
@@ -218,16 +218,6 @@ async function cleanIncompleteDirectories(
   return { deleted, failed, freedBytes };
 }
 
-function calculateFileSha256(filePath: string): Promise<string> {
-  return new Promise((resolveHash, reject) => {
-    const hash = createHash('sha256');
-    const stream = createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolveHash(hash.digest('hex')));
-    stream.on('error', reject);
-  });
-}
-
 async function tryDiscoverBackup(
   destinationDir: string,
   name: string,
@@ -239,17 +229,7 @@ async function tryDiscoverBackup(
   try {
     const rawText = await readFile(manifestPath, 'utf8');
     const parsedManifest = backupManifestSchema.parse(JSON.parse(rawText));
-    const dumpMeta = parsedManifest.checksums.databaseDump;
-    const dumpFilePath = join(fullPath, dumpMeta.file);
-    const dumpStat = await stat(dumpFilePath);
-    if (!dumpStat.isFile() || dumpStat.size !== dumpMeta.bytes) {
-      return undefined;
-    }
-
-    const actualSha256 = await calculateFileSha256(dumpFilePath);
-    if (actualSha256 !== dumpMeta.sha256) {
-      return undefined;
-    }
+    await verifyPreMutationChecksums(fullPath, parsedManifest);
 
     const size = await calculateDirectorySize(fullPath);
     const isPinned = await isPinnedBackup(fullPath, parsedManifest, pinnedIds);

@@ -506,4 +506,123 @@ describe('backup retention and pruning', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('accepts backups where manifest checksums use uppercase hexadecimal digits', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-upper-case-'));
+    try {
+      const backupDir = join(tempDir, 'backup-upper-case');
+      await mkdir(backupDir, { recursive: true });
+      const dumpBuffer = Buffer.alloc(1024, 0x05);
+      const dumpSha256 = createHash('sha256').update(dumpBuffer).digest('hex').toUpperCase();
+
+      const manifest = {
+        formatVersion: '1.0.0',
+        orbitVersion: '0.1.0',
+        sourceRevision: 'abc1234',
+        databaseVersion: 'PostgreSQL 18.0',
+        createdAt: '2026-09-15T10:00:00.000Z',
+        migrationLedger: [],
+        configuration: {},
+        checksums: {
+          databaseDump: {
+            file: 'database.dump',
+            sha256: dumpSha256,
+            bytes: 1024,
+          },
+          objects: [],
+        },
+        counts: { workspaces: 1, users: 1, attachments: 0, issues: 0 },
+        encryption: { enabled: false },
+        metadata: {},
+      };
+      await writeFile(join(backupDir, 'manifest.json'), JSON.stringify(manifest), 'utf8');
+      await writeFile(join(backupDir, 'database.dump'), dumpBuffer);
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+      });
+
+      expect(result.newestGoodBackupId).toBe('backup-upper-case');
+      expect(result.retainedBackups).toEqual(['backup-upper-case']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects backups where any referenced object is missing or corrupted', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-objects-'));
+    try {
+      const goodDate = '2026-09-01T10:00:00.000Z';
+      await createMockBackup(tempDir, 'backup-healthy-old', goodDate);
+
+      const backupMissingObj = join(tempDir, 'backup-missing-obj');
+      await mkdir(join(backupMissingObj, 'objects'), { recursive: true });
+      const dumpBuffer = Buffer.alloc(1024, 0x06);
+      const dumpSha256 = createHash('sha256').update(dumpBuffer).digest('hex');
+      const objBuffer = Buffer.from('hello attachment', 'utf8');
+      const objSha256 = createHash('sha256').update(objBuffer).digest('hex');
+
+      const manifestMissing = {
+        formatVersion: '1.0.0',
+        orbitVersion: '0.1.0',
+        sourceRevision: 'abc1234',
+        databaseVersion: 'PostgreSQL 18.0',
+        createdAt: '2026-09-20T10:00:00.000Z',
+        migrationLedger: [],
+        configuration: {},
+        checksums: {
+          databaseDump: {
+            file: 'database.dump',
+            sha256: dumpSha256,
+            bytes: 1024,
+          },
+          objects: [
+            {
+              key: 'att/file1.png',
+              sha256: objSha256,
+              bytes: objBuffer.byteLength,
+              contentType: 'image/png',
+            },
+          ],
+        },
+        counts: { workspaces: 1, users: 1, attachments: 1, issues: 0 },
+        encryption: { enabled: false },
+        metadata: {},
+      };
+      await writeFile(
+        join(backupMissingObj, 'manifest.json'),
+        JSON.stringify(manifestMissing),
+        'utf8',
+      );
+      await writeFile(join(backupMissingObj, 'database.dump'), dumpBuffer);
+
+      const resultMissing = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+      });
+      expect(resultMissing.newestGoodBackupId).toBe('backup-healthy-old');
+
+      await mkdir(join(backupMissingObj, 'objects', 'att'), { recursive: true });
+      await writeFile(
+        join(backupMissingObj, 'objects', 'att', 'file1.png'),
+        Buffer.from('corrupted payload', 'utf8'),
+      );
+
+      const resultCorrupt = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+      });
+      expect(resultCorrupt.newestGoodBackupId).toBe('backup-healthy-old');
+
+      await writeFile(join(backupMissingObj, 'objects', 'att', 'file1.png'), objBuffer);
+      const resultFixed = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+      });
+      expect(resultFixed.newestGoodBackupId).toBe('backup-missing-obj');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
