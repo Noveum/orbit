@@ -23,14 +23,13 @@ describe('MCP connection ownership', () => {
   });
 
   it('rejects another owner, another workspace and a missing owner', () => {
+    const administrator: Principal = { ...owner, role: 'admin' };
     for (const grant of [
       { userId: 'another-owner', organizationId: owner.organizationId },
       { userId: owner.userId, organizationId: 'another-workspace' },
       { userId: null, organizationId: owner.organizationId },
     ]) {
-      expect(() => assertMcpGrantOwner({ ...owner, role: 'admin' }, grant)).toThrow(
-        'Only the owner',
-      );
+      expect(() => assertMcpGrantOwner(administrator, grant)).toThrow('Only the owner');
     }
   });
 });
