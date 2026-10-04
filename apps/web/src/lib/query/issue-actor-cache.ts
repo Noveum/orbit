@@ -1,6 +1,6 @@
 import type { SyncAction } from '@orbit/shared/events';
 import type { IssueActor } from '@orbit/shared/validators';
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import type { Query, QueryCacheNotifyEvent, QueryClient, QueryKey } from '@tanstack/react-query';
 import { z } from 'zod';
 import { type IssueActorRole, resolveIssueActor } from './issue-actors.ts';
 import {
@@ -37,6 +37,7 @@ interface MemberProfile {
 
 interface ProfileUpdate {
   readonly syncId: number;
+  readonly dataUpdatedAt: number;
   readonly profile: MemberProfile;
   readonly pending: boolean;
 }
@@ -47,6 +48,10 @@ interface ActorCache {
   readonly profiles: Map<string, ProfileUpdate>;
   readonly revisions: Map<string, number>;
   readonly listRevisions: Map<string, number>;
+  readonly bootstrapSources: WeakMap<
+    Query,
+    { readonly data: unknown; readonly source: ProfileSource }
+  >;
   patching: boolean;
 }
 
@@ -61,6 +66,7 @@ function actorCache(client: QueryClient): ActorCache {
       profiles: new Map(),
       revisions: new Map(),
       listRevisions: new Map(),
+      bootstrapSources: new WeakMap(),
       patching: false,
     };
     actorCaches.set(client, cache);
@@ -142,7 +148,12 @@ function patchActorCaches(client: QueryClient): void {
       if (current === undefined) continue;
       const next = patchActorQueryData(query.queryKey[0], current, update);
       if (next === current) continue;
-      client.setQueryData(query.queryKey, next);
+      const bootstrapSource = cache.bootstrapSources.get(query);
+      const stored = client.setQueryData(query.queryKey, next, {
+        updatedAt: query.state.dataUpdatedAt,
+      });
+      if (bootstrapSource !== undefined)
+        cache.bootstrapSources.set(query, { ...bootstrapSource, data: stored });
       if (query.queryKey[0] === ISSUES_ROOT) {
         const key = JSON.stringify(query.queryKey);
         cache.listRevisions.set(key, (cache.listRevisions.get(key) ?? 0) + 1);
@@ -233,6 +244,10 @@ export function recordMemberActorUpdate(
   const { userId, name, image } = parsed.data;
   cache.profiles.set(key, {
     syncId: action.syncId,
+    dataUpdatedAt:
+      name === undefined && image === undefined
+        ? (previous?.dataUpdatedAt ?? Number.NEGATIVE_INFINITY)
+        : Date.now(),
     profile: {
       ...previous?.profile,
       userId,
@@ -267,7 +282,13 @@ export function recordMemberActorUpdate(
   return true;
 }
 
-function acceptFetchedActors(cache: ActorCache, data: unknown, root: unknown): void {
+function acceptFetchedActors(
+  cache: ActorCache,
+  data: unknown,
+  root: unknown,
+  dataUpdatedAt: number,
+  source: 'fetch' | 'restore' = 'fetch',
+): void {
   let rows: readonly Issue[];
   switch (root) {
     case ISSUES_ROOT:
@@ -299,14 +320,29 @@ function acceptFetchedActors(cache: ActorCache, data: unknown, root: unknown): v
       if (actor?.type !== 'user') continue;
       const key = profileKey(organizationId, actor.id);
       const previous = cache.profiles.get(key);
-      if (previous === undefined) continue;
+      if (source === 'restore' && !canRestoreProfile(previous, dataUpdatedAt)) continue;
       cache.profiles.set(key, {
-        ...previous,
+        syncId: previous?.syncId ?? Number.NEGATIVE_INFINITY,
+        dataUpdatedAt,
         pending: false,
         profile: { userId: actor.id, name: actor.name, image: actor.avatar },
       });
     }
   }
+}
+
+type ProfileSource = 'fetch' | 'restore' | 'manual';
+
+function canRestoreProfile(previous: ProfileUpdate | undefined, dataUpdatedAt: number): boolean {
+  return previous === undefined || (!previous.pending && dataUpdatedAt > previous.dataUpdatedAt);
+}
+
+function profileSource(event: QueryCacheNotifyEvent): ProfileSource | undefined {
+  if (event.type === 'added') return 'restore';
+  if (event.type !== 'updated') return undefined;
+  if (event.action.type === 'setState') return 'restore';
+  if (event.action.type !== 'success') return undefined;
+  return event.action.manual === true ? 'manual' : 'fetch';
 }
 
 export function observeIssueActorProfiles(
@@ -317,35 +353,89 @@ export function observeIssueActorProfiles(
   const cache = actorCache(client);
   cache.organizationId = organizationId;
   cache.teamIds = new Set(teamIds);
-  return client.getQueryCache().subscribe((event) => {
-    if (cache.patching || event.type !== 'updated' || event.action.type !== 'success') return;
+  const stop = client.getQueryCache().subscribe((event) => {
+    if (cache.patching || event.query.state.data === undefined) return;
+    const source = profileSource(event);
+    if (source === undefined) return;
     if (event.query.queryKey[0] === BOOTSTRAP_ROOT) {
-      acceptBootstrapProfiles(cache, event.query.state.data, organizationId, event.action.manual);
-    } else if (event.action.manual !== true && event.query.state.data !== undefined) {
-      acceptFetchedActors(cache, event.query.state.data, event.query.queryKey[0]);
+      cache.bootstrapSources.set(event.query, { data: event.query.state.data, source });
+      acceptBootstrapProfiles(
+        cache,
+        event.query.state.data,
+        organizationId,
+        source,
+        event.query.state.dataUpdatedAt,
+      );
+    } else if (source === 'fetch') {
+      acceptFetchedActors(
+        cache,
+        event.query.state.data,
+        event.query.queryKey[0],
+        event.query.state.dataUpdatedAt,
+      );
     }
     patchActorCaches(client);
   });
+  const bootstrapUpdatedAt = seedCachedBootstrapProfiles(client, cache, organizationId);
+  if (bootstrapUpdatedAt !== undefined) {
+    for (const query of client
+      .getQueryCache()
+      .findAll()
+      .toSorted((left, right) => left.state.dataUpdatedAt - right.state.dataUpdatedAt)) {
+      if (query.state.data !== undefined && query.state.dataUpdatedAt > bootstrapUpdatedAt)
+        acceptFetchedActors(
+          cache,
+          query.state.data,
+          query.queryKey[0],
+          query.state.dataUpdatedAt,
+          'restore',
+        );
+    }
+  }
+  patchActorCaches(client);
+  return stop;
+}
+
+function seedCachedBootstrapProfiles(
+  client: QueryClient,
+  cache: ActorCache,
+  organizationId: string,
+): number | undefined {
+  for (const query of client
+    .getQueryCache()
+    .findAll({ queryKey: [BOOTSTRAP_ROOT] })
+    .toSorted((left, right) => right.state.dataUpdatedAt - left.state.dataUpdatedAt)) {
+    const parsed = bootstrapSchema.safeParse(query.state.data);
+    if (!parsed.success || parsed.data.organizationId !== organizationId) continue;
+    const snapshot = cache.bootstrapSources.get(query);
+    const source =
+      snapshot?.data === query.state.data && snapshot?.source === 'manual' ? 'manual' : 'restore';
+    acceptBootstrapProfiles(cache, parsed.data, organizationId, source, query.state.dataUpdatedAt);
+    return query.state.dataUpdatedAt;
+  }
+  return undefined;
 }
 
 function acceptBootstrapProfiles(
   cache: ActorCache,
   data: unknown,
   organizationId: string,
-  manual: boolean | undefined,
+  source: ProfileSource,
+  dataUpdatedAt: number,
 ): void {
   const parsed = bootstrapSchema.safeParse(data);
   if (!parsed.success || parsed.data.organizationId !== organizationId) return;
-  for (const [key, update] of cache.profiles) {
-    if (
-      (!update.pending && manual === true) ||
-      key !== profileKey(organizationId, update.profile.userId)
-    )
-      continue;
-    const member = parsed.data.members.find((member) => member.id === update.profile.userId);
-    if (member === undefined || member.isAgent === true) continue;
+  for (const member of parsed.data.members) {
+    if (member.isAgent === true) continue;
+    const key = profileKey(organizationId, member.id);
+    const update = cache.profiles.get(key);
+    if (update !== undefined) {
+      if (source === 'manual' && !update.pending) continue;
+      if (source === 'restore' && dataUpdatedAt <= update.dataUpdatedAt) continue;
+    }
     cache.profiles.set(key, {
-      ...update,
+      syncId: update?.syncId ?? Number.NEGATIVE_INFINITY,
+      dataUpdatedAt,
       pending: false,
       profile: { userId: member.id, name: member.name, image: member.image },
     });

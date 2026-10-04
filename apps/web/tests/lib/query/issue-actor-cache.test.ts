@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { dehydrate, hydrate, QueryClient, QueryObserver } from '@tanstack/react-query';
 import { waitFor } from '@testing-library/react';
 import {
   issueMutationListRevisionGeneration,
@@ -106,6 +106,329 @@ function client(): QueryClient {
 }
 
 describe('member events refresh Issue Human Actors', () => {
+  it.each(['fetch', 'cached', 'hydrate-added', 'hydrate-existing'] as const)(
+    'refreshes persisted Actors without a member event through %s while Issue reads are offline',
+    async (source) => {
+      const bob = { ...human, name: 'Bob', avatar: '/bob.png' };
+      const carol = { ...human, name: 'Carol', avatar: null };
+      const row = issue({ creator: bob, assignee: bob, owner: bob });
+      const key = queryKeys.issues('team_1');
+      const stale = new QueryClient();
+      stale.setQueryData(
+        key,
+        { pages: [{ issues: [row], nextCursor: null }], pageParams: [null] },
+        { updatedAt: 1 },
+      );
+      const restored = restorable({
+        buster: '1:user_1:org_1',
+        timestamp: 1,
+        clientState: dehydrate(stale),
+      });
+      const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const fresh = bootstrap([
+        {
+          id: human.id,
+          name: carol.name,
+          image: carol.avatar,
+          email: 'u@orbit.test',
+          handle: null,
+          role: 'member',
+        },
+      ]);
+      if (source === 'fetch' || source === 'cached') hydrate(cache, restored.clientState);
+      if (source === 'hydrate-existing')
+        cache.setQueryData(
+          key,
+          { pages: [{ issues: [row], nextCursor: null }], pageParams: [null] },
+          { updatedAt: 0 },
+        );
+      if (source !== 'fetch')
+        await cache.fetchQuery({ queryKey: queryKeys.bootstrap(null), queryFn: async () => fresh });
+      const stop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+      try {
+        if (source === 'fetch')
+          await cache.fetchQuery({
+            queryKey: queryKeys.bootstrap(null),
+            queryFn: async () => fresh,
+          });
+        if (source === 'hydrate-added' || source === 'hydrate-existing')
+          hydrate(cache, restored.clientState);
+        await expect(
+          cache.fetchQuery({
+            queryKey: key,
+            queryFn: () => Promise.reject(new Error('offline')),
+          }),
+        ).rejects.toThrow('offline');
+        const cached = cache.getQueryData<IssuePages>(key)?.pages[0]?.issues[0];
+        for (const role of ['creator', 'assignee', 'owner'] as const)
+          expect(cached?.[role]).toEqual(carol);
+        expect(cached?.syncId).toBe(row.syncId);
+        expect(cached?.updatedAt).toBe(row.updatedAt);
+        expect(cache.getQueryState(key)?.dataUpdatedAt).toBe(1);
+        cache.setQueryData(
+          queryKeys.bootstrap(null),
+          bootstrap([
+            {
+              id: human.id,
+              name: bob.name,
+              image: bob.avatar,
+              email: 'u@orbit.test',
+              handle: null,
+              role: 'member',
+            },
+          ]),
+        );
+        expect(replayIssueActorProfiles(cache, row).creator).toEqual(carol);
+        const dave = { ...carol, name: 'Dave', avatar: '/dave.png' };
+        await cache.fetchQuery({
+          queryKey: key,
+          queryFn: async () => ({
+            pages: [
+              {
+                issues: [{ ...row, creator: dave, assignee: dave, owner: dave }],
+                nextCursor: null,
+              },
+            ],
+            pageParams: [null],
+          }),
+        });
+        expect(replayIssueActorProfiles(cache, row).owner).toEqual(dave);
+      } finally {
+        stop();
+        stale.clear();
+        cache.clear();
+      }
+    },
+  );
+
+  it('uses the newest workspace Bootstrap before observing and ignores an older restored team Bootstrap', () => {
+    const cache = new QueryClient();
+    const member = {
+      id: human.id,
+      name: 'Carol',
+      image: '/carol.png',
+      email: 'u@orbit.test',
+      handle: null,
+      role: 'member' as const,
+    };
+    cache.setQueryData(
+      queryKeys.bootstrap('ENG'),
+      bootstrap([{ ...member, name: 'Bob', image: '/bob.png' }]),
+      { updatedAt: 1 },
+    );
+    cache.setQueryData(queryKeys.bootstrap(null), bootstrap([member]), { updatedAt: 2 });
+    const stop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+    try {
+      expect(replayIssueActorProfiles(cache, issue()).creator).toEqual({
+        ...human,
+        name: member.name,
+        avatar: member.image,
+      });
+      const stale = new QueryClient();
+      stale.setQueryData(
+        queryKeys.bootstrap('OLD'),
+        bootstrap([{ ...member, name: 'Older', image: null }]),
+        { updatedAt: 1 },
+      );
+      hydrate(cache, dehydrate(stale));
+      expect(replayIssueActorProfiles(cache, issue()).creator?.name).toBe('Carol');
+      recordMemberActorUpdate(cache, action({ userId: human.id, name: 'Newer' }, 20), 'org_1');
+      recordMemberActorUpdate(cache, action({ userId: human.id, name: 'Stale' }, 19), 'org_1');
+      expect(replayIssueActorProfiles(cache, issue()).creator?.name).toBe('Newer');
+      stale.clear();
+    } finally {
+      stop();
+      cache.clear();
+    }
+  });
+
+  it.each(['added', 'existing'] as const)(
+    'accepts a newer hydrated Bootstrap through %s after a cached profile was initialized',
+    async (source) => {
+      const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const member = {
+        id: human.id,
+        name: 'Bob',
+        image: '/bob.png',
+        email: 'u@orbit.test',
+        handle: null,
+        role: 'member' as const,
+      };
+      const key = queryKeys.issues('team_1');
+      cache.setQueryData(queryKeys.bootstrap(null), bootstrap([member]), { updatedAt: 1 });
+      cache.setQueryData(
+        key,
+        { pages: [{ issues: [issue()], nextCursor: null }], pageParams: [null] },
+        { updatedAt: 1 },
+      );
+      const stop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+      const server = new QueryClient();
+      try {
+        expect(replayIssueActorProfiles(cache, issue()).creator?.name).toBe('Bob');
+        server.setQueryData(
+          queryKeys.bootstrap(source === 'added' ? 'ENG' : null),
+          bootstrap([{ ...member, name: 'Carol', image: null }]),
+          { updatedAt: 2 },
+        );
+        hydrate(cache, dehydrate(server));
+        await expect(
+          cache.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(new Error('offline')) }),
+        ).rejects.toThrow('offline');
+        expect(replayIssueActorProfiles(cache, issue()).creator).toEqual({
+          ...human,
+          name: 'Carol',
+          avatar: null,
+        });
+        expect(cache.getQueryState(key)?.dataUpdatedAt).toBe(1);
+        const older = new QueryClient();
+        older.setQueryData(queryKeys.bootstrap('OLD'), bootstrap([member]), { updatedAt: 1 });
+        hydrate(cache, dehydrate(older));
+        expect(replayIssueActorProfiles(cache, issue()).owner?.name).toBe('Carol');
+        older.clear();
+      } finally {
+        stop();
+        cache.clear();
+        server.clear();
+      }
+    },
+  );
+
+  it('preserves newer canonical reads when observing an older cached Bootstrap', async () => {
+    const cache = new QueryClient();
+    const member = {
+      id: human.id,
+      name: 'Bob',
+      image: '/bob.png',
+      email: 'u@orbit.test',
+      handle: null,
+      role: 'member' as const,
+    };
+    cache.setQueryData(queryKeys.bootstrap(null), bootstrap([member]), { updatedAt: 1 });
+    const carol = { ...human, name: 'Carol', avatar: '/carol.png' };
+    const row = issue({ creator: carol, assignee: carol, owner: carol });
+    cache.setQueryData(
+      queryKeys.issues('team_1'),
+      { pages: [{ issues: [row], nextCursor: null }], pageParams: [null] },
+      { updatedAt: 2 },
+    );
+    const stop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+    try {
+      expect(replayIssueActorProfiles(cache, issue()).creator).toEqual(carol);
+      recordMemberActorUpdate(
+        cache,
+        action({ userId: human.id, name: 'After event' }, 20),
+        'org_1',
+      );
+      await cache.fetchQuery({
+        queryKey: queryKeys.bootstrap(null),
+        queryFn: async () => bootstrap([{ ...member, name: 'Dave', image: null }]),
+      });
+      recordMemberActorUpdate(cache, action({ userId: human.id, name: 'Stale' }, 19), 'org_1');
+      expect(replayIssueActorProfiles(cache, row).owner).toEqual({
+        ...human,
+        name: 'Dave',
+        avatar: null,
+      });
+    } finally {
+      stop();
+      cache.clear();
+    }
+  });
+
+  it('retains accepted identity information when the observer remounts after a manual Bootstrap update', () => {
+    const cache = new QueryClient();
+    const member = {
+      id: human.id,
+      name: 'Bob',
+      image: '/bob.png',
+      email: 'u@orbit.test',
+      handle: null,
+      role: 'member' as const,
+    };
+    const key = queryKeys.issues('team_1');
+    cache.setQueryData(
+      queryKeys.bootstrap(null),
+      { ...bootstrap([member]), issues: [issue()] },
+      { updatedAt: 1 },
+    );
+    cache.setQueryData(
+      key,
+      { pages: [{ issues: [issue()], nextCursor: null }], pageParams: [null] },
+      { updatedAt: 1 },
+    );
+    const firstStop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+    recordMemberActorUpdate(
+      cache,
+      action({ userId: human.id, name: 'Carol', image: null }),
+      'org_1',
+    );
+    cache.setQueryData(
+      queryKeys.bootstrap(null),
+      { ...bootstrap([member]), issues: [issue()] },
+      { updatedAt: Date.now() + 1_000 },
+    );
+    firstStop();
+    const stop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+    try {
+      expect(replayIssueActorProfiles(cache, issue()).owner?.name).toBe('Carol');
+      expect(cache.getQueryData<IssuePages>(key)?.pages[0]?.issues[0]?.creator?.name).toBe('Carol');
+      expect(cache.getQueryState(key)?.dataUpdatedAt).toBe(1);
+    } finally {
+      stop();
+      cache.clear();
+    }
+  });
+
+  it('seeds only workspace Human profiles and retains missing members, typed Agents, deleted flags and NULL owners', async () => {
+    const cache = client();
+    const agent = { ...human, type: 'agent' as const, deleted: true };
+    const historical = { ...human, id: 'absent', name: 'Historical' };
+    const legacyAgentMember = { ...human, id: 'agent_member', name: 'Canonical' };
+    const rows = [
+      issue({ creator: { ...human, deleted: true }, assignee: agent, owner: null }),
+      issue({ id: 'missing', creatorId: historical.id, creator: historical }),
+      issue({ id: 'other', organizationId: 'org_other' }),
+      issue({ id: 'legacy', organizationId: '' }),
+      issue({ id: 'unknown', organizationId: '', teamId: 'unknown' }),
+      issue({ id: 'agent_member', creatorId: legacyAgentMember.id, creator: legacyAgentMember }),
+    ];
+    const key = queryKeys.issues('team_1');
+    cache.setQueryData(key, { pages: [{ issues: rows, nextCursor: null }], pageParams: [null] });
+    await cache.fetchQuery({
+      queryKey: queryKeys.bootstrap(null),
+      queryFn: async () =>
+        bootstrap([
+          {
+            id: human.id,
+            name: 'Carol',
+            image: null,
+            email: 'u@orbit.test',
+            handle: null,
+            role: 'member',
+          },
+          {
+            id: legacyAgentMember.id,
+            name: 'Legacy Agent',
+            image: null,
+            email: 'a@orbit.test',
+            handle: null,
+            role: 'member',
+            isAgent: true,
+          },
+        ]),
+    });
+    const current = cache.getQueryData<IssuePages>(key)?.pages[0]?.issues;
+    expect(current?.[0]?.creator).toEqual({ ...human, name: 'Carol', avatar: null, deleted: true });
+    expect(current?.[0]?.assignee).toEqual(agent);
+    expect(current?.[0]?.owner).toBeNull();
+    expect(current?.[1]?.creator).toEqual(historical);
+    expect(current?.[2]?.creator).toEqual(human);
+    expect(current?.[3]?.creator?.name).toBe('Carol');
+    expect(current?.[4]?.creator).toEqual(human);
+    expect(current?.[5]?.creator).toEqual(legacyAgentMember);
+    cache.clear();
+  });
+
   it('patches every cache occurrence and fences late reads without changing Issue versions', () => {
     const cache = client();
     const row = issue();
