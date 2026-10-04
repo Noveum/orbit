@@ -27,6 +27,7 @@ import {
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
 import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
+import { bootstrapSchema } from '@/lib/query/schemas.ts';
 import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
@@ -174,6 +175,102 @@ function trackInvalidations(client: QueryClient): unknown[][] {
 }
 
 describe('DeltaBridge Actor views', () => {
+  it.each(['remote', 'own'] as const)(
+    'refreshes Human Actor profiles after a raw %s member event completes bootstrap',
+    async (origin) => {
+      const client = mount();
+      const human = {
+        type: 'user' as const,
+        id: 'user_1',
+        name: 'Old',
+        avatar: '/old.png',
+        deleted: false,
+      };
+      const row = issue({
+        creator: human,
+        assigneeId: human.id,
+        assignee: human,
+        owner: human,
+        ownerUserId: human.id,
+      });
+      client.setQueryData(queryKeys.issues(TEAM), {
+        pages: [{ issues: [row], nextCursor: null }],
+        pageParams: [null],
+      });
+      client.setQueryData(queryKeys.issue(row.identifier), detailFor(row, []));
+      const bootstrap = bootstrapSchema.parse({
+        userId: human.id,
+        organizationId: 'org_1',
+        role: 'admin',
+        teams: [],
+        activeTeamId: null,
+        states: [],
+        labels: [],
+        members: [
+          {
+            id: human.id,
+            name: human.name,
+            image: human.avatar,
+            email: 'u@orbit.test',
+            handle: null,
+            role: 'member',
+          },
+        ],
+        projects: [],
+        cycles: [],
+        issues: [row],
+      });
+      const fresh = {
+        ...bootstrap,
+        members: bootstrap.members.map((member) => ({ ...member, name: 'Fresh', image: null })),
+      };
+      client.setQueryData(queryKeys.bootstrap(null), bootstrap);
+      const pending = deferred<typeof bootstrap>();
+      const observer = new QueryObserver(client, {
+        queryKey: queryKeys.bootstrap(null),
+        queryFn: () => pending.promise,
+        staleTime: Number.POSITIVE_INFINITY,
+      });
+      const unsubscribe = observer.subscribe(() => undefined);
+      try {
+        act(() =>
+          capturedHandler?.([
+            action({
+              model: 'member',
+              modelId: 'membership_1',
+              data: {
+                id: 'membership_1',
+                userId: human.id,
+                organizationId: 'org_1',
+                role: 'member',
+              },
+              ...(origin === 'own' ? { originClientId: clientId() } : {}),
+            }),
+          ]),
+        );
+        expect(
+          client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.creator,
+        ).toEqual(human);
+        await waitFor(() =>
+          expect(client.getQueryState(queryKeys.bootstrap(null))?.fetchStatus).toBe('fetching'),
+        );
+        pending.resolve(fresh);
+        await waitFor(() =>
+          expect(
+            client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.creator
+              ?.name,
+          ).toBe('Fresh'),
+        );
+        const updated = client.getQueryData<ReturnType<typeof detailFor>>(
+          queryKeys.issue(row.identifier),
+        )?.issue;
+        for (const role of ['creator', 'assignee', 'owner'] as const)
+          expect(updated?.[role]).toEqual({ ...human, name: 'Fresh', avatar: null });
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
   it.each(['parent', 'child', 'relation'] as const)(
     'preserves a newer linked-only %s cache against late deletion and departure',
     (source) => {

@@ -4,6 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
+  observeIssueActorProfiles,
+  recordMemberActorUpdate,
+} from '@/lib/query/issue-actor-cache.ts';
+import {
   recordIssueCacheReset,
   recordIssueDeletions,
   recordIssueListRevisions,
@@ -180,6 +184,110 @@ describe('useIssues', () => {
 });
 
 describe('issue mutations patch the cache without a refetch drain', () => {
+  it.each(['update', 'move'] as const)(
+    'restores the old assignment after a failed %s while retaining new Human profile information',
+    async (mode) => {
+      const pending = deferred<Response>();
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === (mode === 'update' ? 'PATCH' : 'POST')
+          ? pending.promise
+          : Promise.reject(new Error('offline')),
+      ) as unknown as typeof fetch;
+      const client = newClient();
+      const stop = observeIssueActorProfiles(client, 'org_1', [TEAM]);
+      const human = {
+        type: 'user' as const,
+        id: 'user_1',
+        name: 'Before',
+        avatar: '/before.png',
+        deleted: false,
+      };
+      const original = issue({
+        creator: human,
+        assigneeId: human.id,
+        assignee: human,
+        ownerUserId: human.id,
+        owner: human,
+      });
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+      client.setQueryData(queryKeys.issue(original.identifier), detailFor(original, []));
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+      let settlement: Promise<unknown> | undefined;
+      await act(async () => {
+        settlement = (
+          mode === 'update'
+            ? update.result.current.mutateAsync({
+                issue: original,
+                patch: { assigneeId: 'user_2' },
+              })
+            : move.result.current.mutateAsync({
+                issue: original,
+                assigneeId: 'user_2',
+                beforeId: null,
+                afterId: null,
+                beforeOrder: null,
+                afterOrder: null,
+              })
+        ).catch(() => undefined);
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(cachedIssue(client)?.assignee?.id).toBe('user_2'));
+      act(() =>
+        recordMemberActorUpdate(
+          client,
+          {
+            model: 'member',
+            modelId: 'membership_1',
+            action: 'update',
+            organizationId: 'org_1',
+            syncId: 20,
+            scopes: ['org:org_1'],
+            actor: { type: 'user', id: 'user_1' },
+            at: '',
+            data: { userId: human.id, name: 'After', image: null },
+          },
+          'org_1',
+        ),
+      );
+      const parent = issue({
+        id: 'parent_1',
+        identifier: 'ENG-2',
+        syncId: 30,
+        title: 'Fresh parent',
+        creatorId: 'other_user',
+      });
+      type DetailWithParent = Omit<ReturnType<typeof detailFor>, 'parent'> & {
+        parent: Issue | null;
+      };
+      if (mode === 'update') {
+        act(() =>
+          client.setQueryData<DetailWithParent>(queryKeys.issue(original.identifier), (detail) =>
+            detail === undefined ? detail : { ...detail, parent },
+          ),
+        );
+      }
+      await act(async () => {
+        pending.resolve(
+          Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
+        );
+        await settlement;
+      });
+      expect(cachedIssue(client)?.assignee).toEqual({ ...human, name: 'After', avatar: null });
+      expect(cachedIssue(client)?.creator?.name).toBe('After');
+      expect(cachedIssue(client)?.owner?.name).toBe('After');
+      if (mode === 'update') {
+        expect(
+          client.getQueryData<ReturnType<typeof detailFor>>(queryKeys.issue(original.identifier))
+            ?.issue.assignee,
+        ).toEqual({ ...human, name: 'After', avatar: null });
+        expect(
+          client.getQueryData<DetailWithParent>(queryKeys.issue(original.identifier))?.parent,
+        ).toEqual(parent);
+      }
+      stop();
+    },
+  );
   it.each(['same-sync', 'newer-list', 'explicit-null'] as const)(
     'uses complete cached Actors over an old detail and restores %s state after failure',
     async (mode) => {
@@ -1632,6 +1740,110 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     await waitFor(() => expect(move.result.current.isError).toBe(true));
     expect(listRequests).toBe(2);
     expect(source.result.current.data?.map((row) => row.id)).toEqual(['issue_1']);
+  });
+
+  it('restores an assignment removed from its source column after sibling profile changes and an offline move failure', async () => {
+    const human = {
+      type: 'user' as const,
+      id: 'user_1',
+      name: 'Before',
+      avatar: '/before.png',
+      deleted: false,
+    };
+    const original = issue({ assigneeId: human.id, assignee: human, owner: null });
+    const sibling = issue({
+      id: 'sibling_1',
+      identifier: 'ENG-2',
+      sortOrder: 2048,
+      assigneeId: human.id,
+      assignee: human,
+    });
+    const pendingMove = deferred<Response>();
+    let listRequests = 0;
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pendingMove.promise;
+      listRequests += 1;
+      return Promise.resolve(
+        listRequests === 1
+          ? Response.json({ issues: [original, sibling], nextCursor: null })
+          : Response.json(
+              { error: { code: 'offline', message: 'Canonical refresh unavailable.' } },
+              { status: 503 },
+            ),
+      );
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const stop = observeIssueActorProfiles(client, 'org_1', [TEAM]);
+    const source = renderHook(
+      () =>
+        useColumnIssues(
+          {
+            query: DEFAULT_ISSUE_QUERY,
+            groupBy: 'assignee',
+            scope: { teamId: TEAM },
+          },
+          human.id,
+          true,
+        ),
+      { wrapper: wrapper(client) },
+    );
+    await waitFor(() =>
+      expect(source.result.current.data?.map((row) => row.id)).toEqual([original.id, sibling.id]),
+    );
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+    let settlement: Promise<unknown> | undefined;
+    await act(async () => {
+      settlement = move.result.current
+        .mutateAsync({
+          issue: original,
+          assigneeId: 'user_2',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .catch(() => undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(source.result.current.data?.map((row) => row.id)).toEqual([sibling.id]),
+    );
+    act(() =>
+      recordMemberActorUpdate(
+        client,
+        {
+          model: 'member',
+          modelId: 'membership_1',
+          action: 'update',
+          organizationId: 'org_1',
+          syncId: 20,
+          scopes: ['org:org_1'],
+          actor: { type: 'user', id: human.id },
+          at: '',
+          data: { userId: human.id, name: 'After', image: null },
+        },
+        'org_1',
+      ),
+    );
+    await waitFor(() => expect(source.result.current.data?.[0]?.assignee?.name).toBe('After'));
+    await act(async () => {
+      pendingMove.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      await settlement;
+    });
+    await waitFor(() => expect(move.result.current.isError).toBe(true));
+    expect(listRequests).toBe(2);
+    expect(source.result.current.data?.map((row) => row.id)).toEqual([original.id, sibling.id]);
+    expect(source.result.current.data?.map((row) => row.assignee)).toEqual([
+      { ...human, name: 'After', avatar: null },
+      { ...human, name: 'After', avatar: null },
+    ]);
+    expect(source.result.current.data?.[0]?.owner).toBeNull();
+    stop();
   });
 
   for (const scenario of [

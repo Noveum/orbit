@@ -663,7 +663,13 @@ export function planDrop(
       : targetGroup.id;
   if (groupId === null) return null;
 
-  const regrouping = regroupPatch(groupBy, groupId);
+  const keepsAgentAssignment =
+    groupBy === 'assignee' &&
+    groupId.startsWith('agent:') &&
+    issueActorGroupKey(dragged, 'assignee') === groupId;
+  const regrouping: IssueRegrouping | null = keepsAgentAssignment
+    ? {}
+    : regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
   if (regrouping.assigneeId === null && resolveIssueActor(dragged, 'assignee')?.type === 'agent')
     return null;
@@ -1047,9 +1053,11 @@ function actorColumnTitle(
   groupId: string,
 ): string | undefined {
   if (groupBy !== 'assignee' && groupBy !== 'creator') return undefined;
-  const row = issues.find((issue) => issueActorGroupKey(issue, groupBy) === groupId);
-  const actor = row === undefined ? null : resolveIssueActor(row, groupBy);
-  return actor === null ? undefined : issueActorLabel(actor);
+  const row = issues.find(
+    (issue) => issue[groupBy] !== undefined && issueActorGroupKey(issue, groupBy) === groupId,
+  );
+  const actor = row?.[groupBy];
+  return actor === undefined || actor === null ? undefined : issueActorLabel(actor);
 }
 
 export function actorBoardGroups(

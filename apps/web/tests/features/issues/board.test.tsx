@@ -17,10 +17,10 @@ import type { BoardColumnSource } from '@/features/issues/board.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
-import { boardSearch, summarySearch } from '@/lib/query/issue-search.ts';
+import { boardSearch, groupColumnSearch, summarySearch } from '@/lib/query/issue-search.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { BoardPage, Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { seedBoardColumns } from '@/lib/query/use-issues.ts';
+import { columnScopeKey, seedBoardColumns } from '@/lib/query/use-issues.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
@@ -182,7 +182,7 @@ const { Board, actorBoardGroups, boardVisibilityConfig, useBoardVisibilityHold }
 );
 
 describe('Board actor columns outside the base page', () => {
-  function renderActorBoard(showSubIssues = true, truncated = false) {
+  function renderActorBoard(showSubIssues = true, truncated = false, legacy = false) {
     const human = {
       type: 'user' as const,
       id: 'human_1',
@@ -195,7 +195,7 @@ describe('Board actor columns outside the base page', () => {
         id: `visible_${index}`,
         identifier: `ENG-${index + 1}`,
         assigneeId: human.id,
-        assignee: human,
+        ...(legacy ? {} : { assignee: human }),
       }),
     );
     const remoteAgent = issue({
@@ -208,13 +208,17 @@ describe('Board actor columns outside the base page', () => {
       id: 'outside_page_human',
       identifier: 'ENG-102',
       assigneeId: 'outside_team',
-      assignee: {
-        type: 'user',
-        id: 'outside_team',
-        name: 'Outside person',
-        avatar: null,
-        deleted: false,
-      },
+      ...(legacy
+        ? {}
+        : {
+            assignee: {
+              type: 'user' as const,
+              id: 'outside_team',
+              name: 'Outside person',
+              avatar: null,
+              deleted: false,
+            },
+          }),
     });
     const column: BoardColumnSource = {
       ...ownedColumnSource,
@@ -286,8 +290,35 @@ describe('Board actor columns outside the base page', () => {
     const groups = groupIssues(
       rows,
       'assignee',
-      { states: [], members: [], projects: [], cycles: [], labels: [] },
-      { showEmptyGroups: false, ordering: 'manual' },
+      {
+        states: [],
+        members: [
+          {
+            id: human.id,
+            name: human.name,
+            email: 'human@orbit.test',
+            image: null,
+            handle: null,
+            role: 'member',
+          },
+          {
+            id: 'outside_team',
+            name: 'Outside person',
+            email: 'outside@orbit.test',
+            image: null,
+            handle: null,
+            role: 'member',
+          },
+        ],
+        projects: [],
+        cycles: [],
+        labels: [],
+      },
+      {
+        showEmptyGroups: false,
+        ordering: 'manual',
+        ...(legacy ? { totals: { human_1: 100, outside_team: 1 } } : {}),
+      },
     );
     render(
       <QueryClientProvider client={client}>
@@ -300,8 +331,79 @@ describe('Board actor columns outside the base page', () => {
         </TooltipProvider>
       </QueryClientProvider>,
     );
-    return { client, summaryKey, columnFetch };
+    const humanColumnKey = queryKeys.issues(
+      columnScopeKey(column.scope),
+      groupColumnSearch(column.query, column.groupBy, human.id, column.scope),
+    );
+    return { client, summaryKey, columnFetch, humanColumnKey };
   }
+
+  it('preserves member column names from legacy cached rows while offline', async () => {
+    const { client, humanColumnKey } = renderActorBoard(true, false, true);
+    expect(screen.getByTestId('board-column-Visible person')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-Outside person')).toBeInTheDocument();
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: mock(() => Promise.reject(new Error('offline'))),
+    });
+
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: humanColumnKey, exact: true });
+    });
+
+    expect(screen.getByTestId('board-column-Visible person')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-Outside person')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-column-Unknown user')).toBeNull();
+    expect(screen.getByTestId('issue-card-ENG-1')).toBeInTheDocument();
+  });
+
+  it('keeps a legacy member title while waiting and then applies canonical deleted actors', async () => {
+    const { client, humanColumnKey } = renderActorBoard(true, false, true);
+    const pending = deferredResponse();
+    const columnFetch = mock(() => pending.promise);
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: columnFetch,
+    });
+    let refetch: Promise<void> | undefined;
+    act(() => {
+      refetch = client.invalidateQueries({ queryKey: humanColumnKey, exact: true });
+    });
+    await waitFor(() => expect(columnFetch.mock.calls.length).toBe(1));
+
+    expect(screen.getByTestId('board-column-Visible person')).toBeInTheDocument();
+    expect(screen.getByTestId('board-column-Outside person')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-column-Unknown user')).toBeNull();
+    await act(async () => {
+      pending.resolve(
+        Response.json({
+          issues: [
+            issue({
+              id: 'visible_0',
+              assigneeId: 'human_1',
+              assignee: {
+                type: 'user',
+                id: 'human_1',
+                name: 'Canonical person',
+                avatar: null,
+                deleted: true,
+              },
+            }),
+          ],
+          nextCursor: null,
+        }),
+      );
+      await refetch;
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId('board-column-Canonical person (Deleted)') !== null).toBe(true),
+    );
+    expect(screen.queryByTestId('board-column-Visible person')).toBeNull();
+    expect(screen.getByTestId('board-column-Outside person')).toBeInTheDocument();
+    expect(screen.getByTestId('issue-card-ENG-1')).toHaveTextContent('Domain auto join');
+  });
 
   it('refreshes known human headers from server actors while retaining group metadata', () => {
     const row = issue({
@@ -389,6 +491,155 @@ describe('Board actor columns outside the base page', () => {
     );
     expect(screen.getByTestId('board-column-Visible person')).toBeInTheDocument();
   });
+});
+
+describe('Board agent manual sorting', () => {
+  it.each(['mouse', 'keyboard'] as const)(
+    'submits only placement when sorting within an agent column using %s',
+    async (input) => {
+      const assignee = {
+        type: 'agent' as const,
+        id: 'agent_1',
+        name: 'Build bot',
+        avatar: null,
+        deleted: false,
+      };
+      const first = issue({ id: 'agent_row_1', assignee, sortOrder: 1024 });
+      const secondAgent = issue({
+        id: 'agent_row_2',
+        identifier: 'ENG-2',
+        title: 'Second task',
+        assignee,
+        sortOrder: 2048,
+      });
+      const thirdAgent = issue({
+        id: 'agent_row_3',
+        identifier: 'ENG-3',
+        title: 'Third task',
+        assignee,
+        sortOrder: 3072,
+      });
+      const rows = [first, secondAgent, thirdAgent];
+      const moved = { ...first, sortOrder: 2560, syncId: 2 };
+      const requests: unknown[] = [];
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: mock((url: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method === 'POST') {
+            expect(String(url)).toBe('/api/issues/agent_row_1/move');
+            const body: unknown = JSON.parse(String(init.body));
+            requests.push(body);
+            return Promise.resolve(Response.json({ issue: moved, rebalanced: [] }));
+          }
+          const params = new URL(String(url), 'http://localhost');
+          return Promise.resolve(
+            Response.json(
+              params.pathname.endsWith('/summary')
+                ? { total: 3, byState: {}, groupTotals: { 'agent:agent_1': 3 } }
+                : { issues: [secondAgent, moved, thirdAgent], nextCursor: null },
+            ),
+          );
+        }),
+      });
+      HTMLElement.prototype.getBoundingClientRect = function agentCardRect() {
+        const card = this.matches('li, [inert]');
+        const label = this.getAttribute('aria-label') ?? '';
+        let top = 80;
+        if (label.startsWith('ENG-2:')) top = 180;
+        else if (label.startsWith('ENG-3:')) top = 280;
+        return new DOMRect(0, card ? top : 0, card ? 260 : 280, card ? 72 : 500);
+      };
+      const column = { ...ownedColumnSource, groupBy: 'assignee' };
+      const page: BoardPage = {
+        groups: [{ id: 'agent:agent_1', total: 3, issues: rows, nextCursor: null }],
+        truncated: false,
+      };
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+      });
+      client.setQueryData(
+        queryKeys.boardPage(boardSearch(column.query, column.groupBy, column.scope)),
+        page,
+      );
+      client.setQueryData(
+        queryKeys.issueSummary(summarySearch(null, column.query, column.groupBy, column.scope)),
+        { total: 3, byState: {}, groupTotals: { 'agent:agent_1': 3 } },
+      );
+      seedBoardColumns(client, column, page, Date.now());
+      const groups = groupIssues(
+        rows,
+        'assignee',
+        { states: [], members: [], projects: [], cycles: [], labels: [] },
+        { showEmptyGroups: false, ordering: 'manual' },
+      );
+      const rendered = render(
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <ToastProvider>
+              <HotkeyProvider>
+                <Board groups={groups} groupBy="assignee" columnSource={column} />
+              </HotkeyProvider>
+            </ToastProvider>
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
+      try {
+        const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+        if (input === 'keyboard') {
+          card.focus();
+          fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+          await waitFor(() => expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2));
+          await act(async () => {
+            await settleKeyboardSensor();
+            fireEvent.keyDown(card, { key: 'ArrowDown', code: 'ArrowDown' });
+            await settleKeyboardSensor();
+          });
+        } else {
+          fireEvent.pointerDown(card, {
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            button: 0,
+            clientX: 30,
+            clientY: 116,
+          });
+          fireEvent.pointerMove(document, {
+            pointerId: 1,
+            pointerType: 'mouse',
+            clientX: 36,
+            clientY: 116,
+          });
+          await waitFor(() => expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2));
+          fireEvent.pointerMove(document, {
+            pointerId: 1,
+            pointerType: 'mouse',
+            clientX: 30,
+            clientY: 216,
+          });
+        }
+        await waitFor(() => expect(dndStatus()).toHaveTextContent('position 2'));
+        if (input === 'keyboard') fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+        else {
+          fireEvent.pointerUp(document, {
+            pointerId: 1,
+            pointerType: 'mouse',
+            clientX: 30,
+            clientY: 216,
+          });
+        }
+        await waitFor(() => expect(requests.length).toBe(1));
+        expect(requests[0]).toEqual({ beforeId: secondAgent.id, afterId: thirdAgent.id });
+        expect(requests[0]).not.toHaveProperty('assigneeId');
+        expect(requests[0]).not.toHaveProperty('assigneeAgentId');
+        expect(requests[0]).not.toHaveProperty('assigneeUserId');
+      } finally {
+        fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
+        rendered.unmount();
+        await settleKeyboardSensor();
+      }
+    },
+  );
 });
 
 describe('Board visibility during drag settlement', () => {

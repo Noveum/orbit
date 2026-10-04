@@ -20,6 +20,11 @@ import {
   recordTabPropertyChange,
 } from '@/features/issues/use-issue-property-undo.ts';
 import { apiFetch, messageOf } from './fetcher.ts';
+import {
+  issueMutationListRevisionGeneration,
+  issueMutationRevisionGeneration as issueRevisionGeneration,
+  replayIssueActorProfiles,
+} from './issue-actor-cache.ts';
 import { humanIssueActor, resolveIssueActor } from './issue-actors.ts';
 import {
   issueCacheRevisionGeneration,
@@ -27,7 +32,6 @@ import {
   issueListRevisionGeneration,
   issueQueryResetMarks,
   issueQueryWasReset,
-  issueRevisionGeneration,
   recordIssueDeletions,
   recordIssueListRevisions,
   recordIssueRevisions,
@@ -1057,6 +1061,21 @@ export function captureIssueHistory(
   };
 }
 
+function matchesOptimisticDetail(
+  client: QueryClient,
+  current: IssueDetail | undefined,
+  optimistic: IssueDetail | undefined,
+): boolean {
+  if (current === undefined || optimistic === undefined) return false;
+  if (current === optimistic) return true;
+  const profiled = replayIssueActorProfiles(client, optimistic.issue);
+  return (
+    profiled !== optimistic.issue &&
+    current.issue.description === optimistic.issue.description &&
+    issueFingerprint(current.issue) === issueFingerprint(profiled)
+  );
+}
+
 export function useUpdateIssue() {
   const client = useQueryClient();
   const { toast } = useToast();
@@ -1084,12 +1103,15 @@ export function useUpdateIssue() {
         mutationTrackers.set(input.issue.id, tracker);
       }
 
-      let currentBase = tracker.rootBase;
+      let currentBase = replayIssueActorProfiles(client, tracker.rootBase);
       for (const m of tracker.active) {
         if (m.status === 'failed') {
           continue;
         }
-        currentBase = applyPatchToIssue(currentBase, m.patch, m.assignment);
+        currentBase = replayIssueActorProfiles(
+          client,
+          applyPatchToIssue(currentBase, m.patch, m.assignment),
+        );
       }
 
       const sequence = nextActionSequence();
@@ -1164,10 +1186,17 @@ export function useUpdateIssue() {
         !serverMovedOn &&
         issueRevisionGeneration(client, input.issue.id) === context.issueRevision;
       const canRestoreDetail =
-        canRestoreList && !detailWasReset && currentDetail === context?.optimisticDetail;
-      if (canRestoreList) placeIssue(client, context.previousIssue);
+        canRestoreList &&
+        !detailWasReset &&
+        matchesOptimisticDetail(client, currentDetail, context.optimisticDetail);
+      if (canRestoreList)
+        placeIssue(client, replayIssueActorProfiles(client, context.previousIssue));
       if (canRestoreDetail && context?.previousDetail !== undefined) {
-        client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+        client.setQueryData(queryKeys.issue(context.identifier), {
+          ...currentDetail,
+          issue: replayIssueActorProfiles(client, context.previousDetail.issue),
+          descriptionHtml: context.previousDetail.descriptionHtml,
+        });
       }
       if (!canRestoreList || (context?.previousDetail !== undefined && !canRestoreDetail)) {
         invalidateIssueCaches(client).catch(() => undefined);
@@ -1279,13 +1308,15 @@ function restoreFailedMoveAfterUnavailableRefresh(
   for (const snapshot of context.lists) {
     if (snapshot.before === undefined || snapshot.optimistic !== undefined) continue;
     if (!refreshKeys.includes(snapshot.key)) continue;
-    if (issueListRevisionGeneration(client, snapshot.key) !== snapshot.listRevision) continue;
+    if (issueMutationListRevisionGeneration(client, snapshot.key) !== snapshot.listRevision)
+      continue;
     const query = client.getQueryCache().find({ queryKey: snapshot.key, exact: true });
     if (query === undefined || query.state.error === null) continue;
+    const before = replayIssueActorProfiles(client, snapshot.before);
     client.setQueryData<IssuePages>(snapshot.key, (pages) =>
       pages === undefined
         ? pages
-        : restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, snapshot.before),
+        : restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, before),
     );
   }
 }
@@ -1310,7 +1341,9 @@ async function rollbackFailedMove(
   const refreshKeys: QueryKey[] = [];
   const expected = new Set(
     lists.flatMap((snapshot) =>
-      snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
+      snapshot.optimistic === undefined
+        ? []
+        : [issueFingerprint(replayIssueActorProfiles(client, snapshot.optimistic))],
     ),
   );
   const resetMarks = context?.resetMarks ?? new Map<string, number>();
@@ -1335,13 +1368,21 @@ async function rollbackFailedMove(
       found === undefined
         ? snapshot.optimistic === undefined
         : snapshot.optimistic !== undefined &&
-          issueFingerprint(found) === issueFingerprint(snapshot.optimistic);
+          issueFingerprint(found) ===
+            issueFingerprint(replayIssueActorProfiles(client, snapshot.optimistic));
     if (hasOptimistic && !intervening && stillOptimistic) {
       client.setQueryData<IssuePages>(snapshot.key, (pages) => {
         if (pages === undefined) return pages;
         const found = issueFromPages(pages, input.issue.id);
         if (found !== undefined && !expected.has(issueFingerprint(found))) return pages;
-        return restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, snapshot.before);
+        return restoreIssueInPages(
+          pages,
+          searchOf(snapshot.key),
+          input.issue.id,
+          snapshot.before === undefined
+            ? undefined
+            : replayIssueActorProfiles(client, snapshot.before),
+        );
       });
       continue;
     }
@@ -1389,7 +1430,7 @@ export function useMoveIssue() {
           key,
           before: issueFromPages(pages, input.issue.id),
           optimistic: issueFromPages(client.getQueryData<IssuePages>(key), input.issue.id),
-          listRevision: issueListRevisionGeneration(client, key),
+          listRevision: issueMutationListRevisionGeneration(client, key),
         })),
         deletionGeneration:
           moveDeletionGenerations.get(input) ?? issueDeletionGeneration(client, input.issue.id),

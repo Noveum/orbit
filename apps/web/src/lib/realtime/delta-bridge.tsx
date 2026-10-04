@@ -15,6 +15,10 @@ import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
+  observeIssueActorProfiles,
+  recordMemberActorUpdate,
+} from '@/lib/query/issue-actor-cache.ts';
+import {
   issueRevisionGeneration,
   issueSurvivalSyncWatermark,
   issueSyncWatermark,
@@ -919,6 +923,11 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const resumeAbort = useRef<AbortController | null>(null);
   const resumeOrganization = useRef(organizationId);
 
+  useEffect(
+    () => observeIssueActorProfiles(client, organizationId, teamIds),
+    [client, organizationId, teamIds],
+  );
+
   useEffect(() => {
     if (resumeOrganization.current === organizationId) return;
     resumeOrganization.current = organizationId;
@@ -963,7 +972,9 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
         counts: false,
         boards: false,
         issueCaches: false,
-        bootstrap: false,
+        bootstrap: actions
+          .map((action) => recordMemberActorUpdate(client, action, organizationId))
+          .includes(true),
         views: false,
         docs: false,
         relations: false,
@@ -999,7 +1010,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       flushRoots(client, roots);
       return roots.bootstrap;
     },
-    [client, currentUserId],
+    [client, currentUserId, organizationId],
   );
 
   useDeltaHandler(applyActions);
