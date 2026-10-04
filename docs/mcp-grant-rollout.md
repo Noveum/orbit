@@ -25,7 +25,9 @@ identity/client/owner/workspace agreement and the original membership ID.
 Missing identity references, a deleted identity, disabled client, removed
 membership or `ORBIT_AGENT_MCP` other than `true` fail closed. They never become
 Human credentials. New agent authorization is unavailable in stage 3a,
-including when the runtime gate is enabled.
+including when the runtime gate is enabled. Stage 3a rejects any explicit
+agent consent field, including requests from a cached stage 3b page. Mixed
+instances and rollback cannot silently authorize that request as legacy.
 
 Agent tools have read-only scopes and are checked at registration and execution.
 The inbox conversation tool has internal write side effects and is unavailable
@@ -78,3 +80,10 @@ business rows, minimum identity insertion, repeat release and drift detection.
 Runtime tests exercise old credentials, scopes, mode isolation, exact grant
 revocation, membership removal and refresh races. No production database or
 deployment gate is changed by these tests.
+
+The existing document import test polls the button's boolean disabled state
+before retaining its original accessibility assertion. A failed assertion on
+the busy Happy DOM element otherwise formats tens of megabytes of accumulated
+document state and can exhaust the unchanged test timeout. All original
+assertions remain, with an additional check that an oversized file is rejected
+before its contents are read. No document import behavior changes.
