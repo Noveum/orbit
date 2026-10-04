@@ -676,16 +676,11 @@ child.on('close', (code) => process.exit(code ?? 0));
       );
     } finally {
       const cleanupSql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
-      try {
-        await cleanupSql`delete from attachment where id = ${attId}`;
-        await cleanupSql`delete from member where id = ${memberId}`;
-        await cleanupSql`delete from "user" where id = ${userId}`;
-        await cleanupSql`delete from organization where id = ${orgId}`;
-      } catch {
-        undefined;
-      } finally {
-        await cleanupSql.end({ timeout: 5 });
-      }
+      await cleanupSql`delete from attachment where id = ${attId}`.catch(() => undefined);
+      await cleanupSql`delete from member where id = ${memberId}`.catch(() => undefined);
+      await cleanupSql`delete from "user" where id = ${userId}`.catch(() => undefined);
+      await cleanupSql`delete from organization where id = ${orgId}`.catch(() => undefined);
+      await cleanupSql.end({ timeout: 5 }).catch(() => undefined);
       await rm(tempBackupDir, { recursive: true, force: true }).catch(() => undefined);
       await setRecoveryState(databaseUrl, 'ready');
     }

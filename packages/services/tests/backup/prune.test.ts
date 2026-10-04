@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,9 @@ describe('backup retention and pruning', () => {
     const backupDir = join(rootDir, id);
     await mkdir(backupDir, { recursive: true });
 
+    const dumpBuffer = Buffer.alloc(options?.sizeBytes ?? 1024);
+    const dumpSha256 = createHash('sha256').update(dumpBuffer).digest('hex');
+
     const manifest = {
       formatVersion: '1.0.0',
       orbitVersion: '0.1.0',
@@ -35,7 +39,7 @@ describe('backup retention and pruning', () => {
       checksums: {
         databaseDump: {
           file: 'database.dump',
-          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          sha256: dumpSha256,
           bytes: options?.sizeBytes ?? 1024,
         },
         objects: [],
@@ -46,7 +50,7 @@ describe('backup retention and pruning', () => {
     };
 
     await writeFile(join(backupDir, 'manifest.json'), JSON.stringify(manifest), 'utf8');
-    await writeFile(join(backupDir, 'database.dump'), Buffer.alloc(options?.sizeBytes ?? 1024));
+    await writeFile(join(backupDir, 'database.dump'), dumpBuffer);
 
     if (options?.holdFile) {
       await writeFile(join(backupDir, '.pinned'), 'pinned by test');
@@ -442,6 +446,53 @@ describe('backup retention and pruning', () => {
       };
       await writeFile(join(corruptDir, 'manifest.json'), JSON.stringify(manifest), 'utf8');
       await writeFile(join(corruptDir, 'database.dump'), Buffer.alloc(100));
+
+      const result = await pruneBackups({
+        destinationDir: tempDir,
+        keepCount: 1,
+      });
+
+      expect(result.newestGoodBackupId).toBe('backup-healthy-old');
+      expect(result.retainedBackups).toEqual(['backup-healthy-old']);
+      expect(result.deletedBackups).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat a backup with same-length corrupted dump as good backup', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-prune-corrupt-same-length-'));
+    try {
+      const goodDate = '2026-09-01T10:00:00.000Z';
+      await createMockBackup(tempDir, 'backup-healthy-old', goodDate);
+
+      const corruptDir = join(tempDir, 'backup-corrupt-same-length');
+      await mkdir(corruptDir, { recursive: true });
+      const validBuffer = Buffer.alloc(1024, 0x01);
+      const validSha256 = createHash('sha256').update(validBuffer).digest('hex');
+      const manifest = {
+        formatVersion: '1.0.0',
+        orbitVersion: '0.1.0',
+        sourceRevision: 'abc1234',
+        databaseVersion: 'PostgreSQL 18.0',
+        createdAt: '2026-09-10T10:00:00.000Z',
+        migrationLedger: [],
+        configuration: {},
+        checksums: {
+          databaseDump: {
+            file: 'database.dump',
+            sha256: validSha256,
+            bytes: 1024,
+          },
+          objects: [],
+        },
+        counts: { workspaces: 1, users: 1, attachments: 0, issues: 0 },
+        encryption: { enabled: false },
+        metadata: {},
+      };
+      await writeFile(join(corruptDir, 'manifest.json'), JSON.stringify(manifest), 'utf8');
+      const corruptedSameLength = Buffer.alloc(1024, 0x02);
+      await writeFile(join(corruptDir, 'database.dump'), corruptedSameLength);
 
       const result = await pruneBackups({
         destinationDir: tempDir,

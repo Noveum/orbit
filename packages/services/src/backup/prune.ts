@@ -1,6 +1,7 @@
-import type { Dirent } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, type Dirent } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   type BackupManifest,
   type BackupPruneResult,
@@ -86,16 +87,11 @@ async function calculateDirectorySize(dirPath: string): Promise<number> {
 
 async function isPinnedBackup(
   backupDir: string,
-  backupId: string,
   manifest: BackupManifest,
   pinnedIds: readonly string[] | undefined,
 ): Promise<boolean> {
-  if (pinnedIds?.includes(backupId)) {
-    return true;
-  }
-
-  const ownId = manifest.metadata['backupId'];
-  if (ownId !== undefined && ownId.length > 0 && pinnedIds?.includes(ownId)) {
+  const dirId = basename(backupDir);
+  if (pinnedIds?.includes(dirId)) {
     return true;
   }
 
@@ -222,6 +218,16 @@ async function cleanIncompleteDirectories(
   return { deleted, failed, freedBytes };
 }
 
+function calculateFileSha256(filePath: string): Promise<string> {
+  return new Promise((resolveHash, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolveHash(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
 async function tryDiscoverBackup(
   destinationDir: string,
   name: string,
@@ -240,8 +246,13 @@ async function tryDiscoverBackup(
       return undefined;
     }
 
+    const actualSha256 = await calculateFileSha256(dumpFilePath);
+    if (actualSha256 !== dumpMeta.sha256) {
+      return undefined;
+    }
+
     const size = await calculateDirectorySize(fullPath);
-    const isPinned = await isPinnedBackup(fullPath, name, parsedManifest, pinnedIds);
+    const isPinned = await isPinnedBackup(fullPath, parsedManifest, pinnedIds);
 
     return {
       id: name,
@@ -448,7 +459,10 @@ export async function pruneBackups(options: BackupPruneOptions): Promise<BackupP
   for (const entry of dirEntries) {
     if (!entry.isDirectory()) continue;
     if (entry.name === 'lost+found' || entry.name.startsWith('.')) continue;
-    if (entry.name.endsWith('.incomplete') || entry.name.endsWith('.tmp')) {
+    if (
+      entry.name.startsWith('orbit-backup-') &&
+      (entry.name.endsWith('.incomplete') || entry.name.endsWith('.tmp'))
+    ) {
       incompleteCandidates.push(entry.name);
     } else {
       candidateDirs.push(entry.name);

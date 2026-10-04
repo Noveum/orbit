@@ -29,26 +29,20 @@ const BOOL_FLAGS: Record<string, string> = {
   '-h': 'help',
 };
 
-function parseValue(
-  item: string,
-  index: number,
-  argv: readonly string[],
-  flags: Map<string, string>,
-): number {
-  const eqIdx = item.indexOf('=');
-  if (eqIdx !== -1) {
-    flags.set(item.slice(0, eqIdx), item.slice(eqIdx + 1));
-    return index;
-  }
-  if (item.startsWith('-')) {
-    const next = argv[index + 1];
-    if (next !== undefined && !next.startsWith('-')) {
-      flags.set(item, next);
-      return index + 1;
-    }
-  }
-  return index;
-}
+const VALUE_FLAGS = new Set([
+  '--destination',
+  '-d',
+  '--keep-count',
+  '--keep-days',
+  '--keep-hourly',
+  '--keep-daily',
+  '--keep-weekly',
+  '--keep-monthly',
+  '--max-bytes',
+  '--pinned',
+  '--incomplete-max-age-hours',
+  '--stale-alert-hours',
+]);
 
 function extractPruneFlags(argv: readonly string[]): {
   flags: Map<string, string>;
@@ -73,10 +67,32 @@ function extractPruneFlags(argv: readonly string[]): {
       continue;
     }
 
-    const nextIndex = parseValue(item, index, argv, flags);
-    if (nextIndex !== index) {
-      index = nextIndex;
+    const eqIdx = item.indexOf('=');
+    if (eqIdx !== -1) {
+      const flagName = item.slice(0, eqIdx);
+      const flagValue = item.slice(eqIdx + 1);
+      if (!VALUE_FLAGS.has(flagName)) {
+        throw validationFailed(`Unknown option: "${flagName}"`);
+      }
+      flags.set(flagName, flagValue);
+      continue;
     }
+
+    if (VALUE_FLAGS.has(item)) {
+      const next = argv[index + 1];
+      if (next === undefined || next.startsWith('-')) {
+        throw validationFailed(`Flag ${item} requires a value`);
+      }
+      flags.set(item, next);
+      index += 1;
+      continue;
+    }
+
+    if (item.startsWith('-')) {
+      throw validationFailed(`Unknown option: "${item}"`);
+    }
+
+    throw validationFailed(`Unexpected positional argument: "${item}"`);
   }
 
   return { flags, bools };

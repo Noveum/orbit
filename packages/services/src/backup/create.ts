@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   type BackupManifest,
@@ -11,12 +11,7 @@ import {
 } from '@orbit/shared';
 import { createStorageDriver, storageDriver } from '../storage/index.ts';
 import { dumpDatabase } from './database.ts';
-import {
-  createEnvelopeDataKey,
-  encryptBuffer,
-  encryptFile,
-  resolveMasterEncryptionKey,
-} from './encryption.ts';
+import { createEnvelopeDataKey, encryptFile, resolveMasterEncryptionKey } from './encryption.ts';
 import { verifyPreflight } from './preflight.ts';
 import { openCoordinatedSnapshot } from './snapshot.ts';
 import { captureStorageObjects } from './storage.ts';
@@ -59,19 +54,23 @@ async function encryptStoredObjects(
   const encryptedObjects: BackupManifest['checksums']['objects'] = [];
   for (const obj of objects) {
     const objectPath = join(workingDir, 'objects', obj.key);
-    const rawData = await readFile(objectPath);
-    const encryptedData = encryptBuffer(rawData, dek);
-    await writeFile(objectPath, encryptedData, { mode: 0o600 });
-    const encryptedSha256 = createHash('sha256').update(encryptedData).digest('hex');
+    const tempEncryptedPath = `${objectPath}.enc.tmp`;
+    try {
+      const encResult = await encryptFile(objectPath, tempEncryptedPath, dek);
+      await rm(objectPath, { force: true });
+      await rename(tempEncryptedPath, objectPath);
 
-    encryptedObjects.push({
-      key: obj.key,
-      sha256: encryptedSha256,
-      bytes: encryptedData.byteLength,
-      contentType: obj.contentType,
-      plaintextSha256: obj.sha256,
-      plaintextBytes: obj.bytes,
-    });
+      encryptedObjects.push({
+        key: obj.key,
+        sha256: encResult.sha256,
+        bytes: encResult.bytes,
+        contentType: obj.contentType,
+        plaintextSha256: encResult.plaintextSha256,
+        plaintextBytes: encResult.plaintextBytes,
+      });
+    } finally {
+      await rm(tempEncryptedPath, { force: true }).catch(() => undefined);
+    }
   }
   return encryptedObjects;
 }

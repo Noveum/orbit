@@ -63,6 +63,24 @@ describe('backup prune CLI args', () => {
     expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--keep-days=1.5'])).toThrow();
   });
 
+  it('rejects unknown flags and equals-form flags', () => {
+    expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--unknown-flag'])).toThrow(
+      /Unknown option/,
+    );
+    expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--unknown=value'])).toThrow(
+      /Unknown option/,
+    );
+  });
+
+  it('rejects value-taking flags without an operand', () => {
+    expect(() => parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--keep-count'])).toThrow(
+      /Flag --keep-count requires a value/,
+    );
+    expect(() =>
+      parsePruneArgs(['bun', 'scripts/backup/prune.ts', '--destination', '--json']),
+    ).toThrow(/Flag --destination requires a value/);
+  });
+
   it('executes prune CLI with dry-run and json flags successfully', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'orbit-cli-prune-'));
     try {
