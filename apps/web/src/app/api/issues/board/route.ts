@@ -6,7 +6,10 @@ export async function GET(request: Request): Promise<Response> {
   const params = searchParamsOf(request);
   return await handle(async (principal) => {
     const page = await listBoardGroups(principal, params);
-    const issues = await attachIssueDecorations(page.groups.flatMap((group) => group.issues));
+    const issues = await attachIssueDecorations(
+      page.groups.flatMap((group) => group.issues),
+      principal.organizationId,
+    );
     let offset = 0;
     const groups = page.groups.map((group) => {
       const decorated = issues.slice(offset, offset + group.issues.length);

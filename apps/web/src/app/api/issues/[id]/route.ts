@@ -27,7 +27,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
   const query = paginationSchema.parse(searchParamsOf(request));
   return await handle(async (principal) => {
     const row = await getIssue(principal, id);
-    const [issue] = await attachIssueDecorations([row]);
+    const [issue] = await attachIssueDecorations([row], principal.organizationId);
     const [activityPage, subPage, subscribers, parentRow] = await Promise.all([
       listActivityPage(db, principal, row.id, {
         oldestFirst: true,
@@ -38,7 +38,10 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       listSubscribers(principal, row.id),
       getParentIssue(principal, row.id),
     ]);
-    const [parent] = parentRow === null ? [null] : await attachIssueDecorations([parentRow]);
+    const [parent] =
+      parentRow === null
+        ? [null]
+        : await attachIssueDecorations([parentRow], principal.organizationId);
     return {
       issue,
       descriptionHtml: renderMarkdown(row.description),
@@ -47,7 +50,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
         summary: describeActivity(entry),
       })),
       activityCursor: activityPage.nextCursor,
-      subIssues: await attachIssueDecorations(subPage.issues),
+      subIssues: await attachIssueDecorations(subPage.issues, principal.organizationId),
       parent: parent ?? null,
       subscribed: subscribers.some((row) => row.userId === principal.userId),
       attachments: (await listIssueAttachments(principal, row.id)).map((file) => ({
@@ -70,7 +73,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return await handle(async (principal) => {
     const result = await updateIssue(principal, id, body);
     await publish(result.actions);
-    const [issue] = await attachIssueDecorations([result.issue]);
+    const [issue] = await attachIssueDecorations([result.issue], principal.organizationId);
     return { issue };
   });
 }

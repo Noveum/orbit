@@ -58,6 +58,7 @@ import {
 import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { attachIssueActors, type IssueActorRead } from './issue-actor-view.ts';
 import {
   applyStateTimestamps,
   type IssueRow,
@@ -78,6 +79,7 @@ export {
 } from './issue-fields.ts';
 
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
+export type IssueReadRow = IssueActorRead<IssueRow>;
 
 type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
 
@@ -170,6 +172,23 @@ function issueDepartureAction(row: IssueRow, syncId: number, actor: Actor): Sync
       syncId,
     },
     actor,
+  });
+}
+
+function issueActorActions(actions: SyncAction[], rows: readonly IssueReadRow[]): SyncAction[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return actions.map((action) => {
+    const issue = action.model === 'issue' ? byId.get(action.modelId) : undefined;
+    if (issue === undefined || action.action === 'delete') return action;
+    return {
+      ...action,
+      data: {
+        ...action.data,
+        creator: issue.creator,
+        assignee: issue.assignee,
+        owner: issue.owner,
+      },
+    };
   });
 }
 
@@ -680,7 +699,7 @@ function updateNotificationInputs(
 }
 
 export interface CreatedIssue {
-  readonly issue: IssueRow;
+  readonly issue: IssueReadRow;
   readonly actions: SyncAction[];
 }
 
@@ -936,10 +955,12 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       },
     ]);
 
+    const [readIssue] = await attachIssueActors(tx, principal.organizationId, [issue]);
+    const resultIssue = requireRow(readIssue, 'That issue does not exist.');
     return {
-      issue,
+      issue: resultIssue,
       actions: [
-        issueAction(issue, syncId, actor, 'insert', {
+        issueAction(resultIssue, syncId, actor, 'insert', {
           labelIds: parsed.labelIds,
           reviewerIds,
         }),
@@ -1056,7 +1077,7 @@ async function insertSubIssue(
 export async function createSubIssues(
   principal: Principal,
   input: unknown,
-): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
+): Promise<{ issues: IssueReadRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:create');
   const parsed = createSubIssuesSchema.parse(input);
 
@@ -1108,12 +1129,13 @@ export async function createSubIssues(
       }
     }
 
-    return { issues: createdIssues, actions: allActions };
+    const issues = await attachIssueActors(tx, principal.organizationId, createdIssues);
+    return { issues, actions: issueActorActions(allActions, issues) };
   });
 }
 
 export interface UpdatedIssue {
-  readonly issue: IssueRow;
+  readonly issue: IssueReadRow;
   readonly changes: FieldChange[];
   readonly actions: SyncAction[];
 }
@@ -1355,7 +1377,12 @@ async function applyIssueUpdates(
   const labelsChanged = parsed.labelIds !== undefined;
   const changing = pending.filter((entry) => entry.changes.length > 0 || labelsChanged);
   if (changing.length === 0) {
-    return pending.map((entry) => ({ issue: entry.current, changes: [], actions: [] }));
+    const issues = await attachIssueActors(
+      tx,
+      principal.organizationId,
+      pending.map((entry) => entry.current),
+    );
+    return issues.map((issue) => ({ issue, changes: [], actions: [] }));
   }
 
   const syncId = await nextSyncId(tx);
@@ -1435,7 +1462,19 @@ async function applyIssueUpdates(
     pending.map((entry) => entry.current.id),
   );
 
-  return updateResults(pending, updated, { notifications, ...decorations }, syncId, actor);
+  const issues = await attachIssueActors(
+    tx,
+    principal.organizationId,
+    pending.map((entry) => updated.get(entry.current.id) ?? entry.current),
+  );
+  return updateResults(
+    pending,
+    updated,
+    new Map(issues.map((issue) => [issue.id, issue])),
+    { notifications, ...decorations },
+    syncId,
+    actor,
+  );
 }
 
 async function updateNotifications(
@@ -1462,13 +1501,14 @@ interface UpdateDecorations {
 function updateResults(
   pending: readonly PendingUpdate[],
   updated: ReadonlyMap<string, IssueRow>,
+  issues: ReadonlyMap<string, IssueReadRow>,
   decorations: UpdateDecorations,
   syncId: number,
   actor: Actor,
 ): UpdatedIssue[] {
   return pending.map((entry) => {
-    const issue = updated.get(entry.current.id);
-    if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
+    const issue = requireRow(issues.get(entry.current.id), 'That issue does not exist.');
+    if (!updated.has(issue.id)) return { issue, changes: [], actions: [] };
     return {
       issue,
       changes: entry.changes,
@@ -1539,8 +1579,8 @@ export async function rebalanceColumn(
 }
 
 export interface MovedIssue {
-  readonly issue: IssueRow;
-  readonly rebalanced: IssueRow[];
+  readonly issue: IssueReadRow;
+  readonly rebalanced: IssueReadRow[];
   readonly actions: SyncAction[];
 }
 
@@ -1804,7 +1844,10 @@ export async function moveIssue(
       issue,
     });
 
-    const affected = [issue, ...rebalanced.filter((row) => row.id !== issueId)];
+    const affected = await attachIssueActors(tx, principal.organizationId, [
+      issue,
+      ...rebalanced.filter((row) => row.id !== issueId),
+    ]);
     const decorations = await issueDecorationsByIssue(
       tx,
       affected.map((row) => row.id),
@@ -1812,8 +1855,16 @@ export async function moveIssue(
     const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
 
     return {
-      issue,
-      rebalanced,
+      issue: requireRow(
+        affected.find((row) => row.id === issue.id),
+        'That issue does not exist.',
+      ),
+      rebalanced: rebalanced.map((row) =>
+        requireRow(
+          affected.find((read) => read.id === row.id),
+          'That issue does not exist.',
+        ),
+      ),
       actions: [
         ...(changingTeam ? [issueDepartureAction(current, syncId, actor)] : []),
         ...affected.map((row) =>
@@ -1862,7 +1913,7 @@ async function moveNotifications(
 export async function bulkUpdateIssues(
   principal: Principal,
   input: unknown,
-): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
+): Promise<{ issues: IssueReadRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueBulkUpdateSchema.parse(input);
 
@@ -1884,7 +1935,7 @@ async function setArchived(
   principal: Principal,
   issueId: string,
   archivedAt: Date | null,
-): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+): Promise<{ issue: IssueReadRow; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
 
   return await db.transaction(async (tx) => {
@@ -1912,10 +1963,12 @@ async function setArchived(
     ]);
 
     const decorations = await issueDecorationsByIssue(tx, [issue.id]);
+    const [readIssue] = await attachIssueActors(tx, principal.organizationId, [issue]);
+    const resultIssue = requireRow(readIssue, 'That issue does not exist.');
     return {
-      issue,
+      issue: resultIssue,
       actions: [
-        issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
+        issueAction(resultIssue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
           labelIds: decorations.labels.get(issue.id) ?? [],
           reviewerIds: decorations.reviewers.get(issue.id) ?? [],
         }),
@@ -1927,14 +1980,14 @@ async function setArchived(
 export async function archiveIssue(
   principal: Principal,
   issueId: string,
-): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+): Promise<{ issue: IssueReadRow; actions: SyncAction[] }> {
   return await setArchived(principal, issueId, new Date());
 }
 
 export async function unarchiveIssue(
   principal: Principal,
   issueId: string,
-): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+): Promise<{ issue: IssueReadRow; actions: SyncAction[] }> {
   return await setArchived(principal, issueId, null);
 }
 
@@ -1976,6 +2029,7 @@ export async function deleteIssue(
       orphaned.map((child) => child.id),
     );
 
+    const orphanedReads = await attachIssueActors(tx, principal.organizationId, orphaned);
     return [
       buildSyncAction({
         syncId,
@@ -1987,7 +2041,7 @@ export async function deleteIssue(
         data: { id: issueId, teamId: current.teamId, identifier: current.identifier },
         actor,
       }),
-      ...orphaned.map((child) =>
+      ...orphanedReads.map((child) =>
         issueAction(child, syncId, actor, 'update', {
           labelIds: decorations.labels.get(child.id) ?? [],
           reviewerIds: decorations.reviewers.get(child.id) ?? [],
@@ -2094,7 +2148,7 @@ export type IssueListRow = Omit<IssueRow, TrimmedIssueColumn> &
   Partial<Pick<IssueRow, TrimmedIssueColumn>>;
 
 export interface IssuePage {
-  readonly issues: IssueListRow[];
+  readonly issues: IssueActorRead<IssueListRow>[];
   readonly nextCursor: string | null;
 }
 
@@ -2128,7 +2182,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
     .limit(filter.limit + 1);
 
-  const page = rows.slice(0, filter.limit);
+  const page = await attachIssueActors(db, principal.organizationId, rows.slice(0, filter.limit));
   const last = page.at(-1);
   const nextCursor =
     rows.length > filter.limit && last !== undefined
@@ -2200,7 +2254,10 @@ function tally(rows: readonly { key: string | null; total: number }[]): Record<s
   return counts;
 }
 
-async function facetOf(column: PgColumn, where: SQL | undefined): Promise<Record<string, number>> {
+async function facetOf(
+  column: PgColumn | SQL,
+  where: SQL | undefined,
+): Promise<Record<string, number>> {
   const rows = await db
     .select({ key: sql<string | null>`${column}::text`, total: count() })
     .from(schema.issue)
@@ -2253,7 +2310,7 @@ async function participantFacet(
     select participant.key, count(distinct participant.issue_id)::int as total
     from (
       select ${schema.issue.id} as issue_id,
-             coalesce(${schema.issue.assigneeId}, ${UNSET_FACET_VALUE}) as key
+             coalesce(${FACET_COLUMNS.assignee()}, ${UNSET_FACET_VALUE}) as key
       from ${schema.issue}
       where ${where ?? sql`true`} and ${workType !== 'reviewing'}
       union all
@@ -2268,10 +2325,16 @@ async function participantFacet(
   return tally(rows);
 }
 
-const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn> = {
+const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn | SQL> = {
   state: () => schema.issue.stateId,
-  assignee: () => schema.issue.assigneeId,
-  creator: () => schema.issue.creatorId,
+  assignee: () =>
+    sql`case when ${schema.issue.assigneeAgentId} is not null
+      then 'agent:' || ${schema.issue.assigneeAgentId}
+      else coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) end`,
+  creator: () =>
+    sql`case when ${schema.issue.creatorAgentId} is not null
+      then 'agent:' || ${schema.issue.creatorAgentId}
+      else coalesce(${schema.issue.creatorUserId}, ${schema.issue.creatorId}) end`,
   priority: () => schema.issue.priority,
   estimate: () => schema.issue.estimate,
   project: () => schema.issue.projectId,
@@ -2380,7 +2443,7 @@ const boardSchema = issueListSchema.extend({
 export interface BoardGroup {
   readonly id: string;
   readonly total: number;
-  readonly issues: IssueListRow[];
+  readonly issues: IssueActorRead<IssueListRow>[];
   readonly nextCursor: string | null;
 }
 
@@ -2454,11 +2517,12 @@ export async function listBoardGroups(
           )
           .orderBy(asc(ranked.seat));
 
-  const byGroup = new Map<string, IssueListRow[]>();
-  for (const row of rows) {
+  const byGroup = new Map<string, IssueActorRead<IssueListRow>[]>();
+  const readRows = await attachIssueActors(db, principal.organizationId, rows);
+  for (const row of readRows) {
     const { groupKey, seat: _seat, ...issue } = row;
     const key = groupKey ?? UNGROUPED_KEY;
-    byGroup.set(key, [...(byGroup.get(key) ?? []), issue as IssueListRow]);
+    byGroup.set(key, [...(byGroup.get(key) ?? []), issue]);
   }
 
   const groups: BoardGroup[] = [];
@@ -2532,7 +2596,10 @@ export async function getIssueFacets(
   return { scopeTotal: Number(scopeTotal[0]?.total ?? 0), facets };
 }
 
-export async function getIssue(principal: Principal, idOrIdentifier: string): Promise<IssueRow> {
+export async function getIssue(
+  principal: Principal,
+  idOrIdentifier: string,
+): Promise<IssueReadRow> {
   assertCan(principal, 'issue:read');
   const parsed = parseIssueIdentifier(idOrIdentifier);
   const identifier = parsed === null ? null : issueIdentifier(parsed.prefix, parsed.number);
@@ -2566,7 +2633,8 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
   const row = direct ?? aliased?.issue;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
-  return issue;
+  const [readIssue] = await attachIssueActors(db, principal.organizationId, [issue]);
+  return requireRow(readIssue, 'That issue does not exist.');
 }
 
 export async function listIssueLabels(
@@ -2749,7 +2817,7 @@ export async function listRelations(
 export async function getParentIssue(
   principal: Principal,
   issueId: string,
-): Promise<IssueRow | null> {
+): Promise<IssueReadRow | null> {
   assertCan(principal, 'issue:read');
   const issue = await loadIssue(db, principal, issueId);
   if (issue.parentId === null) return null;
@@ -2764,13 +2832,14 @@ export async function getParentIssue(
     )
     .limit(1);
   if (row === undefined || !isInTeam(principal, teamScope(row))) return null;
-  return row;
+  const [readIssue] = await attachIssueActors(db, principal.organizationId, [row]);
+  return requireRow(readIssue, 'That issue does not exist.');
 }
 
 export interface RelatedIssue {
   readonly id: string;
   readonly type: IssueRelationType;
-  readonly issue: IssueRow;
+  readonly issue: IssueReadRow;
 }
 
 function relationTypeOf(value: string): IssueRelationType {
@@ -2796,13 +2865,18 @@ export async function listRelatedIssues(
     )
     .orderBy(asc(schema.issueRelation.createdAt));
 
-  return rows
-    .filter((row) => isInTeam(principal, teamScope(row.related)))
-    .map((row) => ({
-      id: row.relation.id,
-      type: relationTypeOf(row.relation.type),
-      issue: row.related,
-    }));
+  const visible = rows.filter((row) => isInTeam(principal, teamScope(row.related)));
+  const issues = await attachIssueActors(
+    db,
+    principal.organizationId,
+    visible.map((row) => row.related),
+  );
+  const byId = new Map(issues.map((issue) => [issue.id, issue]));
+  return visible.map((row) => ({
+    id: row.relation.id,
+    type: relationTypeOf(row.relation.type),
+    issue: requireRow(byId.get(row.related.id), 'That issue does not exist.'),
+  }));
 }
 
 export async function subscribe(
@@ -3138,7 +3212,7 @@ export async function markAsDuplicate(
   principal: Principal,
   issueId: string,
   input: unknown,
-): Promise<{ issue: IssueRow; relations: IssueRelationRow[]; actions: SyncAction[] }> {
+): Promise<{ issue: IssueReadRow; relations: IssueRelationRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueMarkDuplicateSchema.parse(input);
   if (parsed.survivorIssueId === issueId) {
@@ -3170,7 +3244,12 @@ export async function markAsDuplicate(
       existingDuplicateOf !== undefined &&
       existingDuplicateOf.relatedIssueId === target.id
     ) {
-      return { issue: source, relations: [existingDuplicateOf], actions: [] };
+      const [issue] = await attachIssueActors(tx, principal.organizationId, [source]);
+      return {
+        issue: requireRow(issue, 'That issue does not exist.'),
+        relations: [existingDuplicateOf],
+        actions: [],
+      };
     }
 
     await assertSurvivorAllowed(tx, principal.organizationId, source.id, target);
@@ -3329,13 +3408,15 @@ export async function markAsDuplicate(
     );
 
     const decorations = await issueDecorationsByIssue(tx, [updatedIssue.id]);
-    const updatedIssueAction = issueAction(updatedIssue, syncId, actor, 'update', {
+    const [readIssue] = await attachIssueActors(tx, principal.organizationId, [updatedIssue]);
+    const resultIssue = requireRow(readIssue, 'That issue does not exist.');
+    const updatedIssueAction = issueAction(resultIssue, syncId, actor, 'update', {
       labelIds: decorations.labels.get(updatedIssue.id) ?? [],
       reviewerIds: decorations.reviewers.get(updatedIssue.id) ?? [],
     });
 
     return {
-      issue: updatedIssue,
+      issue: resultIssue,
       relations,
       actions: [
         updatedIssueAction,

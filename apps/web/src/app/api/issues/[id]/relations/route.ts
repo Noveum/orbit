@@ -12,7 +12,10 @@ async function relationPayload(
   issueId: string,
 ): Promise<{ relations: { id: string; type: string; issue: unknown }[] }> {
   const related: RelatedIssue[] = await listRelatedIssues(principal, issueId);
-  const issues = await attachIssueDecorations(related.map((entry) => entry.issue));
+  const issues = await attachIssueDecorations(
+    related.map((entry) => entry.issue),
+    principal.organizationId,
+  );
   return {
     relations: related.map((entry, index) => ({
       id: entry.id,
