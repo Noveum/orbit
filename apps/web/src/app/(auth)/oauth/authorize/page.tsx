@@ -1,6 +1,8 @@
 import {
   getMcpClient,
   getMcpConsentRequest,
+  isAgentMcpEnabled,
+  listAgentIdentitiesForConsent,
   listOrganizationsForUser,
   userHasPasskey,
 } from '@orbit/core';
@@ -75,11 +77,13 @@ export default async function AuthorizePage({
   }
   const clientId = consent.clientId;
   const scope = consent.scope.join(' ');
+  const agentMcpEnabled = isAgentMcpEnabled() && consent.scope.includes('orbit.read');
 
-  const [client, organizations, requirePasskey] = await Promise.all([
+  const [client, organizations, requirePasskey, agentIdentities] = await Promise.all([
     getMcpClient(clientId),
     listOrganizationsForUser(session.user.id),
     userHasPasskey(session.user.id),
+    agentMcpEnabled ? listAgentIdentitiesForConsent(session.user.id, clientId) : [],
   ]);
 
   if (organizations.length === 0) {
@@ -107,6 +111,8 @@ export default async function AuthorizePage({
         }))}
         requirePasskey={requirePasskey}
         userEmail={session.user.email}
+        agentMcpEnabled={agentMcpEnabled}
+        agentIdentities={agentIdentities}
       />
     </ConsentShell>
   );

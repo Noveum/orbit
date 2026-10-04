@@ -41,3 +41,21 @@ export function assertMcpGrantOwner(
     throw forbidden('Only the owner of this connection can revoke it.');
   }
 }
+
+export function assertAgentIdentityOwner(
+  principal: Pick<Principal, 'userId' | 'organizationId'>,
+  identity: {
+    readonly ownerUserId: string | null;
+    readonly organizationId: string;
+    readonly clientId: string | null;
+  },
+  clientId: string,
+): void {
+  if (
+    identity.ownerUserId !== principal.userId ||
+    identity.organizationId !== principal.organizationId ||
+    identity.clientId !== clientId
+  ) {
+    throw forbidden('Choose an identity owned by you in this workspace and bound to this client.');
+  }
+}

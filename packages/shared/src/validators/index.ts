@@ -1,3 +1,4 @@
+export * from './agent-identity.ts';
 export * from './analytics.ts';
 export * from './auth.ts';
 export * from './avatar.ts';

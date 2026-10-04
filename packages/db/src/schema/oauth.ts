@@ -114,7 +114,9 @@ export const mcpGrant = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('mcp_grant_client_user_unique').on(table.clientId, table.userId),
+    uniqueIndex('mcp_grant_active_agent_unique')
+      .on(table.agentIdentityId)
+      .where(sql`${table.identityKind} = 'agent' and ${table.revokedAt} is null`),
     uniqueIndex('mcp_grant_legacy_unique')
       .on(table.clientId, table.userId)
       .where(sql`${table.identityKind} = 'legacy'`),

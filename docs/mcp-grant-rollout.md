@@ -50,6 +50,17 @@ prevents a removed and rejoined owner from reviving an old grant.
 
 ## Stage 3b: deployment prerequisites
 
+Implementation base: completed stage 3a commit
+`5a143898e268bae5a29c32a0840a32785713abab`, including compatibility commit
+`9d3e91fbe493519b1d3b15565b38f081f3183f17`.
+
+Migration `0032_mcp_agent_grant_binding` removes only the old global unique
+index and adds one active agent grant per identity. It preserves the legacy
+partial index, all credentials, consent records, identities and historical
+grants. Release also reconciles this explicitly retired index when baselining
+a missing or partial ledger, and on repeated releases after index drift. It
+does not remove unrelated undeclared indexes.
+
 Stage 3b must be a separate review and release based on completed stage 3a.
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
@@ -61,6 +72,30 @@ Stage 3a runtime uses the partial legacy conflict target and works after the
 global index is removed. Old release/build drift checks still describe their
 own schema: run release verification with the schema for the stage being
 deployed, not an older checkout against a newer migration ledger.
+
+After migration and successful stage 3b verification, deploy stage 3b with
+the gate still disabled. Enable `ORBIT_AGENT_MCP=true` only after every
+consent instance runs stage 3b, every token and MCP instance is at least stage
+3a, and the global index is absent. Stage 3a rejects agent consent requests
+during a mixed rollout or rollback. This flag opens explicit identity consent
+and authentication, never agent writes.
+
+Consent defaults to the legacy Human connection. The owner can explicitly
+choose read-only agent mode, enter an identity name or select an existing
+identity belonging to that owner, workspace and registered client. Names are
+not inferred from client names; there is no identity quota. An identity cannot
+be reassigned to another client through consent. Bound consent requires a
+trusted S256 PKCE context and a requested `orbit.read` scope. Granted scopes
+are the requested supported scopes, including `orbit.read` and excluding
+`orbit.write`.
+The displayed permissions, authorization code, consent row, grant, access
+token, refresh token and MCP tool set agree on this restriction.
+
+Reauthorization revokes only the selected identity's old active grant, keeps
+that grant's history, and creates a new immutable version. Legacy upsert,
+another identity or another workspace cannot overwrite this version. The
+connection settings display the identity name so that the owner can select
+the exact connection to disconnect. They expose no token secrets.
 
 After agent grants exist, rolling back to PR1 code or recreating the global
 unique index is unsafe: multiple agent/workspace grants can share a client/user.
@@ -87,3 +122,26 @@ the busy Happy DOM element otherwise formats tens of megabytes of accumulated
 document state and can exhaust the unchanged test timeout. All original
 assertions remain, with an additional check that an oversized file is rejected
 before its contents are read. No document import behavior changes.
+
+Stage 3b tests cover several identities for one client/user across workspaces,
+explicit names, client takeover rejection, nullable owner/client rejection,
+selected identity reauthorization and preserved snapshots. The real provider
+flow covers lowercase `s256`, v2 access and refresh, persisted grant binding
+and read-only scopes. The consent race test uses separate database connections
+and observes an ungranted PostgreSQL advisory lock before releasing competing
+duplicate and distinct authorization requests. All original assertions remain.
+
+Test preparation initially invoked `db:test-setup` in error and reset the six
+local base test databases. Existing isolated lanes were unaffected. It was
+stopped, and subsequent preparation updated only explicitly named local lanes.
+Windows root tests fail on existing POSIX permission and symlink assumptions.
+Initial parallel Linux runs encountered a shared PostgreSQL checkpoint wait
+longer than the scratch cleanup timeout and a large-file UI test timeout.
+Final full verification uses the local Linux image, a dedicated PostgreSQL 18
+cluster on local tmpfs with fsync, synchronous commits and full-page writes
+enabled, and the same local Redis and S3 services. The twelve precreated
+`pr3a-final` and `pr3b-final` lane databases use the committed 32 and 33 migration
+prefixes respectively. Two dedicated root catalogs support existing tests
+which read DATABASE_URL directly. The two stages run sequentially with all
+original assertions and unchanged timeouts. None of the six shared base test
+databases is used or reset by this final preparation.

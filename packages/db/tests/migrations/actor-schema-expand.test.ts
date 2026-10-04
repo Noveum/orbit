@@ -474,12 +474,12 @@ describe('actor schema expansion compatibility', () => {
     });
   });
 
-  it('keeps the original grant unique index usable by old consent upserts', async () => {
+  it('keeps the previous compatibility release legacy consent upsert usable', async () => {
     await rolledBack(async (tx) => {
       await tx`
         insert into mcp_grant (id, client_id, user_id, organization_id, scopes)
         values ('replacement-grant', 'expand-client', 'expand-creator', 'expand-org', 'orbit.read')
-        on conflict (client_id, user_id) do update set
+        on conflict (client_id, user_id) where identity_kind = 'legacy' do update set
           id = excluded.id, scopes = excluded.scopes, revoked_at = null
       `;
       const grants = await tx`
@@ -535,7 +535,7 @@ describe('actor schema expansion compatibility', () => {
     });
   }, 60_000);
 
-  it('runs the unchanged old issue, starter and MCP services against the upgraded database', async () => {
+  it('runs compatible issue, starter and legacy MCP services against the upgraded database', async () => {
     await runLegacyHelper();
   }, 30_000);
 });

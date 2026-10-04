@@ -10,7 +10,7 @@ import * as schema from '../src/schema/index.ts';
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_mcp_rollout', currentLane());
 const MIGRATIONS = fileURLToPath(new URL('../drizzle', import.meta.url));
-const PR1_MIGRATION = 1791120831827;
+const COMPATIBILITY_MIGRATION = 1791126760600;
 
 function urlFor(database: string): string {
   const url = new URL(BASE);
@@ -30,9 +30,8 @@ async function run<T>(work: (sql: postgres.Sql) => Promise<T>, database = SCRATC
 async function legacyRows(sql: postgres.Sql): Promise<Record<string, unknown>[]> {
   return [
     ...(await sql<Record<string, unknown>[]>`
-    select 'grant' as kind, to_jsonb(mcp_grant)
-      - 'identity_kind' - 'agent_identity_id' - 'owner_member_id' as payload from mcp_grant
-    union all select 'token', to_jsonb(oauth_access_token) - 'mcp_grant_id' from oauth_access_token
+    select 'grant' as kind, to_jsonb(mcp_grant) as payload from mcp_grant
+    union all select 'token', to_jsonb(oauth_access_token) from oauth_access_token
     union all select 'consent', to_jsonb(oauth_consent) from oauth_consent
     union all select 'identity', to_jsonb(agent_identity) from agent_identity
     order by kind
@@ -40,19 +39,21 @@ async function legacyRows(sql: postgres.Sql): Promise<Record<string, unknown>[]>
   ];
 }
 
-describe('MCP grant compatibility rollout', () => {
+describe('MCP agent grant binding rollout', () => {
   afterAll(async () => {
     await run((sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`), 'postgres');
   }, 30_000);
 
-  it('preserves legacy data, old consent SQL and the minimal identity contract', async () => {
+  it('preserves compatibility release data and SQL while admitting exact agent grants', async () => {
     await run(async (sql) => {
       await sql.unsafe(`drop database if exists "${SCRATCH}"`);
       await sql.unsafe(`create database "${SCRATCH}"`);
     }, 'postgres');
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
-    const prefix = migrations.filter((migration) => migration.folderMillis <= PR1_MIGRATION);
-    expect(prefix).toHaveLength(31);
+    const prefix = migrations.filter(
+      (migration) => migration.folderMillis <= COMPATIBILITY_MIGRATION,
+    );
+    expect(prefix).toHaveLength(32);
     await run(async (sql) => {
       await sql`create extension if not exists pg_trgm`;
       for (const migration of prefix) {
@@ -115,7 +116,8 @@ describe('MCP grant compatibility rollout', () => {
       await sql`
         insert into mcp_grant (id, client_id, user_id, organization_id, scopes)
         values ('rollout-rotated', 'rollout-client', 'rollout-owner', 'rollout-org', 'orbit.read')
-        on conflict (client_id, user_id) do update set id = excluded.id, scopes = excluded.scopes
+        on conflict (client_id, user_id) where identity_kind = 'legacy'
+        do update set id = excluded.id, scopes = excluded.scopes
       `;
       const grants = await sql`select id, identity_kind, agent_identity_id from mcp_grant`;
       expect([...grants]).toEqual([
@@ -130,9 +132,44 @@ describe('MCP grant compatibility rollout', () => {
       expect(identity).toMatchObject({ owner_user_id: null, client_id: null });
       const [globalIndex] =
         await sql`select indisunique from pg_index where indexrelid = to_regclass('mcp_grant_client_user_unique')`;
-      expect(globalIndex?.['indisunique']).toBe(true);
+      expect(globalIndex).toBeUndefined();
       const [count] = await sql`select count(*)::integer as total from agent_identity`;
       expect(count?.['total']).toBe(2);
+      await sql`insert into organization (id, name, slug) values ('rollout-other-org', 'Other workspace', 'rollout-other-org')`;
+      for (const [id, organizationId] of [
+        ['rollout-agent-a', 'rollout-org'],
+        ['rollout-agent-b', 'rollout-org'],
+        ['rollout-agent-c', 'rollout-other-org'],
+      ] as const) {
+        await sql`
+          insert into agent_identity (
+            id, organization_id, owner_user_id, client_id, name, owner_name_snapshot, client_name_snapshot
+          ) values (${id}, ${organizationId}, 'rollout-owner', 'rollout-client', ${id}, 'Owner', 'Client')
+        `;
+        await sql`
+          insert into mcp_grant (
+            id, client_id, user_id, organization_id, scopes, identity_kind, agent_identity_id, owner_member_id
+          ) values (${id}, 'rollout-client', 'rollout-owner', ${organizationId}, 'orbit.read', 'agent', ${id}, 'member-epoch')
+        `;
+      }
+      await expect(
+        (async () => {
+          await sql`
+            insert into mcp_grant (id, client_id, user_id, organization_id, scopes, identity_kind, agent_identity_id)
+            values ('rollout-agent-duplicate', 'rollout-client', 'rollout-owner', 'rollout-org', 'orbit.read', 'agent', 'rollout-agent-a')
+          `;
+        })(),
+      ).rejects.toThrow('mcp_grant_active_agent_unique');
+      await sql`update mcp_grant set revoked_at = now() where id = 'rollout-agent-a'`;
+      await sql`
+        insert into mcp_grant (id, client_id, user_id, organization_id, scopes, identity_kind, agent_identity_id)
+        values ('rollout-agent-renewed', 'rollout-client', 'rollout-owner', 'rollout-org', 'orbit.read', 'agent', 'rollout-agent-a')
+      `;
+      const [bound] =
+        await sql`select count(*)::integer as total from mcp_grant where identity_kind = 'agent' and revoked_at is null`;
+      expect(bound?.['total']).toBe(3);
+      const [legacy] = await sql`select id, scopes from mcp_grant where identity_kind = 'legacy'`;
+      expect(legacy).toMatchObject({ id: 'rollout-rotated', scopes: 'orbit.read' });
     });
     const afterWrites = await run(legacyRows);
     const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
