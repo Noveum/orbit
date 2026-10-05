@@ -141,7 +141,7 @@ describe('explicit agent connections', () => {
     for (const name of ['test_write', 'test_side_effect_read']) {
       const result = (await client.callTool({ name, arguments: {} })) as CallToolResult;
       expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain('write side effects');
+      expect(JSON.stringify(result.content)).toContain('cannot perform that operation');
     }
     expect(effects).toBe(0);
   });

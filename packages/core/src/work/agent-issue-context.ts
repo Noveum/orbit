@@ -10,6 +10,7 @@ import {
   verifyMcpTokenBinding,
 } from '../auth/mcp-token.ts';
 import type { Executor } from '../internal.ts';
+import { lockNotificationPolicyRead } from '../notifications/access-sync.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
 
 export interface AgentIssueWriteContext {
@@ -57,6 +58,7 @@ export async function issueWriteTransaction<T>(
   database: Database = db,
 ): Promise<T> {
   return await database.transaction(async (tx) => {
+    await lockNotificationPolicyRead(tx, principal.organizationId);
     if (context === undefined) return work(tx, principal);
     if (!(isAgentIssueWriteEnabled() && context.scopes.split(/\s+/).includes('orbit.write'))) {
       throw forbidden('Agent Issue writing is not authorized.');
@@ -99,10 +101,20 @@ export async function issueWriteTransaction<T>(
           eq(schema.team.organizationId, context.organizationId),
         ),
       )
-      .for('share');
+      .for('share', { of: schema.teamMember });
     const current = await resolvePrincipal(context.userId, context.organizationId, tx);
     assertAgentIssueWrite(current, access.scopes, permission);
     ACTORS.set(tx, { type: 'agent', id: access.identity.id, name: access.identity.name });
     return work(tx, current);
   });
+}
+
+export function issueWriteTransactionFor(
+  principal: Principal,
+  permission: Permission,
+  context: AgentIssueWriteContext | undefined,
+  database: Database = db,
+) {
+  return <T>(work: (tx: Transaction, current: Principal) => Promise<T>): Promise<T> =>
+    issueWriteTransaction(principal, permission, context, work, database);
 }

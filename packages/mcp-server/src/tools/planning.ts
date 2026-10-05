@@ -16,7 +16,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveCycle, resolveProject, resolveTeam, resolveUserId } from '../resolve.ts';
 import { deltaViews, describeIssue } from '../views.ts';
-import { defineTool, publish } from './support.ts';
+import { defineTool, issueWriteContextFor, publish } from './support.ts';
 
 const teamRef = z.string().min(1).describe('Team key like "ENG", team name, or team id.');
 
@@ -181,6 +181,7 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
       description:
         'Put an issue into a sprint, or pass null to take it out of the sprint it is in. The sprint must belong to the issue team.',
       readOnly: false,
+      agentWrite: true,
       inputSchema: {
         issue: z.string().min(1).describe('Issue identifier like "ENG-42", or an issue id.'),
         cycle: z
@@ -195,7 +196,13 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
     async (args) => {
       const issue = await getIssue(principal, args.issue);
       const cycleId = args.cycle === null ? null : (await resolveCycle(principal, args.cycle)).id;
-      const updated = await updateIssue(principal, issue.id, { cycleId });
+      const updated = await updateIssue(
+        principal,
+        issue.id,
+        { cycleId },
+        undefined,
+        issueWriteContextFor(server),
+      );
       await publish(updated.actions);
       return {
         issue: await describeIssue(principal, updated.issue),

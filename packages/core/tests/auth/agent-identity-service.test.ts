@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { and, db, eq, isNull, schema, sql } from '@orbit/db';
 import { type AgentConsentSelection, mcpAuthorizationCodeSchema } from '@orbit/shared/validators';
@@ -18,11 +18,13 @@ import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-s
 
 const SECRET = 'agent-consent-binding-test-secret';
 const SCOPES = 'openid profile offline_access orbit.read orbit.write';
+const originalWriteGate = process.env['ORBIT_AGENT_ISSUE_WRITE'];
 let workspace: Workspace;
 let clientId: string;
 
 beforeEach(async () => {
   process.env['ORBIT_AGENT_MCP'] = 'true';
+  process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
   process.env['BETTER_AUTH_SECRET'] = SECRET;
   await resetDatabase();
   workspace = await createWorkspace();
@@ -34,6 +36,11 @@ beforeEach(async () => {
     redirectUrls: 'https://example.com/callback',
     type: 'public',
   });
+});
+
+afterEach(() => {
+  if (originalWriteGate === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+  else process.env['ORBIT_AGENT_ISSUE_WRITE'] = originalWriteGate;
 });
 
 async function request(scopes = SCOPES, client = clientId): Promise<string> {
@@ -56,10 +63,14 @@ async function request(scopes = SCOPES, client = clientId): Promise<string> {
   return id;
 }
 
-async function approve(agent: AgentConsentSelection, organizationId = workspace.organizationId) {
+async function approve(
+  agent: AgentConsentSelection,
+  organizationId = workspace.organizationId,
+  scopes = SCOPES,
+) {
   const result = await finalizeMcpConsent({
     userId: workspace.adminUser.id,
-    consentCode: await request(),
+    consentCode: await request(scopes),
     organizationId,
     accept: true,
     agent,
@@ -139,6 +150,46 @@ async function remainingOutput(reader: ReadableStreamDefaultReader<Uint8Array>):
 }
 
 describe('explicit identity consent', () => {
+  it('requires a new explicit write authorization without upgrading read-only grants', async () => {
+    const reader = await approve({ name: 'Existing reader' });
+    const oldToken = await credential(reader.grant);
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    expect((await verifyMcpAccessToken(oldToken)).scopes).not.toContain('orbit.write');
+    const writer = await approve({ identityId: reader.identityId, write: true });
+    expect(writer.grant.id).not.toBe(reader.grant.id);
+    expect(writer.context.scope).toEqual(SCOPES.split(' '));
+    expect(writer.grant.scopes).toBe(SCOPES);
+    const [consent] = await db
+      .select()
+      .from(schema.oauthConsent)
+      .where(
+        and(eq(schema.oauthConsent.clientId, clientId), eq(schema.oauthConsent.scopes, SCOPES)),
+      )
+      .limit(1);
+    expect(consent?.scopes).toBe(SCOPES);
+    await expect(verifyMcpAccessToken(oldToken)).rejects.toMatchObject({ code: 'unauthorized' });
+    const token = await credential(writer.grant);
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
+    expect((await verifyMcpAccessToken(token)).scopes).toBe(SCOPES);
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    const readAgain = await approve({ identityId: reader.identityId });
+    expect(readAgain.grant.scopes).not.toContain('orbit.write');
+    await expect(verifyMcpAccessToken(token)).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('rejects explicit writes without the gate or trusted requested scope', async () => {
+    await expect(approve({ name: 'Blocked writer', write: true })).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    await expect(
+      approve({ name: 'Unrequested writer', write: true }, workspace.organizationId, 'orbit.read'),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    expect(await db.select().from(schema.agentIdentity)).toHaveLength(0);
+    expect(await db.select().from(schema.mcpGrant)).toHaveLength(0);
+    expect(await db.select().from(schema.oauthConsent)).toHaveLength(0);
+  });
+
   it('keeps legacy writes while binding multiple read-only identities and exact revocation', async () => {
     const legacyId = await recordMcpGrant({
       clientId,

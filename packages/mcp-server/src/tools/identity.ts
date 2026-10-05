@@ -12,7 +12,7 @@ import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { permissionsFor } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveTeam } from '../resolve.ts';
-import { defineTool } from './support.ts';
+import { canWriteAgentIssues, defineTool } from './support.ts';
 
 const teamRef = z.string().min(1).describe('A team key like "ENG", a team name, or a team id.');
 
@@ -28,11 +28,14 @@ export function registerIdentityTools(
         name: 'get_agent_identity',
         title: 'Get the Agent Identity',
         description:
-          'Return this connection explicit Agent Identity. The connection is read-only. get_me and me continue to identify the Human Principal who authorized it.',
+          'Return this connection explicit Agent Identity and Issue write capability. get_me and me continue to identify the Human Principal who authorized it.',
         readOnly: true,
         inputSchema: {},
       },
-      async () => ({ agent: { id: identity.id, name: identity.name }, readOnly: true }),
+      async () => ({
+        agent: { id: identity.id, name: identity.name },
+        readOnly: !canWriteAgentIssues(server),
+      }),
     );
   }
   defineTool(

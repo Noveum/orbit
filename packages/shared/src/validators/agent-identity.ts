@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 export const agentConsentSelectionSchema = z.union([
-  z.strictObject({ identityId: z.string().min(1) }),
-  z.strictObject({ name: z.string().trim().min(1).max(100) }),
+  z.strictObject({ identityId: z.string().min(1), write: z.boolean().default(false) }),
+  z.strictObject({ name: z.string().trim().min(1).max(100), write: z.boolean().default(false) }),
 ]);
-export type AgentConsentSelection = z.infer<typeof agentConsentSelectionSchema>;
+export type AgentConsentSelection = z.input<typeof agentConsentSelectionSchema>;
 
 export const mcpConsentDecisionSchema = z.object({
   decision: z.enum(['allow', 'deny']),

@@ -2,7 +2,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { getOrganization, verifyMcpAccessToken } from '@orbit/core';
+import {
+  type AgentIssueWriteContext,
+  agentIssueWriteContext,
+  getOrganization,
+  verifyMcpAccessToken,
+} from '@orbit/core';
 import { forbidden, toDomainError, unauthorized } from '@orbit/shared/errors';
 import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { errorFields, logger } from './logger.ts';
@@ -23,7 +28,8 @@ const INSTRUCTIONS = [
 
 const AGENT_INSTRUCTIONS = [
   'Orbit is a task manager. Issues live on teams and carry identifiers such as ENG-42.',
-  'This connection has an explicit Agent Identity and is read-only. Write tools and reads with write side effects are unavailable.',
+  'This connection has an explicit Agent Identity. Issue writes require explicit write consent and the Issue write gate. Other writes and reads with write side effects are unavailable.',
+  'Read-only Agent Grants remain read-only.',
   'Call get_agent_identity for the Agent Identity. get_me, me and my issues still refer to the Human Principal who authorized this connection.',
   'Available read tools use the current workspace permissions of that Human Principal and the orbit.read scope.',
 ].join(' ');
@@ -54,6 +60,7 @@ export function createOrbitMcpServer(
   scopes = EVERY_ORBIT_SCOPE,
   workspaceInstructions = '',
   identity: McpIdentity = { kind: 'legacy' },
+  writeContext?: AgentIssueWriteContext,
 ): McpServer {
   const instructions = [
     identity.kind === 'agent' ? AGENT_INSTRUCTIONS : INSTRUCTIONS,
@@ -65,7 +72,11 @@ export function createOrbitMcpServer(
     { name: 'orbit', version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions },
   );
-  allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes), identity });
+  allowTools(
+    server,
+    { reads: grantsReads(scopes), writes: grantsWrites(scopes), identity },
+    writeContext,
+  );
   registerTools(server, principal, identity);
   return server;
 }
@@ -124,6 +135,7 @@ async function dispatch(
     identity.scopes,
     workspaceInstructions,
     identity.identity,
+    identity.identity.kind === 'agent' ? agentIssueWriteContext(identity) : undefined,
   );
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);

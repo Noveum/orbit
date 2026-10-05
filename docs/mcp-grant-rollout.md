@@ -155,3 +155,16 @@ prefixes respectively. Two dedicated root catalogs support existing tests
 which read DATABASE_URL directly. The two stages run sequentially with all
 original assertions and unchanged timeouts. None of the six shared base test
 databases is used or reset by this final preparation.
+
+## PR4: explicit Issue write consent
+
+PR4 preserves these PR3 deployment prerequisites. The Agent connection defaults
+to read-only even when its client requests `orbit.write`. After the PR4 reader
+and writer rollout, `ORBIT_AGENT_ISSUE_WRITE=true` makes a separate unchecked
+"Allow this Agent to create and update issues" permission available. Approval
+grants write scope only when the stored OAuth request requested it and the owner
+explicitly selects this permission. Selecting another identity, connection mode
+or workspace clears that selection. Reauthorization creates a new exact grant
+version; existing PR3 grants and credentials never gain write scope automatically.
+Turning off the write gate preserves valid Agent read credentials and refresh,
+while writer registration and execution reject Agent Issue mutations.

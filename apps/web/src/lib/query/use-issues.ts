@@ -953,6 +953,10 @@ function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
     expectedForUndo,
     expectedForRedo,
   );
+  if (patch.assigneeId !== undefined) {
+    expectedForUndo['assigneeAgentId'] = null;
+    expectedForRedo['assigneeAgentId'] = issue.assigneeAgentId ?? null;
+  }
   assignScalarDelta(
     'estimate',
     patch.estimate,

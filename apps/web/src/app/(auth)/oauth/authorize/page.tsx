@@ -1,6 +1,7 @@
 import {
   getMcpClient,
   getMcpConsentRequest,
+  isAgentIssueWriteEnabled,
   isAgentMcpEnabled,
   listAgentIdentitiesForConsent,
   listOrganizationsForUser,
@@ -112,6 +113,7 @@ export default async function AuthorizePage({
         requirePasskey={requirePasskey}
         userEmail={session.user.email}
         agentMcpEnabled={agentMcpEnabled}
+        agentIssueWriteEnabled={isAgentIssueWriteEnabled() && consent.scope.includes('orbit.write')}
         agentIdentities={agentIdentities}
       />
     </ConsentShell>

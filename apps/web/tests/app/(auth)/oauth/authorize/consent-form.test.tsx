@@ -115,6 +115,51 @@ const agentProps = {
 };
 
 describe('explicit read-only Agent consent', () => {
+  it('defaults to read-only even when write access is available', async () => {
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc' }]);
+    render(<ConsentForm {...agentProps} agentIssueWriteEnabled />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    expect(screen.getByRole('checkbox', { name: /Allow this Agent/ })).not.toBeChecked();
+    expect(screen.queryByText(/Create, edit, archive, delete and relate issues/)).toBeNull();
+    fireEvent.change(screen.getByLabelText('Agent Identity'), { target: { value: 'identity_1' } });
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({
+      agent: { identityId: 'identity_1', write: false },
+    });
+  });
+
+  it('sends write permission only after the separate explicit checkbox is selected', async () => {
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc' }]);
+    render(<ConsentForm {...agentProps} agentIssueWriteEnabled />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    fireEvent.change(screen.getByLabelText('Agent name'), { target: { value: 'Issue assistant' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /Allow this Agent/ }));
+    expect(screen.getByText(/Create, edit, archive, delete and relate issues/)).toBeTruthy();
+    expect(screen.queryByText(/This Agent connection is read-only/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({
+      agent: { name: 'Issue assistant', write: true },
+    });
+  });
+
+  it('clears write permission when changing identity, mode or workspace', () => {
+    render(<ConsentForm {...agentProps} agentIssueWriteEnabled />);
+    const mode = screen.getByLabelText('Connection identity');
+    fireEvent.change(mode, { target: { value: 'agent' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /Allow this Agent/ }));
+    fireEvent.change(screen.getByLabelText('Agent Identity'), { target: { value: 'identity_1' } });
+    expect(screen.getByRole('checkbox', { name: /Allow this Agent/ })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Allow this Agent/ }));
+    fireEvent.change(mode, { target: { value: 'legacy' } });
+    fireEvent.change(mode, { target: { value: 'agent' } });
+    expect(screen.getByRole('checkbox', { name: /Allow this Agent/ })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Allow this Agent/ }));
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'org_2' } });
+    expect(screen.getByRole('checkbox', { name: /Allow this Agent/ })).not.toBeChecked();
+  });
+
   it('preserves legacy approval when the feature is disabled or no Agent is selected', async () => {
     const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc' }]);
     const { rerender } = render(<ConsentForm {...agentProps} agentMcpEnabled={false} />);
@@ -174,6 +219,12 @@ describe('explicit read-only Agent consent', () => {
   it('does not offer Agent access when the trusted request has no read scope', () => {
     render(<ConsentForm {...agentProps} scopes={['orbit.write']} scope="orbit.write" />);
     expect(screen.queryByLabelText('Connection identity')).toBeNull();
+  });
+
+  it('does not offer write opt-in without a requested write scope', () => {
+    render(<ConsentForm {...agentProps} {...props} agentIssueWriteEnabled />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    expect(screen.queryByRole('checkbox', { name: /Allow this Agent/ })).toBeNull();
   });
 
   it('allows denial without naming an Agent', async () => {

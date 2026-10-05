@@ -44,6 +44,145 @@ and retain the canonical Actor display from PR2.
 write scopes or tools. `ORBIT_AGENT_MCP=true` can retain valid read-only Agent
 connections while Issue writing is disabled.
 
+## Stage B: authorization and responsibility
+
+Agent consent defaults to read-only. A write checkbox is offered only when
+the trusted OAuth request includes `orbit.write` and the Issue write gate is
+enabled. Selecting it creates a new exact Grant version with that scope.
+Existing read-only Grants and tokens never acquire it automatically. Token
+exchange and refresh remain bound to the selected Grant, Client, Identity,
+workspace and Owner Membership. An invalid Agent binding fails closed.
+Legacy Human consent, token and refresh contracts remain unchanged.
+
+The server constructs an Issue write context from the verified credential.
+Tool arguments cannot supply its Grant, token, Client, Identity, Membership
+or scope fields. Registration and invocation check the gate and tool policy.
+Every Core Issue mutation checks again inside its transaction, locks the
+current credential and binding, and resolves the Owner's current Principal.
+Permission is the intersection of the Grant scope, current Human permissions
+and each resource's policy. A removed Membership cannot regain an old Grant
+by rejoining. Role, Team access, revocation and lifecycle changes are checked
+at the write boundary. No authentication failure becomes a Human write.
+
+The transaction takes the shared notification-policy lock before the MCP
+Owner lifecycle lock, then credential and binding row locks. Issue rows used
+by mutations are locked before resource authorization; relation pairs are
+locked in stable order. This coordinates with existing policy/lifecycle
+mutations and prevents a concurrent Team move from bypassing resource checks.
+The current Team Membership query locks only Membership rows, avoiding a
+shared lock on the Team counter before allocating an Issue number.
+
+Creator is the actual Human or Agent executing the create. An Issue has at
+most one Human or Agent Assignee. Its Human Owner is a separate relationship
+from the Personal Agent's Owner. First assignment initializes a NULL Issue
+Owner to the Human Assignee or Agent Owner; later replacement or removal
+preserves it. Agent writes cannot transfer that responsibility. Only the
+actual Human Owner or the same Personal Agent can establish that Agent's
+assignment. Sharing a Human Owner does not authorize one Agent to assign
+another. Editors can remove or replace an existing Assignee.
+
+An assigned Human and the Agent's Human Owner must be current workspace
+members who can read the Issue. A Team move validates the resulting Assignee,
+Agent Owner and Issue Owner together and rejects invalid moves atomically.
+Human creates retain their existing default self-assignment; an Agent create
+without an assignment is unassigned.
+
+## Input contract
+
+Core create, update, bulk, sub-Issue and move schemas accept optional
+`assigneeAgentId`. `assigneeId` retains its Human meaning. Two non-NULL
+Assignee references are rejected. Omitting both preserves an existing
+assignment; explicitly setting `assigneeId: null` clears an Agent assignment
+even when its legacy mirror was already NULL. Owner and Creator are computed
+by the server and are not caller-controlled mutation fields.
+
+MCP assignment references use the existing `assignee` argument. Human IDs,
+handles and `me` keep their meanings. `agent` means the connected Agent;
+`agent:<identity-id>` names a Personal Agent and is subject to assignment
+policy. `null` clears either kind. Human-only search filters retain their
+existing contract. The Web interface continues to use the canonical Actor
+reader from PR2; this change does not add a complete Agent selector UI.
+
+## MCP mutation coverage
+
+| Tool | Personal Agent policy |
+| --- | --- |
+| `create_issue` | Write scope, current Team permission, actual Creator, assignment policy |
+| `update_issue` | Current Issue permission, assignment and retained Owner |
+| `create_sub_issues` | Locked parent, every child authorized, one atomic transaction |
+| `bulk_update_issues` | Every Issue authorized, one atomic transaction |
+| `move_issue` | Source and destination permission, final responsibility validation |
+| `move_to_cycle` | Context forwarded into Issue update; cycle and Issue policy |
+| `archive_issue`, `unarchive_issue` | Locked current Issue and write permission |
+| `delete_issue` | Current delete permission, all affected child/relation Issues authorized, actual Actor |
+| `set_relation`, `remove_relation` | Both locked Issues authorized in one transaction |
+| `mark_issue_duplicate` | Source, new survivor and previous duplicate endpoints authorized atomically |
+| Comment create, edit and delete | Denied for Agent connections |
+| Attachment add and remove | Denied for Agent connections |
+| Other workspace, Team, project, document and planning writes | Denied for Agent connections |
+| Inbox reads with write side effects | Denied for Agent connections |
+
+The 12 allowed Issue mutation tools use the same trusted write context.
+`get_agent_identity.readOnly` reflects available write capability. Turning
+off the gate removes Issue write capability while keeping valid Agent reads
+and refresh. Non-Issue operations do not receive Agent write access.
+
+Activities, notifications and Realtime use the actual canonical Agent Actor.
+Public payloads contain Actor references, never Grant IDs or credentials.
+Agent self-assignment notifies its Human Owner, including when the Issue
+Owner is someone else. Existing Human self-notification suppression remains.
+Create, sub-Issue, update, bulk update and move establish persistent
+subscriptions using the canonical assignment recipient. An Agent assignment
+subscribes its Human Owner, so subsequent status changes reach that person.
+Replacement or removal of an Assignee does not remove existing subscriptions.
+The existing transaction and event-delivery architecture is retained; no
+Outbox, permanent worker or separate idempotency subsystem is introduced.
+
+## Review follow-up
+
+Column moves collect the moving Issue, anchors and potential rebalance
+candidates before taking any Issue row lock. The entire set is locked in
+stable Issue ID order, and each locked row is authorized using its current
+Team. A changed source Team or state, changed candidate column membership,
+or a newly discovered candidate causes a conflict before column updates.
+Rebalance uses the locked rows and rechecks the current candidate set, so
+an Issue concurrently moved beyond the Owner's access is never updated.
+The stable order also prevents two moves from holding different target rows
+and waiting for one another through shared anchors and rebalance candidates.
+
+Human sub-Issue creation preserves its existing independent number
+reservation when the locked parent's Team matches the reservation Team.
+If the parent moved meanwhile, it allocates from the current Team counter
+after locking and authorizing that parent. The unused old Team reservation
+remains a gap; it is never reused as a number in the destination Team.
+Agent number allocation stays within the authorized write transaction.
+Sub-Issues with cycle assignments acquire the cycle locks before updating
+the counter. Parent and cycle checks precede an Agent create's counter
+update for the same lock order to apply across create and move paths.
+
+Human assignment undo and redo include both legacy `assigneeId` and
+canonical `assigneeAgentId` in their expected state. A cached Human
+unassignment cannot overwrite a newer Agent assignment merely because both
+legacy Assignee values are NULL. The server rejects the stale operation as
+a conflict and the client retains the intervening assignment.
+
+Focused regression evidence for this follow-up is retained in the ignored
+`.artifacts/` directory:
+
+| Coverage | Evidence |
+| --- | --- |
+| Concurrent move beyond current access, allowed rebalance and Actor | `pr4-review-rebalance-red.log`, `pr4-review-rebalance-green.log` |
+| Concurrent rebalance move lock ordering | `pr4-review-rebalance-concurrent-red.log`, `pr4-review-rebalance-concurrent-green.log` |
+| Different Agent Owners creating together and moved-parent numbering | `review-counters-red.log`, `review-counters-green.log` |
+| Persistent subscriptions, distinct Owners and Human notification behavior | `pr4-review-subscriptions-red.log`, `pr4-review-subscriptions-regression.log` |
+| Actual Web undo and redo PATCH conditions | `review-undo-web-red.log`, `review-undo-web-green.log` |
+| Server assignment conflict and unchanged responsibility on rejection | `review-undo-core-green.log` |
+
+These logs establish focused behavior only. The subscription regression run
+passed 145 tests; the Web history regression run passed 84 tests; the Core
+undo run passed 11 tests. The final delivery record separately identifies the
+independent review and full verification results for the exact source tree.
+
 ## Deployment order
 
 1. Complete the separate PR3 compatibility and identity-binding rollout in
@@ -55,12 +194,20 @@ connections while Issue writing is disabled.
    token exchange and refresh instances before offering Agent write consent.
 4. Verify legacy Human writes and real-null Agent reader fixtures before
    authorizing any Agent to write.
+5. After every reader, writer and OAuth instance has stage B or newer code,
+   enable `ORBIT_AGENT_ISSUE_WRITE=true` on those instances. Explicitly
+   reauthorize each intended Agent with the write checkbox, then verify an
+   allowed Issue write and a read-only Grant rejection. Turning on the gate
+   alone does not upgrade existing Grants.
 
 ## Rollback
 
 Before Agent business rows exist, keep the expanded schema while recovering
 the deployment. After Agent rows exist, disable `ORBIT_AGENT_ISSUE_WRITE`
 first and retain a PR4 version capable of reading and editing those rows.
+After write Grants exist, retain stage B token, refresh and consent support
+even while writing is disabled. Stage A rejects writable Agent Grants and
+is not a compatibility rollback for those credentials.
 Do not directly roll back to PR2 or PR3. Old writers are not promised to safely
 operate on existing Agent rows. Do not convert Agent history into Human
 history, replace Agent IDs with User IDs or remove legacy columns.
@@ -76,3 +223,11 @@ Native Windows root tests depend on POSIX permissions, symlinks and Bash.
 The local Linux verification image runs the same source snapshot with Bun
 1.3.14 and a dedicated PostgreSQL 18 cluster. Test storage and Redis are local.
 Logs are retained under the worktree's ignored `.artifacts/` directory.
+
+Regression coverage includes every allowed MCP mutation, explicit consent
+and exact binding, forged contexts, current permissions, revocation races,
+cross-Team moves, assignment and Owner preservation, real Agent reader
+paths, atomic bulk/sub-Issues, and notification recipient/Actor contracts.
+SQL tests cover normal upgrades, old ledger states, baseline, repeated
+release and missing/disabled/stale trigger recovery. The final delivery
+record identifies each source tree, complete verification result and log.

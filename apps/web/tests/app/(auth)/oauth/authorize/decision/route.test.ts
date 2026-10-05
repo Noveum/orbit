@@ -6,6 +6,7 @@ import { mockSession } from '../../../../../../tests-support.ts';
 
 let workspace: Workspace;
 const originalGate = process.env['ORBIT_AGENT_MCP'];
+const originalWriteGate = process.env['ORBIT_AGENT_ISSUE_WRITE'];
 const clientId = 'consent-client';
 const callback = 'http://127.0.0.1:9000/callback';
 const verifier = 'consent-decision-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
@@ -16,6 +17,7 @@ const { POST } = await import('../../../../../../src/app/(auth)/oauth/authorize/
 
 beforeEach(async () => {
   process.env['ORBIT_AGENT_MCP'] = 'true';
+  process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
   await resetDatabase();
   workspace = await createWorkspace('Decision');
   await db.insert(schema.oauthApplication).values({
@@ -30,9 +32,13 @@ beforeEach(async () => {
 afterEach(() => {
   if (originalGate === undefined) delete process.env['ORBIT_AGENT_MCP'];
   else process.env['ORBIT_AGENT_MCP'] = originalGate;
+  if (originalWriteGate === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+  else process.env['ORBIT_AGENT_ISSUE_WRITE'] = originalWriteGate;
 });
 
-async function consentCode(): Promise<string> {
+async function consentCode(
+  scopes = ['openid', 'offline_access', 'orbit.read', 'orbit.write'],
+): Promise<string> {
   const code = randomUUID();
   await db.insert(schema.verification).values({
     id: randomUUID(),
@@ -41,7 +47,7 @@ async function consentCode(): Promise<string> {
       clientId,
       redirectURI: callback,
       userId: workspace.adminUser.id,
-      scope: ['openid', 'offline_access', 'orbit.read', 'orbit.write'],
+      scope: scopes,
       requireConsent: true,
       state: 'trusted-state',
       codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
@@ -66,6 +72,56 @@ function request(code: string, fields: Record<string, unknown>): Request {
 }
 
 describe('Agent consent decision boundary', () => {
+  it('grants explicitly selected writes only from the trusted requested scope', async () => {
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    const response = await POST(
+      request(await consentCode(), { agent: { name: 'Issue writer', write: true } }),
+    );
+    expect(response.status).toBe(200);
+    const [grant] = await db.select().from(schema.mcpGrant);
+    expect(grant).toMatchObject({
+      identityKind: 'agent',
+      scopes: 'openid offline_access orbit.read orbit.write',
+    });
+    const body = (await response.json()) as { redirectUri: string };
+    const [record] = await db
+      .select()
+      .from(schema.verification)
+      .where(
+        eq(
+          schema.verification.identifier,
+          new URL(body.redirectUri).searchParams.get('code') ?? '',
+        ),
+      );
+    expect(JSON.parse(record?.value ?? '{}')).toMatchObject({
+      scope: ['openid', 'offline_access', 'orbit.read', 'orbit.write'],
+      mcpGrantId: grant?.id,
+    });
+  });
+
+  it('rejects disabled writes, forged requested scopes and nonboolean opt-ins', async () => {
+    expect(
+      (await POST(request(await consentCode(), { agent: { name: 'Writer', write: true } }))).status,
+    ).toBe(403);
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    expect(
+      (
+        await POST(
+          request(await consentCode(['orbit.read']), {
+            agent: { name: 'Writer', write: true },
+            scope: 'orbit.read orbit.write',
+          }),
+        )
+      ).status,
+    ).toBe(422);
+    expect(
+      (await POST(request(await consentCode(), { agent: { name: 'Writer', write: 'true' } })))
+        .status,
+    ).toBe(400);
+    expect(await db.select().from(schema.mcpGrant)).toHaveLength(0);
+    expect(await db.select().from(schema.agentIdentity)).toHaveLength(0);
+  });
+
   it('binds an explicit Identity using the trusted client, user and read-only scopes', async () => {
     const response = await POST(
       request(await consentCode(), {

@@ -9,7 +9,7 @@ import {
 } from '@orbit/shared/validators';
 import { type Executor, newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
-import { prepareAgentMcpGrant, readOnlyAgentScopes } from './agent-identity-service.ts';
+import { agentConsentScopes, prepareAgentMcpGrant } from './agent-identity-service.ts';
 
 const MCP_CREDENTIAL_PREFIX = 'orbit-mcp-v1';
 const AGENT_CREDENTIAL_PREFIX = 'orbit-mcp-agent-v2';
@@ -154,12 +154,14 @@ export async function validateMcpGrant(
       .select()
       .from(schema.agentIdentity)
       .where(eq(schema.agentIdentity.id, grant.agentIdentityId))
-      .limit(1);
+      .limit(1)
+      .for('share');
     const [client] = await tx
       .select()
       .from(schema.oauthApplication)
       .where(eq(schema.oauthApplication.clientId, grant.clientId))
-      .limit(1);
+      .limit(1)
+      .for('share');
     if (
       agent === undefined ||
       agent.deletedAt !== null ||
@@ -168,7 +170,7 @@ export async function validateMcpGrant(
       agent.organizationId !== grant.organizationId ||
       client === undefined ||
       client.disabled ||
-      grant.scopes.split(/\s+/).includes('orbit.write')
+      !grant.scopes.split(/\s+/).includes('orbit.read')
     )
       throw invalid;
     identity = { kind: 'agent', id: agent.id, name: agent.name };
@@ -200,7 +202,8 @@ export async function verifyMcpTokenBinding(
     .select()
     .from(schema.mcpGrant)
     .where(eq(schema.mcpGrant.id, grantId))
-    .limit(1);
+    .limit(1)
+    .for('share');
   if (
     grant === undefined ||
     token.clientId !== grant.clientId ||
@@ -507,7 +510,7 @@ function consentScopes(
   ) {
     throw validationFailed('This identity connection requires a valid PKCE request.');
   }
-  return readOnlyAgentScopes(value.scope);
+  return agentConsentScopes(value.scope, agent.write === true);
 }
 
 export async function finalizeMcpConsent(
