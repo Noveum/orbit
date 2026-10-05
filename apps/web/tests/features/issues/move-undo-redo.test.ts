@@ -288,13 +288,29 @@ describe('Issue move undo and redo', () => {
 
   it('refreshes redo expected position from the settled issue after undo', async () => {
     const originalFetch = globalThis.fetch;
+    const requestBodies: Array<{
+      stateId?: string;
+      expected?: {
+        stateId?: string;
+        sortOrder?: number;
+      };
+    }> = [];
 
     globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      const body =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as {
+              stateId?: string;
+              expected?: {
+                stateId?: string;
+                sortOrder?: number;
+              };
+            })
+          : undefined;
 
-      expect(body?.stateId).toBe('state_todo');
-      expect(body?.expected?.stateId).toBe('state_done');
-      expect(body?.expected?.sortOrder).toBe(800);
+      if (body !== undefined) {
+        requestBodies.push(body);
+      }
 
       return Promise.resolve(
         new Response(
@@ -345,11 +361,26 @@ describe('Issue move undo and redo', () => {
 
       await act(async () => {
         await result.current.undo();
+        await result.current.redo();
       });
 
-      const redoEntry = getTabRedoStack()[0];
+      expect(requestBodies).toHaveLength(2);
 
-      expect(redoEntry).toBeUndefined();
+      expect(requestBodies[0]).toMatchObject({
+        stateId: 'state_todo',
+        expected: {
+          stateId: 'state_done',
+          sortOrder: 800,
+        },
+      });
+
+      expect(requestBodies[1]).toMatchObject({
+        stateId: 'state_done',
+        expected: {
+          stateId: 'state_todo',
+          sortOrder: 450,
+        },
+      });
 
       unmount();
 
@@ -364,18 +395,31 @@ describe('Issue move undo and redo', () => {
 
   it('refreshes undo expected position from the settled issue after redo', async () => {
     const originalFetch = globalThis.fetch;
-    let callCount = 0;
+    const requestBodies: Array<{
+      stateId?: string;
+      expected?: {
+        stateId?: string;
+        sortOrder?: number;
+      };
+    }> = [];
 
     globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      const body =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as {
+              stateId?: string;
+              expected?: {
+                stateId?: string;
+                sortOrder?: number;
+              };
+            })
+          : undefined;
 
-      callCount += 1;
+      if (body !== undefined) {
+        requestBodies.push(body);
+      }
 
-      if (callCount === 1) {
-        expect(body?.stateId).toBe('state_todo');
-        expect(body?.expected?.stateId).toBe('state_done');
-        expect(body?.expected?.sortOrder).toBe(800);
-
+      if (requestBodies.length === 1) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -396,10 +440,6 @@ describe('Issue move undo and redo', () => {
           ),
         );
       }
-
-      expect(body?.stateId).toBe('state_done');
-      expect(body?.expected?.stateId).toBe('state_todo');
-      expect(body?.expected?.sortOrder).toBe(450);
 
       return Promise.resolve(
         new Response(
@@ -453,7 +493,23 @@ describe('Issue move undo and redo', () => {
         await result.current.redo();
       });
 
-      expect(callCount).toBe(2);
+      expect(requestBodies).toHaveLength(2);
+
+      expect(requestBodies[0]).toMatchObject({
+        stateId: 'state_todo',
+        expected: {
+          stateId: 'state_done',
+          sortOrder: 800,
+        },
+      });
+
+      expect(requestBodies[1]).toMatchObject({
+        stateId: 'state_done',
+        expected: {
+          stateId: 'state_todo',
+          sortOrder: 450,
+        },
+      });
 
       unmount();
 
