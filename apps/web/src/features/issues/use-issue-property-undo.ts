@@ -43,11 +43,13 @@ export function nextActionSequence(): number {
 
 function insertHistoryEntry(entry: IssueUndoEntry): void {
   const insertIndex = tabUndoStack.findIndex((item) => item.sequence > entry.sequence);
+
   if (insertIndex === -1) {
     tabUndoStack.push(entry);
   } else {
     tabUndoStack.splice(insertIndex, 0, entry);
   }
+
   if (tabUndoStack.length > MAX_HISTORY) {
     tabUndoStack.shift();
   }
@@ -90,7 +92,6 @@ export function useIssuePropertyUndo() {
 
   const { mutateAsync: updateIssue } = useUpdateIssue();
   const { mutateAsync: moveIssue } = useMoveIssue();
-
   const { toast } = useToast();
 
   const undo = useCallback(async () => {
@@ -104,12 +105,33 @@ export function useIssuePropertyUndo() {
 
     try {
       if (isMoveEntry(entry)) {
-        await moveIssue({
+        const settlement = await moveIssue({
           ...entry.inverse,
           expected: entry.expectedForUndo,
         });
 
-        tabRedoStack.push(entry);
+        const settled = settlement.issues.find((issue) => issue.id === entry.issue.id);
+
+        if (settled === undefined) {
+          return;
+        }
+
+        tabRedoStack.push({
+          ...entry,
+          issue: settled,
+          forward: {
+            ...entry.forward,
+            issue: settled,
+          },
+          inverse: {
+            ...entry.inverse,
+            issue: settled,
+          },
+          expectedForRedo: {
+            stateId: settled.stateId,
+            sortOrder: settled.sortOrder,
+          },
+        });
 
         toast({
           title: 'Reverted Move',
@@ -151,12 +173,33 @@ export function useIssuePropertyUndo() {
 
     try {
       if (isMoveEntry(entry)) {
-        await moveIssue({
+        const settlement = await moveIssue({
           ...entry.forward,
           expected: entry.expectedForRedo,
         });
 
-        tabUndoStack.push(entry);
+        const settled = settlement.issues.find((issue) => issue.id === entry.issue.id);
+
+        if (settled === undefined) {
+          return;
+        }
+
+        tabUndoStack.push({
+          ...entry,
+          issue: settled,
+          forward: {
+            ...entry.forward,
+            issue: settled,
+          },
+          inverse: {
+            ...entry.inverse,
+            issue: settled,
+          },
+          expectedForUndo: {
+            stateId: settled.stateId,
+            sortOrder: settled.sortOrder,
+          },
+        });
 
         toast({
           title: 'Restored Move',
