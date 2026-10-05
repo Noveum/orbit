@@ -154,4 +154,36 @@ describe('McpPanel', () => {
     expect(lastRequest?.url).toContain('grantId=grant-1');
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
+
+  it('names each Agent connection and disconnects its exact grant', async () => {
+    const user = userEvent.setup();
+    const connections: readonly McpConnection[] = [
+      {
+        ...CONNECTED[0],
+        id: 'agent-grant-1',
+        clientName: 'Shared client',
+        organizationName: 'Noveum AI',
+        lastUsedAt: null,
+        identityName: 'Review assistant',
+      },
+      {
+        ...CONNECTED[0],
+        id: 'agent-grant-2',
+        clientName: 'Shared client',
+        organizationName: 'Noveum AI',
+        lastUsedAt: null,
+        identityName: 'Planning assistant',
+      },
+    ];
+    render(<McpPanel mcpUrl={MCP_URL} connections={connections} />);
+    expect(screen.getByText('Review assistant, read-only Agent')).toBeTruthy();
+    expect(screen.getByText('Planning assistant, read-only Agent')).toBeTruthy();
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Disconnect Shared client as Planning assistant in Noveum AI',
+      }),
+    );
+    await waitFor(() => expect(lastRequest?.url).toContain('grantId=agent-grant-2'));
+    expect(lastRequest?.url).not.toContain('grantId=agent-grant-1');
+  });
 });

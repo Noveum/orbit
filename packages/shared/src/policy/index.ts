@@ -1,6 +1,16 @@
 import { isRestricted, ORG_ROLE_RANK, ORG_ROLES, type OrgRole } from '../constants/index.ts';
 import { forbidden, notFound } from '../errors/index.ts';
 
+export {
+  assertAgentIdentityOwner,
+  assertMcpGrantOwner,
+  assertMcpToolAccess,
+  canUseMcpTool,
+  type McpIdentity,
+  type McpToolAccess,
+  type McpToolOperation,
+} from './mcp.ts';
+
 export const PERMISSIONS = [
   'analytics:read',
   'issue:read',

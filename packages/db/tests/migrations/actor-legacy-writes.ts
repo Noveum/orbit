@@ -25,8 +25,16 @@ async function runChecks(): Promise<void> {
       import('../../../core/src/auth/mcp-token.ts'),
     ]);
   if (process.argv.includes('--existing-credential')) {
-    const token = mcp.bindMcpCredential('existing-access-token', 'expand-grant', credentialSecret);
-    const verified = await mcp.verifyMcpAccessToken(token, new Date('2026-10-04T00:00:00Z'));
+    const legacy = await import('./legacy-mcp-reader.ts');
+    const token = legacy.bindLegacyMcpCredential(
+      'existing-access-token',
+      'expand-grant',
+      credentialSecret,
+    );
+    const verified = await legacy.verifyLegacyMcpAccessToken(
+      token,
+      new Date('2026-10-04T00:00:00Z'),
+    );
     strictEqual(verified.userId, 'expand-creator');
     strictEqual(verified.principal.userId, 'expand-creator');
     strictEqual(verified.organizationId, 'expand-org');

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { cleanup, fireEvent, render, screen, waitFor } from '@/test/render.tsx';
 
@@ -46,10 +46,14 @@ describe('importing a markdown file', () => {
   it('refuses a file too large to be a doc, before it reads it', async () => {
     render(<DocImport collectionId={null} projectId={null} />);
     const huge = fileOf('huge.md', 'x');
+    const read = spyOn(huge, 'text');
     Object.defineProperty(huge, 'size', { value: DOC_CONTENT_LIMIT * 8, configurable: true });
     pick(huge);
 
-    await waitFor(() => expect(screen.getByTestId('doc-import')).not.toBeDisabled());
+    const button = screen.getByTestId('doc-import') as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(button).not.toBeDisabled();
+    expect(read).not.toHaveBeenCalled();
     expect(created).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
   });

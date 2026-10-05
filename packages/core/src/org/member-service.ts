@@ -7,6 +7,7 @@ import type { Principal } from '@orbit/shared/policy';
 import { assertCan, canAssignRole } from '@orbit/shared/policy';
 import { memberUpdateSchema } from '@orbit/shared/validators';
 import { principalActor } from '../activity/activity-service.ts';
+import { invalidateMcpGrant, lockMcpOwner } from '../auth/mcp-token.ts';
 import { type Executor, requireRow } from '../internal.ts';
 import {
   lockNotificationPolicyMutation,
@@ -231,6 +232,17 @@ export async function removeMember(
 
   return await db.transaction(async (tx) => {
     await lockNotificationPolicyMutation(tx, principal.organizationId);
+    const [subject] = await tx
+      .select({ userId: schema.member.userId })
+      .from(schema.member)
+      .where(
+        and(
+          eq(schema.member.id, memberId),
+          eq(schema.member.organizationId, principal.organizationId),
+        ),
+      )
+      .limit(1);
+    if (subject !== undefined) await lockMcpOwner(tx, subject.userId);
     const [existing] = await tx
       .select()
       .from(schema.member)
@@ -327,6 +339,18 @@ export async function removeMember(
         ),
       );
     await tx.delete(schema.member).where(eq(schema.member.id, memberId));
+    const grants = await tx
+      .select()
+      .from(schema.mcpGrant)
+      .where(
+        and(
+          eq(schema.mcpGrant.userId, current.userId),
+          eq(schema.mcpGrant.organizationId, principal.organizationId),
+          eq(schema.mcpGrant.identityKind, 'agent'),
+          isNull(schema.mcpGrant.revokedAt),
+        ),
+      );
+    for (const grant of grants) await invalidateMcpGrant(tx, grant);
     await tx.delete(schema.session).where(eq(schema.session.userId, current.userId));
 
     const changedIssues = new Map([...reassigned, ...reviewed].map((row) => [row.id, row]));
