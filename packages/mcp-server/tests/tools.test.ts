@@ -226,13 +226,15 @@ describe('issues', () => {
     await db
       .update(schema.issue)
       .set({
+        creatorId: null,
         creatorUserId: null,
         creatorAgentId: id,
+        assigneeId: null,
         assigneeUserId: null,
         assigneeAgentId: id,
-        ownerUserId: null,
       })
       .where(eq(schema.issue.id, created.id));
+    await db.update(schema.issue).set({ ownerUserId: null }).where(eq(schema.issue.id, created.id));
     const fetched = issueOf(await admin.result('get_issue', { issue: created.identifier }));
     const expected = {
       type: 'agent',

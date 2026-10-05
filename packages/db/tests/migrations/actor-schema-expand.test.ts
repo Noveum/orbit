@@ -41,7 +41,7 @@ interface BusinessState {
 }
 
 interface ActorColumns {
-  readonly creator_id: string;
+  readonly creator_id: string | null;
   readonly assignee_id: string | null;
   readonly creator_user_id: string | null;
   readonly creator_agent_id: string | null;
@@ -435,6 +435,96 @@ describe('actor schema expansion compatibility', () => {
         creator_id: 'expand-second',
         creator_user_id: 'expand-second',
         creator_agent_id: null,
+        owner_user_id: 'expand-first',
+      });
+    });
+  });
+
+  it('preserves real Agent creators through Human edits and canonical reassignment', async () => {
+    await rolledBack(async (tx) => {
+      await tx`
+        insert into agent_identity (
+          id, organization_id, owner_user_id, name, owner_name_snapshot, client_name_snapshot
+        ) values
+          ('write-creator', 'expand-org', 'expand-creator', 'Creator agent', 'Creator', 'Client'),
+          ('write-assignee', 'expand-org', 'expand-first', 'Assignee agent', 'First', 'Client')
+      `;
+      await tx`
+        insert into issue (
+          id, organization_id, team_id, number, identifier, title, state_id,
+          creator_agent_id, assignee_agent_id
+        ) values (
+          'agent-write', 'expand-org', 'expand-team', 91, 'EXP-91', 'Agent created',
+          'expand-state', 'write-creator', 'write-assignee'
+        )
+      `;
+      expect(await readActors(tx, 'agent-write')).toEqual({
+        creator_id: null,
+        creator_user_id: null,
+        creator_agent_id: 'write-creator',
+        assignee_id: null,
+        assignee_user_id: null,
+        assignee_agent_id: 'write-assignee',
+        owner_user_id: 'expand-first',
+      });
+      await tx`update issue set title = 'Human edited' where id = 'agent-write'`;
+      await tx`
+        update issue set assignee_user_id = null, assignee_agent_id = null
+        where id = 'agent-write'
+      `;
+      expect(await readActors(tx, 'agent-write')).toMatchObject({
+        creator_id: null,
+        creator_agent_id: 'write-creator',
+        assignee_id: null,
+        assignee_user_id: null,
+        assignee_agent_id: null,
+        owner_user_id: 'expand-first',
+      });
+      await tx`
+        update issue set assignee_user_id = 'expand-second', assignee_agent_id = null
+        where id = 'agent-write'
+      `;
+      expect(await readActors(tx, 'agent-write')).toMatchObject({
+        creator_agent_id: 'write-creator',
+        assignee_id: 'expand-second',
+        assignee_user_id: 'expand-second',
+        owner_user_id: 'expand-first',
+      });
+      await tx`update issue set assignee_id = null where id = 'agent-write'`;
+      expect(await readActors(tx, 'agent-write')).toMatchObject({
+        creator_agent_id: 'write-creator',
+        assignee_user_id: null,
+        owner_user_id: 'expand-first',
+      });
+    });
+  });
+
+  it('initializes canonical Human assignment and lets legacy replacement clear Agent assignment', async () => {
+    await rolledBack(async (tx) => {
+      await insertLegacyIssue(tx, null);
+      await tx`
+        update issue set assignee_user_id = 'expand-first' where id = 'legacy-write'
+      `;
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        assignee_id: 'expand-first',
+        assignee_user_id: 'expand-first',
+        owner_user_id: 'expand-first',
+      });
+      await tx`
+        insert into agent_identity (
+          id, organization_id, owner_user_id, name, owner_name_snapshot, client_name_snapshot
+        ) values ('write-assignee', 'expand-org', 'expand-second', 'Agent', 'Second', 'Client')
+      `;
+      await tx`
+        update issue set assignee_user_id = null, assignee_agent_id = 'write-assignee'
+        where id = 'legacy-write'
+      `;
+      await tx`update issue set assignee_id = 'expand-second' where id = 'legacy-write'`;
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        creator_user_id: 'expand-creator',
+        assignee_id: 'expand-second',
+        assignee_user_id: 'expand-second',
+        assignee_agent_id: null,
         owner_user_id: 'expand-first',
       });
     });

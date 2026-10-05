@@ -282,7 +282,9 @@ function MyIssuesBody({
                 const reviewer = workspace.memberById.get(id);
                 return reviewer === undefined ? [] : [reviewer];
               })}
-              creator={workspace.memberById.get(issue.creatorId)}
+              creator={
+                issue.creatorId === null ? undefined : workspace.memberById.get(issue.creatorId)
+              }
               active={peekId === issue.id}
               selected={false}
               onOpen={() => onPeek(issue.id)}

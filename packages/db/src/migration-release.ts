@@ -81,7 +81,45 @@ function artifactStatement(migration: MigrationMeta, prefix: string): string {
   return statement;
 }
 
-async function humanActorArtifactsAreValid(sql: postgres.TransactionSql): Promise<boolean> {
+interface HumanActorArtifacts {
+  readonly functionStatement: string;
+  readonly functionBody: string;
+  readonly triggerStatement: string;
+  readonly updateColumns: readonly string[];
+}
+
+function humanActorArtifacts(
+  migrations: readonly MigrationMeta[],
+): HumanActorArtifacts | undefined {
+  const statements = migrations.flatMap((migration) => migration.sql);
+  const functionStatement = statements.findLast((statement) =>
+    /^\s*CREATE (?:OR REPLACE )?FUNCTION sync_issue_human_actors\(\)/u.test(statement),
+  );
+  const triggerStatement = statements.findLast((statement) =>
+    statement.trimStart().startsWith('CREATE TRIGGER issue_human_actor_compat_trigger'),
+  );
+  if (functionStatement === undefined && triggerStatement === undefined) return undefined;
+  const functionBody = /AS \$\$([\s\S]*)\$\$;/u.exec(functionStatement ?? '')?.[1];
+  const updateColumns = /UPDATE OF ([\s\S]*?) ON /u
+    .exec(triggerStatement ?? '')?.[1]
+    ?.split(',')
+    .map((column) => column.trim())
+    .sort();
+  if (
+    functionStatement === undefined ||
+    functionBody === undefined ||
+    triggerStatement === undefined ||
+    updateColumns === undefined
+  ) {
+    throw new Error('Human actor compatibility migrations have invalid artifacts.');
+  }
+  return { functionStatement, functionBody, triggerStatement, updateColumns };
+}
+
+async function humanActorArtifactsAreValid(
+  sql: postgres.TransactionSql,
+  artifacts: HumanActorArtifacts,
+): Promise<boolean> {
   const [artifact] = await sql<{ valid: boolean }[]>`
     select exists (
       select 1
@@ -96,6 +134,7 @@ async function humanActorArtifactsAreValid(sql: postgres.TransactionSql): Promis
         and procedure.proname = 'sync_issue_human_actors'
         and procedure.pronargs = 0
         and procedure.prorettype = 'pg_catalog.trigger'::regtype
+        and procedure.prosrc = ${artifacts.functionBody}
         and trigger.tgname = 'issue_human_actor_compat_trigger'
         and trigger.tgenabled = 'O'
         and trigger.tgtype = 23
@@ -105,7 +144,7 @@ async function humanActorArtifactsAreValid(sql: postgres.TransactionSql): Promis
           from unnest(trigger.tgattr) as trigger_column(number)
           inner join pg_attribute attribute
             on attribute.attrelid = relation.oid and attribute.attnum = trigger_column.number
-        ) = array['assignee_id', 'creator_id']
+        ) = ${[...artifacts.updateColumns]}::text[]
         and trigger.tgqual is null
         and trigger.tgnargs = 0
     ) as valid
@@ -115,20 +154,14 @@ async function humanActorArtifactsAreValid(sql: postgres.TransactionSql): Promis
 
 async function reconcileHumanActorArtifacts(
   sql: postgres.TransactionSql,
-  migration: MigrationMeta,
+  artifacts: HumanActorArtifacts,
 ): Promise<void> {
-  const functionStatement = artifactStatement(
-    migration,
-    'CREATE FUNCTION sync_issue_human_actors()',
+  await sql.unsafe(
+    artifacts.functionStatement.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '),
   );
-  const triggerStatement = artifactStatement(
-    migration,
-    'CREATE TRIGGER issue_human_actor_compat_trigger',
-  );
-  await sql.unsafe(functionStatement.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
   await sql`drop trigger if exists issue_human_actor_compat_trigger on issue`;
-  await sql.unsafe(triggerStatement);
-  if (!(await humanActorArtifactsAreValid(sql))) {
+  await sql.unsafe(artifacts.triggerStatement);
+  if (!(await humanActorArtifactsAreValid(sql, artifacts))) {
     throw new Error('Human actor compatibility reconciliation did not produce valid artifacts.');
   }
 }
@@ -139,27 +172,41 @@ async function reconcileHumanActorBaseline(
   pendingMigrations: readonly MigrationMeta[],
 ): Promise<void> {
   const migration = migrations.find((entry) => entry.folderMillis === HUMAN_ACTOR_MIGRATION);
-  if (migration === undefined) return;
-  const artifactsWereValid = await humanActorArtifactsAreValid(sql);
-  await reconcileHumanActorArtifacts(sql, migration);
+  const artifacts = humanActorArtifacts(migrations);
+  if (migration === undefined || artifacts === undefined) return;
+  const artifactsWereValid = await humanActorArtifactsAreValid(sql, artifacts);
+  await reconcileHumanActorArtifacts(sql, artifacts);
   if (pendingMigrations.includes(migration)) {
-    await sql.unsafe(artifactStatement(migration, 'UPDATE "issue"'));
+    if (artifacts.updateColumns.includes('assignee_agent_id')) {
+      await reconcileHumanActorMirrors(sql, true);
+    } else {
+      await sql.unsafe(artifactStatement(migration, 'UPDATE "issue"'));
+    }
   } else if (!artifactsWereValid) {
     await reconcileHumanActorMirrors(sql);
   }
 }
 
-async function reconcileHumanActorMirrors(sql: postgres.TransactionSql): Promise<void> {
+async function reconcileHumanActorMirrors(
+  sql: postgres.TransactionSql,
+  initializeLegacyOwners = false,
+): Promise<void> {
+  await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
   await sql`
     update issue
-    set creator_user_id = creator_id, assignee_user_id = assignee_id
-    where creator_agent_id is null
-      and assignee_agent_id is null
-      and (
-        creator_user_id is distinct from creator_id
-        or assignee_user_id is distinct from assignee_id
-      )
+    set creator_user_id = case when creator_agent_id is null then creator_id else creator_user_id end,
+      assignee_user_id = case when assignee_agent_id is null then assignee_id else assignee_user_id end,
+      owner_user_id = case
+        when ${initializeLegacyOwners}
+          and creator_user_id is null and creator_agent_id is null and creator_id is not null
+          and assignee_agent_id is null
+        then coalesce(owner_user_id, assignee_id)
+        else owner_user_id
+      end
+    where (creator_agent_id is null and creator_user_id is distinct from creator_id)
+      or (assignee_agent_id is null and assignee_user_id is distinct from assignee_id)
   `;
+  await sql`alter table issue enable trigger issue_human_actor_compat_trigger`;
 }
 
 async function reconcileNotificationAuditArtifacts(
@@ -553,13 +600,14 @@ export async function releaseDatabase(
 
     const finalRows = await ledgerRows(sql);
     verifyLedger(finalRows, migrations);
-    const humanActorMigration = migrations.find(
-      (migration) => migration.folderMillis === HUMAN_ACTOR_MIGRATION,
-    );
+    const actorArtifacts = humanActorArtifacts(migrations);
     await sql.begin(async (tx) => {
       await reconcileMcpGrantContract(tx, migrations);
-      if (humanActorMigration !== undefined && !(await humanActorArtifactsAreValid(tx))) {
-        await reconcileHumanActorArtifacts(tx, humanActorMigration);
+      if (
+        actorArtifacts !== undefined &&
+        !(await humanActorArtifactsAreValid(tx, actorArtifacts))
+      ) {
+        await reconcileHumanActorArtifacts(tx, actorArtifacts);
         await reconcileHumanActorMirrors(tx);
       }
     });

@@ -1,6 +1,8 @@
 import { isRestricted, ORG_ROLE_RANK, ORG_ROLES, type OrgRole } from '../constants/index.ts';
 import { forbidden, notFound } from '../errors/index.ts';
 
+export { assertAgentIssueWrite } from './agent-issue.ts';
+
 export {
   assertAgentIdentityOwner,
   assertMcpGrantOwner,

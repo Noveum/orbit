@@ -156,6 +156,40 @@ describe('database release', () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);
 
+  for (const artifact of ['missing', 'disabled'] as const) {
+    it(`upgrades the previous ledger with a ${artifact} compatibility trigger`, async () => {
+      await resetScratch();
+      const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+      const index = migrations.findIndex((migration) =>
+        migration.sql.some((statement) =>
+          statement.includes('ALTER COLUMN "creator_id" DROP NOT NULL'),
+        ),
+      );
+      expect(index).toBeGreaterThan(0);
+      const previous = migrations.slice(0, index);
+      const before = await run(urlFor(SCRATCH), async (sql) => {
+        await sql`create schema drizzle`;
+        await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+        for (const migration of previous) {
+          for (const statement of migration.sql) await sql.unsafe(statement);
+          await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+        }
+        await seedHumanActorIssues(sql);
+        if (artifact === 'missing')
+          await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+        else await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+        return humanActorBusinessRows(sql);
+      });
+      expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('migrated');
+      await run(urlFor(SCRATCH), async (sql) => {
+        expect(await humanActorBusinessRows(sql)).toEqual(before);
+        const [trigger] =
+          await sql`select tgenabled from pg_trigger where tgname = 'issue_human_actor_compat_trigger'`;
+        expect(trigger?.['tgenabled']).toBe('O');
+      });
+    }, 60_000);
+  }
+
   it('upgrades the released main ledger before applying notification migrations', async () => {
     await resetScratch();
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
@@ -363,6 +397,149 @@ describe('database release', () => {
         owner_user_id: 'release-actor-assignee',
       });
     });
+  }, 60_000);
+
+  for (const [ledgerState, artifactState] of [
+    ['missing', 'missing'],
+    ['prefix', 'disabled'],
+    ['current', 'legacy-function'],
+  ] as const) {
+    it(`retains Agent history while restoring current compatibility for ${ledgerState} ledger and ${artifactState} artifacts`, async () => {
+      await resetScratch();
+      await migrateScratch();
+      const before = await run(urlFor(SCRATCH), async (sql) => {
+        await seedHumanActorIssues(sql);
+        await sql`update issue set owner_user_id = null where id = 'release-actor-history'`;
+        await sql`
+          insert into agent_identity (
+            id, organization_id, owner_user_id, name, owner_name_snapshot, client_name_snapshot
+          ) values (
+            'release-agent', 'release-actor-org', 'release-actor-creator',
+            'Agent', 'Creator', 'Client'
+          )
+        `;
+        await sql`
+          insert into issue (
+            id, organization_id, team_id, number, identifier, title, state_id,
+            creator_agent_id, assignee_agent_id, owner_user_id, created_at, updated_at, sync_id
+          ) values (
+            'release-agent-history', 'release-actor-org', 'release-actor-team', 3, 'ACTOR-3',
+            'Agent history', 'release-actor-state', 'release-agent', 'release-agent',
+            'release-actor-owner', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 81
+          )
+        `;
+        await sql`update issue set owner_user_id = null where id = 'release-agent-history'`;
+        if (artifactState === 'missing') {
+          await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+          await sql`drop function sync_issue_human_actors()`;
+        } else if (artifactState === 'disabled') {
+          await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+        } else {
+          const original = readMigrationFiles({ migrationsFolder: MIGRATIONS })
+            .find((migration) => migration.folderMillis === HUMAN_ACTOR_MIGRATION)
+            ?.sql.find((statement) =>
+              statement.trimStart().startsWith('CREATE FUNCTION sync_issue_human_actors()'),
+            );
+          if (original === undefined)
+            throw new Error('The original compatibility function is missing.');
+          await sql.unsafe(original.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
+        }
+        if (ledgerState === 'missing') await sql`drop schema drizzle cascade`;
+        if (ledgerState === 'prefix') {
+          await sql`delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`;
+        }
+        return [...(await sql`select to_jsonb(issue) as payload from issue order by id`)];
+      });
+
+      const first = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(first.mode).toBe(ledgerState === 'current' ? 'current' : 'baselined');
+      const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(second.mode).toBe('current');
+      await run(urlFor(SCRATCH), async (sql) => {
+        const after = await sql`select to_jsonb(issue) as payload from issue order by id`;
+        expect([...after]).toEqual(before);
+        await sql`
+          update issue set assignee_user_id = null, assignee_agent_id = null
+          where id = 'release-agent-history'
+        `;
+        const [issue] = await sql`
+          select creator_id, creator_user_id, creator_agent_id, assignee_id,
+            assignee_user_id, assignee_agent_id, owner_user_id
+          from issue where id = 'release-agent-history'
+        `;
+        expect(issue).toEqual({
+          creator_id: null,
+          creator_user_id: null,
+          creator_agent_id: 'release-agent',
+          assignee_id: null,
+          assignee_user_id: null,
+          assignee_agent_id: null,
+          owner_user_id: null,
+        });
+        await sql`
+          insert into issue (
+            id, organization_id, team_id, number, identifier, title, state_id, creator_agent_id
+          ) values (
+            'release-agent-after', 'release-actor-org', 'release-actor-team', 4, 'ACTOR-4',
+            'New Agent row', 'release-actor-state', 'release-agent'
+          )
+        `;
+        const [created] =
+          await sql`select creator_id, creator_agent_id from issue where id = 'release-agent-after'`;
+        expect(created).toEqual({ creator_id: null, creator_agent_id: 'release-agent' });
+      });
+    }, 60_000);
+  }
+
+  it('repairs each Human mirror independently on mixed Actor rows without changing history', async () => {
+    await resetScratch();
+    await migrateScratch();
+    const before = await run(urlFor(SCRATCH), async (sql) => {
+      await seedHumanActorIssues(sql);
+      await sql`
+        insert into agent_identity (
+          id, organization_id, owner_user_id, name, owner_name_snapshot, client_name_snapshot
+        ) values ('release-mixed-agent', 'release-actor-org', 'release-actor-owner', 'Agent', 'Owner', 'Client')
+      `;
+      await sql`
+        update issue set creator_user_id = null, creator_agent_id = 'release-mixed-agent'
+        where id = 'release-actor-history'
+      `;
+      await sql`update issue set owner_user_id = null where id = 'release-actor-history'`;
+      await sql`
+        update issue set assignee_user_id = null, assignee_agent_id = 'release-mixed-agent'
+        where id = 'release-actor-owned'
+      `;
+      await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+      await sql`
+        update issue set assignee_id = 'release-actor-creator' where id = 'release-actor-history'
+      `;
+      await sql`
+        update issue set creator_id = 'release-actor-owner' where id = 'release-actor-owned'
+      `;
+      return await humanActorBusinessRows(sql);
+    });
+
+    await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    expect(await run(urlFor(SCRATCH), humanActorBusinessRows)).toEqual(before);
+    expect(await run(urlFor(SCRATCH), humanActorRows)).toEqual([
+      {
+        id: 'release-actor-history',
+        creator_user_id: null,
+        creator_agent_id: 'release-mixed-agent',
+        assignee_user_id: 'release-actor-creator',
+        assignee_agent_id: null,
+        owner_user_id: null,
+      },
+      {
+        id: 'release-actor-owned',
+        creator_user_id: 'release-actor-owner',
+        creator_agent_id: null,
+        assignee_user_id: null,
+        assignee_agent_id: 'release-mixed-agent',
+        owner_user_id: 'release-actor-owner',
+      },
+    ]);
   }, 60_000);
 
   for (const [artifactState, pendingBaseline] of [

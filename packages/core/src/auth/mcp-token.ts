@@ -103,7 +103,14 @@ export function isAgentMcpEnabled(): boolean {
   return process.env['ORBIT_AGENT_MCP'] === 'true';
 }
 
+export function isAgentIssueWriteEnabled(): boolean {
+  return process.env['ORBIT_AGENT_ISSUE_WRITE'] === 'true';
+}
+
 export interface McpAccessContext {
+  readonly grantId: string;
+  readonly ownerMemberId: string | null;
+  readonly tokenId?: string;
   readonly identity: McpIdentity;
   readonly principal: Principal;
   readonly userId: string;
@@ -170,6 +177,8 @@ export async function validateMcpGrant(
   }
   const principal = await resolvePrincipal(grant.userId, grant.organizationId, tx);
   return {
+    grantId: grant.id,
+    ownerMemberId: grant.ownerMemberId,
     principal,
     identity,
     userId: grant.userId,
@@ -208,7 +217,7 @@ export async function verifyMcpTokenBinding(
   )
     throw invalid;
   const context = await validateMcpGrant(tx, grant, kind, now);
-  return { ...context, scopes: token.scopes };
+  return { ...context, tokenId: token.id, scopes: token.scopes };
 }
 
 export async function verifyMcpAccessToken(

@@ -402,7 +402,7 @@ function ListRow({
         const reviewer = memberById.get(id);
         return reviewer === undefined ? [] : [reviewer];
       })}
-      creator={memberById.get(issue.creatorId)}
+      creator={issue.creatorId === null ? undefined : memberById.get(issue.creatorId)}
       project={issue.projectId === null ? undefined : projectById.get(issue.projectId)}
       cycle={issue.cycleId === null ? undefined : cycleById.get(issue.cycleId)}
       subIssueCount={childCounts.get(issue.id) ?? 0}

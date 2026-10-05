@@ -22,6 +22,8 @@ import {
 import { and, db, eq, schema, sql } from '@orbit/db';
 import { issueSchema } from '@orbit/shared/validators';
 import { attachIssueDecorations } from '../../../src/lib/api/issues.ts';
+import { dehydratedWorkspace } from '../../../src/lib/query/prefetch.ts';
+import { issueListSchema } from '../../../src/lib/query/schemas.ts';
 
 let workspace: Workspace;
 let installedTrigger = false;
@@ -32,19 +34,21 @@ beforeAll(async () => {
   );
   if (existing !== undefined) return;
   const migration = await readFile(
-    new URL('../../../../../packages/db/drizzle/0030_actor_schema_expand.sql', import.meta.url),
+    new URL(
+      '../../../../../packages/db/drizzle/0033_issue_actor_write_compatibility.sql',
+      import.meta.url,
+    ),
     'utf8',
   );
   const statements = migration
     .split('--> statement-breakpoint')
     .filter((statement) =>
-      /^CREATE (FUNCTION sync_issue_human_actors|TRIGGER issue_human_actor_compat_trigger)/.test(
+      /^CREATE(?: OR REPLACE)? (FUNCTION sync_issue_human_actors|TRIGGER issue_human_actor_compat_trigger)/.test(
         statement.trim(),
       ),
     );
   expect(statements).toHaveLength(2);
-  for (const statement of statements)
-    await db.execute(sql.raw(statement.replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION')));
+  for (const statement of statements) await db.execute(sql.raw(statement));
   installedTrigger = true;
 });
 
@@ -78,12 +82,16 @@ async function agentIssue() {
   await db
     .update(schema.issue)
     .set({
+      creatorId: null,
       creatorUserId: null,
       creatorAgentId: id,
       assigneeUserId: null,
       assigneeAgentId: id,
-      ownerUserId: null,
     })
+    .where(eq(schema.issue.id, created.issue.id));
+  await db
+    .update(schema.issue)
+    .set({ ownerUserId: null })
     .where(eq(schema.issue.id, created.issue.id));
   return await getIssue(workspace.admin, created.issue.id);
 }
@@ -128,6 +136,16 @@ describe('Issue Actor decorations', () => {
       deleted: false,
     });
     expect(expected.owner).toBeNull();
+    expect(row.creatorId).toBeNull();
+    const hydrated = await dehydratedWorkspace(workspace.admin);
+    const initial = hydrated.queries.find((query) => query.queryKey[0] === 'issues')?.state.data as
+      | { pages: unknown[] }
+      | undefined;
+    const seeded = issueListSchema
+      .parse(initial?.pages[0])
+      .issues.find((issue) => issue.id === row.id);
+    expect(seeded?.creatorId).toBeNull();
+    expect(seeded?.creator).toEqual(expected.creator);
     const page = await listIssues(workspace.admin, { teamId: workspace.teamId });
     const listed = page.issues.find((issue) => issue.id === row.id);
     expect(listed).toBeDefined();

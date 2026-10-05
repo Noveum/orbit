@@ -42,12 +42,12 @@ beforeAll(async () => {
   `);
   if (existing !== undefined) return;
   const migration = await readFile(
-    new URL('../../../db/drizzle/0030_actor_schema_expand.sql', import.meta.url),
+    new URL('../../../db/drizzle/0033_issue_actor_write_compatibility.sql', import.meta.url),
     'utf8',
   );
   const statements = migration.split('--> statement-breakpoint');
   const triggerStatements = statements.filter((statement) =>
-    /^CREATE (FUNCTION sync_issue_human_actors|TRIGGER issue_human_actor_compat_trigger)/.test(
+    /^CREATE(?: OR REPLACE)? (FUNCTION sync_issue_human_actors|TRIGGER issue_human_actor_compat_trigger)/.test(
       statement.trim(),
     ),
   );
@@ -96,6 +96,7 @@ async function agentIssueFixture(options: { parentId?: string; deleted?: boolean
   await db
     .update(schema.issue)
     .set({
+      creatorId: null,
       creatorUserId: null,
       creatorAgentId: agent.id,
       assigneeUserId: null,
@@ -201,6 +202,7 @@ describe('attachIssueActors', () => {
     const [legacy] = await attachIssueActors(db, workspace.organizationId, [
       {
         ...row,
+        creatorId: workspace.admin.userId,
         creatorAgentId: null,
         assigneeUserId: null,
       },
@@ -475,9 +477,13 @@ describe('Issue event Actor adapter', () => {
       title: 'Foreign event',
       assigneeId: null,
     });
+    await db
+      .update(schema.issue)
+      .set({ assigneeAgentId: agent.id })
+      .where(eq(schema.issue.id, created.issue.id));
     const [foreignRow] = await db
       .update(schema.issue)
-      .set({ assigneeAgentId: agent.id, ownerUserId: null })
+      .set({ ownerUserId: null })
       .where(eq(schema.issue.id, created.issue.id))
       .returning();
     if (foreignRow === undefined) throw new Error('Missing foreign fixture.');

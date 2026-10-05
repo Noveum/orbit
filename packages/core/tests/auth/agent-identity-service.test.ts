@@ -163,6 +163,14 @@ describe('explicit identity consent', () => {
       kind: 'agent',
       id: one.identityId,
     });
+    expect(await verifyMcpAccessToken(oneToken)).toMatchObject({
+      grantId: one.grant.id,
+      ownerMemberId: one.grant.ownerMemberId,
+      userId: workspace.adminUser.id,
+      clientId,
+      scopes: one.grant.scopes,
+    });
+    expect((await verifyMcpAccessToken(oneToken)).tokenId).toBeString();
     expect((await verifyMcpAccessToken(legacyToken)).scopes).toContain('orbit.write');
     await revokeMcpGrant(one.grant.id, workspace.adminUser.id);
     await expect(verifyMcpAccessToken(oneToken)).rejects.toMatchObject({ code: 'unauthorized' });
