@@ -1167,16 +1167,15 @@ describe('getIssueSummary', () => {
     const { sql: text } = new PgDialect().sqlToQuery(columnFacetsSql(undefined));
 
     expect(text.match(/grouping sets/g)).toHaveLength(1);
-    for (const column of [
-      'state_id',
-      'assignee_id',
-      'creator_id',
-      'priority',
-      'estimate',
-      'project_id',
-      'cycle_id',
-    ]) {
+    for (const column of ['state_id', 'priority', 'estimate', 'project_id', 'cycle_id']) {
       expect(text).toContain(`grouping("issue"."${column}")`);
+    }
+    for (const actor of ['assignee', 'creator']) {
+      expect(text).toContain(`grouping(case when "issue"."${actor}_agent_id" is not null`);
+      expect(text).toContain(`then 'agent:' || "issue"."${actor}_agent_id"`);
+      expect(text).toContain(
+        `else coalesce("issue"."${actor}_user_id", "issue"."${actor}_id") end`,
+      );
     }
   });
 });

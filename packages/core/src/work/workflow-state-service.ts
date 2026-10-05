@@ -15,6 +15,7 @@ import { type Executor, isUniqueViolation, newId, requireRow } from '../internal
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { attachIssueActors } from './issue-actor-view.ts';
 import { applyStateTimestamps, type IssueRow, issueScopes } from './issue-fields.ts';
 import { labelIdsByIssue } from './label-service.ts';
 import { reviewerIdsByIssue } from './reviewer-service.ts';
@@ -213,7 +214,7 @@ async function restateIssues(executor: Executor, params: RestateParams): Promise
     labelIdsByIssue(executor, issueIds),
     reviewerIdsByIssue(executor, issueIds),
   ]);
-  const actions: SyncAction[] = [];
+  const updated: IssueRow[] = [];
   for (const issue of params.issues) {
     const timestamps = applyStateTimestamps(issue, params.category, now);
     const [row] = await executor
@@ -228,24 +229,26 @@ async function restateIssues(executor: Executor, params: RestateParams): Promise
       .where(eq(schema.issue.id, issue.id))
       .returning();
     if (row === undefined) continue;
-    actions.push(
-      buildSyncAction({
-        syncId: params.syncId,
-        organizationId: row.organizationId,
-        scopes: issueScopes(row),
-        action: 'update',
-        model: 'issue',
-        modelId: row.id,
-        data: {
-          ...row,
-          labelIds: labels.get(row.id) ?? [],
-          reviewerIds: reviewers.get(row.id) ?? [],
-        },
-        actor: params.actor,
-      }),
-    );
+    updated.push(row);
   }
-  return actions;
+  const organizationId = params.issues[0]?.organizationId;
+  if (organizationId === undefined) return [];
+  return (await attachIssueActors(executor, organizationId, updated)).map((row) =>
+    buildSyncAction({
+      syncId: params.syncId,
+      organizationId: row.organizationId,
+      scopes: issueScopes(row),
+      action: 'update',
+      model: 'issue',
+      modelId: row.id,
+      data: {
+        ...row,
+        labelIds: labels.get(row.id) ?? [],
+        reviewerIds: reviewers.get(row.id) ?? [],
+      },
+      actor: params.actor,
+    }),
+  );
 }
 
 async function nextPosition(executor: Executor, teamId: string): Promise<number> {

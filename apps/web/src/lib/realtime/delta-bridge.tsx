@@ -15,6 +15,10 @@ import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
 import { clientId } from '@/lib/query/client-id.ts';
 import { apiFetch } from '@/lib/query/fetcher.ts';
 import {
+  observeIssueActorProfiles,
+  recordMemberActorUpdate,
+} from '@/lib/query/issue-actor-cache.ts';
+import {
   issueRevisionGeneration,
   issueSurvivalSyncWatermark,
   issueSyncWatermark,
@@ -51,6 +55,7 @@ import {
   type DocComment,
   type Issue,
   type IssueDetail,
+  type IssueRelation,
   issueDetailSchema,
   issueSchema,
 } from '@/lib/query/schemas.ts';
@@ -60,6 +65,7 @@ import {
   applyDocCommentDelta,
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
+  applyIssueRowDelta,
   applyReactionDelta,
   awaitsServerRefresh,
   belongsInList,
@@ -172,7 +178,14 @@ function issueDetailIdentifierSets(
       ),
     ...client
       .getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })
-      .flatMap(([, detail]) => (detail?.issue.id === action.modelId ? [detail.issue] : [])),
+      .flatMap(([, detail]) =>
+        detail === undefined ? [] : [detail.issue, detail.parent, ...detail.subIssues],
+      )
+      .filter((issue): issue is Issue => issue !== null && issue.id === action.modelId),
+    ...client
+      .getQueriesData<readonly IssueRelation[]>({ queryKey: [ISSUE_RELATIONS_ROOT] })
+      .flatMap(([, relations]) => relations?.map((relation) => relation.issue) ?? [])
+      .filter((issue) => issue.id === action.modelId),
   ];
   const current = action.data['identifier'];
   const newestSyncId = cached.reduce(
@@ -307,6 +320,58 @@ function patchIssueDetailUpdates(client: QueryClient, action: SyncAction): void 
   }
 }
 
+function patchRelatedIssueData(
+  client: QueryClient,
+  action: SyncAction,
+  preserveDeletedDetail: boolean,
+): void {
+  for (const [key, relations] of client.getQueriesData<readonly IssueRelation[]>({
+    queryKey: [ISSUE_RELATIONS_ROOT],
+  })) {
+    if (relations === undefined) continue;
+    const next = relations.flatMap((relation) => {
+      if (relation.issue.id !== action.modelId) return [relation];
+      if (action.action === 'delete') return preserveDeletedDetail ? [relation] : [];
+      const issue = applyIssueRowDelta(relation.issue, action);
+      return [issue === relation.issue ? relation : { ...relation, issue }];
+    });
+    if (
+      next.length !== relations.length ||
+      next.some((relation, index) => relation !== relations[index])
+    ) {
+      client.setQueryData(key, next);
+    }
+  }
+}
+
+function patchRelatedIssueUpdates(
+  client: QueryClient,
+  action: SyncAction,
+  preserveDeletedDetail: boolean,
+): void {
+  const fetchingKeys = client
+    .getQueryCache()
+    .findAll({ queryKey: [ISSUE_RELATIONS_ROOT] })
+    .flatMap((query) => {
+      const relations = query.state.data as readonly IssueRelation[] | undefined;
+      return query.state.fetchStatus === 'fetching' &&
+        relations?.some((relation) => relation.issue.id === action.modelId)
+        ? [query.queryKey]
+        : [];
+    });
+  const cancellations = fetchingKeys.map((key) =>
+    client.cancelQueries({ queryKey: key, exact: true }),
+  );
+  patchRelatedIssueData(client, action, preserveDeletedDetail);
+  Promise.allSettled(cancellations)
+    .then(() => {
+      patchRelatedIssueData(client, action, preserveDeletedDetail);
+      for (const key of fetchingKeys)
+        client.invalidateQueries({ queryKey: key, exact: true }).catch(noop);
+    })
+    .catch(noop);
+}
+
 function issueActionIdentifiers(
   action: SyncAction,
   previousIdentifiers: ReadonlySet<string>,
@@ -388,7 +453,12 @@ function patchIssueDetailCaches(
     .flatMap((query) => {
       const current = query.state.data as IssueDetail | undefined;
       if (query.state.fetchStatus !== 'fetching') return [];
-      if (current?.issue.id === action.modelId) return [query.queryKey];
+      if (
+        current?.issue.id === action.modelId ||
+        current?.parent?.id === action.modelId ||
+        current?.subIssues.some((child) => child.id === action.modelId)
+      )
+        return [query.queryKey];
       const queryIdentifier = query.queryKey[1];
       return current === undefined &&
         typeof queryIdentifier === 'string' &&
@@ -605,7 +675,10 @@ function routeAction(
         ? (previousIssueIdentifiers.get(issueMoveKey(action)) ?? new Set())
         : new Set<string>();
     const applied = patchIssueCaches(client, action, preserveDeletedDetail, previousIdentifiers);
-    if (applied) recordIssueGeneration(client, action, preserveDeletedDetail);
+    if (applied) {
+      patchRelatedIssueUpdates(client, action, preserveDeletedDetail);
+      recordIssueGeneration(client, action, preserveDeletedDetail);
+    }
     roots.counts = true;
     roots.milestones = true;
     roots.boards = true;
@@ -850,6 +923,11 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
   const resumeAbort = useRef<AbortController | null>(null);
   const resumeOrganization = useRef(organizationId);
 
+  useEffect(
+    () => observeIssueActorProfiles(client, organizationId, teamIds),
+    [client, organizationId, teamIds],
+  );
+
   useEffect(() => {
     if (resumeOrganization.current === organizationId) return;
     resumeOrganization.current = organizationId;
@@ -894,7 +972,9 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
         counts: false,
         boards: false,
         issueCaches: false,
-        bootstrap: false,
+        bootstrap: actions
+          .map((action) => recordMemberActorUpdate(client, action, organizationId))
+          .includes(true),
         views: false,
         docs: false,
         relations: false,
@@ -930,7 +1010,7 @@ export function DeltaBridge({ organizationId, teamIds }: DeltaBridgeProps) {
       flushRoots(client, roots);
       return roots.bootstrap;
     },
-    [client, currentUserId],
+    [client, currentUserId, organizationId],
   );
 
   useDeltaHandler(applyActions);

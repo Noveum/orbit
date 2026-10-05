@@ -66,6 +66,38 @@ const issue = {
 } satisfies Issue;
 
 describe('AssigneeControl', () => {
+  it('shows the agent actor and keeps the picker limited to existing human assignments', async () => {
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ToastProvider>
+          <AssigneeControl
+            issue={{
+              ...issue,
+              assignee: {
+                type: 'agent',
+                id: 'agent_1',
+                name: 'Build bot',
+                avatar: null,
+                deleted: false,
+              },
+            }}
+            assignee={undefined}
+          />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole('img', { name: 'Build bot' })).toBeInTheDocument();
+    await user.click(screen.getByTestId('card-assignee-ENG-1'));
+    const menu = await screen.findByTestId('card-assignee-menu');
+    const clear = within(menu).getByRole('menuitemradio', { name: 'No assignee' });
+    expect(clear).toHaveAttribute('data-disabled');
+    expect(clear).toHaveAttribute('aria-checked', 'false');
+    expect(within(menu).getByRole('menuitemradio', { name: member.name })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitemradio', { name: 'Build bot' })).toBeNull();
+  });
+
   it('shows member profile pictures in the Kanban assignee picker', async () => {
     const user = userEvent.setup();
     const client = new QueryClient();
