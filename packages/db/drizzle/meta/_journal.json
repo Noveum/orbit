@@ -211,6 +211,27 @@
       "when": 1789786278452,
       "tag": "0029_material_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791120831827,
+      "tag": "0030_actor_schema_expand",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791126760600,
+      "tag": "0031_mcp_grant_compatibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791127988483,
+      "tag": "0032_mcp_agent_grant_binding",
+      "breakpoints": true
     }
   ]
 }
