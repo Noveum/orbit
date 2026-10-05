@@ -1,5 +1,9 @@
 # MCP grant compatibility rollout
 
+Stages 3a and 3b are submitted together in one pull request depending on PR1.
+Production still requires two separate rollout stages. Preserve a deployable
+stage 3a artifact before deploying the final stage 3b checkout.
+
 ## Stage 3a: compatibility preparation
 
 Start from PR1 commit `edcc0c6ac4c80fb1b6a95783b325ce0cb394a688`.
@@ -61,7 +65,13 @@ grants. Release also reconciles this explicitly retired index when baselining
 a missing or partial ledger, and on repeated releases after index drift. It
 does not remove unrelated undeclared indexes.
 
-Stage 3b must be a separate review and release based on completed stage 3a.
+Stage 3b must be a separate release based on completed stage 3a, even when
+both stages are reviewed in one pull request. The final checkout's
+`bun run db:release` applies every pending migration, including both `0031`
+and `0032`; it does not pause for stage 3a deployment. First use the stage 3a
+checkout and release artifact to apply `0031` and upgrade all related instances.
+Only then use the final checkout to apply `0032` and deploy stage 3b. Follow
+this sequence before merging schema-dependent code into a deployment branch.
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
 `ORBIT_AGENT_MCP` disabled during migration and deployment. Never run the stage
