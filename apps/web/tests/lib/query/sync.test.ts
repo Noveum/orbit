@@ -109,6 +109,83 @@ describe('sync id staleness guard', () => {
 });
 
 describe('applyIssueDelta', () => {
+  it('accepts a real Agent-created insert with no legacy Human creator', () => {
+    const creator = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build helper',
+      avatar: null,
+      deleted: false,
+    };
+    const incoming = issue({
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: creator.id,
+      creator,
+    });
+    const rows = applyIssueDelta([], action({ action: 'insert', data: incoming }), TEAM);
+    expect(rows[0]?.creatorId).toBeNull();
+    expect(rows[0]?.creator).toEqual(creator);
+  });
+
+  it('preserves complete actors and nonempty defaulted fields through partial updates', () => {
+    const agent = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build helper',
+      avatar: 'https://example.com/helper.png',
+      deleted: true,
+    };
+    const original = issue({
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: agent.id,
+      creator: agent,
+      assignee: agent,
+      owner: null,
+      description: 'Notes',
+    });
+    const delta = action({ data: { id: original.id, priority: 1, syncId: 12 } });
+    const row = applyIssueDelta([original], delta, TEAM)[0];
+    expect(row?.creator).toEqual(agent);
+    expect(row?.creatorId).toBeNull();
+    expect(row?.assignee).toEqual(agent);
+    expect(row?.owner).toBeNull();
+    expect(row?.description).toBe('Notes');
+    expect(row?.organizationId).toBe(original.organizationId);
+    expect(row?.stateEnteredAt).toBe(original.stateEnteredAt);
+    expect(applyIssueDetailDelta({ issue: original }, delta)?.issue).toEqual(row);
+  });
+
+  it('accepts explicit null assignment and owner updates without clearing creator', () => {
+    const creator = {
+      type: 'user' as const,
+      id: 'user_1',
+      name: 'Alex',
+      avatar: null,
+      deleted: false,
+    };
+    const next = applyIssueDelta(
+      [issue({ creator, assignee: creator, owner: creator })],
+      action({ data: { id: 'issue_1', assignee: null, owner: null, syncId: 12 } }),
+      TEAM,
+    );
+    expect(next[0]?.creator).toEqual(creator);
+    expect(next[0]?.assignee).toBeNull();
+    expect(next[0]?.owner).toBeNull();
+  });
+
+  it('treats Agents as assigned while preserving Human participation and group matching', () => {
+    const row = issue({
+      assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: false },
+    });
+    expect(belongsInList('workType=assigned', row)).toBe(true);
+    expect(belongsInList('participantId=none', row)).toBe(false);
+    expect(belongsInList('participantId=user_1', row)).toBe(false);
+    expect(belongsInList('assigneeId=agent:agent_1', row)).toBe(true);
+    expect(belongsInList('assigneeId=user_1', row)).toBe(false);
+  });
+
   it('merges a partial update and keeps labels the delta does not carry', () => {
     const list = [issue({ reviewerIds: ['user_reviewer'] })];
     const next = applyIssueDelta(
@@ -188,6 +265,25 @@ describe('applyIssueDelta', () => {
 });
 
 describe('applyIssueDetailDelta', () => {
+  it('updates Actor views in cached parent and sub-issues', () => {
+    const related = issue({ id: 'related', syncId: 10 });
+    const detail = { issue: issue(), parent: related, subIssues: [related] };
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Helper',
+      avatar: null,
+      deleted: false,
+    };
+    const next = applyIssueDetailDelta(
+      detail,
+      action({ modelId: related.id, data: { id: related.id, assignee, syncId: 12 } }),
+    );
+    expect(next?.issue).toBe(detail.issue);
+    expect(next?.parent?.assignee).toEqual(assignee);
+    expect(next?.subIssues[0]?.assignee).toEqual(assignee);
+  });
+
   it('drops the rendered description when the markdown changes so the viewer sees the new text', () => {
     const detail = { issue: issue(), descriptionHtml: '<p>old</p>' };
     const patched = applyIssueDetailDelta(

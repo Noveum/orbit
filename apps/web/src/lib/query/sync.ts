@@ -3,6 +3,7 @@ import type { IssueOrdering } from '@orbit/shared/filters';
 import { docCommentAnchorSchema } from '@orbit/shared/validators';
 import type { InfiniteData } from '@tanstack/react-query';
 import { z } from 'zod';
+import { resolveIssueActor } from './issue-actors.ts';
 import type { Comment, DocComment, Issue, IssuePage, Reaction } from './schemas.ts';
 import { issueSchema, reactionSchema } from './schemas.ts';
 
@@ -47,8 +48,13 @@ function isStale(incomingSyncId: number | undefined, existingSyncId: number): bo
 
 type IssueDelta = Partial<Issue> & { id: string };
 
-function definedFields(value: Record<string, unknown>): IssueDelta {
-  const entries = Object.entries(value).filter(([, entry]) => entry !== undefined);
+function definedFields(
+  value: Record<string, unknown>,
+  source: Record<string, unknown>,
+): IssueDelta {
+  const entries = Object.entries(value).filter(
+    ([key, entry]) => entry !== undefined && source[key] !== undefined,
+  );
   return Object.fromEntries(entries) as IssueDelta;
 }
 
@@ -63,7 +69,11 @@ function reviewerDelta(
 export type IssueBelongs = (issue: Issue) => boolean;
 
 export function participatesIn(issue: Issue, userId: string): boolean {
-  return issue.assigneeId === userId || (issue.reviewerIds ?? []).includes(userId);
+  const assignee = resolveIssueActor(issue, 'assignee');
+  return (
+    (assignee?.type === 'user' && assignee.id === userId) ||
+    (issue.reviewerIds ?? []).includes(userId)
+  );
 }
 
 const SCOPED_PARAMS = ['teamId', 'stateId', 'assigneeId', 'projectId', 'cycleId'] as const;
@@ -76,11 +86,18 @@ const ISSUE_FIELD_OF: Record<(typeof SCOPED_PARAMS)[number], keyof Issue> = {
   cycleId: 'cycleId',
 };
 
+function assignmentKey(issue: Issue): string | null {
+  const assignee = resolveIssueActor(issue, 'assignee');
+  if (assignee === null) return null;
+  return assignee.type === 'agent' ? `agent:${assignee.id}` : assignee.id;
+}
+
 export function belongsInList(search: string, issue: Issue): boolean {
   const params = new URLSearchParams(search);
   const scoped = SCOPED_PARAMS.every((name) => {
     const expected = params.get(name);
-    return expected === null || issue[ISSUE_FIELD_OF[name]] === expected;
+    const actual = name === 'assigneeId' ? assignmentKey(issue) : issue[ISSUE_FIELD_OF[name]];
+    return expected === null || actual === expected;
   });
   if (!scoped) return false;
   const participantId = params.get('participantId');
@@ -89,12 +106,13 @@ export function belongsInList(search: string, issue: Issue): boolean {
     return participantId === null
       ? (issue.reviewerIds ?? []).length > 0
       : (issue.reviewerIds ?? []).includes(participantId);
-  if (workType === 'assigned')
-    return participantId === null
-      ? issue.assigneeId !== null
-      : issue.assigneeId === (participantId === 'none' ? null : participantId);
+  if (workType === 'assigned') {
+    if (participantId === null) return resolveIssueActor(issue, 'assignee') !== null;
+    if (participantId === 'none') return resolveIssueActor(issue, 'assignee') === null;
+    return assignmentKey(issue) === participantId;
+  }
   if (participantId === null) return true;
-  if (participantId === 'none') return issue.assigneeId === null;
+  if (participantId === 'none') return resolveIssueActor(issue, 'assignee') === null;
   return participatesIn(issue, participantId);
 }
 
@@ -104,7 +122,8 @@ export function isGroupColumn(search: string, issue: Issue): boolean {
   const params = new URLSearchParams(search);
   return GROUPED_PARAMS.some((name) => {
     const expected = params.get(name);
-    return expected !== null && issue[ISSUE_FIELD_OF[name]] === expected;
+    const actual = name === 'assigneeId' ? assignmentKey(issue) : issue[ISSUE_FIELD_OF[name]];
+    return expected !== null && actual === expected;
   });
 }
 
@@ -163,7 +182,7 @@ export function applyIssueDelta(
 
   const merged: Issue = {
     ...existing,
-    ...definedFields(incoming),
+    ...definedFields(incoming, action.data),
     labelIds: existing.labelIds,
     ...reviewerDelta(action.data, incoming),
   };
@@ -236,25 +255,41 @@ export function withoutSubIssue<T extends { issue: Issue; subIssues: readonly Is
   return subIssues.length === detail.subIssues.length ? detail : { ...detail, subIssues };
 }
 
-export function applyIssueDetailDelta<T extends { issue: Issue; descriptionHtml?: string }>(
-  detail: T | undefined,
-  action: SyncAction,
-): T | undefined {
-  if (detail === undefined) return detail;
+export function applyIssueRowDelta(issue: Issue, action: Pick<SyncAction, 'data'>): Issue {
   const parsed = partialIssueSchema.safeParse(action.data);
-  if (!parsed.success || parsed.data.id !== detail.issue.id) return detail;
-  if (isStale(parsed.data.syncId, detail.issue.syncId)) return detail;
-
-  const issue: Issue = {
-    ...detail.issue,
-    ...definedFields(parsed.data),
-    labelIds: detail.issue.labelIds,
+  if (!parsed.success || parsed.data.id !== issue.id) return issue;
+  if (isStale(parsed.data.syncId, issue.syncId)) return issue;
+  return {
+    ...issue,
+    ...definedFields(parsed.data, action.data),
+    labelIds: issue.labelIds,
     ...reviewerDelta(action.data, parsed.data),
   };
+}
+
+export function applyIssueDetailDelta<
+  T extends {
+    issue: Issue;
+    descriptionHtml?: string;
+    parent?: Issue | null;
+    subIssues?: readonly Issue[];
+  },
+>(detail: T | undefined, action: Pick<SyncAction, 'data'>): T | undefined {
+  if (detail === undefined) return detail;
+  const issue = applyIssueRowDelta(detail.issue, action);
+  const parent =
+    detail.parent === undefined || detail.parent === null
+      ? detail.parent
+      : applyIssueRowDelta(detail.parent, action);
+  const subIssues = detail.subIssues?.map((child) => applyIssueRowDelta(child, action));
+  const childrenChanged = subIssues?.some((child, index) => child !== detail.subIssues?.[index]);
+  if (issue === detail.issue && parent === detail.parent && !childrenChanged) return detail;
   const descriptionChanged = issue.description !== detail.issue.description;
   return {
     ...detail,
     issue,
+    ...(parent === undefined ? {} : { parent }),
+    ...(childrenChanged ? { subIssues } : {}),
     ...(descriptionChanged ? { descriptionHtml: '' } : {}),
   };
 }

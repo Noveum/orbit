@@ -17,6 +17,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.ts';
+import { agentIdentity } from './oauth.ts';
 import { organization, team } from './org.ts';
 
 const healthListSql = sql.raw(PROJECT_HEALTHS.map((health) => `'${health}'`).join(', '));
@@ -365,10 +366,17 @@ export const issue = pgTable(
       .notNull()
       .references(() => workflowState.id, { onDelete: 'restrict' }),
     priority: smallint('priority').notNull().default(0),
-    creatorId: text('creator_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    creatorId: text('creator_id').references(() => user.id, { onDelete: 'restrict' }),
     assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
+    creatorUserId: text('creator_user_id').references(() => user.id, { onDelete: 'set null' }),
+    creatorAgentId: text('creator_agent_id').references(() => agentIdentity.id, {
+      onDelete: 'set null',
+    }),
+    assigneeUserId: text('assignee_user_id').references(() => user.id, { onDelete: 'set null' }),
+    assigneeAgentId: text('assignee_agent_id').references(() => agentIdentity.id, {
+      onDelete: 'set null',
+    }),
+    ownerUserId: text('owner_user_id').references(() => user.id, { onDelete: 'set null' }),
     projectId: text('project_id').references(() => project.id, { onDelete: 'set null' }),
     milestoneId: text('milestone_id').references(() => milestone.id, { onDelete: 'set null' }),
     cycleId: text('cycle_id').references(() => cycle.id, { onDelete: 'set null' }),
@@ -393,6 +401,9 @@ export const issue = pgTable(
     uniqueIndex('issue_org_identifier_unique').on(table.organizationId, table.identifier),
     index('issue_board_idx').on(table.teamId, table.stateId, table.sortOrder),
     index('issue_assignee_idx').on(table.assigneeId, table.updatedAt),
+    index('issue_creator_agent_idx').on(table.creatorAgentId),
+    index('issue_assignee_agent_idx').on(table.assigneeAgentId),
+    index('issue_owner_user_idx').on(table.ownerUserId),
     index('issue_project_idx').on(table.projectId),
     index('issue_cycle_idx').on(table.cycleId),
     index('issue_parent_idx').on(table.parentId),

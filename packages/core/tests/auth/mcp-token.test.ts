@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { createHmac, randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
+import { mcpConsentValueSchema } from '@orbit/shared/validators';
 import {
   bindMcpCredential,
   type FinalizeMcpConsentInput,
   finalizeMcpConsent,
   getMcpClient,
+  getMcpConsentRequest,
+  isAgentIssueWriteEnabled,
   listMcpGrants,
   passkeyVerifiedWithin,
   recordMcpGrant,
@@ -28,6 +31,27 @@ const MCP_SECRET = 'mcp-binding-test-secret-0123456789abcdef';
 let workspace: Workspace;
 
 describe('MCP credential binding', () => {
+  it('enables agent issue writes only with the independent exact opt-in', () => {
+    const previous = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+    const previousOutbox = process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'];
+    try {
+      for (const value of [undefined, '', 'false', 'TRUE', '1']) {
+        if (value === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+        else process.env['ORBIT_AGENT_ISSUE_WRITE'] = value;
+        process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = 'true';
+        expect(isAgentIssueWriteEnabled()).toBe(false);
+      }
+      process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+      process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = 'false';
+      expect(isAgentIssueWriteEnabled()).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previous;
+      if (previousOutbox === undefined) delete process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'];
+      else process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = previousOutbox;
+    }
+  });
+
   it('round trips an opaque credential and rejects a changed binding', () => {
     const bound = bindMcpCredential('opaque-token', 'grant-one', MCP_SECRET);
     expect(unbindMcpCredential(bound, MCP_SECRET)).toEqual({
@@ -173,6 +197,19 @@ describe('recordMcpGrant', () => {
 });
 
 describe('verifyMcpAccessToken with a grant', () => {
+  it('lets a legacy owner disconnect after leaving the workspace', async () => {
+    const clientId = await createClient();
+    const grantId = await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: SCOPES,
+    });
+    await db.delete(schema.member).where(eq(schema.member.userId, workspace.adminUser.id));
+    await revokeMcpGrant(grantId, workspace.adminUser.id);
+    const [grant] = await db.select().from(schema.mcpGrant).where(eq(schema.mcpGrant.id, grantId));
+    expect(grant?.revokedAt).toBeInstanceOf(Date);
+  });
   it('accepts only the immutable grant version carried by a late-issued token', async () => {
     const clientId = await createClient();
     const other = await createOrganizationFor(workspace.adminUser.id);
@@ -216,6 +253,10 @@ describe('verifyMcpAccessToken with a grant', () => {
     );
 
     const context = await verifyMcpAccessToken(token);
+    const [grant] = await listMcpGrants(workspace.adminUser.id);
+    expect(context.grantId).toBe(grant?.id ?? 'missing-grant');
+    expect(context.ownerMemberId).toBeNull();
+    expect(context.tokenId).toBeString();
     expect(context.organizationId).toBe(workspace.organizationId);
     expect(context.principal.role).toBe('admin');
   });
@@ -373,6 +414,51 @@ async function createConsentCode(
 }
 
 describe('finalizeMcpConsent', () => {
+  it('reads the owner, client, scopes, redirect and PKCE only from stored consent', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const [record] = await db
+      .select()
+      .from(schema.verification)
+      .where(eq(schema.verification.identifier, consentCode));
+    const stored = mcpConsentValueSchema.parse(JSON.parse(record?.value ?? '{}'));
+    expect(await getMcpConsentRequest(workspace.adminUser.id, consentCode)).toEqual(stored);
+    expect(stored).toMatchObject({
+      userId: workspace.adminUser.id,
+      scope: ['openid', 'orbit.read', 'orbit.write'],
+      redirectURI: 'http://127.0.0.1:9876/callback',
+      codeChallenge: 'challenge',
+      codeChallengeMethod: 'S256',
+      state: 'xyz',
+    });
+    await expect(getMcpConsentRequest('other-owner', consentCode)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    const client = await getMcpClient(stored.clientId);
+    expect(client?.clientId).toBe(stored.clientId);
+  });
+
+  it('commits one authorization code and grant for concurrent duplicate consent', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const input = {
+      userId: workspace.adminUser.id,
+      consentCode,
+      accept: true as const,
+      organizationId: workspace.organizationId,
+    };
+    const results = await Promise.allSettled([
+      finalizeMcpConsent(input),
+      finalizeMcpConsent(input),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected');
+    expect(rejected?.status === 'rejected' ? rejected.reason : null).toMatchObject({
+      code: 'unauthorized',
+    });
+    expect(await db.select().from(schema.verification)).toHaveLength(1);
+    expect(await db.select().from(schema.mcpGrant)).toHaveLength(1);
+    expect(await db.select().from(schema.oauthConsent)).toHaveLength(1);
+  });
+
   it('mints a code, records consent, and preserves PKCE on accept', async () => {
     const consentCode = await createConsentCode(workspace.adminUser.id);
     const { redirectUri } = await finalizeMcpConsent({

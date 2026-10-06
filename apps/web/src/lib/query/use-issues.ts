@@ -2,7 +2,7 @@
 
 import { decodeFilter, hasCurrentSprintFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
-import type { IssueExpectedProperties } from '@orbit/shared/validators';
+import type { IssueActor, IssueExpectedProperties } from '@orbit/shared/validators';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import {
   keepPreviousData,
@@ -21,12 +21,17 @@ import {
 } from '@/features/issues/use-issue-property-undo.ts';
 import { apiFetch, messageOf } from './fetcher.ts';
 import {
+  issueMutationListRevisionGeneration,
+  issueMutationRevisionGeneration as issueRevisionGeneration,
+  replayIssueActorProfiles,
+} from './issue-actor-cache.ts';
+import { humanIssueActor, resolveIssueActor } from './issue-actors.ts';
+import {
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
   issueListRevisionGeneration,
   issueQueryResetMarks,
   issueQueryWasReset,
-  issueRevisionGeneration,
   recordIssueDeletions,
   recordIssueListRevisions,
   recordIssueRevisions,
@@ -49,7 +54,9 @@ import {
 } from './issue-search.ts';
 import {
   BOARD_ROOT,
+  BOOTSTRAP_ROOT,
   ISSUE_FACETS_ROOT,
+  ISSUE_RELATIONS_ROOT,
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
@@ -63,6 +70,7 @@ import type {
   IssueDetail,
   IssueFacets,
   IssuePage,
+  IssueRelation,
   IssueSummary,
 } from './schemas.ts';
 import {
@@ -80,6 +88,8 @@ import {
 import type { IssuePages } from './sync.ts';
 import {
   admitsNewRows,
+  applyIssueDetailDelta,
+  applyIssueRowDelta,
   belongsInList,
   flattenIssuePages,
   isGroupColumn,
@@ -454,6 +464,14 @@ function issueFromPages(pages: IssuePages | undefined, issueId: string): Issue |
     : flattenIssuePages(pages).find((issue) => issue.id === issueId);
 }
 
+function actorFingerprint(
+  actor: IssueActor | null | undefined,
+): readonly unknown[] | null | string {
+  if (actor === undefined) return 'missing';
+  if (actor === null) return null;
+  return [actor.type, actor.id, actor.name, actor.avatar, actor.deleted];
+}
+
 function issueFingerprint(issue: Issue): string {
   return (
     JSON.stringify([
@@ -466,6 +484,14 @@ function issueFingerprint(issue: Issue): string {
       issue.priority,
       issue.creatorId,
       issue.assigneeId,
+      issue.creatorUserId,
+      issue.creatorAgentId,
+      issue.assigneeUserId,
+      issue.assigneeAgentId,
+      issue.ownerUserId,
+      actorFingerprint(issue.creator),
+      actorFingerprint(issue.assignee),
+      actorFingerprint(issue.owner),
       [...(issue.reviewerIds ?? [])].sort(),
       issue.projectId,
       issue.milestoneId,
@@ -627,6 +653,46 @@ function placeMovedIssue(client: QueryClient, next: Issue): void {
   recordIssueRevisions(client, [next.id]);
 }
 
+async function settleIssueOccurrences(client: QueryClient, issue: Issue): Promise<void> {
+  const action = { data: { ...issue } };
+  const fetchingKeys = client
+    .getQueryCache()
+    .findAll()
+    .flatMap((query) => {
+      if (query.state.fetchStatus !== 'fetching') return [];
+      if (query.queryKey[0] === ISSUE_ROOT) {
+        const detail = query.state.data as IssueDetail | undefined;
+        const related =
+          detail?.parent?.id === issue.id ||
+          detail?.subIssues.some((child) => child.id === issue.id);
+        return related ? [query.queryKey] : [];
+      }
+      if (query.queryKey[0] !== ISSUE_RELATIONS_ROOT) return [];
+      const relations = query.state.data as readonly IssueRelation[] | undefined;
+      return relations?.some((relation) => relation.issue.id === issue.id) ? [query.queryKey] : [];
+    });
+  await Promise.allSettled(
+    fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
+  );
+  for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
+    if (detail !== undefined) client.setQueryData(key, applyIssueDetailDelta(detail, action));
+  }
+  for (const [key, relations] of client.getQueriesData<readonly IssueRelation[]>({
+    queryKey: [ISSUE_RELATIONS_ROOT],
+  })) {
+    if (relations === undefined) continue;
+    client.setQueryData(
+      key,
+      relations.map((relation) => {
+        const updated = applyIssueRowDelta(relation.issue, action);
+        return updated === relation.issue ? relation : { ...relation, issue: updated };
+      }),
+    );
+  }
+  for (const key of fetchingKeys)
+    client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
+}
+
 async function placeIssues(client: QueryClient, moved: readonly Issue[]): Promise<void> {
   const before = filteredListsHolding(client, moved);
   eachIssueList(client, { queryKey: [ISSUES_ROOT] }, (issues, search) => {
@@ -702,6 +768,7 @@ export function filterSupportedPatch(patch: IssuePatch): Record<string, unknown>
 interface ActiveIssueMutation {
   readonly sequence: number;
   readonly patch: IssuePatch;
+  readonly assignment: Partial<OptimisticAssignment>;
   entry: PropertyUndoEntry | undefined;
   status: 'pending' | 'succeeded' | 'failed';
 }
@@ -713,11 +780,79 @@ interface IssueMutationTracker {
 
 const mutationTrackers = new Map<string, IssueMutationTracker>();
 
-function applyPatchToIssue(base: Issue, patch: IssuePatch): Issue {
+function cachedMutationBase(
+  detail: Issue | undefined,
+  cached: Issue | undefined,
+  fallback: Issue,
+): Issue {
+  if (detail === undefined) return cached ?? fallback;
+  if (cached === undefined || detail.syncId > cached.syncId) return detail;
+  if (cached.syncId > detail.syncId) return cached;
+  const next = { ...detail };
+  const actorFields = {
+    creator: ['creatorUserId', 'creatorAgentId'],
+    assignee: ['assigneeUserId', 'assigneeAgentId'],
+    owner: ['ownerUserId'],
+  } as const;
+  for (const role of ['creator', 'assignee', 'owner'] as const) {
+    if (next[role] !== undefined || cached[role] === undefined) continue;
+    next[role] = cached[role];
+    for (const key of actorFields[role]) {
+      if (next[key] === undefined && cached[key] !== undefined)
+        Object.assign(next, { [key]: cached[key] });
+    }
+  }
+  return next;
+}
+
+function restoredIssueDetail(
+  detail: IssueDetail | undefined,
+  issue: Issue,
+): IssueDetail | undefined {
+  if (detail === undefined) return undefined;
+  return { ...detail, issue: { ...issue, description: detail.issue.description } };
+}
+
+type OptimisticAssignment = Pick<
+  Issue,
+  'assigneeId' | 'assigneeUserId' | 'assigneeAgentId' | 'assignee'
+>;
+
+function optimisticAssignment(
+  client: QueryClient,
+  issue: Issue,
+  assigneeId: string | null | undefined,
+): Partial<OptimisticAssignment> {
+  if (assigneeId === undefined) return {};
+  let actor: IssueActor | null = null;
+  if (assigneeId !== null) {
+    const member = client
+      .getQueriesData<Bootstrap>({ queryKey: [BOOTSTRAP_ROOT] })
+      .flatMap(([, bootstrap]) =>
+        bootstrap?.organizationId === issue.organizationId ? bootstrap.members : [],
+      )
+      .find((member) => member.id === assigneeId);
+    actor = humanIssueActor(assigneeId, member);
+    if (
+      member === undefined &&
+      issue.assignee?.type === 'user' &&
+      issue.assignee.id === assigneeId
+    ) {
+      actor = issue.assignee;
+    }
+  }
+  return { assigneeId, assigneeUserId: assigneeId, assigneeAgentId: null, assignee: actor };
+}
+
+function applyPatchToIssue(
+  base: Issue,
+  patch: IssuePatch,
+  assignment: Partial<OptimisticAssignment>,
+): Issue {
   const next: Issue = Object.assign({}, base);
   if (patch.stateId !== undefined) next.stateId = patch.stateId;
   if (patch.priority !== undefined) next.priority = patch.priority;
-  if (patch.assigneeId !== undefined) next.assigneeId = patch.assigneeId;
+  Object.assign(next, assignment);
   if (patch.estimate !== undefined) next.estimate = patch.estimate;
   if (patch.projectId !== undefined) next.projectId = patch.projectId;
   if (patch.milestoneId !== undefined) next.milestoneId = patch.milestoneId;
@@ -750,7 +885,7 @@ function reconcileTracker(tracker: IssueMutationTracker): void {
     }
 
     mutation.entry = nextEntry;
-    currentBase = applyPatchToIssue(currentBase, mutation.patch);
+    currentBase = applyPatchToIssue(currentBase, mutation.patch, mutation.assignment);
   }
 }
 
@@ -818,6 +953,10 @@ function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
     expectedForUndo,
     expectedForRedo,
   );
+  if (patch.assigneeId !== undefined) {
+    expectedForUndo['assigneeAgentId'] = null;
+    expectedForRedo['assigneeAgentId'] = issue.assigneeAgentId ?? null;
+  }
   assignScalarDelta(
     'estimate',
     patch.estimate,
@@ -904,23 +1043,41 @@ export function captureIssueHistory(
   patch: IssuePatch,
   sequence: number,
 ): PropertyUndoEntry | undefined {
-  const supportedForwardPatch = filterSupportedPatch(patch);
+  const { assigneeId: _assigneeId, ...withoutAssignee } = patch;
+  const historyPatch =
+    resolveIssueActor(issue, 'assignee')?.type === 'agent' ? withoutAssignee : patch;
+  const supportedForwardPatch = filterSupportedPatch(historyPatch);
 
   if (patch.expected !== undefined || Object.keys(supportedForwardPatch).length === 0) {
     return undefined;
   }
 
-  const { inversePatch, expectedForUndo, expectedForRedo } = buildUndoDeltas(issue, patch);
+  const { inversePatch, expectedForUndo, expectedForRedo } = buildUndoDeltas(issue, historyPatch);
 
   return {
     sequence,
     issue,
-    propertyLabel: resolvePropertyLabel(patch),
+    propertyLabel: resolvePropertyLabel(historyPatch),
     patch: supportedForwardPatch,
     inversePatch,
     expectedForUndo,
     expectedForRedo,
   };
+}
+
+function matchesOptimisticDetail(
+  client: QueryClient,
+  current: IssueDetail | undefined,
+  optimistic: IssueDetail | undefined,
+): boolean {
+  if (current === undefined || optimistic === undefined) return false;
+  if (current === optimistic) return true;
+  const profiled = replayIssueActorProfiles(client, optimistic.issue);
+  return (
+    profiled !== optimistic.issue &&
+    current.issue.description === optimistic.issue.description &&
+    issueFingerprint(current.issue) === issueFingerprint(profiled)
+  );
 }
 
 export function useUpdateIssue() {
@@ -940,25 +1097,35 @@ export function useUpdateIssue() {
       if (tracker === undefined) {
         const detailKey = queryKeys.issue(input.issue.identifier);
         const heldDetail = client.getQueryData<IssueDetail>(detailKey);
-        const fallbackBase = heldDetail?.issue ?? input.issue;
+        const cached = authoritativeCachedIssue(client, input.issue.id);
+        const fallbackBase = cachedMutationBase(
+          heldDetail?.issue,
+          cached.kind === 'found' ? cached.issue : undefined,
+          input.issue,
+        );
         tracker = { rootBase: fallbackBase, active: [] };
         mutationTrackers.set(input.issue.id, tracker);
       }
 
-      let currentBase = tracker.rootBase;
+      let currentBase = replayIssueActorProfiles(client, tracker.rootBase);
       for (const m of tracker.active) {
         if (m.status === 'failed') {
           continue;
         }
-        currentBase = applyPatchToIssue(currentBase, m.patch);
+        currentBase = replayIssueActorProfiles(
+          client,
+          applyPatchToIssue(currentBase, m.patch, m.assignment),
+        );
       }
 
       const sequence = nextActionSequence();
       const undoEntry = captureIssueHistory(currentBase, input.patch, sequence);
+      const assignment = optimisticAssignment(client, currentBase, input.patch.assigneeId);
 
       const activeRecord: ActiveIssueMutation = {
         sequence,
         patch: input.patch,
+        assignment,
         entry: undoEntry,
         status: 'pending',
       };
@@ -975,6 +1142,7 @@ export function useUpdateIssue() {
       const optimistic: Issue = {
         ...currentBase,
         ...patch,
+        ...assignment,
         ...(reviewerIds === undefined ? {} : { reviewerIds: [...reviewerIds] }),
         labelIds:
           input.patch.labelIds === undefined ? currentBase.labelIds : [...input.patch.labelIds],
@@ -993,8 +1161,9 @@ export function useUpdateIssue() {
       return {
         sequence,
         undoEntry,
-        previousDetail,
+        previousDetail: restoredIssueDetail(previousDetail, currentBase),
         optimisticDetail,
+        previousIssue: currentBase,
         identifier: input.issue.identifier,
         detailResetMarks: issueQueryResetMarks(client, [detailKey]),
         issueRevision: issueRevisionGeneration(client, input.issue.id),
@@ -1021,17 +1190,24 @@ export function useUpdateIssue() {
         !serverMovedOn &&
         issueRevisionGeneration(client, input.issue.id) === context.issueRevision;
       const canRestoreDetail =
-        canRestoreList && !detailWasReset && currentDetail === context?.optimisticDetail;
-      if (canRestoreList) placeIssue(client, input.issue);
+        canRestoreList &&
+        !detailWasReset &&
+        matchesOptimisticDetail(client, currentDetail, context.optimisticDetail);
+      if (canRestoreList)
+        placeIssue(client, replayIssueActorProfiles(client, context.previousIssue));
       if (canRestoreDetail && context?.previousDetail !== undefined) {
-        client.setQueryData(queryKeys.issue(context.identifier), context.previousDetail);
+        client.setQueryData(queryKeys.issue(context.identifier), {
+          ...currentDetail,
+          issue: replayIssueActorProfiles(client, context.previousDetail.issue),
+          descriptionHtml: context.previousDetail.descriptionHtml,
+        });
       }
       if (!canRestoreList || (context?.previousDetail !== undefined && !canRestoreDetail)) {
         invalidateIssueCaches(client).catch(() => undefined);
       }
       toast({ title: 'Could not save', description: messageOf(error), tone: 'danger' });
     },
-    onSuccess: (issue, input, context) => {
+    onSuccess: async (issue, input, context) => {
       const tracker = mutationTrackers.get(input.issue.id);
       const activeRecord = tracker?.active.find(
         (mutation) => mutation.sequence === context?.sequence,
@@ -1047,6 +1223,7 @@ export function useUpdateIssue() {
       }
 
       placeIssue(client, issue);
+      await settleIssueOccurrences(client, issue);
       refreshCounts(client);
       client.setQueryData<IssueDetail>(queryKeys.issue(issue.identifier), (current) =>
         current === undefined || current.issue.syncId > issue.syncId
@@ -1135,13 +1312,15 @@ function restoreFailedMoveAfterUnavailableRefresh(
   for (const snapshot of context.lists) {
     if (snapshot.before === undefined || snapshot.optimistic !== undefined) continue;
     if (!refreshKeys.includes(snapshot.key)) continue;
-    if (issueListRevisionGeneration(client, snapshot.key) !== snapshot.listRevision) continue;
+    if (issueMutationListRevisionGeneration(client, snapshot.key) !== snapshot.listRevision)
+      continue;
     const query = client.getQueryCache().find({ queryKey: snapshot.key, exact: true });
     if (query === undefined || query.state.error === null) continue;
+    const before = replayIssueActorProfiles(client, snapshot.before);
     client.setQueryData<IssuePages>(snapshot.key, (pages) =>
       pages === undefined
         ? pages
-        : restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, snapshot.before),
+        : restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, before),
     );
   }
 }
@@ -1166,7 +1345,9 @@ async function rollbackFailedMove(
   const refreshKeys: QueryKey[] = [];
   const expected = new Set(
     lists.flatMap((snapshot) =>
-      snapshot.optimistic === undefined ? [] : [issueFingerprint(snapshot.optimistic)],
+      snapshot.optimistic === undefined
+        ? []
+        : [issueFingerprint(replayIssueActorProfiles(client, snapshot.optimistic))],
     ),
   );
   const resetMarks = context?.resetMarks ?? new Map<string, number>();
@@ -1191,13 +1372,21 @@ async function rollbackFailedMove(
       found === undefined
         ? snapshot.optimistic === undefined
         : snapshot.optimistic !== undefined &&
-          issueFingerprint(found) === issueFingerprint(snapshot.optimistic);
+          issueFingerprint(found) ===
+            issueFingerprint(replayIssueActorProfiles(client, snapshot.optimistic));
     if (hasOptimistic && !intervening && stillOptimistic) {
       client.setQueryData<IssuePages>(snapshot.key, (pages) => {
         if (pages === undefined) return pages;
         const found = issueFromPages(pages, input.issue.id);
         if (found !== undefined && !expected.has(issueFingerprint(found))) return pages;
-        return restoreIssueInPages(pages, searchOf(snapshot.key), input.issue.id, snapshot.before);
+        return restoreIssueInPages(
+          pages,
+          searchOf(snapshot.key),
+          input.issue.id,
+          snapshot.before === undefined
+            ? undefined
+            : replayIssueActorProfiles(client, snapshot.before),
+        );
       });
       continue;
     }
@@ -1236,6 +1425,7 @@ export function useMoveIssue() {
       const optimistic: Issue = {
         ...input.issue,
         ...regroupingOf(input),
+        ...optimisticAssignment(client, input.issue, input.assigneeId),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
       placeMovedIssue(client, optimistic);
@@ -1244,7 +1434,7 @@ export function useMoveIssue() {
           key,
           before: issueFromPages(pages, input.issue.id),
           optimistic: issueFromPages(client.getQueryData<IssuePages>(key), input.issue.id),
-          listRevision: issueListRevisionGeneration(client, key),
+          listRevision: issueMutationListRevisionGeneration(client, key),
         })),
         deletionGeneration:
           moveDeletionGenerations.get(input) ?? issueDeletionGeneration(client, input.issue.id),
@@ -1269,6 +1459,9 @@ export function useMoveIssue() {
         client,
         settlement.issues.filter((issue) => !confirmedDeleted.has(issue.id)),
       );
+      for (const issue of settlement.issues) {
+        if (!confirmedDeleted.has(issue.id)) await settleIssueOccurrences(client, issue);
+      }
       if (confirmedDeleted.size > 0) dropFromIssueLists(client, confirmedDeleted);
       if (settlement.issueWasDeletedDuringSettlement) {
         dropFromIssueLists(client, new Set([input.issue.id]));

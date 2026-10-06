@@ -3,6 +3,16 @@ import { z } from 'zod';
 const timestamp = z.string();
 const nullableTimestamp = z.string().nullable();
 
+export const issueActorSchema = z.object({
+  type: z.enum(['user', 'agent']),
+  id: z.string(),
+  name: z.string(),
+  avatar: z.string().nullable(),
+  deleted: z.boolean(),
+});
+
+export type IssueActor = z.infer<typeof issueActorSchema>;
+
 export const issueSchema = z.object({
   canOpen: z.boolean().optional(),
   id: z.string(),
@@ -14,8 +24,16 @@ export const issueSchema = z.object({
   description: z.string().default(''),
   stateId: z.string(),
   priority: z.number(),
-  creatorId: z.string(),
+  creatorId: z.string().nullable(),
   assigneeId: z.string().nullable(),
+  creatorUserId: z.string().nullable().optional(),
+  creatorAgentId: z.string().nullable().optional(),
+  assigneeUserId: z.string().nullable().optional(),
+  assigneeAgentId: z.string().nullable().optional(),
+  ownerUserId: z.string().nullable().optional(),
+  creator: issueActorSchema.nullable().optional(),
+  assignee: issueActorSchema.nullable().optional(),
+  owner: issueActorSchema.nullable().optional(),
   reviewerIds: z.array(z.string()).optional(),
   projectId: z.string().nullable(),
   milestoneId: z.string().nullable(),

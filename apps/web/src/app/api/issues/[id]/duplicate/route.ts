@@ -13,7 +13,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     const input = issueMarkDuplicateSchema.parse(await readJson(request));
     const result = await markAsDuplicate(principal, id, input);
     await publish(result.actions);
-    const [decorated] = await attachIssueDecorations([result.issue]);
+    const [decorated] = await attachIssueDecorations([result.issue], principal.organizationId);
     return { issue: decorated };
   });
 }
