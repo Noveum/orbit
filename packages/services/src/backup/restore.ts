@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { releaseDatabase } from '@orbit/db/migration-release';
@@ -12,6 +13,12 @@ import { createStorageDriver } from '../storage/index.ts';
 import type { StorageDriver } from '../storage/types.ts';
 import { assertNoSymlinkPath, verifyPreMutationChecksums } from './checksums.ts';
 import { verifyBackupCompatibility } from './compatibility.ts';
+import {
+  decryptBuffer,
+  decryptEnvelopeDataKey,
+  decryptFile,
+  resolveMasterEncryptionKey,
+} from './encryption.ts';
 import { acquireRestoreLock, setRecoveryState } from './readiness.ts';
 import { restoreDatabase } from './restore-database.ts';
 import { restoreStorageObjects } from './restore-storage.ts';
@@ -64,14 +71,12 @@ function resolveStorageDriver(
 
 async function runDatabaseAndMigrations(
   databaseUrl: string,
-  backupDir: string,
-  manifest: BackupManifest,
+  dumpFile: string,
   migrationsFolder: string | undefined,
   pgRestorePath: string | undefined,
   pendingMigrationsCount: number,
   signal?: AbortSignal | undefined,
 ): Promise<void> {
-  const dumpFile = await assertNoSymlinkPath(backupDir, manifest.checksums.databaseDump.file);
   await restoreDatabase({ databaseUrl, dumpFile, pgRestorePath, signal });
 
   if (signal?.aborted) {
@@ -83,6 +88,54 @@ async function runDatabaseAndMigrations(
       migrationsFolder ?? fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
     await releaseDatabase(databaseUrl, folder);
   }
+}
+
+async function resolveRestoreDek(
+  manifest: BackupManifest,
+  options: BackupRestoreOptions,
+  env: NodeJS.ProcessEnv,
+): Promise<Buffer | undefined> {
+  if (!manifest.encryption.enabled) {
+    return undefined;
+  }
+
+  const masterKey = await resolveMasterEncryptionKey({
+    key: options.encryptionKey,
+    keyFile: options.encryptionKeyFile,
+    command: options.encryptionCommand,
+    env,
+  });
+
+  if (
+    manifest.encryption.encryptedDek === undefined ||
+    manifest.encryption.dekIv === undefined ||
+    manifest.encryption.dekTag === undefined
+  ) {
+    throw validationFailed('Encrypted backup manifest is missing envelope parameters.');
+  }
+
+  return decryptEnvelopeDataKey(masterKey.key, {
+    encryptedDek: manifest.encryption.encryptedDek,
+    dekIv: manifest.encryption.dekIv,
+    dekTag: manifest.encryption.dekTag,
+  });
+}
+
+async function prepareDumpFileToRestore(
+  backupDir: string,
+  dumpManifestFile: string,
+  dek: Buffer | undefined,
+): Promise<{ dumpFile: string; tempDir?: string | undefined }> {
+  if (dek === undefined) {
+    const dumpFile = await assertNoSymlinkPath(backupDir, dumpManifestFile);
+    return { dumpFile };
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-restore-dec-'));
+  const decryptedDumpFile = join(tempDir, 'database.dump');
+  const dumpEncFile = await assertNoSymlinkPath(backupDir, dumpManifestFile);
+  await decryptFile(dumpEncFile, decryptedDumpFile, dek);
+  return { dumpFile: decryptedDumpFile, tempDir };
 }
 
 export async function restoreBackup(options: BackupRestoreOptions): Promise<BackupRestoreResult> {
@@ -111,18 +164,28 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
 
   await verifyPreMutationChecksums(backupDir, manifest);
 
+  const dek = await resolveRestoreDek(manifest, options, env);
   const driver = resolveStorageDriver(options, env);
 
   const lock = await acquireRestoreLock(databaseUrl, {
     maxLifetime: options.lockMaxLifetime,
   });
 
+  let tempRestoreDir: string | undefined;
+
   try {
     lock.assertActive();
+
+    const prepared = await prepareDumpFileToRestore(
+      backupDir,
+      manifest.checksums.databaseDump.file,
+      dek,
+    );
+    tempRestoreDir = prepared.tempDir;
+
     await runDatabaseAndMigrations(
       databaseUrl,
-      backupDir,
-      manifest,
+      prepared.dumpFile,
       options.migrationsFolder,
       options.pgRestorePath,
       compatibility.pendingMigrationsCount,
@@ -134,11 +197,14 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
     let objectsReconciled = 0;
     if (driver !== undefined) {
       lock.assertActive();
+      const decrypt =
+        dek === undefined ? undefined : (buf: Buffer) => decryptBuffer(buf, dek as Buffer);
       const storageResult = await restoreStorageObjects({
         objectsDir: join(backupDir, 'objects'),
         expectedObjects: manifest.checksums.objects,
         driver,
         signal: lock.signal,
+        decrypt,
       });
       objectsReconciled = storageResult.uploadedCount + storageResult.verifiedCount;
     }
@@ -176,6 +242,9 @@ export async function restoreBackup(options: BackupRestoreOptions): Promise<Back
     }
     throw error;
   } finally {
+    if (tempRestoreDir !== undefined) {
+      await rm(tempRestoreDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     await lock.release().catch(() => undefined);
   }
 }

@@ -43,6 +43,7 @@
     "backup:create": "bun scripts/backup/create.ts",
     "backup:restore": "bun scripts/backup/restore.ts",
     "backup:validate": "bun scripts/backup/validate.ts",
+    "backup:prune": "bun scripts/backup/prune.ts",
     "db:generate": "bun run --filter '@orbit/db' generate",
     "db:migrate": "bun run --filter '@orbit/db' migrate",
     "db:release": "bun run --filter '@orbit/db' release",

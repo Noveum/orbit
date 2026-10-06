@@ -154,4 +154,72 @@ describe('restoreStorageObjects', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('decrypts encrypted objects during restore and fails if decrypt is missing', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'orbit-restore-enc-test-'));
+    try {
+      const key = 'org_1/issue/att_1/secret.txt';
+      const plaintext = Buffer.from('unencrypted attachment content');
+      const ciphertext = Buffer.from('ENCRYPTED:unencrypted attachment content');
+      const cipherSha = createHash('sha256').update(ciphertext).digest('hex');
+      const plainSha = createHash('sha256').update(plaintext).digest('hex');
+
+      const filePath = join(tempDir, key);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, ciphertext);
+
+      const store = new Map<string, Uint8Array>();
+      const driver = createMockDriver(store);
+
+      await expect(
+        restoreStorageObjects({
+          objectsDir: tempDir,
+          expectedObjects: [
+            {
+              key,
+              sha256: cipherSha,
+              bytes: ciphertext.byteLength,
+              plaintextSha256: plainSha,
+              plaintextBytes: plaintext.byteLength,
+              contentType: 'text/plain',
+            },
+          ],
+          driver,
+        }),
+      ).rejects.toThrow(/is encrypted but no decryption cipher was provided/);
+
+      const decryptFn = (buf: Buffer): Buffer => {
+        const str = buf.toString('utf8');
+        if (str.startsWith('ENCRYPTED:')) {
+          return Buffer.from(str.slice('ENCRYPTED:'.length));
+        }
+        return buf;
+      };
+
+      const result = await restoreStorageObjects({
+        objectsDir: tempDir,
+        expectedObjects: [
+          {
+            key,
+            sha256: cipherSha,
+            bytes: ciphertext.byteLength,
+            plaintextSha256: plainSha,
+            plaintextBytes: plaintext.byteLength,
+            contentType: 'text/plain',
+          },
+        ],
+        driver,
+        decrypt: decryptFn,
+      });
+
+      expect(result.uploadedCount).toBe(1);
+      const uploaded = store.get(key);
+      expect(uploaded).toBeDefined();
+      expect(Buffer.from(uploaded as Uint8Array).toString('utf8')).toBe(
+        'unencrypted attachment content',
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
