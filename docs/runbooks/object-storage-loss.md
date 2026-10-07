@@ -27,14 +27,22 @@ aws s3api put-bucket-cors --bucket "$S3_BUCKET" --cors-configuration file:///tmp
 The backup directory stores all attachment objects inside the `objects/` directory.
 When encryption is enabled, they are decrypted using the master key during restore.
 
-Execute object reconciliation using `bun run backup:restore`:
+To restore objects without overwriting your live PostgreSQL database, create a temporary
+disposable database to receive the dump portion while S3 uploads are reconciled into the repaired bucket:
 
 ```bash
+# Create temporary disposable database:
+createdb -h localhost -p 5432 -U orbit orbit_disposable_restore
+
 # Restore objects into the clean bucket:
 bun run backup:restore /var/backups/orbit/latest \
-  --confirm-destructive-restore-target="$PGHOST:$PGPORT/db/$PGDATABASE#bucket:$S3_BUCKET" \
+  --database-url="postgres://orbit:secret@localhost:5432/orbit_disposable_restore" \
+  --confirm-destructive-restore-target="localhost:5432/db/orbit_disposable_restore#bucket:$S3_BUCKET" \
   --encryption-key-file=/etc/orbit/master.key \
   --json
+
+# Clean up disposable database:
+dropdb -h localhost -p 5432 -U orbit orbit_disposable_restore
 ```
 
 The restore engine decrypts each object, validates its SHA-256 digest against the

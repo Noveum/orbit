@@ -18,10 +18,17 @@ the connection or lock may remain open.
 Inspect active PostgreSQL locks:
 
 ```sql
-SELECT pid, query_start, state, query
-FROM pg_stat_activity
-WHERE query LIKE '%pg_try_advisory_lock%'
-   OR query LIKE '%drizzle%';
+SELECT
+  l.pid,
+  l.objid AS lock_id,
+  l.granted,
+  a.usename,
+  a.query_start,
+  a.state,
+  a.query
+FROM pg_locks l
+JOIN pg_stat_activity a ON l.pid = a.pid
+WHERE l.locktype = 'advisory';
 ```
 
 If an orphaned process is holding the connection open, terminate it:

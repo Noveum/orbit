@@ -389,6 +389,7 @@ async function wipeDatabaseAndStorage(
   driver: StorageDriver,
   attachmentKeys: readonly string[],
   redisUrl: string | undefined,
+  skipRedisCheck: boolean | undefined,
 ): Promise<void> {
   const tables = [
     'public.mcp_grant',
@@ -416,16 +417,24 @@ async function wipeDatabaseAndStorage(
   ];
 
   for (const table of tables) {
-    await sql.unsafe(`truncate table ${table} cascade`).catch(async () => {
-      await sql.unsafe(`delete from ${table}`).catch(() => undefined);
-    });
+    try {
+      await sql.unsafe(`truncate table ${table} cascade`);
+    } catch (truncateError) {
+      try {
+        await sql.unsafe(`delete from ${table}`);
+      } catch (deleteError) {
+        throw new Error(
+          `Failed to wipe table ${table}: truncate failed (${String(truncateError)}), delete failed (${String(deleteError)})`,
+        );
+      }
+    }
   }
 
   for (const key of attachmentKeys) {
     await driver.delete(key).catch(() => undefined);
   }
 
-  if (redisUrl !== undefined && redisUrl.length > 0) {
+  if (redisUrl !== undefined && redisUrl.length > 0 && skipRedisCheck !== true) {
     try {
       const redis = new Redis(redisUrl, {
         connectTimeout: 2000,
@@ -470,6 +479,14 @@ export async function runRecoveryDrill(
     throw validationFailed('Target database connection URL is required for recovery drill.');
   }
 
+  const bucket = process.env['S3_BUCKET'];
+  const target = computeRestoreTargetIdentity(databaseUrl, bucket);
+  if (options.confirmDestructiveTarget !== target.identity) {
+    throw validationFailed(
+      `Recovery drill refused: confirmDestructiveTarget "${options.confirmDestructiveTarget ?? ''}" does not match target identity "${target.identity}". Pass --confirm-destructive=${target.identity} to confirm this destructive operation.`,
+    );
+  }
+
   const driver = options.storageDriver ?? storageDriver();
   const sql = postgres(databaseUrl, {
     max: 2,
@@ -506,15 +523,18 @@ export async function runRecoveryDrill(
     const backupSizeBytes = await computeDirectorySizeBytes(backupResult.backupDir);
 
     const attachmentKeys = representativeData.attachments.map((a) => a.storageKey);
-    await wipeDatabaseAndStorage(sql, driver, attachmentKeys, options.redisUrl);
-
-    const bucket = process.env['S3_BUCKET'];
-    const target = computeRestoreTargetIdentity(databaseUrl, bucket);
+    await wipeDatabaseAndStorage(
+      sql,
+      driver,
+      attachmentKeys,
+      options.redisUrl,
+      options.skipRedisCheck,
+    );
 
     const restoreStart = performance.now();
     const restoreResult = await restoreBackup({
       backupPath: backupResult.backupDir,
-      confirmDestructiveRestoreTarget: target.identity,
+      confirmDestructiveRestoreTarget: options.confirmDestructiveTarget,
       databaseUrl,
       encryptionKey,
       storageDriver: driver,
@@ -556,10 +576,6 @@ export async function runRecoveryDrill(
       valid: allErrors.length === 0,
     };
 
-    if (options.cleanDestination === true) {
-      await rm(destinationDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-
     return {
       success: allErrors.length === 0,
       metrics,
@@ -567,6 +583,9 @@ export async function runRecoveryDrill(
       representativeData,
     };
   } finally {
+    if (options.cleanDestination === true) {
+      await rm(destinationDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     await sql.end({ timeout: 5 }).catch(() => undefined);
   }
 }

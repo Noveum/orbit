@@ -56,7 +56,12 @@ aws s3 sync s3://migration-transit-bucket/cutover/ /var/backups/orbit/migration-
 Compute and confirm the destination target identity:
 
 ```bash
-# Execute restore targeting the new database and new S3 bucket:
+# Execute restore targeting the new database and new S3 bucket with destination storage credentials:
+S3_BUCKET="$NEW_S3_BUCKET" \
+S3_ENDPOINT="$NEW_S3_ENDPOINT" \
+S3_REGION="$NEW_S3_REGION" \
+S3_ACCESS_KEY_ID="$NEW_S3_ACCESS_KEY_ID" \
+S3_SECRET_ACCESS_KEY="$NEW_S3_SECRET_ACCESS_KEY" \
 bun run backup:restore /var/backups/orbit/migration-cutover \
   --database-url="postgres://$NEW_DB_USER:$NEW_DB_PASSWORD@$NEW_DB_HOST:5432/$NEW_DB_NAME" \
   --confirm-destructive-restore-target="$NEW_DB_HOST:5432/db/$NEW_DB_NAME#bucket:$NEW_S3_BUCKET" \

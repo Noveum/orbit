@@ -23,13 +23,14 @@ describe('upgrade matrix CLI args', () => {
     expect(args.json).toBe(true);
   });
 
-  it('ignores invalid scenario string and leaves scenario undefined', () => {
-    const args = parseMatrixArgs([
-      'bun',
-      'scripts/backup/upgrade-matrix.ts',
-      '--scenario=invalid_scenario_id',
-    ]);
-    expect(args.scenario).toBeUndefined();
+  it('rejects invalid scenario string with an error', () => {
+    expect(() =>
+      parseMatrixArgs([
+        'bun',
+        'scripts/backup/upgrade-matrix.ts',
+        '--scenario=invalid_scenario_id',
+      ]),
+    ).toThrow('Invalid upgrade scenario');
   });
 
   it('parses help flag correctly', () => {
@@ -52,6 +53,29 @@ describe('upgrade matrix CLI args', () => {
     const stderrText = proc.stderr.toString();
     const parsed = JSON.parse(stderrText) as { status: string; error: string };
     expect(parsed.status).toBe('error');
-    expect(parsed.error).toContain('DATABASE_URL or DIRECT_URL is required');
+    expect(parsed.error).toContain(
+      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
+    );
+  });
+
+  it('emits json error and exits nonzero when confirm-destructive is missing for destructive scenario', () => {
+    const proc = Bun.spawnSync(
+      [
+        'bun',
+        'scripts/backup/upgrade-matrix.ts',
+        '--database-url=postgres://localhost:5432/db',
+        '--scenario=backup_restore_upgrade',
+        '--json',
+      ],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    expect(proc.exitCode).toBe(1);
+    const stderrText = proc.stderr.toString();
+    const parsed = JSON.parse(stderrText) as { status: string; error: string };
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('Destructive confirmation is required');
   });
 });

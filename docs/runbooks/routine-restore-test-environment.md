@@ -29,7 +29,7 @@ Orbit enforces a target-identity guard before any mutation occurs. If you invoke
 restore without confirmation, Orbit reports the exact required identity and safely exits:
 
 ```bash
-DIRECT_URL="postgres://orbit:password@staging-db:5432/orbit_staging" \
+DIRECT_URL="$STAGING_DATABASE_URL" \
 S3_BUCKET="orbit-uploads-staging" \
 bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-20T12-00-00-abc123
 ```
@@ -42,11 +42,12 @@ Pass --confirm-destructive-restore-target=staging-db:5432/db/orbit_staging#bucke
 
 ## Step 3: Execute guarded restore
 
-Provide the target confirmation and master encryption key:
+Provide the target confirmation, S3_BUCKET environment, and master encryption key:
 
 ```bash
+DIRECT_URL="$STAGING_DATABASE_URL" \
+S3_BUCKET="orbit-uploads-staging" \
 bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-20T12-00-00-abc123 \
-  --database-url="postgres://orbit:password@staging-db:5432/orbit_staging" \
   --confirm-destructive-restore-target="staging-db:5432/db/orbit_staging#bucket:orbit-uploads-staging" \
   --encryption-key-file=/etc/orbit/master.key \
   --json
@@ -66,9 +67,9 @@ During execution, Orbit:
 Confirm that all referential integrity checks and object checksums pass:
 
 ```bash
-bun run backup:validate \
-  --database-url="postgres://orbit:password@staging-db:5432/orbit_staging" \
-  --json
+DIRECT_URL="$STAGING_DATABASE_URL" \
+S3_BUCKET="orbit-uploads-staging" \
+bun run backup:validate --json
 ```
 
 Output should confirm:

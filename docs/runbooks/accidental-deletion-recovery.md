@@ -58,6 +58,7 @@ psql -h localhost -U orbit -d orbit_recovery_staging -c "
   COPY (SELECT * FROM public.project WHERE organization_id = '$ORG_ID') TO '/tmp/projects.csv' CSV HEADER;
   COPY (SELECT * FROM public.issue WHERE organization_id = '$ORG_ID') TO '/tmp/issues.csv' CSV HEADER;
   COPY (SELECT * FROM public.doc WHERE organization_id = '$ORG_ID') TO '/tmp/docs.csv' CSV HEADER;
+  COPY (SELECT * FROM public.comment WHERE organization_id = '$ORG_ID') TO '/tmp/comments.csv' CSV HEADER;
   COPY (SELECT * FROM public.attachment WHERE organization_id = '$ORG_ID') TO '/tmp/attachments.csv' CSV HEADER;
 "
 ```
@@ -75,6 +76,7 @@ BEGIN;
 \copy public.project FROM '/tmp/projects.csv' CSV HEADER;
 \copy public.issue FROM '/tmp/issues.csv' CSV HEADER;
 \copy public.doc FROM '/tmp/docs.csv' CSV HEADER;
+\copy public.comment FROM '/tmp/comments.csv' CSV HEADER;
 \copy public.attachment FROM '/tmp/attachments.csv' CSV HEADER;
 
 COMMIT;

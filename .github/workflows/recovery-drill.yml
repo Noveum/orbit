@@ -9,7 +9,11 @@ on:
       - 'packages/services/src/backup/**'
       - 'packages/services/tests/backup/**'
       - 'scripts/backup/**'
+      - 'scripts/backup-recovery-drill.test.ts'
+      - 'scripts/backup-upgrade-matrix.test.ts'
       - 'packages/db/drizzle/**'
+      - 'package.json'
+      - 'scripts/tsconfig.json'
       - '.github/workflows/recovery-drill.yml'
 
 permissions:
@@ -62,6 +66,8 @@ jobs:
       S3_SECRET_ACCESS_KEY: orbitminio
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -98,15 +104,18 @@ jobs:
           bun run backup:recovery-drill \
             --database-url="$DATABASE_URL" \
             --redis-url="$REDIS_URL" \
+            --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
             --json > artifacts/recovery-drill-report.json
           cat artifacts/recovery-drill-report.json
       - name: Execute automated 7-scenario upgrade matrix
         run: |
           bun run backup:upgrade-matrix \
             --database-url="$DATABASE_URL" \
+            --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
             --json > artifacts/upgrade-matrix-report.json
           cat artifacts/upgrade-matrix-report.json
       - name: Upload drill metrics artifact
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: recovery-drill-reports

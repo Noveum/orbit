@@ -224,9 +224,9 @@ follow-up work.
   controls and sampling, reduce recorded attribution, document retention, and
   test deletion and abuse limits.
 - [ ] **REL-001: Operational readiness.** **Status: partial.** Backup capture,
-  guarded restore, envelope encryption, scheduled retention, continuous recovery
-  drills, and upgrade matrix complete in #394 (#444, #481, #513). Configured
-  capability enforcement remains tracked.
+  guarded restore, envelope encryption, scheduled retention, synthetic CI recovery
+  drills, and upgrade matrix complete in #394 (#444, #481, #513). Production-shaped
+  previous-release destroy-and-restore drills and capability enforcement remain tracked.
 - [x] **MCP-001: Accurate tool annotations.** **Status: complete in #384.** Mark destructive,
   read-only, idempotent, and open-world behavior correctly for every MCP tool.
 - [ ] **CI-002: Immutable CI inputs.** **Status: open.** Pin actions and container

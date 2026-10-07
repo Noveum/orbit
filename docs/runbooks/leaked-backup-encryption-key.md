@@ -48,13 +48,14 @@ bun run backup:create \
   --json
 ```
 
-## Step 4: Re-encrypt existing archives or rotate retention
+## Step 4: Address historical archives and purge compromised copies
 
-To preserve older historical backups while protecting them under the new key:
+Archives created with the compromised key remain permanently exposed to anyone who obtained
+the leaked key, because re-encryption protects only the local copies you control. Any previously
+exfiltrated or replicated copy cannot be retroactively secured.
 
-1. Restore the older backup into an isolated staging directory or decrypt its payload using the old key.
-2. Re-create the archive using the new master key.
-3. Alternatively, if your retention policy allows, expire older compromised backups using `backup:prune`:
+1. If historical backups must be preserved locally under the new key, decrypt the payload into an isolated directory and re-encrypt with the new master key.
+2. Expire compromised backups from the local destination:
 
 ```bash
 # Keep only the fresh backup created under the new key:
@@ -64,11 +65,17 @@ bun run backup:prune \
   --json
 ```
 
-4. Permanently erase compromised ciphertext files from disk and offsite replicas:
+3. Delete compromised archives across every configured backup destination:
 
 ```bash
-# Shred compromised older backup directories:
+# Local storage deletion:
 rm -rf /var/backups/orbit/orbit-backup-compromised-*
+
+# S3 or cold-storage replica deletion:
+aws s3 rm s3://company-cold-storage/orbit-backups/orbit-backup-compromised --recursive
+
+# Secondary mirror or disaster recovery bucket deletion:
+aws s3 rm s3://company-dr-storage/orbit-backups/orbit-backup-compromised --recursive
 ```
 
 ## Step 5: Update automated services

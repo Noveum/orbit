@@ -43,8 +43,32 @@ If any phase fails, the directory is marked with `.incomplete` and the command e
 Check that the manifest is intact and all files match their SHA-256 digests:
 
 ```bash
-# Inspect the generated manifest
+# Inspect the generated manifest:
 cat /var/backups/orbit/orbit-backup-<timestamp>-<hash>/manifest.json | jq .
+
+# Verify archive file checksums match manifest digests:
+node -e '
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+const path = require("node:path");
+
+const backupDir = process.argv[1];
+const manifest = JSON.parse(fs.readFileSync(path.join(backupDir, "manifest.json"), "utf8"));
+
+function verifyFile(fileRel, expectedSha256) {
+  const buf = fs.readFileSync(path.join(backupDir, fileRel));
+  const actual = crypto.createHash("sha256").update(buf).digest("hex");
+  if (actual !== expectedSha256) {
+    throw new Error(`Digest mismatch for ${fileRel}: expected ${expectedSha256}, got ${actual}`);
+  }
+}
+
+verifyFile(manifest.checksums.databaseDump.file, manifest.checksums.databaseDump.sha256);
+for (const obj of manifest.checksums.objects) {
+  verifyFile(path.join("objects", obj.key), obj.sha256);
+}
+console.log("Archive checksums verified successfully.");
+' /var/backups/orbit/orbit-backup-<timestamp>-<hash>
 ```
 
 Verify that:

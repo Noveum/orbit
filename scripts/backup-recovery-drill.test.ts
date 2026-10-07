@@ -52,6 +52,28 @@ describe('recovery drill CLI args', () => {
     const stderrText = proc.stderr.toString();
     const parsed = JSON.parse(stderrText) as { status: string; error: string };
     expect(parsed.status).toBe('error');
-    expect(parsed.error).toContain('DATABASE_URL or DIRECT_URL is required');
+    expect(parsed.error).toContain(
+      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
+    );
+  });
+
+  it('emits json error and exits nonzero when confirm-destructive is missing', () => {
+    const proc = Bun.spawnSync(
+      [
+        'bun',
+        'scripts/backup/recovery-drill.ts',
+        '--database-url=postgres://localhost:5432/db',
+        '--json',
+      ],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    expect(proc.exitCode).toBe(1);
+    const stderrText = proc.stderr.toString();
+    const parsed = JSON.parse(stderrText) as { status: string; error: string };
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('Destructive confirmation is required');
   });
 });

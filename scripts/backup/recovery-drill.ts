@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 
 export interface ParsedDrillArgs {
   readonly databaseUrl?: string | undefined;
+  readonly confirmDestructive?: string | undefined;
   readonly destination?: string | undefined;
   readonly encryptionKey?: string | undefined;
   readonly redisUrl?: string | undefined;
@@ -62,11 +63,14 @@ export function parseDrillArgs(argv: readonly string[]): ParsedDrillArgs {
   const rawDest = flags.get('--destination') ?? flags.get('-d');
 
   return {
-    databaseUrl:
-      flags.get('--database-url') ?? process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'],
+    databaseUrl: flags.get('--database-url') ?? process.env['ORBIT_DRILL_DATABASE_URL'],
+    confirmDestructive:
+      flags.get('--confirm-destructive') ??
+      flags.get('--confirm-destructive-restore-target') ??
+      process.env['ORBIT_DRILL_CONFIRM_TARGET'],
     destination: rawDest === undefined ? undefined : resolve(rawDest),
     encryptionKey: flags.get('--encryption-key') ?? process.env['ORBIT_BACKUP_ENCRYPTION_KEY'],
-    redisUrl: flags.get('--redis-url') ?? process.env['REDIS_URL'],
+    redisUrl: flags.get('--redis-url') ?? process.env['ORBIT_DRILL_REDIS_URL'],
     skipRedis,
     cleanDestination,
     json,
@@ -132,6 +136,41 @@ function printHumanSummary(result: {
   }
 }
 
+function emitError(message: string, isJson: boolean): never {
+  if (isJson) {
+    process.stderr.write(JSON.stringify({ status: 'error', error: message }));
+  } else {
+    process.stderr.write(`Error: ${message}\n`);
+  }
+  process.exit(1);
+}
+
+interface ValidatedDrillArgs {
+  readonly databaseUrl: string;
+  readonly confirmDestructive: string;
+}
+
+function validateDrillArgs(args: ParsedDrillArgs): ValidatedDrillArgs {
+  if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
+    emitError(
+      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
+      args.json,
+    );
+  }
+
+  if (args.confirmDestructive === undefined || args.confirmDestructive.length === 0) {
+    emitError(
+      'Destructive confirmation is required via --confirm-destructive=<identity> or ORBIT_DRILL_CONFIRM_TARGET.',
+      args.json,
+    );
+  }
+
+  return {
+    databaseUrl: args.databaseUrl,
+    confirmDestructive: args.confirmDestructive,
+  };
+}
+
 async function main(): Promise<void> {
   const args = parseDrillArgs(process.argv);
 
@@ -140,15 +179,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
-    const errorMsg = 'DATABASE_URL or DIRECT_URL is required.';
-    if (args.json) {
-      process.stderr.write(JSON.stringify({ status: 'error', error: errorMsg }));
-    } else {
-      process.stderr.write(`Error: ${errorMsg}\n`);
-    }
-    process.exit(1);
-  }
+  const { databaseUrl, confirmDestructive } = validateDrillArgs(args);
 
   try {
     if (!args.json) {
@@ -157,7 +188,8 @@ async function main(): Promise<void> {
 
     const { runRecoveryDrill } = await import('../../packages/services/src/backup/index.ts');
     const result = await runRecoveryDrill({
-      databaseUrl: args.databaseUrl,
+      databaseUrl,
+      confirmDestructiveTarget: confirmDestructive,
       destinationDir: args.destination,
       encryptionKey: args.encryptionKey,
       redisUrl: args.redisUrl,

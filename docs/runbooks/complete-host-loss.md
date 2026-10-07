@@ -40,9 +40,10 @@ mkdir -p /var/backups/orbit
 aws s3 sync s3://company-cold-storage/orbit-backups/latest/ /var/backups/orbit/latest/
 
 # Retrieve the master encryption key securely into an owner-readable file
-chmod 700 /etc/orbit
-aws kms decrypt --ciphertext-blob fileb://master-key.encrypted --output text --query Plaintext | base64 -d > /etc/orbit/master.key
-chmod 600 /etc/orbit/master.key
+sudo mkdir -p /etc/orbit
+sudo chmod 700 /etc/orbit
+aws kms decrypt --ciphertext-blob fileb://master-key.encrypted --output text --query Plaintext | base64 -d | sudo tee /etc/orbit/master.key > /dev/null
+sudo chmod 600 /etc/orbit/master.key
 ```
 
 ## Step 3: Prepare configuration
@@ -67,13 +68,11 @@ EOF
 
 ## Step 4: Restore database and object storage
 
-Execute guarded restore targeting the new database and bucket:
+Execute guarded restore targeting the new database and bucket. The target identity is
+constructed as `<host>:<port>/db/<database>#bucket:<bucket>`:
 
 ```bash
-# Preview target identity:
-bun run backup:restore /var/backups/orbit/latest
-
-# Execute restore with confirmation:
+# Target identity: new-postgres:5432/db/orbit#bucket:orbit-uploads
 bun run backup:restore /var/backups/orbit/latest \
   --confirm-destructive-restore-target="new-postgres:5432/db/orbit#bucket:orbit-uploads" \
   --encryption-key-file=/etc/orbit/master.key \
@@ -97,8 +96,11 @@ Run the validator to verify ledger integrity, referential integrity, and attachm
 bun run backup:validate --json
 ```
 
-Verify that `status` is `ok`. This unlocks the recovery gate in PostgreSQL, allowing
-the web application to transition `/api/health` from HTTP 503 to HTTP 200.
+A successful `backup:restore` automatically transitions `public.orbit_recovery_state.status`
+to `ready`. Note that `backup:validate` inspects and reports current consistency but does
+not mutate recovery state. If an earlier attempt resulted in `validation_failed`, re-run
+`backup:restore` with a known-good backup or resolve the reported inconsistency so the
+table reflects `ready`, allowing `/api/health` to return HTTP 200.
 
 ## Step 7: Start Orbit and verify user login
 

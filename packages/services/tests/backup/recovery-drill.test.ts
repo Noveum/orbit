@@ -250,4 +250,13 @@ describe('recovery drill verification', () => {
       }),
     ).rejects.toThrow('Target database connection URL is required for recovery drill.');
   });
+
+  it('rejects recovery drill execution when destructive confirmation does not match target', async () => {
+    await expect(
+      runRecoveryDrill({
+        databaseUrl: 'postgres://localhost:5432/testdb',
+        confirmDestructiveTarget: 'mismatched-target',
+      }),
+    ).rejects.toThrow('Recovery drill refused: confirmDestructiveTarget');
+  });
 });

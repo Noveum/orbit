@@ -148,6 +148,7 @@ export interface RecoveryDrillMetrics {
 
 export interface RecoveryDrillOptions {
   readonly databaseUrl: string;
+  readonly confirmDestructiveTarget?: string | undefined;
   readonly destinationDir?: string | undefined;
   readonly encryptionKey?: string | undefined;
   readonly redisUrl?: string | undefined;
@@ -177,6 +178,7 @@ export interface UpgradeScenarioResult {
   readonly id: UpgradeScenarioId;
   readonly name: string;
   readonly passed: boolean;
+  readonly skipped?: boolean | undefined;
   readonly durationMs: number;
   readonly error?: string | undefined;
   readonly details?: Record<string, unknown> | undefined;
@@ -184,6 +186,7 @@ export interface UpgradeScenarioResult {
 
 export interface UpgradeMatrixOptions {
   readonly databaseUrl: string;
+  readonly confirmDestructiveTarget?: string | undefined;
   readonly migrationsFolder?: string | undefined;
   readonly scenario?: UpgradeScenarioId | undefined;
   readonly storageDriver?: StorageDriver | undefined;

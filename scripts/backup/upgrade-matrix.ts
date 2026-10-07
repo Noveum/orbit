@@ -9,7 +9,9 @@ export type UpgradeScenarioId =
 
 export interface ParsedMatrixArgs {
   readonly databaseUrl?: string | undefined;
+  readonly confirmDestructive?: string | undefined;
   readonly scenario?: UpgradeScenarioId | undefined;
+  readonly skipDestructive: boolean;
   readonly json: boolean;
   readonly help: boolean;
 }
@@ -26,19 +28,21 @@ const VALID_SCENARIOS: readonly UpgradeScenarioId[] = [
 
 interface FlagResult {
   readonly flags: Map<string, string>;
+  readonly skipDestructive: boolean;
   readonly json: boolean;
   readonly help: boolean;
 }
 
-const BOOLEAN_FLAGS: Record<string, 'json' | 'help'> = {
+const BOOLEAN_FLAGS: Record<string, 'json' | 'skipDestructive' | 'help'> = {
   '--json': 'json',
+  '--skip-destructive': 'skipDestructive',
   '--help': 'help',
   '-h': 'help',
 };
 
 function extractFlags(argv: readonly string[]): FlagResult {
   const flags = new Map<string, string>();
-  const state = { json: false, help: false };
+  const state = { json: false, skipDestructive: false, help: false };
 
   for (let index = 2; index < argv.length; index += 1) {
     const item = argv[index];
@@ -67,17 +71,23 @@ function extractFlags(argv: readonly string[]): FlagResult {
 }
 
 export function parseMatrixArgs(argv: readonly string[]): ParsedMatrixArgs {
-  const { flags, json, help } = extractFlags(argv);
+  const { flags, skipDestructive, json, help } = extractFlags(argv);
   const rawScenario = flags.get('--scenario');
-  const scenario =
-    rawScenario !== undefined && VALID_SCENARIOS.includes(rawScenario as UpgradeScenarioId)
-      ? (rawScenario as UpgradeScenarioId)
-      : undefined;
+  if (rawScenario !== undefined && !VALID_SCENARIOS.includes(rawScenario as UpgradeScenarioId)) {
+    throw new Error(
+      `Invalid upgrade scenario "${rawScenario}". Valid scenarios: ${VALID_SCENARIOS.join(', ')}`,
+    );
+  }
+  const scenario = rawScenario as UpgradeScenarioId | undefined;
 
   return {
-    databaseUrl:
-      flags.get('--database-url') ?? process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'],
+    databaseUrl: flags.get('--database-url') ?? process.env['ORBIT_DRILL_DATABASE_URL'],
+    confirmDestructive:
+      flags.get('--confirm-destructive') ??
+      flags.get('--confirm-destructive-restore-target') ??
+      process.env['ORBIT_DRILL_CONFIRM_TARGET'],
     scenario,
+    skipDestructive,
     json,
     help,
   };
@@ -127,23 +137,64 @@ function printHumanMatrixResults(result: {
   );
 }
 
+function emitError(message: string, isJson: boolean): never {
+  if (isJson) {
+    process.stderr.write(JSON.stringify({ status: 'error', error: message }));
+  } else {
+    process.stderr.write(`Error: ${message}\n`);
+  }
+  process.exit(1);
+}
+
+function parseArgsOrExit(): ParsedMatrixArgs {
+  try {
+    return parseMatrixArgs(process.argv);
+  } catch (parseError) {
+    const message = parseError instanceof Error ? parseError.message : String(parseError);
+    return emitError(message, process.argv.includes('--json'));
+  }
+}
+
+interface ValidatedMatrixArgs {
+  readonly databaseUrl: string;
+}
+
+function validateMatrixArgs(args: ParsedMatrixArgs): ValidatedMatrixArgs {
+  if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
+    emitError(
+      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
+      args.json,
+    );
+  }
+
+  const runsDestructive =
+    !args.skipDestructive &&
+    (args.scenario === undefined ||
+      args.scenario === 'backup_restore_upgrade' ||
+      args.scenario === 'direct_restore_current');
+
+  if (
+    runsDestructive &&
+    (args.confirmDestructive === undefined || args.confirmDestructive.length === 0)
+  ) {
+    emitError(
+      'Destructive confirmation is required via --confirm-destructive=<identity> or ORBIT_DRILL_CONFIRM_TARGET. Alternatively pass --skip-destructive.',
+      args.json,
+    );
+  }
+
+  return { databaseUrl: args.databaseUrl };
+}
+
 async function main(): Promise<void> {
-  const args = parseMatrixArgs(process.argv);
+  const args = parseArgsOrExit();
 
   if (args.help) {
     printUsage();
     process.exit(0);
   }
 
-  if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
-    const errorMsg = 'DATABASE_URL or DIRECT_URL is required.';
-    if (args.json) {
-      process.stderr.write(JSON.stringify({ status: 'error', error: errorMsg }));
-    } else {
-      process.stderr.write(`Error: ${errorMsg}\n`);
-    }
-    process.exit(1);
-  }
+  const { databaseUrl } = validateMatrixArgs(args);
 
   try {
     if (!args.json) {
@@ -152,8 +203,10 @@ async function main(): Promise<void> {
 
     const { runUpgradeMatrix } = await import('../../packages/services/src/backup/index.ts');
     const result = await runUpgradeMatrix({
-      databaseUrl: args.databaseUrl,
+      databaseUrl,
+      confirmDestructiveTarget: args.confirmDestructive,
       scenario: args.scenario,
+      skipDestructive: args.skipDestructive,
     });
 
     if (args.json) {

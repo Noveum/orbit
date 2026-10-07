@@ -468,8 +468,14 @@ Orbit includes an automated continuous recovery drill and a 7-scenario upgrade
 matrix executed in CI:
 
 ```bash
-# Run automated recovery drill:
-bun run backup:recovery-drill --json
+# WARNING: Never run the recovery drill against production environments.
+# The drill wipes database tables and Redis during its verification cycle.
+# Always supply isolated disposable target endpoints and explicit confirmation:
+bun run backup:recovery-drill \
+  --database-url="postgres://orbit:secret@disposable-host:5432/orbit_drill" \
+  --redis-url="redis://disposable-host:6379" \
+  --confirm-destructive="disposable-host:5432/db/orbit_drill#bucket:orbit-drill-uploads" \
+  --json
 
 # Run 7-scenario upgrade matrix:
 bun run backup:upgrade-matrix --json
@@ -492,7 +498,7 @@ operational guarantees:
 | Restore duration | ~2.8 seconds | Unpack, decryption, `pg_restore`, and S3 reconciliation |
 | Database dump size | ~1.2 MB uncompressed | Custom-format PostgreSQL archive (`-Fc`) |
 | Object store payload | ~4.5 MB | Representative file attachments encrypted with AES-256-GCM |
-| Post-restore validation | ~650 ms | Ledger verification, catalog drift, referential integrity |
+| Post-restore validation | ~650 ms (estimated) | Ledger verification, catalog drift, referential integrity |
 
 Actual production recovery times scale with relational row counts, total attachment
 byte volume, and network latency to your S3 provider.
