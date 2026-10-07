@@ -71,7 +71,7 @@ async function seedHumanActorIssues(sql: postgres.Sql): Promise<void> {
     ) values
       (
         'release-actor-history', 'release-actor-org', 'release-actor-team', 1, 'ACTOR-1',
-        'Historical owner', 'release-actor-state', 'release-actor-creator',
+        'Unowned history', 'release-actor-state', 'release-actor-creator',
         'release-actor-assignee', null, '2026-09-01T00:00:00Z', 79
       ),
       (
@@ -271,7 +271,7 @@ describe('database release', () => {
           creator_agent_id: null,
           assignee_user_id: 'release-actor-assignee',
           assignee_agent_id: null,
-          owner_user_id: 'release-actor-assignee',
+          owner_user_id: null,
           timestamp_preserved: true,
           sync_id: 79,
         },
@@ -305,7 +305,7 @@ describe('database release', () => {
         {
           id: 'release-actor-history',
           assignee_user_id: null,
-          owner_user_id: 'release-actor-assignee',
+          owner_user_id: null,
         },
         {
           id: 'release-actor-owned',
@@ -343,7 +343,7 @@ describe('database release', () => {
       expect(issue).toEqual({
         creator_user_id: 'release-actor-creator',
         assignee_user_id: 'release-actor-assignee',
-        owner_user_id: 'release-actor-assignee',
+        owner_user_id: null,
       });
       await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
     });
@@ -360,7 +360,7 @@ describe('database release', () => {
       `;
       expect(issue).toEqual({
         assignee_user_id: 'release-actor-creator',
-        owner_user_id: 'release-actor-assignee',
+        owner_user_id: null,
       });
     });
   }, 60_000);
@@ -459,7 +459,7 @@ describe('database release', () => {
             creator_agent_id: null,
             assignee_user_id: 'release-actor-owner',
             assignee_agent_id: null,
-            owner_user_id: 'release-actor-owner',
+            owner_user_id: null,
           });
         });
       } finally {
