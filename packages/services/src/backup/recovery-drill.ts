@@ -384,6 +384,17 @@ export async function verifyRedisRealtimeAfterEmpty(
   };
 }
 
+function isRelationMissingError(error: unknown): boolean {
+  if (error !== null && typeof error === 'object' && 'code' in error) {
+    const code = (error as { readonly code?: unknown }).code;
+    if (code === '42P01') {
+      return true;
+    }
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('does not exist');
+}
+
 async function wipeDatabaseAndStorage(
   sql: postgres.Sql,
   driver: StorageDriver,
@@ -420,9 +431,15 @@ async function wipeDatabaseAndStorage(
     try {
       await sql.unsafe(`truncate table ${table} cascade`);
     } catch (truncateError) {
+      if (isRelationMissingError(truncateError)) {
+        continue;
+      }
       try {
         await sql.unsafe(`delete from ${table}`);
       } catch (deleteError) {
+        if (isRelationMissingError(deleteError)) {
+          continue;
+        }
         throw new Error(
           `Failed to wipe table ${table}: truncate failed (${String(truncateError)}), delete failed (${String(deleteError)})`,
         );
