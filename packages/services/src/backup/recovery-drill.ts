@@ -110,8 +110,8 @@ export async function seedDrillRepresentativeData(
   `;
 
   await sql`
-    insert into public.issue (id, organization_id, team_id, identifier, title, state_id, project_id, creator_id)
-    values (${issueId}, ${organizationId}, ${teamId}, 'ENG-1', 'Validate Continuous Backup and Restore Drill', ${stateId}, ${projectId}, ${adminUserId})
+    insert into public.issue (id, organization_id, team_id, number, identifier, title, state_id, project_id, creator_id)
+    values (${issueId}, ${organizationId}, ${teamId}, 1, 'ENG-1', 'Validate Continuous Backup and Restore Drill', ${stateId}, ${projectId}, ${adminUserId})
   `;
 
   await sql`
