@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeRestoreTargetIdentity, validationFailed } from '@orbit/shared';
@@ -480,8 +480,10 @@ export async function runRecoveryDrill(
   });
 
   const destinationDir =
-    options.destinationDir ?? join(tmpdir(), `orbit-recovery-drill-${randomUUID().slice(0, 8)}`);
-  await mkdir(destinationDir, { recursive: true });
+    options.destinationDir ?? (await mkdtemp(join(tmpdir(), 'orbit-recovery-drill-')));
+  if (options.destinationDir !== undefined) {
+    await mkdir(destinationDir, { recursive: true });
+  }
 
   const encryptionKey = options.encryptionKey ?? randomBytes(32).toString('hex');
   const allErrors: string[] = [];

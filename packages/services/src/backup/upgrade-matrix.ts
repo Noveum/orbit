@@ -1,5 +1,5 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -100,8 +100,7 @@ export async function runScenarioBackupRestoreUpgrade(
 ): Promise<UpgradeScenarioResult> {
   const start = performance.now();
   const folder = defaultMigrationsFolder(migrationsFolder);
-  const tempDir = join(tmpdir(), `orbit-matrix-bru-${randomUUID().slice(0, 8)}`);
-  await mkdir(tempDir, { recursive: true });
+  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-bru-'));
   const encryptionKey = randomBytes(32).toString('hex');
 
   try {
@@ -156,8 +155,7 @@ export async function runScenarioDirectRestoreCurrent(
 ): Promise<UpgradeScenarioResult> {
   const start = performance.now();
   const folder = defaultMigrationsFolder(migrationsFolder);
-  const tempDir = join(tmpdir(), `orbit-matrix-drc-${randomUUID().slice(0, 8)}`);
-  await mkdir(tempDir, { recursive: true });
+  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-drc-'));
   const encryptionKey = randomBytes(32).toString('hex');
 
   try {

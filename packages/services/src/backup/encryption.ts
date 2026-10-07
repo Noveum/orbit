@@ -224,7 +224,8 @@ export async function encryptFile(
   const cipher = createCipheriv('aes-256-gcm', dek, iv);
 
   const inputStream = createReadStream(inputFile);
-  const outputStream = createWriteStream(outputFile, { mode: 0o600 });
+  await rm(outputFile, { force: true }).catch(() => undefined);
+  const outputStream = createWriteStream(outputFile, { mode: 0o600, flags: 'wx' });
 
   const plaintextHash = createHash('sha256');
   const ciphertextHash = createHash('sha256');
@@ -328,7 +329,8 @@ export async function decryptFile(
       if (finalDecrypted.length > 0) {
         plaintextHash.update(finalDecrypted);
       }
-      await writeFile(outputFile, finalDecrypted, { mode: 0o600 });
+      await rm(outputFile, { force: true }).catch(() => undefined);
+      await writeFile(outputFile, finalDecrypted, { mode: 0o600, flag: 'wx' });
       return {
         bytes: finalDecrypted.length,
         sha256: plaintextHash.digest('hex'),
@@ -339,7 +341,8 @@ export async function decryptFile(
       start: ciphertextStart,
       end: ciphertextEnd,
     });
-    const writeStream = createWriteStream(outputFile, { mode: 0o600 });
+    await rm(outputFile, { force: true }).catch(() => undefined);
+    const writeStream = createWriteStream(outputFile, { mode: 0o600, flags: 'wx' });
     const plaintextHash = createHash('sha256');
     let plaintextBytes = 0;
 

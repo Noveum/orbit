@@ -82,6 +82,12 @@ jobs:
           done
           echo "MinIO failed to initialize" >&2
           exit 1
+      - name: Install PostgreSQL 18 client
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
       - name: Create isolated drill database
         run: |
           PGPASSWORD=orbit createdb -h localhost -p 5433 -U orbit orbit_recovery_drill
