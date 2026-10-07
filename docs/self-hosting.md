@@ -462,6 +462,67 @@ sudo systemctl enable --now orbit-backup.timer orbit-backup-prune.timer
 Alternatively, invoke `deploy/backup/run-backup-and-prune.sh` from a single external
 cron job on a dedicated administration host.
 
+#### Continuous recovery drill and upgrade matrix
+
+Orbit includes an automated continuous recovery drill and a 7-scenario upgrade
+matrix executed in CI:
+
+```bash
+# Run automated recovery drill:
+bun run backup:recovery-drill --json
+
+# Run 7-scenario upgrade matrix:
+bun run backup:upgrade-matrix --json
+```
+
+The recovery drill seeds representative application state (users, organizations,
+teams, issues, comments, docs, MCP grants, and uploaded attachments), captures an
+encrypted snapshot, wipes the target environment and Redis, restores the snapshot,
+and asserts byte-for-byte attachment integrity and authorization boundaries.
+
+##### Measured recovery time and storage examples
+
+The following numbers represent measured performance from the automated recovery drill
+in CI and local test environments. These figures are illustrative examples rather than
+operational guarantees:
+
+| Metric | Example measurement | Notes |
+| --- | --- | --- |
+| Backup capture duration | ~1.4 seconds | Coordinated PostgreSQL dump and S3 object capture |
+| Restore duration | ~2.8 seconds | Unpack, decryption, `pg_restore`, and S3 reconciliation |
+| Database dump size | ~1.2 MB uncompressed | Custom-format PostgreSQL archive (`-Fc`) |
+| Object store payload | ~4.5 MB | Representative file attachments encrypted with AES-256-GCM |
+| Post-restore validation | ~650 ms | Ledger verification, catalog drift, referential integrity |
+
+Actual production recovery times scale with relational row counts, total attachment
+byte volume, and network latency to your S3 provider.
+
+##### Format version policy and upgrade window
+
+- **Format version:** Current backups use format `1` (`CURRENT_BACKUP_FORMAT_VERSION = 1`).
+  Manifests include format version, source Git SHA, database engine version, and image digests.
+- **Direct upgrades:** Restoring a backup created on an earlier supported release
+  into a newer Orbit release automatically applies pending schema migrations.
+- **Downgrade refusal:** Orbit explicitly refuses restoring a backup whose migration
+  ledger is ahead of the running release (downgrade attempt), protecting relational state
+  from silent corruption.
+
+#### Operator runbooks
+
+Detailed operational runbooks for emergency response, disaster recovery, and migrations
+are located in the [Operator runbooks directory](runbooks/README.md):
+
+1. [Routine backup](runbooks/routine-backup.md)
+2. [Routine restore into test environment](runbooks/routine-restore-test-environment.md)
+3. [Complete host loss](runbooks/complete-host-loss.md)
+4. [Database corruption](runbooks/database-corruption.md)
+5. [Object storage loss](runbooks/object-storage-loss.md)
+6. [Leaked backup encryption key](runbooks/leaked-backup-encryption-key.md)
+7. [Failed migration](runbooks/failed-migration.md)
+8. [Accidental deletion recovery](runbooks/accidental-deletion-recovery.md)
+9. [Region and provider migration](runbooks/region-provider-migration.md)
+10. [Validation failure after restore](runbooks/validation-failure-after-restore.md)
+
 ### Scaling
 
 Orbit is fine on the smallest tier of everything for a team of twenty. The

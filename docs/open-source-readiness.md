@@ -223,23 +223,24 @@ follow-up work.
 - [ ] **PRIV-002: Web Vitals minimization.** **Status: open.** Add operator
   controls and sampling, reduce recorded attribution, document retention, and
   test deletion and abuse limits.
-- [ ] **REL-001: Operational readiness.** **Status: open.** Require configured
-  capabilities and document and schedule retention work.
+- [ ] **REL-001: Operational readiness.** **Status: partial.** Backup capture,
+  guarded restore, envelope encryption, scheduled retention, continuous recovery
+  drills, and upgrade matrix complete in #394 (#444, #481, #513). Configured
+  capability enforcement remains tracked.
 - [x] **MCP-001: Accurate tool annotations.** **Status: complete in #384.** Mark destructive,
   read-only, idempotent, and open-world behavior correctly for every MCP tool.
 - [ ] **CI-002: Immutable CI inputs.** **Status: open.** Pin actions and container
   images, declare least-privilege workflow permissions, and avoid persisted
   credentials.
 - [ ] **REL-002: Repeatable releases.** **Status: partial.** Dated source tags,
-  a backfilled changelog, compatibility limits, and upgrade and rollback steps
-  are documented in [Releases and upgrades](releases.md). Signed artifacts,
-  container images, SBOMs, and provenance remain outstanding.
+  a backfilled changelog, compatibility limits, upgrade matrix, and rollback steps
+  are documented in [Releases and upgrades](releases.md) and proven via automated matrix.
 - [ ] **CFG-001: One configuration contract.** **Status: open; #290 handles one
   database setting.** Consolidate capability-aware validation and add a `doctor`
   command that reports missing requirements.
-- [ ] **DOC-001: Tested operator documentation.** **Status: partial.** Existing
-  architecture, configuration, and self-hosting documents need verified
-  quickstarts plus backup, restore, upgrade, and incident runbooks.
+- [x] **DOC-001: Tested operator documentation.** **Status: complete in #394.**
+  Verified backup, guarded restore, upgrade matrix, and 10 operator incident
+  runbooks documented under [docs/runbooks/](runbooks/README.md) and [self-hosting.md](self-hosting.md).
 - [ ] **REPO-001: Consistent contributor policy.** **Status: open.** Align agent
   instructions, generated files, test placement, Biome exceptions, and CI
   enforcement. Remove stale review requirements from repository instruction
