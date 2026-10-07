@@ -1,10 +1,19 @@
 import { afterEach, expect, it, mock } from 'bun:test';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { OnboardingFlow } from '@/features/onboarding/onboarding-flow.tsx';
 import type { OnboardingStatusView } from '@/features/onboarding/types.ts';
 
 const originalFetch = globalThis.fetch;
+
+function renderedOpacity(element: HTMLElement): number {
+  let opacity = 1;
+  for (let node: HTMLElement | null = element; node !== null; node = node.parentElement) {
+    opacity *= Number(getComputedStyle(node).opacity || '1');
+  }
+  return opacity;
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
@@ -73,5 +82,7 @@ it('moves from teammates to the AI tool step and labels it in the progress bar',
   );
   expect(screen.getByText('AI tool')).toBeVisible();
   await userEvent.setup().click(screen.getByRole('button', { name: 'Continue' }));
-  expect(await screen.findByRole('heading', { name: 'Bring your work in with AI' })).toBeVisible();
+  const heading = await screen.findByRole('heading', { name: 'Bring your work in with AI' });
+  await waitFor(() => expect(renderedOpacity(heading)).toBeGreaterThan(0));
+  expect(heading).toBeVisible();
 });

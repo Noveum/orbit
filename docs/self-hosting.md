@@ -306,6 +306,10 @@ bun run backup:create --json --destination /var/backups/orbit
 | `--pg-dump-path` | `PG_DUMP_PATH` | `pg_dump` | Path to the local `pg_dump` binary |
 | `--orbit-version` | `ORBIT_VERSION` | `0.1.0` | Orbit version string stamped into `manifest.json` |
 | `--source-revision` | `SOURCE_REVISION`, `VERCEL_GIT_COMMIT_SHA` | `unknown` | Git commit SHA stamped into `manifest.json` |
+| `--encrypt` | `ORBIT_BACKUP_ENCRYPT` | `false` | Enable AES-256-GCM envelope encryption |
+| `--encryption-key-file` | `ORBIT_BACKUP_ENCRYPTION_KEY_FILE` | none | Path to file containing 256-bit encryption key |
+| `--encryption-command` | `ORBIT_BACKUP_ENCRYPTION_COMMAND` | none | Command to retrieve encryption key from KMS or secret vault |
+| `--encryption-key-id` | `ORBIT_BACKUP_ENCRYPTION_KEY_ID` | `default` | Key identifier stamped in manifest for key rotation |
 | `--json` | none | `false` | Emit JSON status on stdout and stderr |
 
 #### Prerequisites
@@ -329,7 +333,7 @@ Each backup creates an isolated directory named `orbit-backup-<timestamp>-<hash>
 ```
 orbit-backup-2026-09-10T19-36-31-839Z-68a1dddb/
 ├── manifest.json      # Schema ledger, checksums, counts, safe config allowlist
-├── database.dump      # pg_dump custom format (-Fc) archive
+├── database.dump      # pg_dump custom format (-Fc) archive (or database.dump.enc)
 └── objects/           # Captured attachments keyed by storage key
     └── org_xxx/issue/att_yyy/file.png
 ```
@@ -339,18 +343,124 @@ validation, or object capture fails, the working directory is renamed to
 `.incomplete` and the command exits with code 1. Only a fully verified backup
 is published to its final path.
 
+#### Backup encryption and secret handling
+
+Backups contain sensitive application data, password hashes, OAuth tokens, and
+attachments. Orbit supports operator-managed AES-256-GCM envelope encryption
+before data leaves the host.
+
+To prevent credential leakage in shell history, process listings (`ps aux`), or
+manifests, encryption keys must never be passed as CLI arguments. Supported
+secret sources:
+
+1. **Environment variable:** `ORBIT_BACKUP_ENCRYPTION_KEY`
+2. **Key file:** `--encryption-key-file=/etc/orbit/backup.key` or `ORBIT_BACKUP_ENCRYPTION_KEY_FILE`
+3. **KMS / secret helper command:** `--encryption-command="aws kms decrypt ..."` or `ORBIT_BACKUP_ENCRYPTION_COMMAND`
+
+Each backup generates a random 256-bit Data Encryption Key (DEK). The DEK is
+encrypted with the Key Encryption Key (KEK) using AES-256-GCM and stored in the
+manifest alongside its IV, authentication tag, and key ID. Database dumps and
+attachment objects are encrypted with the DEK.
+
+```bash
+# Capture an encrypted backup using a key file
+bun run backup:create --destination ./backups --encryption-key-file /etc/orbit/backup.key
+
+# Capture with KMS helper command and specific key ID
+ORBIT_BACKUP_ENCRYPTION_COMMAND="op read op://infra/orbit-backup/key" \
+ORBIT_BACKUP_ENCRYPTION_KEY_ID="prod-2026-q3" \
+bun run backup:create --destination /var/backups/orbit
+```
+
+##### Key rotation and custody
+
+- **Key rotation:** When rotating to a new master key, new backups are encrypted
+  with the new key ID. Restore does not look up keys automatically by `keyId`,
+  so the operator must supply the corresponding master key that matches the archive's
+  encryption key ID when restoring an older backup.
+- **Recovery custody:** Store recovery keys in an offsite secret manager (e.g.
+  AWS KMS, HashiCorp Vault, 1Password, or hardware security module). Orbit never
+  uploads backups or keys to Noveum infrastructure.
+- **Distinction from image signatures:** Encrypted backup archives protect customer
+  data at rest. Container image provenance and signatures (e.g. Cosign) protect
+  executable code and supply-chain integrity, and operate independently.
+
 #### Backup limitations
 
-- **Unencrypted at rest:** Archive files and dumps are written with restricted
-  file modes (`0o600`), but payloads are unencrypted. Encrypt the backup
-  directory at the filesystem or bucket level if storing backups in cloud cold
-  storage.
 - **Online object capture:** The database snapshot guarantees consistent relational
   state, and object storage capture fetches all attachments present when the
   snapshot began. If external tooling deletes an object from storage while Orbit
   is running, the backup fails rather than publishing a partial archive.
 - **Local scratch disk space:** The destination directory must have enough disk
   capacity to hold the uncompressed PostgreSQL dump and all attachment objects.
+  When encryption is enabled, additional temporary scratch space is required while
+  the raw dump and the encrypted ciphertext file (`database.dump.enc`) coexist during
+  encryption. Similarly, restore decrypts the full database dump into a temporary
+  directory before passing it to `pg_restore`.
+
+#### Guarded restore and validation
+
+Orbit provides a guarded restore engine (`bun run backup:restore`) that validates
+archive integrity, checks database compatibility, prevents accidental production
+overwrites, restores Postgres and storage objects, and gates readiness.
+
+```bash
+# Preview required target identity
+DIRECT_URL="postgres://user:pass@test-db:5432/orbit_staging" \
+bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-10T...
+
+# Execute destructive restore with explicit target confirmation
+bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-10T... \
+  --confirm-destructive-restore-target="test-db:5432/db/orbit_staging#bucket:orbit-uploads-staging" \
+  --database-url="postgres://user:pass@test-db:5432/orbit_staging" \
+  --encryption-key-file=/etc/orbit/backup.key
+```
+
+#### Scheduled retention and pruning
+
+Manage backup disk consumption and lifecycle with `bun run backup:prune`.
+
+```bash
+# Keep 30 newest backups, retain up to 14 days, enforce 50GB quota
+bun run backup:prune \
+  --destination /var/backups/orbit \
+  --keep-count 30 \
+  --keep-days 14 \
+  --max-bytes 50GB \
+  --stale-alert-hours 26
+
+# Preview pruning actions without deleting files
+bun run backup:prune --destination ./backups --keep-count 10 --dry-run
+```
+
+##### Retention guarantees and policies
+
+1. **Protection of newest known-good backup:** The prune engine never deletes the
+   newest valid backup, even if `--keep-count=0` or storage exceeds `--max-bytes`.
+2. **Incomplete and stale cleanup:** Cleans orphaned `.incomplete` and `.tmp`
+   directories left by failed runs.
+3. **Legal hold / operator pinning:** Any backup with a `.pinned`, `.hold`, or
+   `legal-hold.json` marker file, or `metadata.pinned: "true"`, is permanently
+   preserved and immune from deletion.
+4. **Stale backup monitoring:** When `--stale-alert-hours=<N>` is set, `backup:prune`
+   exits with code 2 and writes an alert if the newest backup exceeds the threshold.
+
+#### Automated scheduling with systemd
+
+Do not run backup cron jobs inside every web replica. Use an external
+orchestration mechanism such as systemd timers on the host running the backup tools.
+
+Install `deploy/backup/systemd/orbit-backup.timer` and `orbit-backup-prune.timer`:
+
+```bash
+sudo cp deploy/backup/systemd/orbit-backup.* /etc/systemd/system/
+sudo cp deploy/backup/systemd/orbit-backup-prune.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now orbit-backup.timer orbit-backup-prune.timer
+```
+
+Alternatively, invoke `deploy/backup/run-backup-and-prune.sh` from a single external
+cron job on a dedicated administration host.
 
 ### Scaling
 

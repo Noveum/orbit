@@ -315,7 +315,10 @@ export function IssueDetailView({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col lg:flex-row" data-testid="issue-detail">
+    <div
+      className="flex h-full min-h-0 flex-col overflow-y-auto lg:flex-row lg:overflow-visible"
+      data-testid="issue-detail"
+    >
       {pickingDuplicate ? (
         <IssuePicker
           open={pickingDuplicate}
@@ -329,7 +332,10 @@ export function IssueDetailView({
         </IssuePicker>
       ) : null}
 
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+      <div
+        className="min-h-0 min-w-0 flex-none lg:flex-1 lg:overflow-y-auto"
+        data-testid="issue-detail-main"
+      >
         <header className="flex items-center gap-2 border-border border-b px-5 py-2.5">
           <span data-numeric className="text-2xs text-faint">
             {issue.identifier}

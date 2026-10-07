@@ -10,9 +10,15 @@ import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 import { signUpIsOpen } from '@/lib/env.ts';
-import { mcpContinueUrl, safeCallback } from './continue-url.ts';
+import { loginMetadata, mcpContinueUrl, safeCallback } from './continue-url.ts';
 
-export const metadata: Metadata = { title: 'Sign in' };
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<Metadata> {
+  return loginMetadata((await searchParams)['next']);
+}
 
 export default async function LoginPage({
   searchParams,
