@@ -101,19 +101,19 @@ jobs:
       - name: Execute automated continuous recovery drill
         run: |
           mkdir -p artifacts
+          set -o pipefail
           bun run backup:recovery-drill \
             --database-url="$DATABASE_URL" \
             --redis-url="$REDIS_URL" \
             --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
-            --json > artifacts/recovery-drill-report.json
-          cat artifacts/recovery-drill-report.json
+            --json | tee artifacts/recovery-drill-report.json
       - name: Execute automated 7-scenario upgrade matrix
         run: |
+          set -o pipefail
           bun run backup:upgrade-matrix \
             --database-url="$DATABASE_URL" \
             --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
-            --json > artifacts/upgrade-matrix-report.json
-          cat artifacts/upgrade-matrix-report.json
+            --json | tee artifacts/upgrade-matrix-report.json
       - name: Upload drill metrics artifact
         if: always()
         uses: actions/upload-artifact@v7

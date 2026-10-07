@@ -157,8 +157,8 @@ export async function seedDrillRepresentativeData(
   await sql`
     insert into public.attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, uploaded_by_id, status)
     values
-      (${attachment1Id}, ${organizationId}, 'issue', ${issueId}, 'text-spec.txt', 'text/plain', ${attachment1Buffer.length}, ${attachment1Key}, ${adminUserId}, 'completed'),
-      (${attachment2Id}, ${organizationId}, 'issue', ${issueId}, 'binary-token.png', 'image/png', ${attachment2Buffer.length}, ${attachment2Key}, ${adminUserId}, 'completed')
+      (${attachment1Id}, ${organizationId}, 'issue', ${issueId}, 'text-spec.txt', 'text/plain', ${attachment1Buffer.length}, ${attachment1Key}, ${adminUserId}, 'ready'),
+      (${attachment2Id}, ${organizationId}, 'issue', ${issueId}, 'binary-token.png', 'image/png', ${attachment2Buffer.length}, ${attachment2Key}, ${adminUserId}, 'ready')
   `;
 
   const attachments: RecoveryDrillAttachmentRecord[] = [
@@ -322,7 +322,7 @@ export async function verifyRedisRealtimeAfterEmpty(
     subClient = new Redis(redisUrl, {
       connectTimeout: 3000,
       lazyConnect: true,
-      maxRetriesPerRequest: 0,
+      maxRetriesPerRequest: null,
       retryStrategy: () => null,
     });
     pubClient = new Redis(redisUrl, {
