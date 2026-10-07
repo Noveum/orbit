@@ -437,7 +437,7 @@ async function wipeDatabaseAndStorage(
   }
 
   for (const att of data.attachments) {
-    await driver.delete(att.storageKey).catch(() => undefined);
+    await driver.delete(att.storageKey);
   }
 
   if (redisUrl !== undefined && redisUrl.length > 0 && skipRedisCheck !== true) {

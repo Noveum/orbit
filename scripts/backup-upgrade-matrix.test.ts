@@ -41,12 +41,15 @@ describe('upgrade matrix CLI args', () => {
 
   it('falls back to DATABASE_URL when --database-url is omitted', () => {
     const prev = process.env['DATABASE_URL'];
+    const prevDrill = process.env['ORBIT_DRILL_DATABASE_URL'];
+    delete process.env['ORBIT_DRILL_DATABASE_URL'];
     process.env['DATABASE_URL'] = 'postgres://user:pass@localhost:5432/fallback_db';
     try {
       const args = parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts']);
       expect(args.databaseUrl).toBe('postgres://user:pass@localhost:5432/fallback_db');
     } finally {
       process.env['DATABASE_URL'] = prev;
+      process.env['ORBIT_DRILL_DATABASE_URL'] = prevDrill;
     }
   });
 
