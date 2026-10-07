@@ -60,6 +60,16 @@ function extractFlags(argv: readonly string[]): FlagResult {
       continue;
     }
 
+    if (item === '--scenario') {
+      const next = argv[index + 1];
+      if (next === undefined || next.startsWith('-')) {
+        throw new Error('Missing operand for --scenario');
+      }
+      flags.set(item, next);
+      index += 1;
+      continue;
+    }
+
     const next = argv[index + 1];
     if (next !== undefined && !next.startsWith('-')) {
       flags.set(item, next);
@@ -81,7 +91,11 @@ export function parseMatrixArgs(argv: readonly string[]): ParsedMatrixArgs {
   const scenario = rawScenario as UpgradeScenarioId | undefined;
 
   return {
-    databaseUrl: flags.get('--database-url') ?? process.env['ORBIT_DRILL_DATABASE_URL'],
+    databaseUrl:
+      flags.get('--database-url') ??
+      process.env['ORBIT_DRILL_DATABASE_URL'] ??
+      process.env['DATABASE_URL'] ??
+      process.env['DIRECT_URL'],
     confirmDestructive:
       flags.get('--confirm-destructive') ??
       flags.get('--confirm-destructive-restore-target') ??
@@ -162,7 +176,7 @@ interface ValidatedMatrixArgs {
 function validateMatrixArgs(args: ParsedMatrixArgs): ValidatedMatrixArgs {
   if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
     emitError(
-      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
+      'Database connection URL is required via --database-url, DATABASE_URL, or DIRECT_URL.',
       args.json,
     );
   }

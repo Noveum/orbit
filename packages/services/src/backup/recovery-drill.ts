@@ -124,9 +124,10 @@ export async function seedDrillRepresentativeData(
     values (${docId}, ${organizationId}, 'Recovery Architecture Spec', ${adminUserId}, '# Disaster Recovery Architecture\n\nAll state and attachments must survive byte-for-byte.')
   `;
 
+  const oauthApplicationId = randomUUID();
   await sql`
     insert into public.oauth_application (id, name, client_id, redirect_urls, type)
-    values (${randomUUID()}, 'Drill MCP Toolset', ${clientId}, 'https://orbit.local/oauth/callback', 'web')
+    values (${oauthApplicationId}, 'Drill MCP Toolset', ${clientId}, 'https://orbit.local/oauth/callback', 'web')
   `;
 
   await sql`
@@ -193,6 +194,7 @@ export async function seedDrillRepresentativeData(
     docId,
     activeGrantId,
     revokedGrantId,
+    oauthApplicationId,
     attachments,
   };
 }
@@ -398,57 +400,44 @@ function isRelationMissingError(error: unknown): boolean {
 async function wipeDatabaseAndStorage(
   sql: postgres.Sql,
   driver: StorageDriver,
-  attachmentKeys: readonly string[],
+  data: RecoveryDrillRepresentativeData,
   redisUrl: string | undefined,
   skipRedisCheck: boolean | undefined,
 ): Promise<void> {
-  const tables = [
-    'public.mcp_grant',
-    'public.oauth_access_token',
-    'public.oauth_consent',
-    'public.oauth_application',
-    'public.attachment',
-    'public.doc_version',
-    'public.doc',
-    'public.doc_collection',
-    'public.comment',
-    'public.issue_activity',
-    'public.issue',
-    'public.milestone',
-    'public.project',
-    'public.workflow_state',
-    'public.team_member',
-    'public.team',
-    'public.member',
-    'public.session',
-    'public.account',
-    'public.user',
-    'public.organization',
-    'public.orbit_recovery_state',
+  const deletes = [
+    sql`delete from public.mcp_grant where id in (${data.activeGrantId}, ${data.revokedGrantId})`,
+    data.oauthApplicationId === undefined
+      ? undefined
+      : sql`delete from public.oauth_application where id = ${data.oauthApplicationId}`,
+    sql`delete from public.attachment where organization_id = ${data.organizationId}`,
+    sql`delete from public.comment where id = ${data.commentId}`,
+    sql`delete from public.issue where id = ${data.issueId}`,
+    sql`delete from public.doc where id = ${data.docId}`,
+    sql`delete from public.milestone where organization_id = ${data.organizationId}`,
+    sql`delete from public.project where id = ${data.projectId}`,
+    sql`delete from public.workflow_state where organization_id = ${data.organizationId}`,
+    sql`delete from public.team_member where team_id = ${data.teamId}`,
+    sql`delete from public.team where id = ${data.teamId}`,
+    sql`delete from public.member where organization_id = ${data.organizationId}`,
+    sql`delete from public.organization where id = ${data.organizationId}`,
+    sql`delete from public.session where user_id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`,
+    sql`delete from public.account where user_id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`,
+    sql`delete from public."user" where id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`,
   ];
 
-  for (const table of tables) {
+  for (const del of deletes) {
+    if (del === undefined) continue;
     try {
-      await sql.unsafe(`truncate table ${table} cascade`);
-    } catch (truncateError) {
-      if (isRelationMissingError(truncateError)) {
-        continue;
-      }
-      try {
-        await sql.unsafe(`delete from ${table}`);
-      } catch (deleteError) {
-        if (isRelationMissingError(deleteError)) {
-          continue;
-        }
-        throw new Error(
-          `Failed to wipe table ${table}: truncate failed (${String(truncateError)}), delete failed (${String(deleteError)})`,
-        );
+      await del;
+    } catch (error) {
+      if (!isRelationMissingError(error)) {
+        throw error;
       }
     }
   }
 
-  for (const key of attachmentKeys) {
-    await driver.delete(key).catch(() => undefined);
+  for (const att of data.attachments) {
+    await driver.delete(att.storageKey).catch(() => undefined);
   }
 
   if (redisUrl !== undefined && redisUrl.length > 0 && skipRedisCheck !== true) {
@@ -539,11 +528,10 @@ export async function runRecoveryDrill(
     const manifest = backupResult.manifest;
     const backupSizeBytes = await computeDirectorySizeBytes(backupResult.backupDir);
 
-    const attachmentKeys = representativeData.attachments.map((a) => a.storageKey);
     await wipeDatabaseAndStorage(
       sql,
       driver,
-      attachmentKeys,
+      representativeData,
       options.redisUrl,
       options.skipRedisCheck,
     );

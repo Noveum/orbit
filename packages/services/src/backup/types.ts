@@ -127,6 +127,7 @@ export interface RecoveryDrillRepresentativeData {
   readonly docId: string;
   readonly activeGrantId: string;
   readonly revokedGrantId: string;
+  readonly oauthApplicationId?: string | undefined;
   readonly attachments: readonly RecoveryDrillAttachmentRecord[];
 }
 

@@ -20,7 +20,8 @@ Inspect active PostgreSQL locks:
 ```sql
 SELECT
   l.pid,
-  l.objid AS lock_id,
+  d.datname AS database_name,
+  ((l.classid::bigint << 32) | (l.objid::bigint & 4294967295)) AS lock_id,
   l.granted,
   a.usename,
   a.query_start,
@@ -28,10 +29,13 @@ SELECT
   a.query
 FROM pg_locks l
 JOIN pg_stat_activity a ON l.pid = a.pid
+LEFT JOIN pg_database d ON l.database = d.oid
 WHERE l.locktype = 'advisory';
 ```
 
-If an orphaned process is holding the connection open, terminate it:
+Verify that `database_name` matches your target database and match `lock_id` against Orbit's migration release lock key `4611358438132153` (`releaseDatabase`) before terminating any PID.
+
+If an orphaned process is confirmed holding the lock, terminate it:
 
 ```sql
 SELECT pg_terminate_backend(<pid>);

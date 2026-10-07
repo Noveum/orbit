@@ -33,6 +33,23 @@ describe('upgrade matrix CLI args', () => {
     ).toThrow('Invalid upgrade scenario');
   });
 
+  it('rejects --scenario flag when operand is missing', () => {
+    expect(() =>
+      parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts', '--scenario']),
+    ).toThrow('Missing operand for --scenario');
+  });
+
+  it('falls back to DATABASE_URL when --database-url is omitted', () => {
+    const prev = process.env['DATABASE_URL'];
+    process.env['DATABASE_URL'] = 'postgres://user:pass@localhost:5432/fallback_db';
+    try {
+      const args = parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts']);
+      expect(args.databaseUrl).toBe('postgres://user:pass@localhost:5432/fallback_db');
+    } finally {
+      process.env['DATABASE_URL'] = prev;
+    }
+  });
+
   it('parses help flag correctly', () => {
     const args = parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts', '-h']);
     expect(args.help).toBe(true);
@@ -41,6 +58,7 @@ describe('upgrade matrix CLI args', () => {
   it('emits json error and exits nonzero when database url is missing and --json is passed', () => {
     const env = {
       ...process.env,
+      ORBIT_DRILL_DATABASE_URL: '',
       DATABASE_URL: '',
       DIRECT_URL: '',
     };
@@ -53,12 +71,14 @@ describe('upgrade matrix CLI args', () => {
     const stderrText = proc.stderr.toString();
     const parsed = JSON.parse(stderrText) as { status: string; error: string };
     expect(parsed.status).toBe('error');
-    expect(parsed.error).toContain(
-      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
-    );
+    expect(parsed.error).toContain('Database connection URL is required');
   });
 
   it('emits json error and exits nonzero when confirm-destructive is missing for destructive scenario', () => {
+    const env = {
+      ...process.env,
+      ORBIT_DRILL_CONFIRM_TARGET: '',
+    };
     const proc = Bun.spawnSync(
       [
         'bun',
@@ -68,6 +88,7 @@ describe('upgrade matrix CLI args', () => {
         '--json',
       ],
       {
+        env,
         stdout: 'pipe',
         stderr: 'pipe',
       },

@@ -52,14 +52,28 @@ const fs = require("node:fs");
 const crypto = require("node:crypto");
 const path = require("node:path");
 
-const backupDir = process.argv[1];
-const manifest = JSON.parse(fs.readFileSync(path.join(backupDir, "manifest.json"), "utf8"));
+const backupDir = path.resolve(process.argv[1]);
+const manifestPath = path.resolve(backupDir, "manifest.json");
+const realBackupDir = fs.realpathSync(backupDir);
+const realManifestPath = fs.realpathSync(manifestPath);
+if (!realManifestPath.startsWith(realBackupDir + path.sep)) {
+  throw new Error("Invalid manifest path");
+}
+const manifest = JSON.parse(fs.readFileSync(realManifestPath, "utf8"));
 
 function verifyFile(fileRel, expectedSha256) {
-  const buf = fs.readFileSync(path.join(backupDir, fileRel));
+  const targetPath = path.resolve(backupDir, fileRel);
+  if (!targetPath.startsWith(backupDir + path.sep)) {
+    throw new Error(`Path traverses outside backup directory: ${fileRel}`);
+  }
+  const realTarget = fs.realpathSync(targetPath);
+  if (!realTarget.startsWith(realBackupDir + path.sep)) {
+    throw new Error(`Target resolved outside backup directory: ${fileRel}`);
+  }
+  const buf = fs.readFileSync(realTarget);
   const actual = crypto.createHash("sha256").update(buf).digest("hex");
   if (actual !== expectedSha256) {
-    throw new Error(`Digest mismatch for ${fileRel}: expected ${expectedSha256}, got ${actual}`);
+    throw new Error(`Digest mismatch for ${fileRel}: expected ${expectedSha256}`);
   }
 }
 

@@ -58,6 +58,10 @@ describe('recovery drill CLI args', () => {
   });
 
   it('emits json error and exits nonzero when confirm-destructive is missing', () => {
+    const env = {
+      ...process.env,
+      ORBIT_DRILL_CONFIRM_TARGET: '',
+    };
     const proc = Bun.spawnSync(
       [
         'bun',
@@ -66,6 +70,7 @@ describe('recovery drill CLI args', () => {
         '--json',
       ],
       {
+        env,
         stdout: 'pipe',
         stderr: 'pipe',
       },

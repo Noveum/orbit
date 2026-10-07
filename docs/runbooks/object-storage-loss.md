@@ -34,9 +34,11 @@ disposable database to receive the dump portion while S3 uploads are reconciled 
 # Create temporary disposable database:
 createdb -h localhost -p 5432 -U orbit orbit_disposable_restore
 
+# Configure DIRECT_URL (or DATABASE_URL with DIRECT_URL unset) for the disposable target:
+export DIRECT_URL="postgres://orbit:secret@localhost:5432/orbit_disposable_restore"
+
 # Restore objects into the clean bucket:
 bun run backup:restore /var/backups/orbit/latest \
-  --database-url="postgres://orbit:secret@localhost:5432/orbit_disposable_restore" \
   --confirm-destructive-restore-target="localhost:5432/db/orbit_disposable_restore#bucket:$S3_BUCKET" \
   --encryption-key-file=/etc/orbit/master.key \
   --json
