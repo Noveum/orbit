@@ -5,7 +5,7 @@ import {
 } from '../../src/backup/upgrade-matrix.ts';
 
 describe('upgrade matrix scenarios', () => {
-  it('proves scenario 7: explicitly refuses unsafe rollback and future format versions', async () => {
+  it('proves scenario 3: explicitly refuses unsafe rollback and future format versions', async () => {
     const result = await runScenarioUnsafeRollbackRefusal(undefined);
     expect(result.id).toBe('unsafe_rollback_refusal');
     expect(result.passed).toBe(true);

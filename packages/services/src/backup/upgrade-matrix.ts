@@ -8,7 +8,6 @@ import { releaseDatabase } from '@orbit/db/migration-release';
 import * as schema from '@orbit/db/schema';
 import { CURRENT_BACKUP_FORMAT_VERSION, validationFailed } from '@orbit/shared';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import postgres from 'postgres';
 import { verifyBackupCompatibility } from './compatibility.ts';
 import { createBackup } from './create.ts';
 import { restoreBackup } from './restore.ts';
@@ -58,67 +57,21 @@ export async function runScenarioFreshInstall(
   }
 }
 
-export async function runScenarioDirectUpgrade(
-  databaseUrl: string,
-  migrationsFolder: string | undefined,
-): Promise<UpgradeScenarioResult> {
-  const start = performance.now();
-  const folder = defaultMigrationsFolder(migrationsFolder);
-
-  if (process.env['ORBIT_PREVIOUS_RELEASE_FIXTURE'] === undefined) {
-    return {
-      id: 'direct_upgrade',
-      name: 'Scenario 2: Previous Stable to Current Stable Direct Upgrade (Placeholder)',
-      passed: true,
-      skipped: true,
-      durationMs: Math.round(performance.now() - start),
-      details: {
-        skipped: true,
-        reason: 'Previous-release schema fixture not configured in environment',
-      },
-    };
-  }
-
-  try {
-    await releaseDatabase(databaseUrl, folder);
-    const driftOk = await checkCatalogDriftSafe(databaseUrl);
-    if (!driftOk) {
-      throw validationFailed('Direct upgrade catalog drift check detected incompatible schema.');
-    }
-
-    return {
-      id: 'direct_upgrade',
-      name: 'Scenario 2: Previous Stable to Current Stable Direct Upgrade',
-      passed: true,
-      durationMs: Math.round(performance.now() - start),
-      details: { driftOk },
-    };
-  } catch (error) {
-    return {
-      id: 'direct_upgrade',
-      name: 'Scenario 2: Previous Stable to Current Stable Direct Upgrade',
-      passed: false,
-      durationMs: Math.round(performance.now() - start),
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export async function runScenarioBackupRestoreUpgrade(
+export async function runScenarioBackupRestore(
   databaseUrl: string,
   migrationsFolder: string | undefined,
   confirmDestructiveTarget?: string | undefined,
 ): Promise<UpgradeScenarioResult> {
   const start = performance.now();
   const folder = defaultMigrationsFolder(migrationsFolder);
-  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-bru-'));
+  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-br-'));
   if (confirmDestructiveTarget === undefined || confirmDestructiveTarget.length === 0) {
     return {
-      id: 'backup_restore_upgrade',
-      name: 'Scenario 3: Backup on Previous Stable, Restore, and Upgrade',
+      id: 'backup_restore',
+      name: 'Scenario 2: Backup and Restore Verification',
       passed: false,
       durationMs: Math.round(performance.now() - start),
-      error: 'confirmDestructiveTarget is required for destructive upgrade scenario.',
+      error: 'confirmDestructiveTarget is required for destructive restore scenario.',
     };
   }
 
@@ -149,8 +102,8 @@ export async function runScenarioBackupRestoreUpgrade(
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 
     return {
-      id: 'backup_restore_upgrade',
-      name: 'Scenario 3: Backup on Previous Stable, Restore, and Upgrade',
+      id: 'backup_restore',
+      name: 'Scenario 2: Backup and Restore Verification',
       passed: restoreResult.databaseRestored && driftOk,
       durationMs: Math.round(performance.now() - start),
       details: { databaseRestored: restoreResult.databaseRestored, driftOk },
@@ -158,179 +111,12 @@ export async function runScenarioBackupRestoreUpgrade(
   } catch (error) {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     return {
-      id: 'backup_restore_upgrade',
-      name: 'Scenario 3: Backup on Previous Stable, Restore, and Upgrade',
+      id: 'backup_restore',
+      name: 'Scenario 2: Backup and Restore Verification',
       passed: false,
       durationMs: Math.round(performance.now() - start),
       error: error instanceof Error ? error.message : String(error),
     };
-  }
-}
-
-export async function runScenarioDirectRestoreCurrent(
-  databaseUrl: string,
-  migrationsFolder: string | undefined,
-  confirmDestructiveTarget?: string | undefined,
-): Promise<UpgradeScenarioResult> {
-  const start = performance.now();
-  const folder = defaultMigrationsFolder(migrationsFolder);
-  if (confirmDestructiveTarget === undefined || confirmDestructiveTarget.length === 0) {
-    return {
-      id: 'direct_restore_current',
-      name: 'Scenario 4: Backup on Previous Stable to Direct Restore into Current Stable',
-      passed: false,
-      durationMs: Math.round(performance.now() - start),
-      error: 'confirmDestructiveTarget is required for destructive upgrade scenario.',
-    };
-  }
-
-  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-drc-'));
-  const encryptionKey = randomBytes(32).toString('hex');
-
-  try {
-    const backupResult = await createBackup({
-      destinationDir: tempDir,
-      databaseUrl,
-      encrypt: true,
-      encryptionKey,
-      migrationsFolder: folder,
-    });
-
-    const restoreResult = await restoreBackup({
-      backupPath: backupResult.backupDir,
-      confirmDestructiveRestoreTarget: confirmDestructiveTarget,
-      databaseUrl,
-      encryptionKey,
-      skipObjectRestore: true,
-      skipRedisCheck: true,
-      migrationsFolder: folder,
-    });
-
-    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-
-    return {
-      id: 'direct_restore_current',
-      name: 'Scenario 4: Backup on Previous Stable to Direct Restore into Current Stable',
-      passed: restoreResult.databaseRestored && restoreResult.validation.valid,
-      durationMs: Math.round(performance.now() - start),
-      details: { valid: restoreResult.validation.valid },
-    };
-  } catch (error) {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    return {
-      id: 'direct_restore_current',
-      name: 'Scenario 4: Backup on Previous Stable to Direct Restore into Current Stable',
-      passed: false,
-      durationMs: Math.round(performance.now() - start),
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export async function runScenarioInterruptedMigrationRepair(
-  databaseUrl: string,
-  migrationsFolder: string | undefined,
-): Promise<UpgradeScenarioResult> {
-  const start = performance.now();
-  const folder = defaultMigrationsFolder(migrationsFolder);
-
-  if (process.env['ORBIT_SIMULATE_INTERRUPTED_MIGRATION'] === undefined) {
-    return {
-      id: 'interrupted_migration_repair',
-      name: 'Scenario 5: Interrupted Migration and Forward-Repair (Placeholder)',
-      passed: true,
-      skipped: true,
-      durationMs: Math.round(performance.now() - start),
-      details: {
-        skipped: true,
-        reason: 'Interrupted migration simulation precondition not configured',
-      },
-    };
-  }
-
-  try {
-    await releaseDatabase(databaseUrl, folder);
-    const driftOk = await checkCatalogDriftSafe(databaseUrl);
-
-    return {
-      id: 'interrupted_migration_repair',
-      name: 'Scenario 5: Interrupted Migration and Forward-Repair',
-      passed: driftOk,
-      durationMs: Math.round(performance.now() - start),
-      details: { driftOk },
-    };
-  } catch (error) {
-    return {
-      id: 'interrupted_migration_repair',
-      name: 'Scenario 5: Interrupted Migration and Forward-Repair',
-      passed: false,
-      durationMs: Math.round(performance.now() - start),
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export async function runScenarioApplicationRollback(
-  databaseUrl: string,
-): Promise<UpgradeScenarioResult> {
-  const start = performance.now();
-
-  if (process.env['ORBIT_TEST_APPLICATION_ROLLBACK'] === undefined) {
-    return {
-      id: 'application_rollback',
-      name: 'Scenario 6: Application Rollback with Compatible Additive Schema (Placeholder)',
-      passed: true,
-      skipped: true,
-      durationMs: Math.round(performance.now() - start),
-      details: { skipped: true, reason: 'Application rollback precondition not configured' },
-    };
-  }
-
-  const sql = postgres(databaseUrl, {
-    max: 1,
-    connect_timeout: 5,
-    keep_alive: 10,
-    prepare: false,
-    onnotice: () => undefined,
-  });
-
-  try {
-    const [userCount] = await sql<
-      { count: number }[]
-    >`select count(*)::int as count from public."user"`;
-    const [orgCount] = await sql<
-      { count: number }[]
-    >`select count(*)::int as count from public.organization`;
-    const [issueCount] = await sql<
-      { count: number }[]
-    >`select count(*)::int as count from public.issue`;
-    const [docCount] = await sql<
-      { count: number }[]
-    >`select count(*)::int as count from public.doc`;
-
-    const canReadPreviousContracts =
-      userCount !== undefined &&
-      orgCount !== undefined &&
-      issueCount !== undefined &&
-      docCount !== undefined;
-
-    return {
-      id: 'application_rollback',
-      name: 'Scenario 6: Application Rollback with Compatible Additive Schema',
-      passed: canReadPreviousContracts,
-      durationMs: Math.round(performance.now() - start),
-      details: { canReadPreviousContracts },
-    };
-  } catch (error) {
-    return {
-      id: 'application_rollback',
-      name: 'Scenario 6: Application Rollback with Compatible Additive Schema',
-      passed: false,
-      durationMs: Math.round(performance.now() - start),
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    await sql.end({ timeout: 5 }).catch(() => undefined);
   }
 }
 
@@ -396,7 +182,7 @@ export async function runScenarioUnsafeRollbackRefusal(
 
     return {
       id: 'unsafe_rollback_refusal',
-      name: 'Scenario 7: Explicit Refusal when Rollback/Downgrade is Unsafe',
+      name: 'Scenario 3: Explicit Refusal of Downgrades and Incompatible Formats',
       passed,
       durationMs: Math.round(performance.now() - start),
       details: { refusalCaught, futureFormatCaught },
@@ -404,53 +190,12 @@ export async function runScenarioUnsafeRollbackRefusal(
   } catch (error) {
     return {
       id: 'unsafe_rollback_refusal',
-      name: 'Scenario 7: Explicit Refusal when Rollback/Downgrade is Unsafe',
+      name: 'Scenario 3: Explicit Refusal of Downgrades and Incompatible Formats',
       passed: false,
       durationMs: Math.round(performance.now() - start),
       error: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-function makeSkippedScenario(id: UpgradeScenarioResult['id'], name: string): UpgradeScenarioResult {
-  return {
-    id,
-    name,
-    passed: true,
-    skipped: true,
-    durationMs: 0,
-    details: { skipped: true },
-  };
-}
-
-async function runScenarioBackupRestoreUpgradeGuarded(
-  databaseUrl: string,
-  folder: string | undefined,
-  confirmDestructiveTarget: string | undefined,
-  skipDestructive: boolean | undefined,
-): Promise<UpgradeScenarioResult> {
-  if (skipDestructive === true) {
-    return makeSkippedScenario(
-      'backup_restore_upgrade',
-      'Scenario 3: Backup on Previous Stable, Restore, and Upgrade',
-    );
-  }
-  return await runScenarioBackupRestoreUpgrade(databaseUrl, folder, confirmDestructiveTarget);
-}
-
-async function runScenarioDirectRestoreCurrentGuarded(
-  databaseUrl: string,
-  folder: string | undefined,
-  confirmDestructiveTarget: string | undefined,
-  skipDestructive: boolean | undefined,
-): Promise<UpgradeScenarioResult> {
-  if (skipDestructive === true) {
-    return makeSkippedScenario(
-      'direct_restore_current',
-      'Scenario 4: Backup on Previous Stable to Direct Restore into Current Stable',
-    );
-  }
-  return await runScenarioDirectRestoreCurrent(databaseUrl, folder, confirmDestructiveTarget);
 }
 
 export async function runUpgradeMatrix(
@@ -464,32 +209,20 @@ export async function runUpgradeMatrix(
 
   const entries: readonly [string, () => Promise<UpgradeScenarioResult>][] = [
     ['fresh_install', () => runScenarioFreshInstall(databaseUrl, folder)],
-    ['direct_upgrade', () => runScenarioDirectUpgrade(databaseUrl, folder)],
     [
-      'backup_restore_upgrade',
+      'backup_restore',
       () =>
-        runScenarioBackupRestoreUpgradeGuarded(
-          databaseUrl,
-          folder,
-          options.confirmDestructiveTarget,
-          options.skipDestructive,
-        ),
+        options.skipDestructive === true
+          ? Promise.resolve({
+              id: 'backup_restore' as const,
+              name: 'Scenario 2: Backup and Restore Verification',
+              passed: true,
+              skipped: true,
+              durationMs: 0,
+              details: { skipped: true },
+            })
+          : runScenarioBackupRestore(databaseUrl, folder, options.confirmDestructiveTarget),
     ],
-    [
-      'direct_restore_current',
-      () =>
-        runScenarioDirectRestoreCurrentGuarded(
-          databaseUrl,
-          folder,
-          options.confirmDestructiveTarget,
-          options.skipDestructive,
-        ),
-    ],
-    [
-      'interrupted_migration_repair',
-      () => runScenarioInterruptedMigrationRepair(databaseUrl, folder),
-    ],
-    ['application_rollback', () => runScenarioApplicationRollback(databaseUrl)],
     ['unsafe_rollback_refusal', () => runScenarioUnsafeRollbackRefusal(folder)],
   ];
 

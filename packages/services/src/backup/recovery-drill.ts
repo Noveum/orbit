@@ -388,13 +388,51 @@ export async function verifyRedisRealtimeAfterEmpty(
 
 function isRelationMissingError(error: unknown): boolean {
   if (error !== null && typeof error === 'object' && 'code' in error) {
-    const code = (error as { readonly code?: unknown }).code;
-    if (code === '42P01') {
-      return true;
+    return (error as { readonly code?: unknown }).code === '42P01';
+  }
+  return false;
+}
+
+async function cleanupRepresentativeRows(
+  sql: postgres.Sql,
+  driver: StorageDriver,
+  data: RecoveryDrillRepresentativeData,
+): Promise<void> {
+  const deletes = [
+    sql`delete from public.mcp_grant where id in (${data.activeGrantId}, ${data.revokedGrantId})`,
+    data.oauthApplicationId === undefined
+      ? undefined
+      : sql`delete from public.oauth_application where id = ${data.oauthApplicationId}`,
+    sql`delete from public.attachment where organization_id = ${data.organizationId}`,
+    sql`delete from public.comment where id = ${data.commentId}`,
+    sql`delete from public.issue where id = ${data.issueId}`,
+    sql`delete from public.doc where id = ${data.docId}`,
+    sql`delete from public.milestone where organization_id = ${data.organizationId}`,
+    sql`delete from public.project where id = ${data.projectId}`,
+    sql`delete from public.workflow_state where organization_id = ${data.organizationId}`,
+    sql`delete from public.team_member where team_id = ${data.teamId}`,
+    sql`delete from public.team where id = ${data.teamId}`,
+    sql`delete from public.member where organization_id = ${data.organizationId}`,
+    sql`delete from public.organization where id = ${data.organizationId}`,
+    sql`delete from public.session where user_id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`,
+    sql`delete from public.account where user_id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`,
+    sql`delete from public."user" where id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`,
+  ];
+
+  for (const del of deletes) {
+    if (del === undefined) continue;
+    try {
+      await del;
+    } catch (error) {
+      if (!isRelationMissingError(error)) {
+        throw error;
+      }
     }
   }
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('does not exist');
+
+  for (const att of data.attachments) {
+    await driver.delete(att.storageKey).catch(() => undefined);
+  }
 }
 
 async function wipeDatabaseAndStorage(
@@ -403,6 +441,8 @@ async function wipeDatabaseAndStorage(
   data: RecoveryDrillRepresentativeData,
   redisUrl: string | undefined,
   skipRedisCheck: boolean | undefined,
+  confirmDestructiveTarget: string | undefined,
+  targetIdentity: string,
 ): Promise<void> {
   const deletes = [
     sql`delete from public.mcp_grant where id in (${data.activeGrantId}, ${data.revokedGrantId})`,
@@ -441,19 +481,20 @@ async function wipeDatabaseAndStorage(
   }
 
   if (redisUrl !== undefined && redisUrl.length > 0 && skipRedisCheck !== true) {
+    if (confirmDestructiveTarget !== targetIdentity) {
+      throw validationFailed('Destructive Redis flush refused without confirmed target.');
+    }
+    const redis = new Redis(redisUrl, {
+      connectTimeout: 2000,
+      lazyConnect: true,
+      maxRetriesPerRequest: 0,
+      retryStrategy: () => null,
+    });
     try {
-      const redis = new Redis(redisUrl, {
-        connectTimeout: 2000,
-        lazyConnect: true,
-        maxRetriesPerRequest: 0,
-        retryStrategy: () => null,
-      });
-      redis.on('error', () => undefined);
       await redis.connect();
       await redis.flushdb();
+    } finally {
       await redis.quit().catch(() => redis.disconnect());
-    } catch {
-      return;
     }
   }
 }
@@ -510,9 +551,10 @@ export async function runRecoveryDrill(
 
   const encryptionKey = options.encryptionKey ?? randomBytes(32).toString('hex');
   const allErrors: string[] = [];
+  let representativeData: RecoveryDrillRepresentativeData | undefined;
 
   try {
-    const representativeData = await seedDrillRepresentativeData(sql, driver);
+    representativeData = await seedDrillRepresentativeData(sql, driver);
 
     const backupStart = performance.now();
     const backupResult = await createBackup({
@@ -534,6 +576,8 @@ export async function runRecoveryDrill(
       representativeData,
       options.redisUrl,
       options.skipRedisCheck,
+      options.confirmDestructiveTarget,
+      target.identity,
     );
 
     const restoreStart = performance.now();
@@ -588,6 +632,9 @@ export async function runRecoveryDrill(
       representativeData,
     };
   } finally {
+    if (representativeData !== undefined) {
+      await cleanupRepresentativeRows(sql, driver, representativeData).catch(() => undefined);
+    }
     if (options.cleanDestination === true) {
       await rm(destinationDir, { recursive: true, force: true }).catch(() => undefined);
     }

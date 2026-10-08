@@ -107,7 +107,7 @@ jobs:
             --redis-url="$REDIS_URL" \
             --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
             --json | tee artifacts/recovery-drill-report.json
-      - name: Execute automated 7-scenario upgrade matrix
+      - name: Execute automated upgrade matrix
         run: |
           set -o pipefail
           bun run backup:upgrade-matrix \

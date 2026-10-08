@@ -39,17 +39,29 @@ describe('upgrade matrix CLI args', () => {
     ).toThrow('Missing operand for --scenario');
   });
 
-  it('falls back to DATABASE_URL when --database-url is omitted', () => {
-    const prev = process.env['DATABASE_URL'];
+  it('reads ORBIT_DRILL_DATABASE_URL when --database-url is omitted', () => {
     const prevDrill = process.env['ORBIT_DRILL_DATABASE_URL'];
-    delete process.env['ORBIT_DRILL_DATABASE_URL'];
-    process.env['DATABASE_URL'] = 'postgres://user:pass@localhost:5432/fallback_db';
+    process.env['ORBIT_DRILL_DATABASE_URL'] =
+      'postgres://user:pass@localhost:5432/drill_fallback_db';
     try {
       const args = parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts']);
-      expect(args.databaseUrl).toBe('postgres://user:pass@localhost:5432/fallback_db');
+      expect(args.databaseUrl).toBe('postgres://user:pass@localhost:5432/drill_fallback_db');
     } finally {
-      process.env['DATABASE_URL'] = prev;
       process.env['ORBIT_DRILL_DATABASE_URL'] = prevDrill;
+    }
+  });
+
+  it('does not fall back to ambient DATABASE_URL', () => {
+    const prevDrill = process.env['ORBIT_DRILL_DATABASE_URL'];
+    const prevDb = process.env['DATABASE_URL'];
+    delete process.env['ORBIT_DRILL_DATABASE_URL'];
+    process.env['DATABASE_URL'] = 'postgres://user:pass@localhost:5432/production_db';
+    try {
+      const args = parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts']);
+      expect(args.databaseUrl).toBeUndefined();
+    } finally {
+      process.env['ORBIT_DRILL_DATABASE_URL'] = prevDrill;
+      process.env['DATABASE_URL'] = prevDb;
     }
   });
 
@@ -87,7 +99,7 @@ describe('upgrade matrix CLI args', () => {
         'bun',
         'scripts/backup/upgrade-matrix.ts',
         '--database-url=postgres://localhost:5432/db',
-        '--scenario=backup_restore_upgrade',
+        '--scenario=backup_restore',
         '--json',
       ],
       {

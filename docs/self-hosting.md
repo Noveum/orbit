@@ -464,8 +464,7 @@ cron job on a dedicated administration host.
 
 #### Continuous recovery drill and upgrade matrix
 
-Orbit includes an automated continuous recovery drill and a 7-scenario upgrade
-matrix executed in CI:
+Orbit includes an automated continuous recovery drill and an upgrade matrix executed in CI:
 
 ```bash
 # WARNING: Never run the recovery drill against production environments.
@@ -478,7 +477,7 @@ bun run backup:recovery-drill \
   --confirm-destructive="disposable-host:5432/db/orbit_drill#bucket:orbit-drill-uploads" \
   --json
 
-# Run 7-scenario upgrade matrix:
+# Run upgrade matrix:
 bun run backup:upgrade-matrix --json
 ```
 
@@ -486,23 +485,6 @@ The recovery drill seeds representative application state (users, organizations,
 teams, issues, comments, docs, MCP grants, and uploaded attachments), captures an
 encrypted snapshot, wipes the target environment and Redis, restores the snapshot,
 and asserts byte-for-byte attachment integrity and authorization boundaries.
-
-##### Estimated recovery time and storage benchmarks
-
-The following numbers represent estimated benchmarks based on the automated recovery drill
-in CI and local test environments. These figures are illustrative estimates rather than
-operational guarantees:
-
-| Metric | Estimated benchmark | Notes |
-| --- | --- | --- |
-| Backup capture duration | ~1.4 seconds | Coordinated PostgreSQL dump and S3 object capture |
-| Restore duration | ~2.8 seconds | Unpack, decryption, `pg_restore`, and S3 reconciliation |
-| Database dump size | ~1.2 MB uncompressed | Custom-format PostgreSQL archive (`-Fc`) |
-| Object store payload | ~4.5 MB | Representative file attachments encrypted with AES-256-GCM |
-| Post-restore validation | ~650 ms | Ledger verification, catalog drift, referential integrity |
-
-Actual production recovery times scale with relational row counts, total attachment
-byte volume, and network latency to your S3 provider.
 
 ##### Format version policy and upgrade window
 

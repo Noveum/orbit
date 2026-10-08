@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { runUpgradeMatrix } from '../packages/services/src/backup/index.ts';
 
 describe('upgrade matrix integration contract', () => {
-  it('proves scenario 7 downgrade and format refusal without live database', async () => {
+  it('proves scenario 3 downgrade and format refusal without live database', async () => {
     const result = await runUpgradeMatrix({
       databaseUrl: 'postgres://localhost:5432/mock_db',
       scenario: 'unsafe_rollback_refusal',

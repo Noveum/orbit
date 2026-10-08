@@ -10,13 +10,12 @@ describe('recovery drill CLI args', () => {
     expect(args.help).toBe(false);
   });
 
-  it('parses explicit flags for destination, redis, encryption, and clean', () => {
+  it('parses explicit flags for destination, redis, and clean', () => {
     const args = parseDrillArgs([
       'bun',
       'scripts/backup/recovery-drill.ts',
       '--destination=/var/backups/drill',
       '--database-url=postgres://user:pass@localhost:5432/drill_db',
-      '--encryption-key=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
       '--redis-url=redis://localhost:6380',
       '--skip-redis',
       '--clean',
@@ -25,7 +24,6 @@ describe('recovery drill CLI args', () => {
 
     expect(args.destination).toContain('drill');
     expect(args.databaseUrl).toBe('postgres://user:pass@localhost:5432/drill_db');
-    expect(args.encryptionKey).toHaveLength(64);
     expect(args.redisUrl).toBe('redis://localhost:6380');
     expect(args.skipRedis).toBe(true);
     expect(args.cleanDestination).toBe(true);

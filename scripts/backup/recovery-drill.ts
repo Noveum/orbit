@@ -4,7 +4,6 @@ export interface ParsedDrillArgs {
   readonly databaseUrl?: string | undefined;
   readonly confirmDestructive?: string | undefined;
   readonly destination?: string | undefined;
-  readonly encryptionKey?: string | undefined;
   readonly redisUrl?: string | undefined;
   readonly skipRedis: boolean;
   readonly cleanDestination: boolean;
@@ -69,7 +68,6 @@ export function parseDrillArgs(argv: readonly string[]): ParsedDrillArgs {
       flags.get('--confirm-destructive-restore-target') ??
       process.env['ORBIT_DRILL_CONFIRM_TARGET'],
     destination: rawDest === undefined ? undefined : resolve(rawDest),
-    encryptionKey: flags.get('--encryption-key') ?? process.env['ORBIT_BACKUP_ENCRYPTION_KEY'],
     redisUrl: flags.get('--redis-url') ?? process.env['ORBIT_DRILL_REDIS_URL'],
     skipRedis,
     cleanDestination,
@@ -86,10 +84,9 @@ destroys test database and bucket, restores into blank environment with empty Re
 and verifies byte-for-byte attachment integrity and authorization boundaries.
 
 Options:
-  --database-url=<url>       Target database connection URL (default: DATABASE_URL / DIRECT_URL)
+  --database-url=<url>       Target database connection URL (default: ORBIT_DRILL_DATABASE_URL)
   --destination=<path>       Backup destination directory (default: system temporary directory)
-  --encryption-key=<hex>     Master 256-bit encryption key (default: ephemeral key generated)
-  --redis-url=<url>          Redis URL for empty start verification (default: REDIS_URL)
+  --redis-url=<url>          Redis URL for empty start verification (default: ORBIT_DRILL_REDIS_URL)
   --skip-redis               Skip Redis empty start pub/sub verification
   --clean                    Clean destination directory after drill finishes
   --json                     Emit machine-readable JSON result
@@ -191,7 +188,7 @@ async function main(): Promise<void> {
       databaseUrl,
       confirmDestructiveTarget: confirmDestructive,
       destinationDir: args.destination,
-      encryptionKey: args.encryptionKey,
+      encryptionKey: process.env['ORBIT_BACKUP_ENCRYPTION_KEY'],
       redisUrl: args.redisUrl,
       skipRedisCheck: args.skipRedis,
       cleanDestination: args.cleanDestination,

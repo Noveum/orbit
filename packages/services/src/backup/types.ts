@@ -166,14 +166,7 @@ export interface RecoveryDrillResult {
   readonly representativeData: RecoveryDrillRepresentativeData;
 }
 
-export type UpgradeScenarioId =
-  | 'fresh_install'
-  | 'direct_upgrade'
-  | 'backup_restore_upgrade'
-  | 'direct_restore_current'
-  | 'interrupted_migration_repair'
-  | 'application_rollback'
-  | 'unsafe_rollback_refusal';
+export type UpgradeScenarioId = 'fresh_install' | 'backup_restore' | 'unsafe_rollback_refusal';
 
 export interface UpgradeScenarioResult {
   readonly id: UpgradeScenarioId;

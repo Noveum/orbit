@@ -1,11 +1,4 @@
-export type UpgradeScenarioId =
-  | 'fresh_install'
-  | 'direct_upgrade'
-  | 'backup_restore_upgrade'
-  | 'direct_restore_current'
-  | 'interrupted_migration_repair'
-  | 'application_rollback'
-  | 'unsafe_rollback_refusal';
+export type UpgradeScenarioId = 'fresh_install' | 'backup_restore' | 'unsafe_rollback_refusal';
 
 export interface ParsedMatrixArgs {
   readonly databaseUrl?: string | undefined;
@@ -18,11 +11,7 @@ export interface ParsedMatrixArgs {
 
 const VALID_SCENARIOS: readonly UpgradeScenarioId[] = [
   'fresh_install',
-  'direct_upgrade',
-  'backup_restore_upgrade',
-  'direct_restore_current',
-  'interrupted_migration_repair',
-  'application_rollback',
+  'backup_restore',
   'unsafe_rollback_refusal',
 ];
 
@@ -91,11 +80,7 @@ export function parseMatrixArgs(argv: readonly string[]): ParsedMatrixArgs {
   const scenario = rawScenario as UpgradeScenarioId | undefined;
 
   return {
-    databaseUrl:
-      flags.get('--database-url') ??
-      process.env['ORBIT_DRILL_DATABASE_URL'] ??
-      process.env['DATABASE_URL'] ??
-      process.env['DIRECT_URL'],
+    databaseUrl: flags.get('--database-url') ?? process.env['ORBIT_DRILL_DATABASE_URL'],
     confirmDestructive:
       flags.get('--confirm-destructive') ??
       flags.get('--confirm-destructive-restore-target') ??
@@ -110,18 +95,16 @@ export function parseMatrixArgs(argv: readonly string[]): ParsedMatrixArgs {
 function printUsage(): void {
   process.stdout.write(`Usage: bun scripts/backup/upgrade-matrix.ts [options]
 
-Tests the 7-scenario upgrade and recovery matrix:
-  1. fresh install
-  2. previous stable to current stable direct upgrade
-  3. backup on previous stable -> restore on previous stable -> upgrade
-  4. backup on previous stable -> direct restore into current stable
-  5. interrupted migration and forward-repair
-  6. application rollback when no irreversible schema change occurred
-  7. explicit refusal when rollback is unsafe
+Tests the upgrade and recovery matrix:
+  1. fresh install (schema creation and drift check)
+  2. backup and restore verification (coordinated snapshot, restore, forward migration)
+  3. explicit refusal of unsafe downgrade and future format versions
 
 Options:
-  --database-url=<url>       Target database connection URL (default: DATABASE_URL / DIRECT_URL)
+  --database-url=<url>       Target database connection URL (default: ORBIT_DRILL_DATABASE_URL)
   --scenario=<id>            Run a single scenario (${VALID_SCENARIOS.join(', ')})
+  --confirm-destructive=<id> Confirm destructive restore target identity
+  --skip-destructive         Skip destructive scenarios
   --json                     Emit machine-readable JSON result
   -h, --help                 Show this help message
 `);
@@ -176,16 +159,13 @@ interface ValidatedMatrixArgs {
 function validateMatrixArgs(args: ParsedMatrixArgs): ValidatedMatrixArgs {
   if (args.databaseUrl === undefined || args.databaseUrl.length === 0) {
     emitError(
-      'Database connection URL is required via --database-url, DATABASE_URL, or DIRECT_URL.',
+      'Database connection URL is required via --database-url or ORBIT_DRILL_DATABASE_URL.',
       args.json,
     );
   }
 
   const runsDestructive =
-    !args.skipDestructive &&
-    (args.scenario === undefined ||
-      args.scenario === 'backup_restore_upgrade' ||
-      args.scenario === 'direct_restore_current');
+    !args.skipDestructive && (args.scenario === undefined || args.scenario === 'backup_restore');
 
   if (
     runsDestructive &&
@@ -212,7 +192,7 @@ async function main(): Promise<void> {
 
   try {
     if (!args.json) {
-      process.stdout.write('Running Orbit 7-scenario upgrade matrix...\n\n');
+      process.stdout.write('Running Orbit upgrade matrix...\n\n');
     }
 
     const { runUpgradeMatrix } = await import('../../packages/services/src/backup/index.ts');

@@ -114,8 +114,15 @@ Once the underlying issue is resolved, re-run the validator:
 bun run backup:validate --json
 ```
 
-When validation returns `valid: true`, Orbit updates `public.orbit_recovery_state` to
-`status = 'ready'`.
+Note that `backup:validate` inspects and reports current consistency but does
+not change recovery state. Once validation passes with `valid: true`, clear the recovery
+gate by setting `status = 'ready'` in `public.orbit_recovery_state` manually or by running
+a clean `backup:restore`:
+
+```sql
+UPDATE public.orbit_recovery_state
+SET status = 'ready', error = NULL, updated_at = NOW();
+```
 
 Verify that the health check responds with HTTP 200:
 
