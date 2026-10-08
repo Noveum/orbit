@@ -11,11 +11,11 @@
     "test": "bun --env-file=../../.env test --timeout 20000"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "@orbit/core": "workspace:*",
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@orbit/services": "workspace:*",
