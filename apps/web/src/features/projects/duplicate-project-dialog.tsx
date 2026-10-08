@@ -42,7 +42,7 @@ export function DuplicateProjectDialog({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(`${projectName} (copy)`);
-  const [shiftDays, setShiftDays] = useState(0);
+  const [shiftDays, setShiftDays] = useState('0');
   const [includeIssues, setIncludeIssues] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +52,7 @@ export function DuplicateProjectDialog({
   function handleOpenChange(nextOpen: boolean): void {
     if (nextOpen) {
       setName(`${projectName} (copy)`);
-      setShiftDays(0);
+      setShiftDays('0');
       setIncludeIssues(true);
       setError(null);
     }
@@ -61,15 +61,18 @@ export function DuplicateProjectDialog({
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    event.stopPropagation();
     if (pending) return;
     setPending(true);
     setError(null);
     try {
+      const parsedShiftDays = Number.parseInt(shiftDays, 10);
+      const normalizedShiftDays = Number.isNaN(parsedShiftDays) ? 0 : parsedShiftDays;
       const result = await apiRequest<unknown>(`/api/projects/${projectId}/duplicate`, {
         method: 'POST',
         body: {
           name: name.trim() === '' ? undefined : name.trim(),
-          shiftDays,
+          shiftDays: normalizedShiftDays,
           includeIssues,
         },
       });
@@ -134,10 +137,7 @@ export function DuplicateProjectDialog({
               min={-3650}
               max={3650}
               data-testid="duplicate-project-shift-days"
-              onChange={(event) => {
-                const parsed = Number.parseInt(event.target.value, 10);
-                setShiftDays(Number.isNaN(parsed) ? 0 : parsed);
-              }}
+              onChange={(event) => setShiftDays(event.target.value)}
             />
             <span className="text-2xs text-faint">
               Use positive numbers to push dates into the future, or negative to pull them back.

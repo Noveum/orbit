@@ -887,7 +887,10 @@ function duplicateIssueValues(
   const teamId = targetTeamIds.includes(sourceIssue.teamId)
     ? sourceIssue.teamId
     : (targetTeamIds[0] ?? sourceIssue.teamId);
-  const stateId = teamId === sourceIssue.teamId ? sourceIssue.stateId : undefined;
+  const isSameTeam = teamId === sourceIssue.teamId;
+  const stateId = isSameTeam ? sourceIssue.stateId : undefined;
+  const reviewerIds = isSameTeam ? (reviewerMap.get(sourceIssue.id) ?? []) : [];
+  const labelIds = isSameTeam ? (labelMap.get(sourceIssue.id) ?? []) : [];
 
   return {
     teamId,
@@ -896,13 +899,13 @@ function duplicateIssueValues(
     stateId,
     priority: sourceIssue.priority,
     assigneeId: sourceIssue.assigneeId,
-    reviewerIds: reviewerMap.get(sourceIssue.id) ?? [],
+    reviewerIds,
     projectId: targetProjectId,
     milestoneId,
     parentId,
     estimate: sourceIssue.estimate,
     dueDate: shiftedDueDate,
-    labelIds: labelMap.get(sourceIssue.id) ?? [],
+    labelIds,
   };
 }
 

@@ -164,4 +164,23 @@ describe('DuplicateProjectDialog', () => {
     expect(screen.getByTestId('duplicate-project-error').textContent).toBe('Name too long');
     expect(pushes).toHaveLength(0);
   });
+
+  it('supports negative date shift input', async () => {
+    const user = userEvent.setup();
+    mountDialog(true);
+
+    await user.click(screen.getByTestId('duplicate-project-trigger'));
+
+    const shiftInput = screen.getByTestId('duplicate-project-shift-days');
+    await user.clear(shiftInput);
+    await user.type(shiftInput, '-7');
+
+    await user.click(screen.getByTestId('duplicate-project-submit'));
+
+    await waitFor(() => {
+      expect(calls).toHaveLength(1);
+    });
+
+    expect(calls[0]?.body['shiftDays']).toBe(-7);
+  });
 });

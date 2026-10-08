@@ -940,6 +940,31 @@ describe('duplicateProject', () => {
     expect(copyChild?.parentId).not.toBe(parent.id);
   });
 
+  it('omits team-scoped labels and reviewers when duplicated issues are reassigned to another team', async () => {
+    const otherTeam = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Ops Migration',
+      teamIds: [workspace.teamId],
+    });
+
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Migrate logs',
+      projectId: source.id,
+    });
+
+    const { project: copy } = await duplicateProject(workspace.admin, source.id, {
+      teamIds: [otherTeam.team.id],
+    });
+
+    const [copyIssue] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id));
+    expect(copyIssue).toBeDefined();
+    expect(copyIssue?.teamId).toBe(otherTeam.team.id);
+  });
+
   it('refuses cross-workspace duplication', async () => {
     const otherWorkspace = await createWorkspace('Other');
     const { project: otherProject } = await createProject(otherWorkspace.admin, {

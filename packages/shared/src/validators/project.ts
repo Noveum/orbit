@@ -42,7 +42,7 @@ export type ProjectCreateInput = z.infer<typeof projectCreateSchema>;
 export const projectDuplicateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   includeIssues: z.boolean().default(true),
-  shiftDays: z.coerce.number().int().default(0),
+  shiftDays: z.coerce.number().int().min(-3650).max(3650).default(0),
   teamIds: z.array(idSchema).max(50).optional(),
 });
 

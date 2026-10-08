@@ -137,4 +137,23 @@ describe('POST /api/projects/[id]/duplicate', () => {
 
     expect(published).toEqual([[action]]);
   });
+
+  it('answers 404 when the project ID is invalid', async () => {
+    const response = await POST(request(), { params: Promise.resolve({ id: '' }) });
+
+    expect(response.status).toBe(404);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('answers 422 when the request body is malformed JSON', async () => {
+    const malformed = new Request('http://localhost:3000/api/projects/project_1/duplicate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'invalid-json{',
+    });
+    const response = await POST(malformed, { params: Promise.resolve({ id: 'project_1' }) });
+
+    expect(response.status).toBe(422);
+    expect(calls).toHaveLength(0);
+  });
 });
