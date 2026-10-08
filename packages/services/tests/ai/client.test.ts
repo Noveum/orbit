@@ -5,10 +5,16 @@ import zlib from 'node:zlib';
 import { AiClientError, AiDisabledError, complete } from '../../src/ai/client.ts';
 
 const originalFetch = globalThis.fetch;
+const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
 describe('AI client complete()', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalAllowPrivate === undefined) {
+      delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+    } else {
+      process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = originalAllowPrivate;
+    }
   });
 
   it('completes prompt against OpenAI-compatible endpoint', async () => {
