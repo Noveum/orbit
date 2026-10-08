@@ -44,6 +44,8 @@
     "backup:restore": "bun scripts/backup/restore.ts",
     "backup:validate": "bun scripts/backup/validate.ts",
     "backup:prune": "bun scripts/backup/prune.ts",
+    "backup:recovery-drill": "bun scripts/backup/recovery-drill.ts",
+    "backup:upgrade-matrix": "bun scripts/backup/upgrade-matrix.ts",
     "db:generate": "bun run --filter '@orbit/db' generate",
     "db:migrate": "bun run --filter '@orbit/db' migrate",
     "db:release": "bun run --filter '@orbit/db' release",
