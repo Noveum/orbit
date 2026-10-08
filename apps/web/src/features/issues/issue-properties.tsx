@@ -147,7 +147,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   return (
     <aside
       data-testid="issue-properties"
-      className="flex w-full shrink-0 flex-col gap-0.5 border-border border-t p-3 lg:w-64 lg:border-t-0 lg:border-l"
+      className="flex w-full shrink-0 flex-col gap-0.5 border-border border-t p-3 lg:min-h-0 lg:w-64 lg:overflow-y-auto lg:border-t-0 lg:border-l"
     >
       <PropertyRow label="Status" shortcut="s">
         <PropertyMenu

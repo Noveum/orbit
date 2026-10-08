@@ -13,6 +13,18 @@ PR2 `349d39ce07ae81a69946590335d5c5e53178aa16`, and
 PR3 `825e9e1d3e2268e105e4f2adf7be56177474e2fc`.
 Predecessor commits are dependencies, not this change's implementation diff.
 
+The dependency synchronization on 2026-10-08 adopts PR1's Owner revision
+`c8cc14371937ce7bf9dcaaab778d93ec0050d939` and PR2's sidebar follow-up
+`86e8b125a79bab3ed579ae025f22457a9de7424b`. The original integration and
+Stage A/B commits are retained. This synchronization imports those focused
+dependency changes without absorbing unrelated upstream main changes.
+
+PR1 remains open and unmerged at that revision. Its `0030` SQL is preserved
+byte for byte, with SHA-256
+`e4c0f9da17988ac12dc53bc9e825d88dcea6e14a623330b003db190cfa36642b`.
+The `0030` snapshot and journal entry have no schema change and are retained.
+Official migrations `0000` through `0029` are unchanged.
+
 ## Stage A: write compatibility preparation
 
 Migration `0033_issue_actor_write_compatibility` follows `0032` and makes
@@ -30,10 +42,14 @@ Owner. Later reassignment or unassignment preserves the Issue Owner.
 Release, baseline and trigger recovery install the latest committed compatible
 function and trigger. Recovery preserves Agent references, existing Owner
 values, business timestamps and Sync IDs. Historical migration files are not
-edited. Legacy columns and the expanded foreign keys remain installed.
-Human mirrors on mixed Actor rows are repaired independently. A baseline
-initializes historical Owner only when the Human Creator canonical fields
-were never initialized. An existing canonical row's NULL Owner stays NULL.
+rewritten after application. The still-unmerged `0030` is synchronized with
+the current PR1 source as described above. Legacy columns and the expanded
+foreign keys remain installed. Human mirrors on mixed Actor rows are
+repaired independently. Neither the `0030` backfill nor baseline or recovery
+infers an Owner, including for previously uninitialized Human references.
+NULL and explicit Owner values remain unchanged. The `0033` responsibility
+rule applies when a writer establishes a new assignment, rather than when
+the migration or release repairs historical rows.
 
 Real Agent-created Issues have `creator_id = NULL`. Shared response schemas,
 REST, MCP, bootstrap, Realtime, cached rows and UI readers accept that value
@@ -184,6 +200,16 @@ undo run passed 11 tests. The final delivery record separately identifies the
 independent review and full verification results for the exact source tree.
 
 ## Deployment order
+
+An installation that manually applied the earlier unpublished `0030` hash
+`be5f9ac8863434e90c9660ef83743e3a20bb1a0e14e463925de0cd2077f49f5e`
+cannot use this checkout's release directly. Ledger validation fails closed
+before pending migrations, and does not relabel its checksum or change Owner
+history. Do not edit an applied ledger to bypass that check. A maintained
+database needs an explicit forward correction release retaining its original
+immutable migration lineage, with its data preserved and the upgrade tested.
+A disposable local test database may instead be rebuilt from the current
+chain. No production migration or checksum conversion is performed here.
 
 1. Complete the separate PR3 compatibility and identity-binding rollout in
    [MCP grant rollout](./mcp-grant-rollout.md). Do not skip its stage 3a release.

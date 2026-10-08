@@ -178,7 +178,7 @@ async function reconcileHumanActorBaseline(
   await reconcileHumanActorArtifacts(sql, artifacts);
   if (pendingMigrations.includes(migration)) {
     if (artifacts.updateColumns.includes('assignee_agent_id')) {
-      await reconcileHumanActorMirrors(sql, true);
+      await reconcileHumanActorMirrors(sql);
     } else {
       await sql.unsafe(artifactStatement(migration, 'UPDATE "issue"'));
     }
@@ -187,22 +187,12 @@ async function reconcileHumanActorBaseline(
   }
 }
 
-async function reconcileHumanActorMirrors(
-  sql: postgres.TransactionSql,
-  initializeLegacyOwners = false,
-): Promise<void> {
+async function reconcileHumanActorMirrors(sql: postgres.TransactionSql): Promise<void> {
   await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
   await sql`
     update issue
     set creator_user_id = case when creator_agent_id is null then creator_id else creator_user_id end,
-      assignee_user_id = case when assignee_agent_id is null then assignee_id else assignee_user_id end,
-      owner_user_id = case
-        when ${initializeLegacyOwners}
-          and creator_user_id is null and creator_agent_id is null and creator_id is not null
-          and assignee_agent_id is null
-        then coalesce(owner_user_id, assignee_id)
-        else owner_user_id
-      end
+      assignee_user_id = case when assignee_agent_id is null then assignee_id else assignee_user_id end
     where (creator_agent_id is null and creator_user_id is distinct from creator_id)
       or (assignee_agent_id is null and assignee_user_id is distinct from assignee_id)
   `;

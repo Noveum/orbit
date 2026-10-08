@@ -117,6 +117,19 @@ function backfillStatement(migration: MigrationMeta | undefined): string {
   return statements[0];
 }
 
+async function installExpansionArtifacts(sql: postgres.TransactionSql): Promise<void> {
+  if (expansion === undefined) throw new Error('The expansion migration is missing.');
+  await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+  for (const statement of expansion.sql) {
+    if (statement.trimStart().startsWith('CREATE FUNCTION sync_issue_human_actors()')) {
+      await sql.unsafe(statement.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
+    }
+    if (statement.trimStart().startsWith('CREATE TRIGGER issue_human_actor_compat_trigger')) {
+      await sql.unsafe(statement);
+    }
+  }
+}
+
 async function readBusinessState(sql: postgres.Sql): Promise<BusinessState> {
   const issues = await sql<PayloadRow[]>`
     select to_jsonb(issue)
@@ -300,6 +313,19 @@ describe('actor schema expansion compatibility', () => {
       await seedLegacyData(sql);
       await runLegacyHelper(['--existing-credential']);
       initialState = await readBusinessState(sql);
+      await sql.begin(async (tx) => {
+        for (const statement of expansion.sql) await tx.unsafe(statement);
+        await tx`
+          insert into drizzle.__drizzle_migrations (hash, created_at)
+          values (${expansion.hash}, ${expansion.folderMillis})
+        `;
+        expect(await readActors(tx, 'history-assigned')).toMatchObject({
+          creator_user_id: 'expand-creator',
+          assignee_user_id: 'expand-first',
+          owner_user_id: null,
+        });
+      });
+      expect(await readBusinessState(sql)).toEqual(legacyBusinessState());
     });
     initialRelease = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
   }, 60_000);
@@ -312,7 +338,7 @@ describe('actor schema expansion compatibility', () => {
   it('upgrades the official old chain without changing business records or credentials', async () => {
     expect(initialRelease).toEqual({
       mode: 'migrated',
-      applied: migrations.length - oldMigrations.length,
+      applied: migrations.length - oldMigrations.length - 1,
       total: migrations.length,
     });
     expect(initialState?.issues).toHaveLength(2);
@@ -330,7 +356,7 @@ describe('actor schema expansion compatibility', () => {
         creator_agent_id: null,
         assignee_user_id: 'expand-first',
         assignee_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
       expect(await readActors(tx, 'history-unassigned')).toMatchObject({
         creator_user_id: 'expand-creator',
@@ -356,6 +382,7 @@ describe('actor schema expansion compatibility', () => {
     expect(triggerIndex).toBeGreaterThan(functionIndex);
     expect(statements.indexOf(backfillStatement(expansion))).toBeGreaterThan(triggerIndex);
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`update issue set assignee_id = 'expand-second' where id = 'history-assigned'`;
       await tx.unsafe(backfillStatement(expansion));
       await tx.unsafe(backfillStatement(expansion));
@@ -435,7 +462,37 @@ describe('actor schema expansion compatibility', () => {
         creator_id: 'expand-second',
         creator_user_id: 'expand-second',
         creator_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
+      });
+    });
+  });
+
+  it('keeps expansion-only assignments and repeated backfill neutral to NULL and explicit Owners', async () => {
+    await rolledBack(async (tx) => {
+      await installExpansionArtifacts(tx);
+      await insertLegacyIssue(tx, 'expand-first');
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        assignee_user_id: 'expand-first',
+        owner_user_id: null,
+      });
+      await tx`update issue set assignee_id = 'expand-second' where id = 'legacy-write'`;
+      await tx.unsafe(backfillStatement(expansion));
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        assignee_user_id: 'expand-second',
+        owner_user_id: null,
+      });
+      await tx`update issue set owner_user_id = 'expand-creator' where id = 'legacy-write'`;
+      await tx`
+        update issue set creator_id = 'expand-second', assignee_id = null
+        where id = 'legacy-write'
+      `;
+      await tx`update issue set creator_user_id = null where id = 'legacy-write'`;
+      await tx.unsafe(backfillStatement(expansion));
+      await tx.unsafe(backfillStatement(expansion));
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        creator_user_id: 'expand-second',
+        assignee_user_id: null,
+        owner_user_id: 'expand-creator',
       });
     });
   });
@@ -532,6 +589,7 @@ describe('actor schema expansion compatibility', () => {
 
   it('allows deleting a former owner without undoing the owner foreign key action', async () => {
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`update issue set assignee_id = 'expand-second' where id = 'history-assigned'`;
       await tx`delete from "user" where id = 'expand-first'`;
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
@@ -546,6 +604,7 @@ describe('actor schema expansion compatibility', () => {
 
   it('allows deleting the current assignee with both old and new foreign keys', async () => {
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`update issue set assignee_id = 'expand-second' where id = 'history-assigned'`;
       await tx`delete from "user" where id = 'expand-second'`;
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
@@ -555,6 +614,7 @@ describe('actor schema expansion compatibility', () => {
       });
     });
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`delete from "user" where id = 'expand-first'`;
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
         assignee_id: null,
@@ -627,5 +687,14 @@ describe('actor schema expansion compatibility', () => {
 
   it('runs compatible issue, starter and legacy MCP services against the upgraded database', async () => {
     await runLegacyHelper();
+  }, 30_000);
+
+  it('keeps unchanged bootstrap writers ownerless under the expansion-only function', async () => {
+    await run((sql) => sql.begin(installExpansionArtifacts));
+    try {
+      await runLegacyHelper(['--expansion-only']);
+    } finally {
+      await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    }
   }, 30_000);
 });

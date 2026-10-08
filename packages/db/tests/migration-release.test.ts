@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,7 +72,7 @@ async function seedHumanActorIssues(sql: postgres.Sql): Promise<void> {
     ) values
       (
         'release-actor-history', 'release-actor-org', 'release-actor-team', 1, 'ACTOR-1',
-        'Historical owner', 'release-actor-state', 'release-actor-creator',
+        'Unowned history', 'release-actor-state', 'release-actor-creator',
         'release-actor-assignee', null, '2026-09-01T00:00:00Z', 79
       ),
       (
@@ -305,7 +306,7 @@ describe('database release', () => {
           creator_agent_id: null,
           assignee_user_id: 'release-actor-assignee',
           assignee_agent_id: null,
-          owner_user_id: 'release-actor-assignee',
+          owner_user_id: null,
           timestamp_preserved: true,
           sync_id: 79,
         },
@@ -339,7 +340,7 @@ describe('database release', () => {
         {
           id: 'release-actor-history',
           assignee_user_id: null,
-          owner_user_id: 'release-actor-assignee',
+          owner_user_id: null,
         },
         {
           id: 'release-actor-owned',
@@ -1066,6 +1067,57 @@ describe('database release', () => {
     await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
       'does not match the committed migration',
     );
+  }, 60_000);
+
+  it('refuses a superseded unpublished PR1 migration without changing its ledger or Owner history', async () => {
+    await resetScratch();
+    const historical = readMigrationFiles({ migrationsFolder: MIGRATIONS }).filter(
+      (migration) => migration.folderMillis <= HUMAN_ACTOR_MIGRATION,
+    );
+    const superseded = await readFile(
+      new URL('./migrations/fixtures/0030_before_owner_review.sql', import.meta.url),
+      'utf8',
+    );
+    const supersededHash = createHash('sha256').update(superseded).digest('hex');
+    expect(supersededHash).toBe('be5f9ac8863434e90c9660ef83743e3a20bb1a0e14e463925de0cd2077f49f5e');
+    expect(supersededHash).not.toBe(historical.at(-1)?.hash);
+    const before = await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of historical) {
+        const supersededExpansion = migration.folderMillis === HUMAN_ACTOR_MIGRATION;
+        await sql.begin(async (tx) => {
+          for (const statement of supersededExpansion
+            ? superseded.split('--> statement-breakpoint')
+            : migration.sql) {
+            await tx.unsafe(statement);
+          }
+          await tx`
+            insert into drizzle.__drizzle_migrations (hash, created_at)
+            values (${supersededExpansion ? supersededHash : migration.hash}, ${migration.folderMillis})
+          `;
+        });
+      }
+      await seedHumanActorIssues(sql);
+      return {
+        ledger: [
+          ...(await sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`),
+        ],
+        issues: [...(await sql`select to_jsonb(issue) as payload from issue order by id`)],
+      };
+    });
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'does not match the committed migration',
+    );
+    await run(urlFor(SCRATCH), async (sql) => {
+      expect([
+        ...(await sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`),
+      ]).toEqual(before.ledger);
+      expect([...(await sql`select to_jsonb(issue) as payload from issue order by id`)]).toEqual(
+        before.issues,
+      );
+    });
   }, 60_000);
 
   it('fails promptly when another database release holds the advisory lock', async () => {

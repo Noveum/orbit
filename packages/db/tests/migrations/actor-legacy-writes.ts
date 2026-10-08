@@ -56,6 +56,7 @@ async function runChecks(): Promise<void> {
     .select()
     .from(schema.issue)
     .where(eq(schema.issue.teamId, bootstrap.team.id));
+  const expansionOnly = process.argv.includes('--expansion-only');
   ok(starterIssues.length > 0);
   ok(starterIssues.some((issue) => issue.assigneeId === null));
   ok(starterIssues.some((issue) => issue.assigneeId === owner.id));
@@ -65,7 +66,11 @@ async function runChecks(): Promise<void> {
     strictEqual(issue.creatorAgentId, null);
     strictEqual(issue.assigneeUserId, issue.assigneeId);
     strictEqual(issue.assigneeAgentId, null);
-    strictEqual(issue.ownerUserId, issue.assigneeId);
+    strictEqual(issue.ownerUserId, expansionOnly ? null : issue.assigneeId);
+  }
+  if (expansionOnly) {
+    console.info('Expansion-only bootstrap preserves all NULL Owners.');
+    return;
   }
 
   const assignee = await createUser(`Legacy assignee ${suffix}`);
