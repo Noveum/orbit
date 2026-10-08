@@ -26,8 +26,15 @@ export interface ReleaseResult {
 }
 
 const LOCK_KEY = 4_611_358_438_132_153;
+const HUMAN_ACTOR_MIGRATION = 1791120831827;
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
-  1786217938315, 1786623194883, 1788083189965, 1788724695589, 1788724695585, 1789603762953,
+  1786217938315,
+  1786623194883,
+  1788083189965,
+  1788724695589,
+  1788724695585,
+  1789603762953,
+  HUMAN_ACTOR_MIGRATION,
 ]);
 const NOTIFICATION_AUDIT_MIGRATION = 1788724695590;
 const NOTIFICATION_AUDIT_ARTIFACTS = [
@@ -72,6 +79,87 @@ function artifactStatement(migration: MigrationMeta, prefix: string): string {
     throw new Error(`Migration ${migration.folderMillis} has no ${prefix} artifact.`);
   }
   return statement;
+}
+
+async function humanActorArtifactsAreValid(sql: postgres.TransactionSql): Promise<boolean> {
+  const [artifact] = await sql<{ valid: boolean }[]>`
+    select exists (
+      select 1
+      from pg_trigger trigger
+      inner join pg_class relation on relation.oid = trigger.tgrelid
+      inner join pg_namespace relation_namespace on relation_namespace.oid = relation.relnamespace
+      inner join pg_proc procedure on procedure.oid = trigger.tgfoid
+      inner join pg_namespace procedure_namespace on procedure_namespace.oid = procedure.pronamespace
+      where relation_namespace.nspname = 'public'
+        and relation.relname = 'issue'
+        and procedure_namespace.nspname = 'public'
+        and procedure.proname = 'sync_issue_human_actors'
+        and procedure.pronargs = 0
+        and procedure.prorettype = 'pg_catalog.trigger'::regtype
+        and trigger.tgname = 'issue_human_actor_compat_trigger'
+        and trigger.tgenabled = 'O'
+        and trigger.tgtype = 23
+        and trigger.tgconstraint = 0
+        and (
+          select array_agg(attribute.attname::text order by attribute.attname)
+          from unnest(trigger.tgattr) as trigger_column(number)
+          inner join pg_attribute attribute
+            on attribute.attrelid = relation.oid and attribute.attnum = trigger_column.number
+        ) = array['assignee_id', 'creator_id']
+        and trigger.tgqual is null
+        and trigger.tgnargs = 0
+    ) as valid
+  `;
+  return artifact?.valid === true;
+}
+
+async function reconcileHumanActorArtifacts(
+  sql: postgres.TransactionSql,
+  migration: MigrationMeta,
+): Promise<void> {
+  const functionStatement = artifactStatement(
+    migration,
+    'CREATE FUNCTION sync_issue_human_actors()',
+  );
+  const triggerStatement = artifactStatement(
+    migration,
+    'CREATE TRIGGER issue_human_actor_compat_trigger',
+  );
+  await sql.unsafe(functionStatement.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
+  await sql`drop trigger if exists issue_human_actor_compat_trigger on issue`;
+  await sql.unsafe(triggerStatement);
+  if (!(await humanActorArtifactsAreValid(sql))) {
+    throw new Error('Human actor compatibility reconciliation did not produce valid artifacts.');
+  }
+}
+
+async function reconcileHumanActorBaseline(
+  sql: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+  pendingMigrations: readonly MigrationMeta[],
+): Promise<void> {
+  const migration = migrations.find((entry) => entry.folderMillis === HUMAN_ACTOR_MIGRATION);
+  if (migration === undefined) return;
+  const artifactsWereValid = await humanActorArtifactsAreValid(sql);
+  await reconcileHumanActorArtifacts(sql, migration);
+  if (pendingMigrations.includes(migration)) {
+    await sql.unsafe(artifactStatement(migration, 'UPDATE "issue"'));
+  } else if (!artifactsWereValid) {
+    await reconcileHumanActorMirrors(sql);
+  }
+}
+
+async function reconcileHumanActorMirrors(sql: postgres.TransactionSql): Promise<void> {
+  await sql`
+    update issue
+    set creator_user_id = creator_id, assignee_user_id = assignee_id
+    where creator_agent_id is null
+      and assignee_agent_id is null
+      and (
+        creator_user_id is distinct from creator_id
+        or assignee_user_id is distinct from assignee_id
+      )
+  `;
 }
 
 async function reconcileNotificationAuditArtifacts(
@@ -215,6 +303,7 @@ async function baselineLedger(
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
+    await reconcileHumanActorBaseline(tx, migrations, pendingMigrations);
     const notificationAuditMigration = migrations.find(
       (migration) => migration.folderMillis === NOTIFICATION_AUDIT_MIGRATION,
     );
@@ -443,6 +532,17 @@ export async function releaseDatabase(
 
     const finalRows = await ledgerRows(sql);
     verifyLedger(finalRows, migrations);
+    const humanActorMigration = migrations.find(
+      (migration) => migration.folderMillis === HUMAN_ACTOR_MIGRATION,
+    );
+    if (humanActorMigration !== undefined) {
+      await sql.begin(async (tx) => {
+        if (!(await humanActorArtifactsAreValid(tx))) {
+          await reconcileHumanActorArtifacts(tx, humanActorMigration);
+          await reconcileHumanActorMirrors(tx);
+        }
+      });
+    }
     const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(url));
     if (isBehind(drift)) {
       throw new Error(
