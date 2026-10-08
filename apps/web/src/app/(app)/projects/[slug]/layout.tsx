@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
 import { findProjectDetail } from '@/features/projects/data.ts';
+import { DuplicateProjectDialog } from '@/features/projects/duplicate-project-dialog.tsx';
 import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { ProjectFields } from '@/features/projects/project-fields.tsx';
 import { ProjectTabs } from '@/features/projects/project-tabs.tsx';
@@ -49,6 +50,13 @@ export default async function ProjectLayout({ params, children }: LayoutProps) {
           <h1 className="font-semibold text-text text-xl">{summary.name}</h1>
           <HealthChip health={summary.health} />
           <Badge tone="outline">{STATUS_LABELS[summary.status]}</Badge>
+          <div className="ml-auto">
+            <DuplicateProjectDialog
+              projectId={summary.id}
+              projectName={summary.name}
+              canManage={can(principal, 'project:manage')}
+            />
+          </div>
         </div>
         {summary.summary.length === 0 ? null : (
           <p className="max-w-2xl text-muted text-sm">{summary.summary}</p>
