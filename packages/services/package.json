@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./ai": "./src/ai/index.ts",
     "./markdown": "./src/markdown/index.ts",
     "./storage": "./src/storage/index.ts",
     "./backup": "./src/backup/index.ts",
