@@ -23,10 +23,7 @@ function sha256Buffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-export async function seedDrillRepresentativeData(
-  sql: postgres.Sql,
-  driver: StorageDriver,
-): Promise<RecoveryDrillRepresentativeData> {
+export function createDrillRepresentativeData(): RecoveryDrillRepresentativeData {
   const suffix = randomUUID().slice(0, 8);
   const organizationId = `drill-org-${suffix}`;
   const adminUserId = `drill-usr-admin-${suffix}`;
@@ -34,132 +31,27 @@ export async function seedDrillRepresentativeData(
   const revokedUserId = `drill-usr-revoked-${suffix}`;
   const teamId = `drill-team-${suffix}`;
   const projectId = `drill-proj-${suffix}`;
-  const milestoneId = `drill-mstone-${suffix}`;
-  const stateId = `drill-state-${suffix}`;
   const issueId = `drill-issue-${suffix}`;
   const commentId = `drill-comment-${suffix}`;
   const docId = `drill-doc-${suffix}`;
-  const clientId = `drill-mcp-client-${suffix}`;
   const activeGrantId = `drill-grant-active-${suffix}`;
   const revokedGrantId = `drill-grant-revoked-${suffix}`;
-
-  await sql`
-    insert into public.organization (id, name, slug, sync_id)
-    values (${organizationId}, ${`Drill Org ${suffix}`}, ${organizationId}, 1)
-  `;
-
-  await sql`
-    insert into public."user" (id, name, email, handle, email_verified, onboarding_step)
-    values
-      (${adminUserId}, 'Drill Admin', ${`drill-admin-${suffix}@example.com`}, ${`drilladmin${suffix}`}, true, 'completed'),
-      (${memberUserId}, 'Drill Member', ${`drill-member-${suffix}@example.com`}, ${`drillmember${suffix}`}, true, 'completed'),
-      (${revokedUserId}, 'Drill Revoked', ${`drill-revoked-${suffix}@example.com`}, ${`drillrevoked${suffix}`}, true, 'completed')
-  `;
-
-  await sql`
-    insert into public.account (id, account_id, provider_id, user_id)
-    values
-      (${randomUUID()}, ${adminUserId}, 'credential', ${adminUserId}),
-      (${randomUUID()}, ${memberUserId}, 'credential', ${memberUserId}),
-      (${randomUUID()}, ${revokedUserId}, 'credential', ${revokedUserId})
-  `;
-
-  const futureExpiry = new Date(Date.now() + 86400000);
-  const pastExpiry = new Date(Date.now() - 86400000);
-
-  await sql`
-    insert into public.session (id, token, user_id, expires_at)
-    values
-      (${randomUUID()}, ${`tok-admin-${suffix}`}, ${adminUserId}, ${futureExpiry}),
-      (${randomUUID()}, ${`tok-member-${suffix}`}, ${memberUserId}, ${futureExpiry}),
-      (${randomUUID()}, ${`tok-revoked-${suffix}`}, ${revokedUserId}, ${pastExpiry})
-  `;
-
-  await sql`
-    insert into public.member (id, organization_id, user_id, role)
-    values
-      (${randomUUID()}, ${organizationId}, ${adminUserId}, 'admin'),
-      (${randomUUID()}, ${organizationId}, ${memberUserId}, 'member')
-  `;
-
-  await sql`
-    insert into public.team (id, organization_id, name, key)
-    values (${teamId}, ${organizationId}, 'Platform Engineering', 'ENG')
-  `;
-
-  await sql`
-    insert into public.team_member (id, team_id, user_id)
-    values
-      (${randomUUID()}, ${teamId}, ${adminUserId}),
-      (${randomUUID()}, ${teamId}, ${memberUserId})
-  `;
-
-  await sql`
-    insert into public.workflow_state (id, organization_id, team_id, name, category, color, position)
-    values (${stateId}, ${organizationId}, ${teamId}, 'In Progress', 'started', '#3B82F6', 0)
-  `;
-
-  await sql`
-    insert into public.project (id, organization_id, name, slug, health)
-    values (${projectId}, ${organizationId}, 'Disaster Recovery Verification', ${`dr-project-${suffix}`}, 'on_track')
-  `;
-
-  await sql`
-    insert into public.milestone (id, organization_id, project_id, name)
-    values (${milestoneId}, ${organizationId}, ${projectId}, 'Phase 1 Durability')
-  `;
-
-  await sql`
-    insert into public.issue (id, organization_id, team_id, number, identifier, title, state_id, project_id, creator_id)
-    values (${issueId}, ${organizationId}, ${teamId}, 1, 'ENG-1', 'Validate Continuous Backup and Restore Drill', ${stateId}, ${projectId}, ${adminUserId})
-  `;
-
-  await sql`
-    insert into public.comment (id, organization_id, issue_id, author_id, body)
-    values (${commentId}, ${organizationId}, ${issueId}, ${adminUserId}, 'Proving backup durability and byte-for-byte attachment recovery.')
-  `;
-
-  await sql`
-    insert into public.doc (id, organization_id, title, author_id, content)
-    values (${docId}, ${organizationId}, 'Recovery Architecture Spec', ${adminUserId}, '# Disaster Recovery Architecture\n\nAll state and attachments must survive byte-for-byte.')
-  `;
-
   const oauthApplicationId = randomUUID();
-  await sql`
-    insert into public.oauth_application (id, name, client_id, redirect_urls, type)
-    values (${oauthApplicationId}, 'Drill MCP Toolset', ${clientId}, 'https://orbit.local/oauth/callback', 'web')
-  `;
-
-  await sql`
-    insert into public.mcp_grant (id, client_id, user_id, organization_id, scopes, revoked_at)
-    values
-      (${activeGrantId}, ${clientId}, ${adminUserId}, ${organizationId}, 'orbit.read,orbit.write', null),
-      (${revokedGrantId}, ${clientId}, ${memberUserId}, ${organizationId}, 'orbit.read', ${new Date()})
-  `;
 
   const attachment1Buffer = Buffer.from(
     `Orbit recovery verification plain payload text: ${suffix}`,
     'utf8',
   );
   const attachment1Key = `${organizationId}/issue/${issueId}/text-spec-${suffix}.txt`;
-  await driver.put(attachment1Key, attachment1Buffer, 'text/plain');
 
   const attachment2Buffer = Buffer.from([
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
   ]);
   const attachment2Key = `${organizationId}/issue/${issueId}/binary-token-${suffix}.png`;
-  await driver.put(attachment2Key, attachment2Buffer, 'image/png');
 
   const attachment1Id = randomUUID();
   const attachment2Id = randomUUID();
-
-  await sql`
-    insert into public.attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, uploaded_by_id, status)
-    values
-      (${attachment1Id}, ${organizationId}, 'issue', ${issueId}, 'text-spec.txt', 'text/plain', ${attachment1Buffer.length}, ${attachment1Key}, ${adminUserId}, 'ready'),
-      (${attachment2Id}, ${organizationId}, 'issue', ${issueId}, 'binary-token.png', 'image/png', ${attachment2Buffer.length}, ${attachment2Key}, ${adminUserId}, 'ready')
-  `;
 
   const attachments: RecoveryDrillAttachmentRecord[] = [
     {
@@ -197,6 +89,129 @@ export async function seedDrillRepresentativeData(
     oauthApplicationId,
     attachments,
   };
+}
+
+export async function seedDrillRepresentativeData(
+  sql: postgres.Sql,
+  driver: StorageDriver,
+  predefinedData?: RecoveryDrillRepresentativeData,
+): Promise<RecoveryDrillRepresentativeData> {
+  const data = predefinedData ?? createDrillRepresentativeData();
+  const suffix = data.organizationId.replace(/^drill-org-/, '');
+  const clientId = `drill-mcp-client-${suffix}`;
+  const milestoneId = `drill-mstone-${suffix}`;
+  const stateId = `drill-state-${suffix}`;
+
+  try {
+    await sql`
+      insert into public.organization (id, name, slug, sync_id)
+      values (${data.organizationId}, ${`Drill Org ${suffix}`}, ${data.organizationId}, 1)
+    `;
+
+    await sql`
+      insert into public."user" (id, name, email, handle, email_verified, onboarding_step)
+      values
+        (${data.adminUserId}, 'Drill Admin', ${`drill-admin-${suffix}@example.com`}, ${`drilladmin${suffix}`}, true, 'completed'),
+        (${data.memberUserId}, 'Drill Member', ${`drill-member-${suffix}@example.com`}, ${`drillmember${suffix}`}, true, 'completed'),
+        (${data.revokedUserId}, 'Drill Revoked', ${`drill-revoked-${suffix}@example.com`}, ${`drillrevoked${suffix}`}, true, 'completed')
+    `;
+
+    await sql`
+      insert into public.account (id, account_id, provider_id, user_id)
+      values
+        (${randomUUID()}, ${data.adminUserId}, 'credential', ${data.adminUserId}),
+        (${randomUUID()}, ${data.memberUserId}, 'credential', ${data.memberUserId}),
+        (${randomUUID()}, ${data.revokedUserId}, 'credential', ${data.revokedUserId})
+    `;
+
+    const futureExpiry = new Date(Date.now() + 86400000);
+    const pastExpiry = new Date(Date.now() - 86400000);
+
+    await sql`
+      insert into public.session (id, token, user_id, expires_at)
+      values
+        (${randomUUID()}, ${`tok-admin-${suffix}`}, ${data.adminUserId}, ${futureExpiry}),
+        (${randomUUID()}, ${`tok-member-${suffix}`}, ${data.memberUserId}, ${futureExpiry}),
+        (${randomUUID()}, ${`tok-revoked-${suffix}`}, ${data.revokedUserId}, ${pastExpiry})
+    `;
+
+    await sql`
+      insert into public.member (id, organization_id, user_id, role)
+      values
+        (${randomUUID()}, ${data.organizationId}, ${data.adminUserId}, 'admin'),
+        (${randomUUID()}, ${data.organizationId}, ${data.memberUserId}, 'member')
+    `;
+
+    await sql`
+      insert into public.team (id, organization_id, name, key)
+      values (${data.teamId}, ${data.organizationId}, 'Platform Engineering', 'ENG')
+    `;
+
+    await sql`
+      insert into public.team_member (id, team_id, user_id)
+      values
+        (${randomUUID()}, ${data.teamId}, ${data.adminUserId}),
+        (${randomUUID()}, ${data.teamId}, ${data.memberUserId})
+    `;
+
+    await sql`
+      insert into public.workflow_state (id, organization_id, team_id, name, category, color, position)
+      values (${stateId}, ${data.organizationId}, ${data.teamId}, 'In Progress', 'started', '#3B82F6', 0)
+    `;
+
+    await sql`
+      insert into public.project (id, organization_id, name, slug, health)
+      values (${data.projectId}, ${data.organizationId}, 'Disaster Recovery Verification', ${`dr-project-${suffix}`}, 'on_track')
+    `;
+
+    await sql`
+      insert into public.milestone (id, organization_id, project_id, name)
+      values (${milestoneId}, ${data.organizationId}, ${data.projectId}, 'Phase 1 Durability')
+    `;
+
+    await sql`
+      insert into public.issue (id, organization_id, team_id, number, identifier, title, state_id, project_id, creator_id)
+      values (${data.issueId}, ${data.organizationId}, ${data.teamId}, 1, 'ENG-1', 'Validate Continuous Backup and Restore Drill', ${stateId}, ${data.projectId}, ${data.adminUserId})
+    `;
+
+    await sql`
+      insert into public.comment (id, organization_id, issue_id, author_id, body)
+      values (${data.commentId}, ${data.organizationId}, ${data.issueId}, ${data.adminUserId}, 'Proving backup durability and byte-for-byte attachment recovery.')
+    `;
+
+    await sql`
+      insert into public.doc (id, organization_id, title, author_id, content)
+      values (${data.docId}, ${data.organizationId}, 'Recovery Architecture Spec', ${data.adminUserId}, '# Disaster Recovery Architecture\n\nAll state and attachments must survive byte-for-byte.')
+    `;
+
+    if (data.oauthApplicationId !== undefined) {
+      await sql`
+        insert into public.oauth_application (id, name, client_id, redirect_urls, type)
+        values (${data.oauthApplicationId}, 'Drill MCP Toolset', ${clientId}, 'https://orbit.local/oauth/callback', 'web')
+      `;
+    }
+
+    await sql`
+      insert into public.mcp_grant (id, client_id, user_id, organization_id, scopes, revoked_at)
+      values
+        (${data.activeGrantId}, ${clientId}, ${data.adminUserId}, ${data.organizationId}, 'orbit.read,orbit.write', null),
+        (${data.revokedGrantId}, ${clientId}, ${data.memberUserId}, ${data.organizationId}, 'orbit.read', ${new Date()})
+    `;
+
+    for (const att of data.attachments) {
+      await driver.put(att.storageKey, att.content, att.contentType);
+      await sql`
+        insert into public.attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, uploaded_by_id, status)
+        values
+          (${att.id}, ${data.organizationId}, 'issue', ${data.issueId}, ${att.fileName}, ${att.contentType}, ${att.bytes}, ${att.storageKey}, ${data.adminUserId}, 'ready')
+      `;
+    }
+
+    return data;
+  } catch (error) {
+    await cleanupRepresentativeRows(sql, driver, data).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function verifyEntityRows(
@@ -551,10 +566,10 @@ export async function runRecoveryDrill(
 
   const encryptionKey = options.encryptionKey ?? randomBytes(32).toString('hex');
   const allErrors: string[] = [];
-  let representativeData: RecoveryDrillRepresentativeData | undefined;
+  const representativeData = createDrillRepresentativeData();
 
   try {
-    representativeData = await seedDrillRepresentativeData(sql, driver);
+    await seedDrillRepresentativeData(sql, driver, representativeData);
 
     const backupStart = performance.now();
     const backupResult = await createBackup({
@@ -632,9 +647,7 @@ export async function runRecoveryDrill(
       representativeData,
     };
   } finally {
-    if (representativeData !== undefined) {
-      await cleanupRepresentativeRows(sql, driver, representativeData).catch(() => undefined);
-    }
+    await cleanupRepresentativeRows(sql, driver, representativeData).catch(() => undefined);
     if (options.cleanDestination === true) {
       await rm(destinationDir, { recursive: true, force: true }).catch(() => undefined);
     }

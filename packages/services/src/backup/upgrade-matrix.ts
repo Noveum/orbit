@@ -63,8 +63,6 @@ export async function runScenarioBackupRestore(
   confirmDestructiveTarget?: string | undefined,
 ): Promise<UpgradeScenarioResult> {
   const start = performance.now();
-  const folder = defaultMigrationsFolder(migrationsFolder);
-  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-br-'));
   if (confirmDestructiveTarget === undefined || confirmDestructiveTarget.length === 0) {
     return {
       id: 'backup_restore',
@@ -75,6 +73,8 @@ export async function runScenarioBackupRestore(
     };
   }
 
+  const folder = defaultMigrationsFolder(migrationsFolder);
+  const tempDir = await mkdtemp(join(tmpdir(), 'orbit-matrix-br-'));
   const encryptionKey = randomBytes(32).toString('hex');
 
   try {

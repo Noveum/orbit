@@ -121,7 +121,8 @@ a clean `backup:restore`:
 
 ```sql
 UPDATE public.orbit_recovery_state
-SET status = 'ready', error = NULL, updated_at = NOW();
+SET status = 'ready', error = NULL, updated_at = NOW()
+WHERE id = 'readiness' AND status = 'validation_failed';
 ```
 
 Verify that the health check responds with HTTP 200:
