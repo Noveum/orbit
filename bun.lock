@@ -268,6 +268,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",
     "@lezer/highlight": "^1.2.5",
+    "prosemirror-view": "^1.42.6",
   },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
