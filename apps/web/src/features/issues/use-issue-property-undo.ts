@@ -33,7 +33,6 @@ export type IssueUndoEntry = PropertyUndoEntry | MoveUndoEntry;
 
 const tabUndoStack: IssueUndoEntry[] = [];
 const tabRedoStack: IssueUndoEntry[] = [];
-
 let actionSequenceCounter = 0;
 
 export function nextActionSequence(): number {
@@ -95,6 +94,31 @@ function isMoveEntry(entry: IssueUndoEntry): entry is MoveUndoEntry {
   return entry.propertyLabel === 'Move';
 }
 
+function refreshMoveExpected(issue: Issue, expected: IssueMoveExpected): IssueMoveExpected {
+  const refreshed: IssueMoveExpected = {
+    stateId: issue.stateId,
+    sortOrder: issue.sortOrder,
+  };
+
+  if (expected.assigneeId !== undefined) {
+    refreshed.assigneeId = issue.assigneeId;
+  }
+
+  if (expected.projectId !== undefined) {
+    refreshed.projectId = issue.projectId;
+  }
+
+  if (expected.cycleId !== undefined) {
+    refreshed.cycleId = issue.cycleId;
+  }
+
+  if (expected.priority !== undefined) {
+    refreshed.priority = issue.priority as 0 | 1 | 2 | 3 | 4;
+  }
+
+  return refreshed;
+}
+
 export function useIssuePropertyUndo() {
   const inFlightRef = useRef(false);
 
@@ -121,6 +145,7 @@ export function useIssuePropertyUndo() {
         const settled = settlement.issues.find((issue) => issue.id === entry.issue.id);
 
         if (settled === undefined) {
+          tabUndoStack.push(entry);
           return;
         }
 
@@ -135,14 +160,7 @@ export function useIssuePropertyUndo() {
             ...entry.inverse,
             issue: settled,
           },
-          expectedForRedo: {
-            stateId: settled.stateId,
-            sortOrder: settled.sortOrder,
-            assigneeId: settled.assigneeId,
-            projectId: settled.projectId,
-            cycleId: settled.cycleId,
-            priority: settled.priority as 0 | 1 | 2 | 3 | 4,
-          },
+          expectedForRedo: refreshMoveExpected(settled, entry.expectedForRedo),
         });
 
         toast({
@@ -167,8 +185,14 @@ export function useIssuePropertyUndo() {
         title: `Reverted ${entry.propertyLabel}`,
         tone: 'neutral',
       });
-    } catch {
-      return;
+    } catch (error) {
+      tabUndoStack.push(entry);
+
+      toast({
+        title: 'Could not undo',
+        description: error instanceof Error ? error.message : 'Try again.',
+        tone: 'danger',
+      });
     } finally {
       inFlightRef.current = false;
     }
@@ -193,6 +217,7 @@ export function useIssuePropertyUndo() {
         const settled = settlement.issues.find((issue) => issue.id === entry.issue.id);
 
         if (settled === undefined) {
+          tabRedoStack.push(entry);
           return;
         }
 
@@ -207,14 +232,7 @@ export function useIssuePropertyUndo() {
             ...entry.inverse,
             issue: settled,
           },
-          expectedForUndo: {
-            stateId: settled.stateId,
-            sortOrder: settled.sortOrder,
-            assigneeId: settled.assigneeId,
-            projectId: settled.projectId,
-            cycleId: settled.cycleId,
-            priority: settled.priority as 0 | 1 | 2 | 3 | 4,
-          },
+          expectedForUndo: refreshMoveExpected(settled, entry.expectedForUndo),
         });
 
         toast({
@@ -239,8 +257,14 @@ export function useIssuePropertyUndo() {
         title: `Restored ${entry.propertyLabel}`,
         tone: 'neutral',
       });
-    } catch {
-      return;
+    } catch (error) {
+      tabRedoStack.push(entry);
+
+      toast({
+        title: 'Could not redo',
+        description: error instanceof Error ? error.message : 'Try again.',
+        tone: 'danger',
+      });
     } finally {
       inFlightRef.current = false;
     }

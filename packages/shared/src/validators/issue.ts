@@ -63,14 +63,16 @@ export const issueExpectedPropertiesSchema = z
   })
   .strict();
 
-export const issueMoveExpectedSchema = z
-  .object({
-    stateId: idSchema.optional(),
+export const issueMoveExpectedSchema = issueExpectedPropertiesSchema
+  .pick({
+    stateId: true,
+    assigneeId: true,
+    priority: true,
+    projectId: true,
+    cycleId: true,
+  })
+  .extend({
     sortOrder: z.number().optional(),
-    assigneeId: idSchema.nullable().optional(),
-    projectId: idSchema.nullable().optional(),
-    cycleId: idSchema.nullable().optional(),
-    priority: prioritySchema.optional(),
   })
   .strict();
 

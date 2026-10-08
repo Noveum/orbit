@@ -1,25 +1,33 @@
 import '../../../tests-preload.ts';
 
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import React from 'react';
 
-import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { dragSourceSnapshotFor, planDrop } from '@/features/issues/board.tsx';
-import {
+import type { MoveUndoEntry } from '@/features/issues/use-issue-property-undo.ts';
+import type { Issue } from '@/lib/query/schemas.ts';
+import type { MoveInput } from '@/lib/query/use-issues.ts';
+
+const toast = mock();
+
+mock.module('@/components/ui/toast.tsx', () => ({
+  useToast: () => ({ toast, dismiss: mock() }),
+}));
+
+const { dragSourceSnapshotFor, planDrop } = await import('@/features/issues/board.tsx');
+
+const {
   clearTabHistory,
   getTabRedoStackForTests,
   getTabUndoStackForTests,
-  type MoveUndoEntry,
   recordTabMove,
   useIssuePropertyUndo,
-} from '@/features/issues/use-issue-property-undo.ts';
-import { HotkeyProvider } from '@/lib/keyboard/provider.tsx';
-import type { Issue } from '@/lib/query/schemas.ts';
-import type { MoveInput } from '@/lib/query/use-issues.ts';
+} = await import('@/features/issues/use-issue-property-undo.ts');
+
+const { HotkeyProvider } = await import('@/lib/keyboard/provider.tsx');
 
 const mockIssue: Issue = {
   id: 'issue_move_1',
@@ -156,13 +164,33 @@ function createWrapper(queryClient: QueryClient) {
     React.createElement(
       QueryClientProvider,
       { client: queryClient },
-      React.createElement(HotkeyProvider, null, React.createElement(ToastProvider, null, children)),
+      React.createElement(HotkeyProvider, null, children),
     );
+}
+
+function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      mutations: {
+        retry: false,
+      },
+    },
+  });
+}
+
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
 }
 
 describe('Issue move undo and redo', () => {
   beforeEach(() => {
     clearTabHistory();
+    toast.mockClear();
   });
 
   it('plans a move into another state with the destination neighbours', () => {
@@ -255,36 +283,23 @@ describe('Issue move undo and redo', () => {
       expect(body?.expected?.priority).toBe(2);
 
       return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            issue: {
-              ...mockIssue,
-              stateId: 'state_todo',
-              sortOrder: 500,
-              syncId: 2,
-            },
-            rebalanced: [],
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-            },
+        response({
+          issue: {
+            ...mockIssue,
+            stateId: 'state_todo',
+            sortOrder: 500,
+            syncId: 2,
           },
-        ),
+          rebalanced: [],
+        }),
       );
     }) as typeof globalThis.fetch;
 
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        mutations: {
-          retry: false,
-        },
-      },
-    });
+    const queryClient = createQueryClient();
 
     try {
       const entry = moveEntry();
+
       recordTabMove(entry);
 
       const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
@@ -317,6 +332,7 @@ describe('Issue move undo and redo', () => {
       });
 
       unmount();
+
       await act(async () => {
         await queryClient.cancelQueries();
       });
@@ -362,33 +378,19 @@ describe('Issue move undo and redo', () => {
       }
 
       return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            issue: {
-              ...mockIssue,
-              stateId: 'state_todo',
-              sortOrder: 450,
-              syncId: 2,
-            },
-            rebalanced: [],
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-            },
+        response({
+          issue: {
+            ...mockIssue,
+            stateId: 'state_todo',
+            sortOrder: 450,
+            syncId: 2,
           },
-        ),
+          rebalanced: [],
+        }),
       );
     }) as typeof globalThis.fetch;
 
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        mutations: {
-          retry: false,
-        },
-      },
-    });
+    const queryClient = createQueryClient();
 
     try {
       recordTabMove(moveEntry());
@@ -403,6 +405,7 @@ describe('Issue move undo and redo', () => {
       });
 
       expect(requestBodies).toHaveLength(2);
+
       expect(requestBodies[0]).toMatchObject({
         stateId: 'state_todo',
         expected: {
@@ -414,6 +417,7 @@ describe('Issue move undo and redo', () => {
           priority: 2,
         },
       });
+
       expect(requestBodies[1]).toMatchObject({
         stateId: 'state_done',
         expected: {
@@ -427,6 +431,7 @@ describe('Issue move undo and redo', () => {
       });
 
       unmount();
+
       await act(async () => {
         await queryClient.cancelQueries();
       });
@@ -473,54 +478,32 @@ describe('Issue move undo and redo', () => {
 
       if (requestBodies.length === 1) {
         return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              issue: {
-                ...mockIssue,
-                stateId: 'state_todo',
-                sortOrder: 450,
-                syncId: 2,
-              },
-              rebalanced: [],
-            }),
-            {
-              status: 200,
-              headers: {
-                'Content-Type': 'application/json',
-              },
+          response({
+            issue: {
+              ...mockIssue,
+              stateId: 'state_todo',
+              sortOrder: 450,
+              syncId: 2,
             },
-          ),
+            rebalanced: [],
+          }),
         );
       }
 
       return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            issue: {
-              ...mockIssue,
-              stateId: 'state_done',
-              sortOrder: 900,
-              syncId: 3,
-            },
-            rebalanced: [],
-          }),
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-            },
+        response({
+          issue: {
+            ...mockIssue,
+            stateId: 'state_done',
+            sortOrder: 900,
+            syncId: 3,
           },
-        ),
+          rebalanced: [],
+        }),
       );
     }) as typeof globalThis.fetch;
 
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        mutations: {
-          retry: false,
-        },
-      },
-    });
+    const queryClient = createQueryClient();
 
     try {
       recordTabMove(moveEntry());
@@ -535,6 +518,7 @@ describe('Issue move undo and redo', () => {
       });
 
       expect(requestBodies).toHaveLength(2);
+
       expect(requestBodies[0]).toMatchObject({
         stateId: 'state_todo',
         expected: {
@@ -546,6 +530,7 @@ describe('Issue move undo and redo', () => {
           priority: 2,
         },
       });
+
       expect(requestBodies[1]).toMatchObject({
         stateId: 'state_done',
         expected: {
@@ -559,6 +544,237 @@ describe('Issue move undo and redo', () => {
       });
 
       unmount();
+
+      await act(async () => {
+        await queryClient.cancelQueries();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      queryClient.clear();
+    }
+  });
+
+  it('restores a move to undo history and shows a toast when undo fails', async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = ((_url: string | URL | Request, _init?: RequestInit) =>
+      Promise.resolve(
+        response(
+          {
+            error: 'Cannot undo: position was changed by another update.',
+          },
+          409,
+        ),
+      )) as typeof globalThis.fetch;
+
+    const queryClient = createQueryClient();
+
+    try {
+      recordTabMove(moveEntry());
+
+      const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(getTabUndoStackForTests()).toHaveLength(1);
+      expect(getTabRedoStackForTests()).toHaveLength(0);
+      expect(getTabUndoStackForTests()[0]?.propertyLabel).toBe('Move');
+
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Could not undo',
+          tone: 'danger',
+        }),
+      );
+
+      unmount();
+
+      await act(async () => {
+        await queryClient.cancelQueries();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      queryClient.clear();
+    }
+  });
+
+  it('restores a move to redo history and shows a toast when redo fails', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+
+    globalThis.fetch = ((_url: string | URL | Request, _init?: RequestInit) => {
+      requestCount += 1;
+
+      if (requestCount === 1) {
+        return Promise.resolve(
+          response({
+            issue: {
+              ...mockIssue,
+              stateId: 'state_todo',
+              sortOrder: 500,
+              syncId: 2,
+            },
+            rebalanced: [],
+          }),
+        );
+      }
+
+      return Promise.resolve(
+        response(
+          {
+            error: 'Cannot redo: position was changed by another update.',
+          },
+          409,
+        ),
+      );
+    }) as typeof globalThis.fetch;
+
+    const queryClient = createQueryClient();
+
+    try {
+      recordTabMove(moveEntry());
+
+      const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(getTabUndoStackForTests()).toHaveLength(0);
+      expect(getTabRedoStackForTests()).toHaveLength(1);
+
+      await act(async () => {
+        await result.current.redo();
+      });
+
+      expect(getTabUndoStackForTests()).toHaveLength(0);
+      expect(getTabRedoStackForTests()).toHaveLength(1);
+      expect(getTabRedoStackForTests()[0]?.propertyLabel).toBe('Move');
+
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Could not redo',
+          tone: 'danger',
+        }),
+      );
+
+      unmount();
+
+      await act(async () => {
+        await queryClient.cancelQueries();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      queryClient.clear();
+    }
+  });
+
+  it('preserves only the active grouping field when rebuilding move expectations', async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const body =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as {
+              stateId?: string;
+              expected?: {
+                stateId?: string;
+                sortOrder?: number;
+                assigneeId?: string | null;
+                projectId?: string | null;
+                cycleId?: string | null;
+                priority?: number;
+              };
+            })
+          : undefined;
+
+      if (body?.stateId === 'state_todo') {
+        expect(body.expected).toEqual({
+          stateId: 'state_done',
+          sortOrder: 800,
+          assigneeId: null,
+        });
+      } else {
+        expect(body?.expected).toEqual({
+          stateId: 'state_todo',
+          sortOrder: 500,
+          assigneeId: null,
+        });
+      }
+
+      return Promise.resolve(
+        response({
+          issue: {
+            ...mockIssue,
+            stateId: body?.stateId ?? 'state_todo',
+            sortOrder: body?.stateId === 'state_todo' ? 500 : 800,
+            assigneeId: null,
+            projectId: 'project_changed',
+            cycleId: 'cycle_changed',
+            priority: 4,
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    const queryClient = createQueryClient();
+
+    try {
+      const entry = moveEntry({
+        expectedForUndo: {
+          stateId: 'state_done',
+          sortOrder: 800,
+          assigneeId: null,
+        },
+        expectedForRedo: {
+          stateId: 'state_todo',
+          sortOrder: 500,
+          assigneeId: null,
+        },
+      });
+
+      recordTabMove(entry);
+
+      const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      const redoStackAfterUndo = getTabRedoStackForTests();
+
+      expect(redoStackAfterUndo).toHaveLength(1);
+      expect(redoStackAfterUndo[0]?.expectedForRedo).toEqual({
+        stateId: 'state_todo',
+        sortOrder: 500,
+        assigneeId: null,
+      });
+
+      await act(async () => {
+        await result.current.redo();
+      });
+
+      const undoStackAfterRedo = getTabUndoStackForTests();
+
+      expect(undoStackAfterRedo).toHaveLength(1);
+      expect(undoStackAfterRedo[0]?.expectedForUndo).toEqual({
+        stateId: 'state_done',
+        sortOrder: 800,
+        assigneeId: null,
+      });
+
+      unmount();
+
       await act(async () => {
         await queryClient.cancelQueries();
       });
