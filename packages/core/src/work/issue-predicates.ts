@@ -59,17 +59,21 @@ function allOf(clauses: readonly SQL[]): SQL | null {
   return clauses.length === 1 ? first : (and(...clauses) ?? first);
 }
 
-function negateWithNulls(condition: SQL, column: AnyColumn, matchesUnset: boolean): SQL {
+function negateWithNulls(condition: SQL, column: AnyColumn | SQL, matchesUnset: boolean): SQL {
   if (matchesUnset) return not(condition);
   return or(not(condition), isNull(column)) ?? not(condition);
 }
 
-function setPredicate(column: AnyColumn, values: readonly string[], negate: boolean): SQL | null {
+function setPredicate(
+  column: AnyColumn | SQL,
+  values: readonly string[],
+  negate: boolean,
+): SQL | null {
   const ids = values.filter((value) => value !== UNSET_FILTER_VALUE);
   const matchesUnset = ids.length !== values.length;
 
   const parts: SQL[] = [];
-  if (ids.length > 0) parts.push(inArray(column, ids));
+  if (ids.length > 0) parts.push(inArray(sql`${column}`, ids));
   if (matchesUnset) parts.push(isNull(column));
 
   const positive = anyOf(parts);
@@ -397,9 +401,17 @@ function setSql(condition: FilterCondition, context: FilterContext): SQL | null 
     case 'state':
       return setPredicate(schema.issue.stateId, values, negate);
     case 'assignee':
-      return setPredicate(schema.issue.assigneeId, values, negate);
+      return setPredicate(
+        sql`case when ${schema.issue.assigneeAgentId} is not null then 'agent:' || ${schema.issue.assigneeAgentId} else coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) end`,
+        values,
+        negate,
+      );
     case 'creator':
-      return setPredicate(schema.issue.creatorId, values, negate);
+      return setPredicate(
+        sql`case when ${schema.issue.creatorAgentId} is not null then 'agent:' || ${schema.issue.creatorAgentId} else coalesce(${schema.issue.creatorUserId}, ${schema.issue.creatorId}) end`,
+        values,
+        negate,
+      );
     case 'project':
       return setPredicate(schema.issue.projectId, values, negate);
     case 'cycle':

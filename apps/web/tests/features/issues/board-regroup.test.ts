@@ -63,6 +63,9 @@ const sprintColumns = groupIssues(
 );
 
 describe('regroupPatch', () => {
+  it('does not offer agent assignment through a human regrouping patch', () => {
+    expect(regroupPatch('assignee', 'agent:agent_1')).toBeNull();
+  });
   it('moves an issue into the sprint the column represents', () => {
     expect(regroupPatch('cycle', 'cycle_2')).toEqual({ cycleId: 'cycle_2' });
   });
@@ -91,6 +94,71 @@ describe('regroupPatch', () => {
     expect(regroupPatch('creator', 'member_1')).toBeNull();
     expect(regroupPatch('estimate', '3')).toBeNull();
     expect(regroupPatch('none', 'none')).toBeNull();
+  });
+});
+
+describe('agent board assignment display', () => {
+  it('reorders within the current agent column without writing assignment fields', () => {
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build bot',
+      avatar: null,
+      deleted: false,
+    };
+    const rows = [
+      issue({ id: 'first', assignee, sortOrder: 1024 }),
+      issue({ id: 'second', assignee, sortOrder: 2048 }),
+      issue({ id: 'third', assignee, sortOrder: 3072 }),
+    ];
+    const groups = groupIssues(
+      rows,
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+
+    const plan = planDrop(groups, rows, 'third', 'second', 'assignee');
+    expect(plan).toMatchObject({
+      beforeId: 'first',
+      afterId: 'second',
+      beforeOrder: 1024,
+      afterOrder: 2048,
+    });
+    expect(Object.keys(plan ?? {})).toEqual([
+      'issue',
+      'beforeId',
+      'afterId',
+      'beforeOrder',
+      'afterOrder',
+    ]);
+    expect(planDrop(groups, rows, 'third', 'second', 'assignee', undefined, false)).toBeNull();
+  });
+
+  it('preserves human reassignment while rejecting agent assignment and unsupported clearing', () => {
+    const agentIssue = issue({
+      id: 'agent_issue',
+      assignee: { type: 'agent', id: 'agent_1', name: 'Build bot', avatar: null, deleted: false },
+    });
+    const humanIssue = issue({ id: 'human_issue', assigneeId: 'member_1' });
+    const otherAgentIssue = issue({
+      id: 'other_agent_issue',
+      assignee: { type: 'agent', id: 'agent_2', name: 'Other bot', avatar: null, deleted: false },
+    });
+    const rows = [agentIssue, humanIssue, otherAgentIssue];
+    const groups = groupIssues(
+      rows,
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+
+    expect(planDrop(groups, rows, humanIssue.id, 'agent:agent_1', 'assignee')).toBeNull();
+    expect(planDrop(groups, rows, agentIssue.id, otherAgentIssue.id, 'assignee')).toBeNull();
+    expect(planDrop(groups, rows, agentIssue.id, 'none', 'assignee')).toBeNull();
+    expect(planDrop(groups, rows, agentIssue.id, humanIssue.id, 'assignee')).toMatchObject({
+      assigneeId: 'member_1',
+    });
   });
 });
 

@@ -2,6 +2,32 @@ import { boolean, index, pgTable, text, timestamp, uniqueIndex } from 'drizzle-o
 import { user } from './auth.ts';
 import { organization } from './org.ts';
 
+export const agentIdentity = pgTable(
+  'agent_identity',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    ownerUserId: text('owner_user_id').references(() => user.id, { onDelete: 'set null' }),
+    clientId: text('client_id').references(() => oauthApplication.clientId, {
+      onDelete: 'set null',
+    }),
+    name: text('name').notNull(),
+    avatar: text('avatar'),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    ownerNameSnapshot: text('owner_name_snapshot').notNull(),
+    clientNameSnapshot: text('client_name_snapshot').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('agent_identity_org_idx').on(table.organizationId),
+    index('agent_identity_owner_idx').on(table.ownerUserId),
+    index('agent_identity_client_idx').on(table.clientId),
+  ],
+);
+
 export const oauthApplication = pgTable(
   'oauth_application',
   {

@@ -32,11 +32,21 @@ import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog.tsx';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { mergedStateKey, UNGROUPED_ID } from '@/features/filters/grouping.ts';
+import { issueActorGroupKey, mergedStateKey, UNGROUPED_ID } from '@/features/filters/grouping.ts';
 import type { ViewConfig } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import { issueDeletionGeneration } from '@/lib/query/issue-cache-generation.ts';
-import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
+import { summarySearch } from '@/lib/query/issue-search.ts';
+import type {
+  BoardPage,
+  Cycle,
+  Issue,
+  Label,
+  Member,
+  Project,
+  WorkflowState,
+} from '@/lib/query/schemas.ts';
 import type {
   AuthoritativeCachedIssue,
   IssueMoveSettlement,
@@ -48,10 +58,12 @@ import {
   authoritativeCachedIssue,
   useBoardPage,
   useColumnIssues,
+  useIssueSummary,
   useMoveIssue,
 } from '@/lib/query/use-issues.ts';
 import { createBoardSensorController } from './board-sensors.ts';
 import { GroupGlyph } from './group-glyph.tsx';
+import { issueActorLabel } from './issue-actor.tsx';
 import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { projectSupportsTeam } from './project-scope.ts';
@@ -249,7 +261,7 @@ export function moveResultWasSuperseded(
     current.stateId !== settled.stateId ||
     current.cycleId !== settled.cycleId ||
     current.projectId !== settled.projectId ||
-    current.assigneeId !== settled.assigneeId ||
+    issueActorGroupKey(current, 'assignee') !== issueActorGroupKey(settled, 'assignee') ||
     current.priority !== settled.priority ||
     current.sortOrder !== settled.sortOrder
   );
@@ -390,7 +402,7 @@ export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegro
     case 'project':
       return { projectId: id };
     case 'assignee':
-      return { assigneeId: id };
+      return groupId.startsWith('agent:') ? null : { assigneeId: id };
     case 'priority': {
       const priority = Number(groupId);
       return Number.isInteger(priority) && priority >= 0 && priority <= 4 ? { priority } : null;
@@ -478,7 +490,7 @@ function issueBoardFingerprint(issue: Issue): string {
       issue.teamId,
       issue.stateId,
       issue.priority,
-      issue.assigneeId,
+      issueActorGroupKey(issue, 'assignee'),
       issue.projectId,
       issue.cycleId,
       issue.sortOrder,
@@ -539,6 +551,7 @@ function groupMatchesIssue(
   groupBy: GroupByField,
   resolveState: StateResolver | undefined,
 ): boolean {
+  if (groupBy === 'assignee') return issueActorGroupKey(issue, 'assignee') === group.id;
   const groupId =
     groupBy === 'state' && resolveState !== undefined ? resolveState(group.id, issue) : group.id;
   if (groupId === null) return false;
@@ -650,8 +663,16 @@ export function planDrop(
       : targetGroup.id;
   if (groupId === null) return null;
 
-  const regrouping = regroupPatch(groupBy, groupId);
+  const keepsAgentAssignment =
+    groupBy === 'assignee' &&
+    groupId.startsWith('agent:') &&
+    issueActorGroupKey(dragged, 'assignee') === groupId;
+  const regrouping: IssueRegrouping | null = keepsAgentAssignment
+    ? {}
+    : regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
+  if (regrouping.assigneeId === null && resolveIssueActor(dragged, 'assignee')?.type === 'agent')
+    return null;
 
   if (!reorderable) {
     if (regroupingLeavesIssue(regrouping, dragged)) return null;
@@ -747,6 +768,9 @@ export function dragTargetSnapshotFor(
 }
 
 export function regroupingLeavesIssue(regrouping: IssueRegrouping, issue: Issue): boolean {
+  if ('assigneeId' in regrouping && resolveIssueActor(issue, 'assignee')?.type === 'agent') {
+    return false;
+  }
   const entries = Object.entries(regrouping) as [keyof IssueRegrouping, unknown][];
   return entries.every(([field, value]) => issue[field as keyof Issue] === value);
 }
@@ -1023,8 +1047,60 @@ function dragEndTargetFor(
     : { kind: 'invalid' };
 }
 
+function actorColumnTitle(
+  issues: readonly Issue[],
+  groupBy: string | undefined,
+  groupId: string,
+): string | undefined {
+  if (groupBy !== 'assignee' && groupBy !== 'creator') return undefined;
+  const row = issues.find(
+    (issue) => issue[groupBy] !== undefined && issueActorGroupKey(issue, groupBy) === groupId,
+  );
+  const actor = row?.[groupBy];
+  return actor === undefined || actor === null ? undefined : issueActorLabel(actor);
+}
+
+export function actorBoardGroups(
+  groups: readonly IssueGroup[],
+  page: BoardPage | undefined,
+  groupBy: GroupByField,
+  totals?: Readonly<Record<string, number>>,
+  columnTitles?: ReadonlyMap<string, string>,
+): readonly IssueGroup[] {
+  if (groupBy !== 'assignee' && groupBy !== 'creator') return groups;
+  const titles = new Map<string, string>();
+  for (const group of page?.groups ?? []) {
+    const title = actorColumnTitle(group.issues, groupBy, group.id);
+    if (title !== undefined) titles.set(group.id, title);
+  }
+  for (const [id, title] of columnTitles ?? []) titles.set(id, title);
+  const refreshed = groups.map((group) => {
+    const title = titles.get(group.id);
+    return title === undefined || title === group.title ? group : { ...group, title };
+  });
+  const known = new Set(groups.map((group) => group.id));
+  const counts =
+    totals ?? Object.fromEntries((page?.groups ?? []).map((group) => [group.id, group.total]));
+  const additions = Object.entries(counts).flatMap(([id, total]) => {
+    if (known.has(id) || id === UNGROUPED_ID || total === 0) return [];
+    return [
+      {
+        id,
+        title:
+          titles.get(id) ?? (id.startsWith('agent:') ? 'Unknown agent (Agent)' : 'Unknown user'),
+        color: null,
+        category: null,
+        issues: [],
+        subGroups: [],
+        total,
+      },
+    ];
+  });
+  return [...refreshed, ...additions];
+}
+
 export function Board({
-  groups,
+  groups: providedGroups,
   draggable = true,
   reorderable = true,
   properties = DEFAULT_DISPLAY_PROPERTIES,
@@ -1048,6 +1124,25 @@ export function Board({
   const move = useMoveIssue();
   const positionsIncomplete = boardPositionsAreIncomplete(filtered, columnSource?.display);
   const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
+  const column = columnSource ?? EMPTY_COLUMN;
+  const actorSummary = useIssueSummary(
+    summarySearch(null, column.query, groupBy, column.scope),
+    columnSource !== undefined && (groupBy === 'assignee' || groupBy === 'creator'),
+  );
+  const [columnActorTitles, setColumnActorTitles] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
+  const groups = useMemo(
+    () =>
+      actorBoardGroups(
+        providedGroups,
+        boardPage.data,
+        groupBy,
+        actorSummary.data?.groupTotals,
+        columnActorTitles,
+      ),
+    [providedGroups, boardPage.data, groupBy, actorSummary.data?.groupTotals, columnActorTitles],
+  );
   const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragStatus, setDragStatus] = useState('');
@@ -1326,8 +1421,13 @@ export function Board({
   );
 
   const publishRows = useCallback(
-    (groupId: string, rows: readonly Issue[]) => {
+    (groupId: string, rows: readonly Issue[], title?: string) => {
       if (columnSource === undefined) return;
+      if (title !== undefined) {
+        setColumnActorTitles((current) =>
+          current.get(groupId) === title ? current : new Map(current).set(groupId, title),
+        );
+      }
       if (columnRows.current.get(groupId) === rows) return;
       columnRows.current.set(groupId, rows);
       setLoadedRowMap(new Map(columnRows.current));
@@ -1990,7 +2090,7 @@ interface BoardColumnProps {
   ) => void;
   readonly onColumnNode: (id: string, node: HTMLUListElement | null) => void;
   readonly onOpen: (id: string) => void;
-  readonly onRows: (groupId: string, issues: readonly Issue[]) => void;
+  readonly onRows: (groupId: string, issues: readonly Issue[], title?: string) => void;
 }
 
 function BoardColumn({
@@ -2025,10 +2125,11 @@ function BoardColumn({
         : group.issues,
     [ownsData, columnSource, fetched, group.issues, stateById],
   );
+  const actorTitle = actorColumnTitle(fetched, columnSource?.groupBy, group.id);
 
   useLayoutEffect(() => {
-    onRows(group.id, issues);
-  }, [onRows, group.id, issues]);
+    onRows(group.id, issues, actorTitle);
+  }, [onRows, group.id, issues, actorTitle]);
   const columnHasMore = ownsData ? owned.hasNextPage : hasMore;
   const columnLoadingMore = ownsData ? owned.isFetchingNextPage : loadingMore;
   const loadMore = ownsData

@@ -18,6 +18,7 @@ import {
   DOCS_HOME_ROOT,
   DOCS_ROOT,
   ISSUE_FACETS_ROOT,
+  ISSUE_RELATIONS_ROOT,
   ISSUE_ROOT,
   ISSUE_SUMMARY_ROOT,
   ISSUES_ROOT,
@@ -25,7 +26,8 @@ import {
   queryKeys,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
+import { bootstrapSchema } from '@/lib/query/schemas.ts';
 import type { IssuePages } from '@/lib/query/sync.ts';
 
 let capturedHandler: ((actions: SyncAction[]) => void) | null = null;
@@ -172,6 +174,241 @@ function trackInvalidations(client: QueryClient): unknown[][] {
   return seen;
 }
 
+describe('DeltaBridge Actor views', () => {
+  it.each(['remote', 'own'] as const)(
+    'refreshes Human Actor profiles after a raw %s member event completes bootstrap',
+    async (origin) => {
+      const client = mount();
+      const human = {
+        type: 'user' as const,
+        id: 'user_1',
+        name: 'Old',
+        avatar: '/old.png',
+        deleted: false,
+      };
+      const row = issue({
+        creator: human,
+        assigneeId: human.id,
+        assignee: human,
+        owner: human,
+        ownerUserId: human.id,
+      });
+      client.setQueryData(queryKeys.issues(TEAM), {
+        pages: [{ issues: [row], nextCursor: null }],
+        pageParams: [null],
+      });
+      client.setQueryData(queryKeys.issue(row.identifier), detailFor(row, []));
+      const bootstrap = bootstrapSchema.parse({
+        userId: human.id,
+        organizationId: 'org_1',
+        role: 'admin',
+        teams: [],
+        activeTeamId: null,
+        states: [],
+        labels: [],
+        members: [
+          {
+            id: human.id,
+            name: human.name,
+            image: human.avatar,
+            email: 'u@orbit.test',
+            handle: null,
+            role: 'member',
+          },
+        ],
+        projects: [],
+        cycles: [],
+        issues: [row],
+      });
+      const fresh = {
+        ...bootstrap,
+        members: bootstrap.members.map((member) => ({ ...member, name: 'Fresh', image: null })),
+      };
+      client.setQueryData(queryKeys.bootstrap(null), bootstrap);
+      const pending = deferred<typeof bootstrap>();
+      const observer = new QueryObserver(client, {
+        queryKey: queryKeys.bootstrap(null),
+        queryFn: () => pending.promise,
+        staleTime: Number.POSITIVE_INFINITY,
+      });
+      const unsubscribe = observer.subscribe(() => undefined);
+      try {
+        act(() =>
+          capturedHandler?.([
+            action({
+              model: 'member',
+              modelId: 'membership_1',
+              data: {
+                id: 'membership_1',
+                userId: human.id,
+                organizationId: 'org_1',
+                role: 'member',
+              },
+              ...(origin === 'own' ? { originClientId: clientId() } : {}),
+            }),
+          ]),
+        );
+        expect(
+          client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.creator,
+        ).toEqual(human);
+        await waitFor(() =>
+          expect(client.getQueryState(queryKeys.bootstrap(null))?.fetchStatus).toBe('fetching'),
+        );
+        pending.resolve(fresh);
+        await waitFor(() =>
+          expect(
+            client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0]?.creator
+              ?.name,
+          ).toBe('Fresh'),
+        );
+        const updated = client.getQueryData<ReturnType<typeof detailFor>>(
+          queryKeys.issue(row.identifier),
+        )?.issue;
+        for (const role of ['creator', 'assignee', 'owner'] as const)
+          expect(updated?.[role]).toEqual({ ...human, name: 'Fresh', avatar: null });
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
+  it.each(['parent', 'child', 'relation'] as const)(
+    'preserves a newer linked-only %s cache against late deletion and departure',
+    (source) => {
+      const client = mount();
+      client.removeQueries({ queryKey: [ISSUES_ROOT] });
+      const row = issue({
+        syncId: 30,
+        assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: false },
+      });
+      const key =
+        source === 'relation' ? queryKeys.issueRelations('other') : queryKeys.issue('ENG-2');
+      const detail = detailFor(
+        issue({ id: 'other', identifier: 'ENG-2' }),
+        source === 'child' ? [row] : [],
+      );
+      const data =
+        source === 'relation'
+          ? [{ id: 'relation_1', type: 'related', issue: row }]
+          : { ...detail, parent: source === 'parent' ? row : null };
+      client.setQueryData(key, data);
+      const deletion = issueDeletionGeneration(client, row.id);
+      for (const departure of [false, true]) {
+        act(() =>
+          capturedHandler?.([
+            action({ action: 'delete', syncId: 20, data: { id: row.id, syncId: 20, departure } }),
+          ]),
+        );
+        expect(client.getQueryData<typeof data>(key)).toBe(data);
+        expect(issueDeletionGeneration(client, row.id)).toBe(deletion);
+      }
+    },
+  );
+
+  it('cancels stale parent and relation reads before they can replace newer Actor views', async () => {
+    const client = mount();
+    const row = issue();
+    const parentKey = queryKeys.issue('ENG-2');
+    const relationKey = queryKeys.issueRelations('other_issue');
+    const parent = detailFor(issue({ id: 'parent', identifier: 'ENG-2' }), [row]);
+    const relations: IssueRelation[] = [{ id: 'relation_1', type: 'related', issue: row }];
+    client.setQueryData(parentKey, parent);
+    client.setQueryData(relationKey, relations);
+    const pendingParent = deferred<ReturnType<typeof detailFor>>();
+    const pendingRelations = deferred<IssueRelation[]>();
+    const parentRequest = client
+      .fetchQuery({ queryKey: parentKey, queryFn: () => pendingParent.promise })
+      .catch(() => undefined);
+    const relationRequest = client
+      .fetchQuery({ queryKey: relationKey, queryFn: () => pendingRelations.promise })
+      .catch(() => undefined);
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Helper',
+      avatar: null,
+      deleted: false,
+    };
+    act(() =>
+      capturedHandler?.([action({ data: { id: row.id, assignee, syncId: 20 }, syncId: 20 })]),
+    );
+    pendingParent.resolve(parent);
+    pendingRelations.resolve(relations);
+    await Promise.all([parentRequest, relationRequest]);
+    await Promise.resolve();
+    expect(
+      client.getQueryData<ReturnType<typeof detailFor>>(parentKey)?.subIssues[0]?.assignee,
+    ).toEqual(assignee);
+    expect(client.getQueryData<readonly IssueRelation[]>(relationKey)?.[0]?.issue.assignee).toEqual(
+      assignee,
+    );
+  });
+
+  it.each(['live', 'catchup'] as const)(
+    'keeps complete Actors consistent through %s',
+    async (mode) => {
+      const client = mount();
+      trackInvalidations(client);
+      const detailKey = queryKeys.issue('ENG-3');
+      const relationKey = [ISSUE_RELATIONS_ROOT, 'other_issue'] as const;
+      client.setQueryData(detailKey, detailFor(issue(), []));
+      client.setQueryData(relationKey, [{ id: 'relation_1', type: 'related', issue: issue() }]);
+      const listObserver = new QueryObserver(client, {
+        queryKey: queryKeys.issues(TEAM),
+        staleTime: Number.POSITIVE_INFINITY,
+      });
+      const detailObserver = new QueryObserver(client, {
+        queryKey: detailKey,
+        staleTime: Number.POSITIVE_INFINITY,
+      });
+      const unsubscribes = [
+        listObserver.subscribe(() => undefined),
+        detailObserver.subscribe(() => undefined),
+      ];
+      const actor = {
+        type: 'agent' as const,
+        id: 'agent_1',
+        name: 'Helper',
+        avatar: '/helper.png',
+        deleted: true,
+      };
+      const canonical = issue({
+        creator: actor,
+        assignee: actor,
+        owner: null,
+        assigneeAgentId: actor.id,
+        syncId: 42,
+      });
+      const delta = action({ syncId: 42, data: canonical });
+      const originalFetch = globalThis.fetch;
+      try {
+        if (mode === 'live') act(() => capturedHandler?.([delta]));
+        else {
+          observed.length = 0;
+          globalThis.fetch = (() =>
+            Promise.resolve(
+              Response.json({ syncId: 42, truncated: false, actions: [delta] }),
+            )) as unknown as typeof fetch;
+          act(() => capturedResume?.(17));
+          await waitFor(() => expect(observed).toEqual([42]));
+        }
+        const list = client.getQueryData<IssuePages>(queryKeys.issues(TEAM))?.pages[0]?.issues[0];
+        expect(list?.creator).toEqual(actor);
+        expect(list?.assignee).toEqual(actor);
+        expect(list?.owner).toBeNull();
+        expect(
+          client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue.assignee,
+        ).toEqual(actor);
+        expect(
+          client.getQueryData<readonly IssueRelation[]>(relationKey)?.[0]?.issue.assignee,
+        ).toEqual(actor);
+      } finally {
+        globalThis.fetch = originalFetch;
+        for (const unsubscribe of unsubscribes) unsubscribe();
+      }
+    },
+  );
+});
+
 describe('DeltaBridge origin suppression', () => {
   it('applies a delta that originated in another tab of the same user', () => {
     const client = mount();
@@ -316,6 +553,8 @@ describe('DeltaBridge origin suppression', () => {
     const sourceKey = queryKeys.issues(TEAM, `teamId=${TEAM}`);
     const destinationKey = queryKeys.issues('team_design', 'teamId=team_design');
     const detailKey = queryKeys.issue('ENG-3');
+    const relationKey = queryKeys.issueRelations('other_issue');
+    client.setQueryData(relationKey, [{ id: 'relation_1', type: 'related', issue: issue() }]);
     client.setQueryData(sourceKey, {
       pages: [{ issues: [issue()], nextCursor: null }],
       pageParams: [null],
@@ -354,6 +593,7 @@ describe('DeltaBridge origin suppression', () => {
     expect(client.getQueryData<IssuePages>(sourceKey)?.pages[0]?.issues).toEqual([]);
     expect(client.getQueryData<IssuePages>(destinationKey)?.pages[0]?.issues).toEqual([arrived]);
     expect(client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue).toEqual(arrived);
+    expect(client.getQueryData<readonly IssueRelation[]>(relationKey)?.[0]?.issue).toEqual(arrived);
     expect(issueDeletionGeneration(client, 'issue_1')).toBe(deletionGeneration);
     expect(issueRevisionGeneration(client, 'issue_1')).toBe(revisionGeneration + 1);
   });
