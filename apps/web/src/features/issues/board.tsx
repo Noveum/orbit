@@ -25,6 +25,7 @@ import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
+import type { IssueMoveExpected } from '@orbit/shared/validators';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -490,6 +491,45 @@ function sourcePlacementFor(
     beforeOrder: before?.sortOrder ?? null,
     afterOrder: after?.sortOrder ?? null,
   };
+}
+
+function moveExpectedFor(issue: Issue, groupBy: GroupByField): IssueMoveExpected {
+  switch (groupBy) {
+    case 'state':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+      };
+    case 'cycle':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        cycleId: issue.cycleId,
+      };
+    case 'project':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        projectId: issue.projectId,
+      };
+    case 'assignee':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        assigneeId: issue.assigneeId,
+      };
+    case 'priority':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        priority: issue.priority as 0 | 1 | 2 | 3 | 4,
+      };
+    default:
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+      };
+  }
 }
 
 function newestIssueFor(groups: readonly IssueGroup[], issueId: string): Issue | undefined {
@@ -1579,7 +1619,7 @@ export function Board({
         source: session.source,
         sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
-        departedSource: true,
+        departedSource: session.departedSource,
         endVisibilityActivity: session.endVisibilityActivity,
       };
       setDragStatus((current) => dragSourceReturnStatus(session, title, current));
@@ -1849,15 +1889,8 @@ export function Board({
                 issue: settledIssue,
               },
 
-              expectedForUndo: {
-                stateId: settledIssue.stateId,
-                sortOrder: settledIssue.sortOrder,
-              },
-
-              expectedForRedo: {
-                stateId: session.sourcePlacement.issue.stateId,
-                sortOrder: session.sourcePlacement.issue.sortOrder,
-              },
+              expectedForUndo: moveExpectedFor(settledIssue, groupBy),
+              expectedForRedo: moveExpectedFor(session.sourcePlacement.issue, groupBy),
             };
 
             recordTabMove(moveEntry);

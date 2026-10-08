@@ -270,4 +270,25 @@ describe('service-level moveIssue CAS transaction integration', () => {
       }),
     ).rejects.toThrow('Cannot undo: position was changed by another update.');
   });
+
+  it('allows a move when expected state and grouping values still match', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Move CAS matching expectation test',
+    });
+
+    const result = await moveIssue(workspace.admin, issue.id, {
+      teamId: workspace.teamId,
+      stateId: issue.stateId,
+      beforeId: null,
+      afterId: null,
+      expected: {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        assigneeId: issue.assigneeId,
+      },
+    });
+
+    expect(result.issue.id).toBe(issue.id);
+  });
 });

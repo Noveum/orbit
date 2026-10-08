@@ -3,7 +3,7 @@ import '../../../tests-preload.ts';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import React from 'react';
 
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -11,8 +11,8 @@ import type { IssueGroup } from '@/features/filters/grouping.ts';
 import { dragSourceSnapshotFor, planDrop } from '@/features/issues/board.tsx';
 import {
   clearTabHistory,
-  getTabRedoStack,
-  getTabUndoStack,
+  getTabRedoStackForTests,
+  getTabUndoStackForTests,
   type MoveUndoEntry,
   recordTabMove,
   useIssuePropertyUndo,
@@ -134,13 +134,30 @@ function moveEntry(overrides: Partial<MoveUndoEntry> = {}): MoveUndoEntry {
     expectedForUndo: {
       stateId: 'state_done',
       sortOrder: 800,
+      assigneeId: null,
+      projectId: null,
+      cycleId: null,
+      priority: 2,
     },
     expectedForRedo: {
       stateId: 'state_todo',
       sortOrder: 500,
+      assigneeId: null,
+      projectId: null,
+      cycleId: null,
+      priority: 2,
     },
     ...overrides,
   };
+}
+
+function createWrapper(queryClient: QueryClient) {
+  return ({ children }: { readonly children: React.ReactNode }) =>
+    React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      React.createElement(HotkeyProvider, null, React.createElement(ToastProvider, null, children)),
+    );
 }
 
 describe('Issue move undo and redo', () => {
@@ -183,41 +200,59 @@ describe('Issue move undo and redo', () => {
     expect(snapshot.source.position).toBe(2);
   });
 
-  it('creates a move history entry only after the successful move', () => {
+  it('records a move entry in the actual shared undo history', () => {
     const entry = moveEntry();
 
     recordTabMove(entry);
 
-    const stack = getTabUndoStack();
+    const undoStack = getTabUndoStackForTests();
+    const redoStack = getTabRedoStackForTests();
 
-    expect(stack.length).toBe(0);
-    expect(getTabRedoStack().length).toBe(0);
-
-    expect(entry.propertyLabel).toBe('Move');
-    expect(entry.forward.stateId).toBe('state_done');
-    expect(entry.inverse.stateId).toBe('state_todo');
+    expect(undoStack).toHaveLength(1);
+    expect(redoStack).toHaveLength(0);
+    expect(undoStack[0]).toEqual(entry);
   });
 
-  it('stores the move entry in shared history with its sequence', () => {
-    const entry = moveEntry({ sequence: 42 });
+  it('preserves move ordering in the actual shared history', () => {
+    const first = moveEntry({ sequence: 1 });
+    const second = moveEntry({ sequence: 2 });
+    const third = moveEntry({ sequence: 3 });
 
-    recordTabMove(entry);
+    recordTabMove(second);
+    recordTabMove(third);
+    recordTabMove(first);
 
-    expect(entry.sequence).toBe(42);
-    expect(entry.forward.stateId).toBe('state_done');
-    expect(entry.inverse.stateId).toBe('state_todo');
-    expect(entry.expectedForUndo.stateId).toBe('state_done');
-    expect(entry.expectedForRedo.stateId).toBe('state_todo');
+    const undoStack = getTabUndoStackForTests();
+
+    expect(undoStack.map((entry) => entry.sequence)).toEqual([1, 2, 3]);
   });
 
-  it('undoes a successful move and places the entry into redo history', async () => {
+  it('undoes a successful move and transfers the entry to actual redo history', async () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      const body =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as {
+              stateId?: string;
+              expected?: {
+                stateId?: string;
+                sortOrder?: number;
+                assigneeId?: string | null;
+                projectId?: string | null;
+                cycleId?: string | null;
+                priority?: number;
+              };
+            })
+          : undefined;
 
       expect(body?.stateId).toBe('state_todo');
       expect(body?.expected?.stateId).toBe('state_done');
+      expect(body?.expected?.sortOrder).toBe(800);
+      expect(body?.expected?.assigneeId).toBe(null);
+      expect(body?.expected?.projectId).toBe(null);
+      expect(body?.expected?.cycleId).toBe(null);
+      expect(body?.expected?.priority).toBe(2);
 
       return Promise.resolve(
         new Response(
@@ -248,35 +283,40 @@ describe('Issue move undo and redo', () => {
       },
     });
 
-    const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
-      React.createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        React.createElement(
-          HotkeyProvider,
-          null,
-          React.createElement(ToastProvider, null, children),
-        ),
-      );
-
     try {
-      recordTabMove(moveEntry());
+      const entry = moveEntry();
+      recordTabMove(entry);
 
       const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
-        wrapper,
+        wrapper: createWrapper(queryClient),
       });
 
       await act(async () => {
         await result.current.undo();
       });
 
-      await waitFor(() => {
-        expect(getTabUndoStack().length).toBe(0);
-        expect(getTabRedoStack().length).toBe(0);
+      const undoStack = getTabUndoStackForTests();
+      const redoStack = getTabRedoStackForTests();
+
+      expect(undoStack).toHaveLength(0);
+      expect(redoStack).toHaveLength(1);
+      expect(redoStack[0]).toMatchObject({
+        propertyLabel: 'Move',
+        issue: expect.objectContaining({
+          stateId: 'state_todo',
+          sortOrder: 500,
+        }),
+        expectedForRedo: {
+          stateId: 'state_todo',
+          sortOrder: 500,
+          assigneeId: null,
+          projectId: null,
+          cycleId: null,
+          priority: 2,
+        },
       });
 
       unmount();
-
       await act(async () => {
         await queryClient.cancelQueries();
       });
@@ -288,11 +328,16 @@ describe('Issue move undo and redo', () => {
 
   it('refreshes redo expected position from the settled issue after undo', async () => {
     const originalFetch = globalThis.fetch;
+
     const requestBodies: Array<{
       stateId?: string;
       expected?: {
         stateId?: string;
         sortOrder?: number;
+        assigneeId?: string | null;
+        projectId?: string | null;
+        cycleId?: string | null;
+        priority?: number;
       };
     }> = [];
 
@@ -304,6 +349,10 @@ describe('Issue move undo and redo', () => {
               expected?: {
                 stateId?: string;
                 sortOrder?: number;
+                assigneeId?: string | null;
+                projectId?: string | null;
+                cycleId?: string | null;
+                priority?: number;
               };
             })
           : undefined;
@@ -341,22 +390,11 @@ describe('Issue move undo and redo', () => {
       },
     });
 
-    const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
-      React.createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        React.createElement(
-          HotkeyProvider,
-          null,
-          React.createElement(ToastProvider, null, children),
-        ),
-      );
-
     try {
       recordTabMove(moveEntry());
 
       const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
-        wrapper,
+        wrapper: createWrapper(queryClient),
       });
 
       await act(async () => {
@@ -365,25 +403,30 @@ describe('Issue move undo and redo', () => {
       });
 
       expect(requestBodies).toHaveLength(2);
-
       expect(requestBodies[0]).toMatchObject({
         stateId: 'state_todo',
         expected: {
           stateId: 'state_done',
           sortOrder: 800,
+          assigneeId: null,
+          projectId: null,
+          cycleId: null,
+          priority: 2,
         },
       });
-
       expect(requestBodies[1]).toMatchObject({
         stateId: 'state_done',
         expected: {
           stateId: 'state_todo',
           sortOrder: 450,
+          assigneeId: null,
+          projectId: null,
+          cycleId: null,
+          priority: 2,
         },
       });
 
       unmount();
-
       await act(async () => {
         await queryClient.cancelQueries();
       });
@@ -395,11 +438,16 @@ describe('Issue move undo and redo', () => {
 
   it('refreshes undo expected position from the settled issue after redo', async () => {
     const originalFetch = globalThis.fetch;
+
     const requestBodies: Array<{
       stateId?: string;
       expected?: {
         stateId?: string;
         sortOrder?: number;
+        assigneeId?: string | null;
+        projectId?: string | null;
+        cycleId?: string | null;
+        priority?: number;
       };
     }> = [];
 
@@ -411,6 +459,10 @@ describe('Issue move undo and redo', () => {
               expected?: {
                 stateId?: string;
                 sortOrder?: number;
+                assigneeId?: string | null;
+                projectId?: string | null;
+                cycleId?: string | null;
+                priority?: number;
               };
             })
           : undefined;
@@ -470,22 +522,11 @@ describe('Issue move undo and redo', () => {
       },
     });
 
-    const wrapper = ({ children }: { readonly children: React.ReactNode }) =>
-      React.createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        React.createElement(
-          HotkeyProvider,
-          null,
-          React.createElement(ToastProvider, null, children),
-        ),
-      );
-
     try {
       recordTabMove(moveEntry());
 
       const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
-        wrapper,
+        wrapper: createWrapper(queryClient),
       });
 
       await act(async () => {
@@ -494,25 +535,30 @@ describe('Issue move undo and redo', () => {
       });
 
       expect(requestBodies).toHaveLength(2);
-
       expect(requestBodies[0]).toMatchObject({
         stateId: 'state_todo',
         expected: {
           stateId: 'state_done',
           sortOrder: 800,
+          assigneeId: null,
+          projectId: null,
+          cycleId: null,
+          priority: 2,
         },
       });
-
       expect(requestBodies[1]).toMatchObject({
         stateId: 'state_done',
         expected: {
           stateId: 'state_todo',
           sortOrder: 450,
+          assigneeId: null,
+          projectId: null,
+          cycleId: null,
+          priority: 2,
         },
       });
 
       unmount();
-
       await act(async () => {
         await queryClient.cancelQueries();
       });
@@ -520,37 +566,6 @@ describe('Issue move undo and redo', () => {
       globalThis.fetch = originalFetch;
       queryClient.clear();
     }
-  });
-
-  it('preserves chronological order when move entries resolve out of order', () => {
-    const first = moveEntry({
-      sequence: 1,
-      forward: moveInput({
-        stateId: 'state_in_progress',
-      }),
-    });
-
-    const second = moveEntry({
-      sequence: 2,
-      forward: moveInput({
-        stateId: 'state_done',
-      }),
-    });
-
-    const third = moveEntry({
-      sequence: 3,
-      forward: moveInput({
-        stateId: 'state_canceled',
-      }),
-    });
-
-    recordTabMove(second);
-    recordTabMove(third);
-    recordTabMove(first);
-
-    expect(first.sequence).toBe(1);
-    expect(second.sequence).toBe(2);
-    expect(third.sequence).toBe(3);
   });
 
   it('builds a move undo entry whose inverse restores the original source placement', () => {
@@ -563,17 +578,25 @@ describe('Issue move undo and redo', () => {
     expect(entry.inverse.afterOrder).toBe(issueAfter.sortOrder);
   });
 
-  it('uses expected state for undo and expected source state for redo', () => {
+  it('uses grouping-aware expected state for undo and redo', () => {
     const entry = moveEntry();
 
     expect(entry.expectedForUndo).toEqual({
       stateId: 'state_done',
       sortOrder: 800,
+      assigneeId: null,
+      projectId: null,
+      cycleId: null,
+      priority: 2,
     });
 
     expect(entry.expectedForRedo).toEqual({
       stateId: 'state_todo',
       sortOrder: 500,
+      assigneeId: null,
+      projectId: null,
+      cycleId: null,
+      priority: 2,
     });
   });
 });

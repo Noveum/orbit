@@ -1544,6 +1544,22 @@ function assertExpectedMoveState(current: IssueRow, expected: IssueMoveExpected)
   if (expected.sortOrder !== undefined && expected.sortOrder !== current.sortOrder) {
     throw conflict('Cannot undo: position was changed by another update.');
   }
+
+  if (expected.assigneeId !== undefined && expected.assigneeId !== current.assigneeId) {
+    throw conflict('Cannot undo: assignee was changed by another update.');
+  }
+
+  if (expected.projectId !== undefined && expected.projectId !== current.projectId) {
+    throw conflict('Cannot undo: project was changed by another update.');
+  }
+
+  if (expected.cycleId !== undefined && expected.cycleId !== current.cycleId) {
+    throw conflict('Cannot undo: cycle was changed by another update.');
+  }
+
+  if (expected.priority !== undefined && expected.priority !== current.priority) {
+    throw conflict('Cannot undo: priority was changed by another update.');
+  }
 }
 
 export async function moveIssue(

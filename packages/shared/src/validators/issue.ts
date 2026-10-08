@@ -67,6 +67,10 @@ export const issueMoveExpectedSchema = z
   .object({
     stateId: idSchema.optional(),
     sortOrder: z.number().optional(),
+    assigneeId: idSchema.nullable().optional(),
+    projectId: idSchema.nullable().optional(),
+    cycleId: idSchema.nullable().optional(),
+    priority: prioritySchema.optional(),
   })
   .strict();
 

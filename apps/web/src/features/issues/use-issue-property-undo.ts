@@ -73,6 +73,14 @@ export function getTabRedoStack(): readonly PropertyUndoEntry[] {
   return tabRedoStack.filter((entry): entry is PropertyUndoEntry => !isMoveEntry(entry));
 }
 
+export function getTabUndoStackForTests(): readonly IssueUndoEntry[] {
+  return tabUndoStack;
+}
+
+export function getTabRedoStackForTests(): readonly IssueUndoEntry[] {
+  return tabRedoStack;
+}
+
 export function clearTabHistory(): void {
   tabUndoStack.length = 0;
   tabRedoStack.length = 0;
@@ -130,6 +138,10 @@ export function useIssuePropertyUndo() {
           expectedForRedo: {
             stateId: settled.stateId,
             sortOrder: settled.sortOrder,
+            assigneeId: settled.assigneeId,
+            projectId: settled.projectId,
+            cycleId: settled.cycleId,
+            priority: settled.priority as 0 | 1 | 2 | 3 | 4,
           },
         });
 
@@ -198,6 +210,10 @@ export function useIssuePropertyUndo() {
           expectedForUndo: {
             stateId: settled.stateId,
             sortOrder: settled.sortOrder,
+            assigneeId: settled.assigneeId,
+            projectId: settled.projectId,
+            cycleId: settled.cycleId,
+            priority: settled.priority as 0 | 1 | 2 | 3 | 4,
           },
         });
 
