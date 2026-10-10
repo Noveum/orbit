@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { updateOrganization } from '@orbit/core';
+import { createProject, updateOrganization } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import {
   addMember,
@@ -182,6 +182,44 @@ describe('discovery', () => {
       await connected.close();
     }
   });
+
+  it('returns layered workspace, team, and project instructions with markdown headings', async () => {
+    const wsGuidance = 'Workspace level guidance.';
+    const teamGuidance = 'Team conventions and branch rules.';
+    const projectGuidance = 'Project scope and acceptance criteria.';
+
+    await updateOrganization(workspace.admin, { agentInstructions: wsGuidance });
+    await db
+      .update(schema.team)
+      .set({ instructions: teamGuidance })
+      .where(eq(schema.team.id, workspace.teamId));
+
+    const projectCreated = await createProject(workspace.admin, {
+      name: 'Layered Project',
+      instructions: projectGuidance,
+      teamIds: [workspace.teamId],
+    });
+
+    const teamOnly = await admin.result('get_workspace_instructions', { team: workspace.teamKey });
+    expect(teamOnly).toEqual({
+      agentInstructions: `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}`,
+    });
+
+    const projectOnly = await admin.result('get_workspace_instructions', {
+      project: projectCreated.project.slug,
+    });
+    expect(projectOnly).toEqual({
+      agentInstructions: `## Workspace\n\n${wsGuidance}\n\n## Project\n\n${projectGuidance}`,
+    });
+
+    const layered = await admin.result('get_workspace_instructions', {
+      team: workspace.teamKey,
+      project: projectCreated.project.slug,
+    });
+    expect(layered).toEqual({
+      agentInstructions: `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}\n\n## Project\n\n${projectGuidance}`,
+    });
+  });
 });
 
 describe('permissions', () => {
@@ -222,6 +260,47 @@ describe('issues', () => {
     expect(issue.id).toBe(created.id);
     expect(issue.description).toBe('Serve tools over streamable HTTP.');
     expect(issue.labels).toEqual([]);
+  });
+
+  it('includes resolved instructions in get_issue when caller is an agent and omits them for humans', async () => {
+    const wsGuidance = 'Workspace issue guidance.';
+    const teamGuidance = 'Team issue guidance.';
+    const projectGuidance = 'Project issue guidance.';
+
+    await updateOrganization(workspace.admin, { agentInstructions: wsGuidance });
+    await db
+      .update(schema.team)
+      .set({ instructions: teamGuidance })
+      .where(eq(schema.team.id, workspace.teamId));
+
+    const projectCreated = await createProject(workspace.admin, {
+      name: 'Agent Project',
+      instructions: projectGuidance,
+      teamIds: [workspace.teamId],
+    });
+
+    const issueCreated = await newIssue('Agent issue', {
+      project: projectCreated.project.name,
+    });
+
+    const humanFetched = await admin.result('get_issue', { issue: issueCreated.identifier });
+    expect(humanFetched['instructions']).toBeUndefined();
+    expect((humanFetched['issue'] as Record<string, unknown>)['instructions']).toBeUndefined();
+
+    const agentMember = await addMember(workspace, 'member', 'Agent Bot', true);
+    const agentClient = await connect(
+      await mintToken(workspace.organizationId, agentMember.user.id, 'Agent client'),
+    );
+    try {
+      const agentFetched = await agentClient.result('get_issue', {
+        issue: issueCreated.identifier,
+      });
+      const expected = `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}\n\n## Project\n\n${projectGuidance}`;
+      expect(agentFetched['instructions']).toBe(expected);
+      expect((agentFetched['issue'] as Record<string, unknown>)['instructions']).toBe(expected);
+    } finally {
+      await agentClient.close();
+    }
   });
 
   it('filters a search by text, assignee and state category', async () => {

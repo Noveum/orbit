@@ -37,7 +37,7 @@ export async function findPrincipal(
   executor: Executor = db,
 ): Promise<Principal | null> {
   const [membership] = await executor
-    .select({ role: schema.member.role })
+    .select({ role: schema.member.role, isAgent: schema.member.isAgent })
     .from(schema.member)
     .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
     .where(
@@ -63,6 +63,7 @@ export async function findPrincipal(
     organizationId,
     role: isOrgRole(membership.role) ? membership.role : 'guest',
     teamIds: teams.map((row) => row.teamId),
+    isAgent: membership.isAgent,
   };
 }
 

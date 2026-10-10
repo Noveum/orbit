@@ -1,12 +1,17 @@
 'use client';
 
 import type { ProjectHealth, ProjectStatus } from '@orbit/shared/constants';
-import { PROJECT_HEALTHS, PROJECT_STATUSES } from '@orbit/shared/constants';
+import {
+  AGENT_INSTRUCTIONS_MAX_LENGTH,
+  PROJECT_HEALTHS,
+  PROJECT_STATUSES,
+} from '@orbit/shared/constants';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
+import { Textarea } from '@/components/ui/textarea.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { invalidateBootstrap } from '@/lib/query/bootstrap-cache.ts';
@@ -23,6 +28,7 @@ export interface ProjectSettingsFormProps {
   readonly slug: string;
   readonly name: string;
   readonly summary: string;
+  readonly instructions?: string | undefined;
   readonly status: ProjectStatus;
   readonly health: ProjectHealth;
   readonly startDate: string | null;
@@ -42,6 +48,7 @@ export function ProjectSettingsForm({
   slug,
   name,
   summary,
+  instructions: initialInstructions,
   status,
   health,
   startDate,
@@ -61,6 +68,7 @@ export function ProjectSettingsForm({
     startDate: dateValue(startDate),
     targetDate: dateValue(targetDate),
   });
+  const [instructions, setInstructions] = useState(initialInstructions ?? '');
   const [teamIds, setTeamIds] = useState<readonly string[]>(selectedTeamIds);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +89,7 @@ export function ProjectSettingsForm({
         body: {
           name: draft.name,
           summary: draft.summary,
+          instructions: instructions.trim(),
           status: draft.status,
           health: draft.health,
           startDate: draft.startDate.length === 0 ? null : draft.startDate,
@@ -141,6 +150,26 @@ export function ProjectSettingsForm({
           data-testid="project-summary"
           onChange={(event) => setDraft({ ...draft, summary: event.target.value })}
         />
+      </label>
+
+      <label
+        className="flex flex-col gap-1.5 text-2xs text-faint"
+        htmlFor="project-instructions-field"
+      >
+        Agent instructions
+        <Textarea
+          id="project-instructions-field"
+          value={instructions}
+          disabled={!canManage}
+          data-testid="project-instructions"
+          maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
+          rows={5}
+          placeholder="Conventions and guidance for connected agents working on this project."
+          onChange={(event) => setInstructions(event.target.value)}
+        />
+        <span className="text-faint text-xs">
+          {instructions.length} / {AGENT_INSTRUCTIONS_MAX_LENGTH} characters
+        </span>
       </label>
 
       <div className="grid gap-4 sm:grid-cols-2">

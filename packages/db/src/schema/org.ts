@@ -90,6 +90,7 @@ export const team = pgTable(
     description: text('description').notNull().default(''),
     icon: text('icon').notNull().default('circle'),
     color: text('color').notNull().default('#5A63C8'),
+    instructions: text('instructions').notNull().default(''),
     issueCounter: bigint('issue_counter', { mode: 'number' }).notNull().default(0),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -1,5 +1,6 @@
 'use client';
 
+import { AGENT_INSTRUCTIONS_MAX_LENGTH } from '@orbit/shared/constants';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
@@ -15,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
+import { Textarea } from '@/components/ui/textarea.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import type { MemberView, TeamDetail } from './data.ts';
 
@@ -28,12 +30,16 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
   const router = useRouter();
   const [name, setName] = useState(team.name);
   const [description, setDescription] = useState(team.description);
+  const [instructions, setInstructions] = useState(team.instructions ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
 
   const archived = team.archivedAt !== null;
-  const unchanged = name.trim() === team.name && description.trim() === team.description;
+  const unchanged =
+    name.trim() === team.name &&
+    description.trim() === team.description &&
+    instructions.trim() === (team.instructions ?? '');
 
   async function run(action: () => Promise<unknown>): Promise<void> {
     setBusy(true);
@@ -53,7 +59,11 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
     await run(() =>
       apiRequest(`/api/teams/${team.id}`, {
         method: 'PATCH',
-        body: { name: name.trim(), description: description.trim() },
+        body: {
+          name: name.trim(),
+          description: description.trim(),
+          instructions: instructions.trim(),
+        },
       }),
     );
   }
@@ -98,6 +108,21 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
             placeholder="What this team owns"
             disabled={!canManage || busy}
           />
+        </label>
+        <label htmlFor="team-settings-instructions" className="flex flex-col gap-1.5">
+          <span className="font-medium text-dense text-text">Agent instructions</span>
+          <Textarea
+            id="team-settings-instructions"
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
+            rows={5}
+            placeholder="Conventions and guidance for connected agents working on this team's issues."
+            disabled={!canManage || busy}
+          />
+          <span className="text-faint text-xs">
+            {instructions.length} / {AGENT_INSTRUCTIONS_MAX_LENGTH} characters
+          </span>
         </label>
         <div className="flex items-center justify-between gap-3">
           <p className="text-muted text-xs">

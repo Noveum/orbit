@@ -130,6 +130,7 @@ export const project = pgTable(
     health: text('health').notNull().default('no_update'),
     icon: text('icon').notNull().default('box'),
     color: text('color').notNull().default('#5A63C8'),
+    instructions: text('instructions').notNull().default(''),
     leadId: text('lead_id').references(() => user.id, { onDelete: 'set null' }),
     estimateScaleId: text('estimate_scale_id').references(() => estimateScale.id, {
       onDelete: 'set null',

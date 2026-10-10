@@ -28,6 +28,7 @@ export default async function ProjectSettingsPage({
         slug={slug}
         name={detail.summary.name}
         summary={detail.summary.summary}
+        instructions={detail.instructions}
         status={detail.summary.status}
         health={detail.summary.health}
         startDate={detail.startDate}
