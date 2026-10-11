@@ -27,6 +27,7 @@ function renderForm(agentInstructions = 'Prefer concise issue titles') {
       logo={null}
       allowedEmailDomains={['orbit.test']}
       agentInstructions={agentInstructions}
+      projectStalenessDays={14}
       canManage
     />,
   );
@@ -40,6 +41,7 @@ function renderTwoForms() {
         logo={null}
         allowedEmailDomains={['orbit.test']}
         agentInstructions="Prefer concise issue titles"
+        projectStalenessDays={14}
         canManage
       />
       <GeneralForm
@@ -47,6 +49,7 @@ function renderTwoForms() {
         logo={null}
         allowedEmailDomains={['orbit.test']}
         agentInstructions="Prefer concise issue titles"
+        projectStalenessDays={14}
         canManage
       />
     </>,
