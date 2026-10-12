@@ -34,6 +34,6 @@
     "@types/bun": "1.3.14",
     "drizzle-kit": "0.31.11",
     "pg": "8.23.1",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
