@@ -81,6 +81,45 @@ afterAll(() => {
   mock.module('@/components/ui/toast.tsx', () => toastModule);
 });
 
+describe('GeneralForm project staleness', () => {
+  it('rejects a blank staleness window instead of saving zero', async () => {
+    const fetchMock = captureRequest();
+    const user = userEvent.setup();
+    renderForm();
+
+    const input = screen.getByLabelText(/Project staleness window/);
+    await user.clear(input);
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Enter a number of days. Zero turns the nudges off.',
+      ),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((input as HTMLInputElement).value).toBe('');
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicitly entered zero so the nudges can be turned off', async () => {
+    const fetchMock = captureRequest();
+    const user = userEvent.setup();
+    renderForm();
+
+    const input = screen.getByLabelText(/Project staleness window/);
+    await user.clear(input);
+    await user.type(input, '0');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/organizations/current');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(String(init.body))).toMatchObject({ projectStalenessDays: 0 });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
 describe('GeneralForm agent instructions', () => {
   it('renders the current instructions with a locale-independent character count', () => {
     renderForm();

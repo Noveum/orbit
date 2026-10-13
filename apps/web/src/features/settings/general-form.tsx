@@ -22,8 +22,14 @@ export function parseDomains(value: string): string[] {
 }
 
 function stalenessBodyValue(value: string): number {
+  if (value.trim().length === 0) {
+    throw new Error('Enter a number of days. Zero turns the nudges off.');
+  }
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!Number.isInteger(parsed)) {
+    throw new Error('Enter a whole number of days.');
+  }
+  return parsed;
 }
 
 function applyStalenessField(
