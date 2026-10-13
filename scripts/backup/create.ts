@@ -7,17 +7,30 @@ export interface ParsedArgs {
   readonly pgDumpPath?: string | undefined;
   readonly orbitVersion?: string | undefined;
   readonly sourceRevision?: string | undefined;
+  readonly encrypt: boolean;
+  readonly encryptionKeyFile?: string | undefined;
+  readonly encryptionCommand?: string | undefined;
+  readonly encryptionKeyId?: string | undefined;
 }
 
-export function parseArgs(argv: readonly string[]): ParsedArgs {
+function extractFlagMap(argv: readonly string[]): {
+  flags: Map<string, string>;
+  json: boolean;
+  encrypt: boolean;
+} {
   const flags = new Map<string, string>();
   let json = false;
+  let encrypt = false;
 
   for (let index = 2; index < argv.length; index += 1) {
     const item = argv[index];
     if (item === undefined) continue;
     if (item === '--json') {
       json = true;
+      continue;
+    }
+    if (item === '--encrypt') {
+      encrypt = true;
       continue;
     }
     const eqIdx = item.indexOf('=');
@@ -31,6 +44,12 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       index += 1;
     }
   }
+
+  return { flags, json, encrypt };
+}
+
+export function parseArgs(argv: readonly string[]): ParsedArgs {
+  const { flags, json, encrypt: cliEncrypt } = extractFlagMap(argv);
 
   const destination = resolve(
     flags.get('--destination') ??
@@ -47,6 +66,19 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     process.env['SOURCE_REVISION'] ??
     process.env['VERCEL_GIT_COMMIT_SHA'];
 
+  const encryptionKeyFile =
+    flags.get('--encryption-key-file') ?? process.env['ORBIT_BACKUP_ENCRYPTION_KEY_FILE'];
+  const encryptionCommand =
+    flags.get('--encryption-command') ?? process.env['ORBIT_BACKUP_ENCRYPTION_COMMAND'];
+  const encryptionKeyId =
+    flags.get('--encryption-key-id') ?? process.env['ORBIT_BACKUP_ENCRYPTION_KEY_ID'];
+
+  const encrypt =
+    cliEncrypt ||
+    encryptionKeyFile !== undefined ||
+    encryptionCommand !== undefined ||
+    flags.has('--encryption-key-id');
+
   return {
     destination,
     databaseUrl,
@@ -54,6 +86,10 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     pgDumpPath,
     orbitVersion,
     sourceRevision,
+    encrypt,
+    encryptionKeyFile,
+    encryptionCommand,
+    encryptionKeyId,
   };
 }
 
@@ -86,6 +122,10 @@ async function main(): Promise<void> {
       pgDumpPath: args.pgDumpPath,
       orbitVersion: args.orbitVersion,
       sourceRevision: args.sourceRevision,
+      encrypt: args.encrypt,
+      encryptionKeyFile: args.encryptionKeyFile,
+      encryptionCommand: args.encryptionCommand,
+      encryptionKeyId: args.encryptionKeyId,
     });
 
     if (args.json) {
@@ -113,6 +153,11 @@ async function main(): Promise<void> {
       process.stdout.write(
         `Counts: ${result.manifest.counts.workspaces} workspace(s), ${result.manifest.counts.users} user(s), ${result.manifest.counts.attachments} attachment(s), ${result.manifest.counts.issues} issue(s)\n`,
       );
+      if (result.manifest.encryption.enabled) {
+        process.stdout.write(
+          `Encryption: ${result.manifest.encryption.algorithm ?? 'aes-256-gcm'} (key ID: ${result.manifest.encryption.keyId ?? 'default'})\n`,
+        );
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

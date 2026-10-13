@@ -8,7 +8,7 @@ import {
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
 } from '@orbit/shared/constants';
-import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
+import { conflict, DomainError, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
@@ -22,6 +22,7 @@ import {
   truncate,
 } from '@orbit/shared/utils';
 import {
+  createSubIssuesSchema,
   duplicateIssueQuerySchema,
   type IssueExpectedProperties,
   type IssueFilterInput,
@@ -34,6 +35,7 @@ import {
   issueSummaryQuerySchema,
   issueUpdateSchema,
   paginationSchema,
+  type subIssueItemSchema,
 } from '@orbit/shared/validators';
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
@@ -190,6 +192,22 @@ async function allocateIssueNumber(executor: Executor, team: TeamRow): Promise<n
     .returning({ issueCounter: schema.team.issueCounter });
   if (row === undefined) throw notFound('That team does not exist.');
   return row.issueCounter;
+}
+
+async function allocateIssueNumbers(
+  executor: Executor,
+  team: TeamRow,
+  count: number,
+): Promise<number[]> {
+  const [row] = await executor
+    .update(schema.team)
+    .set({ issueCounter: sql`${schema.team.issueCounter} + ${count}` })
+    .where(and(eq(schema.team.id, team.id), eq(schema.team.organizationId, team.organizationId)))
+    .returning({ issueCounter: schema.team.issueCounter });
+  if (row === undefined) throw notFound('That team does not exist.');
+  const end = row.issueCounter;
+  const start = end - count + 1;
+  return Array.from({ length: count }, (_, index) => start + index);
 }
 
 async function topOfColumn(executor: Executor, teamId: string, stateId: string): Promise<number> {
@@ -928,6 +946,169 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         ...notifications,
       ],
     };
+  });
+}
+
+interface SubIssueContext {
+  readonly tx: Executor;
+  readonly principal: Principal;
+  readonly team: TeamRow;
+  readonly parent: IssueRow;
+  readonly defaultState: Awaited<ReturnType<typeof initialStateFor>>;
+  readonly syncId: number;
+  readonly actor: Actor;
+  readonly now: Date;
+}
+
+async function insertSubIssue(
+  context: SubIssueContext,
+  item: z.infer<typeof subIssueItemSchema>,
+  number: number,
+): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+  const { tx, principal, team, parent, defaultState, syncId, actor, now } = context;
+  const state = item.stateId === undefined ? defaultState : await stateOf(tx, item.stateId);
+  if (state.teamId !== team.id) {
+    throw validationFailed('That status belongs to another team.');
+  }
+  const assigneeId = item.assigneeId === undefined ? principal.userId : item.assigneeId;
+  const reviewerIds = [...new Set(item.reviewerIds)].sort();
+  if (assigneeId !== null) {
+    await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
+  }
+  await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
+  await assertAssignableToTeam(tx, principal.organizationId, team.id, {
+    cycleId: item.cycleId ?? null,
+    projectId: item.projectId ?? null,
+    milestoneId: item.milestoneId ?? null,
+  });
+  await assertLabelsUsable(tx, principal.organizationId, team.id, item.labelIds);
+
+  const id = newId();
+  const [created] = await tx
+    .insert(schema.issue)
+    .values({
+      id,
+      organizationId: principal.organizationId,
+      teamId: team.id,
+      number,
+      identifier: issueIdentifier(team.key, number),
+      title: item.title,
+      description: item.description,
+      stateId: state.id,
+      priority: item.priority,
+      creatorId: principal.userId,
+      assigneeId,
+      projectId: item.projectId ?? null,
+      milestoneId: item.milestoneId ?? null,
+      cycleId: item.cycleId ?? null,
+      parentId: parent.id,
+      estimate: item.estimate,
+      dueDate: toDateString(item.dueDate) ?? null,
+      sortOrder: await topOfColumn(tx, team.id, state.id),
+      ...stateTimestamps(state.category, now),
+      syncId,
+    })
+    .returning();
+  const issue = requireRow(created, 'The issue could not be created.');
+
+  await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
+  await replaceLabels(tx, issue.id, item.labelIds);
+  await replaceReviewersFor(tx, [issue.id], reviewerIds);
+  await subscribeUsers(
+    tx,
+    issue.id,
+    [principal.userId, ...(assigneeId ? [assigneeId] : []), ...reviewerIds],
+    syncId,
+  );
+  await appendActivities(tx, [
+    {
+      organizationId: principal.organizationId,
+      issueId: issue.id,
+      actor,
+      field: 'created',
+      from: null,
+      to: { id: state.id, name: state.name },
+      syncId,
+    },
+  ]);
+
+  const notifications = await issueNotifications(tx, principal, actor, [
+    {
+      issue,
+      mentionHandles: newMentions('', issue.description),
+      assigneeId: issue.assigneeId,
+      statusName: null,
+    },
+  ]);
+
+  return {
+    issue,
+    actions: [
+      issueAction(issue, syncId, actor, 'insert', {
+        labelIds: item.labelIds,
+        reviewerIds,
+      }),
+      ...notifications,
+    ],
+  };
+}
+
+export async function createSubIssues(
+  principal: Principal,
+  input: unknown,
+): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
+  assertCan(principal, 'issue:create');
+  const parsed = createSubIssuesSchema.parse(input);
+
+  const parent = await loadIssue(db, principal, parsed.parentId);
+  const allocationTeam = await requireTeam(principal, parent.teamId);
+  const numbers = await allocateIssueNumbers(db, allocationTeam, parsed.issues.length);
+
+  return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, parent.teamId, tx);
+    await assertParentAllowed(tx, principal, newId(), parent.id);
+
+    const defaultState = await initialStateFor(tx, team.id);
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const now = new Date();
+    const context: SubIssueContext = {
+      tx,
+      principal,
+      team,
+      parent,
+      defaultState,
+      syncId,
+      actor,
+      now,
+    };
+
+    const createdIssues: IssueRow[] = [];
+    const allActions: SyncAction[] = [];
+
+    let index = 0;
+    for (const item of parsed.issues) {
+      const issueNumber = numbers[index];
+      index += 1;
+      if (issueNumber === undefined) {
+        throw validationFailed('Could not allocate issue number.');
+      }
+      try {
+        const created = await insertSubIssue(context, item, issueNumber);
+        createdIssues.push(created.issue);
+        allActions.push(...created.actions);
+      } catch (error) {
+        if (error instanceof DomainError) {
+          throw new DomainError(error.code, `Failed on item ${index}: ${error.message}`, {
+            cause: error,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        }
+        throw error;
+      }
+    }
+
+    return { issues: createdIssues, actions: allActions };
   });
 }
 
