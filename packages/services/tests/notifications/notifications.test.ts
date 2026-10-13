@@ -1312,6 +1312,33 @@ describe('notifyMany', () => {
     });
   });
 
+  it('completes generated sources even when a fanout delivers nothing', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.insert(notificationPreference).values(
+        NOTIFICATION_CHANNELS.map((channel) => ({
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel,
+          type: 'comment_created',
+          enabled: false,
+        })),
+      );
+
+      const muted = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
+      const empty = await notifyMany(tx, [eventFor(fixture, { userIds: [] })]);
+
+      expect(muted.notifications).toHaveLength(0);
+      expect(empty.notifications).toHaveLength(0);
+      const sources = await tx
+        .select({ fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt })
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.organizationId, fixture.organizationId));
+      expect(sources).toHaveLength(2);
+      expect(sources.every((source) => source.fanoutCompletedAt !== null)).toBe(true);
+    });
+  });
+
   it('completes a durable source whose only delivery is a shared Slack channel', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

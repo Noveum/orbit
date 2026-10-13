@@ -426,7 +426,18 @@ export async function notifyMany(
       now,
       slackEnabled,
     );
-    await completeNotificationSources(database, claimedSources, now, slackDeliveredSourceIds);
+    await completeNotificationSources(
+      database,
+      claimedSources,
+      now,
+      deliveredSourceIds(
+        [],
+        activeEvents,
+        generatedSourceKeys,
+        claimedSources,
+        slackDeliveredSourceIds,
+      ),
+    );
     return { ...emptyOutcome(), deduped };
   }
 
@@ -519,7 +530,18 @@ export async function notifyMany(
       now,
       slackEnabled,
     );
-    await completeNotificationSources(database, claimedSources, now, slackDeliveredSourceIds);
+    await completeNotificationSources(
+      database,
+      claimedSources,
+      now,
+      deliveredSourceIds(
+        [],
+        activeEvents,
+        generatedSourceKeys,
+        claimedSources,
+        slackDeliveredSourceIds,
+      ),
+    );
     return { ...emptyOutcome(), deduped };
   }
 
@@ -565,7 +587,13 @@ export async function notifyMany(
     database,
     claimedSources,
     now,
-    deliveredSourceIds(plans, slackDeliveredSourceIds),
+    deliveredSourceIds(
+      plans,
+      activeEvents,
+      generatedSourceKeys,
+      claimedSources,
+      slackDeliveredSourceIds,
+    ),
   );
 
   const outcome = buildOutcome(plans, rows, deduped);
@@ -663,11 +691,22 @@ async function claimNotificationSources(
 
 function deliveredSourceIds(
   plans: readonly Plan[],
+  events: readonly ParsedEvent[],
+  generatedSourceKeys: ReadonlySet<string>,
+  claimedSources: ReadonlyMap<string, string>,
   slackDeliveredSourceIds: ReadonlySet<string>,
 ): ReadonlySet<string> {
   const delivered = new Set(slackDeliveredSourceIds);
   for (const plan of plans) {
     if (plan.sourceEventId !== null) delivered.add(plan.sourceEventId);
+  }
+  for (const event of events) {
+    if (event.source === undefined) continue;
+    if (!generatedSourceKeys.has(event.source.sourceEventKey)) continue;
+    const sourceEventId = claimedSources.get(
+      sourceIdentity(event.organizationId, event.source.sourceEventKey),
+    );
+    if (sourceEventId !== undefined) delivered.add(sourceEventId);
   }
   return delivered;
 }
