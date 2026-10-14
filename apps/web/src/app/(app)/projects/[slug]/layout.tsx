@@ -2,7 +2,7 @@ import { listMembers, listTeams } from '@orbit/core';
 import { can } from '@orbit/shared/policy';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { cache, type ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Donut } from '@/features/charts/donut.tsx';
 import { LineChart } from '@/features/charts/line-chart.tsx';
@@ -11,21 +11,30 @@ import { HealthChip, STATUS_LABELS } from '@/features/projects/health-chip.tsx';
 import { ProjectFields } from '@/features/projects/project-fields.tsx';
 import { ProjectTabs } from '@/features/projects/project-tabs.tsx';
 import { pageContext } from '@/lib/api/handler.ts';
+import { pageMetadata } from '@/lib/page-metadata.ts';
 
 interface LayoutProps {
   readonly params: Promise<{ slug: string }>;
   readonly children: ReactNode;
 }
 
+const loadProject = cache(async (slug: string) => {
+  const { principal } = await pageContext();
+  return { principal, detail: await findProjectDetail(principal, slug) };
+});
+
 export async function generateMetadata({ params }: LayoutProps): Promise<Metadata> {
   const { slug } = await params;
-  return { title: slug };
+  const name = await loadProject(slug).then(
+    (project) => project.detail?.summary.name,
+    () => undefined,
+  );
+  return pageMetadata(name ?? slug, `/projects/${slug}`);
 }
 
 export default async function ProjectLayout({ params, children }: LayoutProps) {
   const { slug } = await params;
-  const { principal } = await pageContext();
-  const detail = await findProjectDetail(principal, slug);
+  const { principal, detail } = await loadProject(slug);
   if (detail === null) notFound();
 
   const [teams, members] = await Promise.all([listTeams(principal), listMembers(principal)]);

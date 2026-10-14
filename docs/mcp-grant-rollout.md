@@ -2,7 +2,9 @@
 
 ## Stage 3a: compatibility preparation
 
-Start from PR1 commit `edcc0c6ac4c80fb1b6a95783b325ce0cb394a688`.
+Start from PR1 commit `911cfcbc19140b2b4e8f97ee3ce553f1b718d877`.
+This stage includes its synchronized `0030_actor_schema_expand` migration,
+which preserves all Owner values, including NULL.
 Apply migration `0031_mcp_grant_compatibility` before deploying stage 3a.
 The PR1 binary continues to use its global client/user index and old columns.
 No grants, tokens or consents are revoked by the migration. No identities are
@@ -50,7 +52,15 @@ prevents a removed and rejoined owner from reviving an old grant.
 
 ## Stage 3b: deployment prerequisites
 
-Stage 3b must be a separate review and release based on completed stage 3a.
+Stages 3a and 3b may be reviewed together, but require separate release and
+deployment artifacts. This checkout contains `0031_mcp_grant_compatibility`
+and the stage 3a runtime, without the stage 3b migration or consent runtime.
+Release PR1 and deploy its runtime first. Then use this stage 3a checkout to
+apply `0031` and deploy its runtime to all related instances. Only afterward
+release and deploy stage 3b from its separate checkout. Running release from
+the final stage 3b checkout applies all pending migrations without pausing for
+the required intermediate stage 3a deployment.
+
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
 `ORBIT_AGENT_MCP` disabled during migration and deployment. Never run the stage
