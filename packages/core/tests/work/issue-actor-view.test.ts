@@ -268,7 +268,7 @@ describe('issue actor reads', () => {
     });
     expect(created.issue.creator.type).toBe('user');
     expect(created.issue.assignee?.id).toBe(workspace.admin.userId);
-    expect(created.issue.owner?.id).toBe(workspace.admin.userId);
+    expect(created.issue.owner).toBeNull();
     expect(created.actions.find((action) => action.model === 'issue')?.data['creator']).toEqual(
       created.issue.creator,
     );
@@ -278,7 +278,7 @@ describe('issue actor reads', () => {
     });
     expect(assigned.issue.assignee).toEqual(created.issue.assignee);
     expect(assigned.issue.creator).toEqual(fixture.actor);
-    expect(assigned.issue.owner).toEqual(created.issue.owner);
+    expect(assigned.issue.owner).toEqual(created.issue.creator);
     const noChange = await updateIssue(workspace.admin, fixture.id, {
       title: assigned.issue.title,
     });
