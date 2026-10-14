@@ -202,7 +202,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           open={openMenu === 'assignee'}
           onOpenChange={toggle('assignee')}
           options={[
-            { id: 'none', label: 'No assignee', disabled: assignee?.type === 'agent' },
+            { id: 'none', label: 'No assignee' },
             ...workspace.members.map((member) => ({
               id: member.id,
               label: member.name,
@@ -211,7 +211,6 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           ]}
           selected={assignee?.type === 'agent' ? [] : [assignee?.id ?? 'none']}
           onSelect={(value) => {
-            if (assignee?.type === 'agent' && value === 'none') return;
             patch({ assigneeId: value === 'none' ? null : value }, 'Assignee');
           }}
         >

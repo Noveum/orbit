@@ -671,8 +671,6 @@ export function planDrop(
     ? {}
     : regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
-  if (regrouping.assigneeId === null && resolveIssueActor(dragged, 'assignee')?.type === 'agent')
-    return null;
 
   if (!reorderable) {
     if (regroupingLeavesIssue(regrouping, dragged)) return null;

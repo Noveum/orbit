@@ -133,14 +133,14 @@ export function AssigneeControl({
 
   const options = useMemo<PropertyOption[]>(
     () => [
-      { id: '', label: 'No assignee', disabled: actor?.type === 'agent' },
+      { id: '', label: 'No assignee' },
       ...workspace.members.map((member) => ({
         id: member.id,
         label: member.name,
         icon: <Avatar name={member.name} src={member.image} size="xs" />,
       })),
     ],
-    [workspace.members, actor?.type],
+    [workspace.members],
   );
 
   return (
@@ -152,7 +152,6 @@ export function AssigneeControl({
       testId="card-assignee-menu"
       onSelect={(value) => {
         const assigneeId = value === '' ? null : value;
-        if (actor?.type === 'agent' && assigneeId === null) return;
         if (actor?.type === 'agent' || assigneeId !== issue.assigneeId) {
           update.mutate({ issue, patch: { assigneeId } });
         }

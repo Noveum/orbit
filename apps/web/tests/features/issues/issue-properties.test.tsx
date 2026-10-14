@@ -303,7 +303,7 @@ describe('Issue actor properties', () => {
     expect(screen.getByTestId('property-assignee')).not.toHaveTextContent('Deleted');
   });
 
-  it('keeps the human assignee menu while withholding unsupported agent clearing', async () => {
+  it('clears an agent assignee while preserving the human assignee menu', async () => {
     const user = userEvent.setup();
     mountProperties(
       issue({
@@ -313,12 +313,13 @@ describe('Issue actor properties', () => {
 
     await user.click(screen.getByTestId('property-assignee'));
     const clear = screen.getByRole('menuitemradio', { name: 'No assignee' });
-    expect(clear).toHaveAttribute('data-disabled');
+    expect(clear).not.toHaveAttribute('data-disabled');
     expect(clear).toHaveAttribute('aria-checked', 'false');
     await user.click(clear);
-    expect(patches).toEqual([]);
+    expect(patches).toEqual([{ assigneeId: null }]);
+    await user.click(screen.getByTestId('property-assignee'));
     await user.click(screen.getByRole('menuitemradio', { name: firstReviewer.name }));
-    expect(patches).toEqual([{ assigneeId: firstReviewer.id }]);
+    expect(patches).toEqual([{ assigneeId: null }, { assigneeId: firstReviewer.id }]);
   });
 
   it('shows the parent agent assignee without turning it into an unassigned user', () => {
