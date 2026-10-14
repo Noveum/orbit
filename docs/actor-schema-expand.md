@@ -35,22 +35,24 @@ without the protection. The trigger handles INSERT and UPDATE OF `creator_id`,
 `assignee_id` only.
 
 - INSERT mirrors the Human Creator and Assignee, clears their Agent columns,
-  and initializes an empty Owner from the Assignee.
+  and preserves the supplied Owner value, including NULL.
 - Changing the legacy Creator mirrors its Human ID and clears its Agent ID.
 - Changing or clearing the legacy Assignee mirrors its Human ID and clears its
-  Agent ID. A non-null assignment initializes an empty Owner.
-- Reassignment and clearing the Assignee preserve an existing Owner.
-- Unrelated updates and FK-driven Owner clearing do not initialize an Owner.
+  Agent ID.
+- Assignment, reassignment and clearing the Assignee preserve all Owner values,
+  including NULL.
+- Unrelated updates preserve all Owner values. User deletion clears its Owner
+  reference to NULL without initializing a replacement.
 
 This covers service create, update, bulk and sub-issue writes, workspace starter
 content, member removal, imports and seeds. Human legacy columns are the write
 authority during this phase. The trigger does not enable Agent writes.
 
-Historical Human rows mirror the legacy IDs and initialize a missing Owner from
-the current Assignee. Replaying the backfill preserves existing Owners. It does
-not modify business timestamps, Sync IDs or the Sync sequence, and produces no
-Activity, notifications or realtime events. No Grant, Token or Consent row is
-changed, and `mcp_grant_client_user_unique` stays available for consent upsert.
+Historical Human rows mirror the legacy IDs and leave Owner NULL. Replaying the
+backfill preserves all Owner values, including NULL. It does not modify business
+timestamps, Sync IDs or the Sync sequence, and produces no Activity, notifications
+or realtime events. No Grant, Token or Consent row is changed, and
+`mcp_grant_client_user_unique` stays available for consent upsert.
 
 ## Release and baseline
 
@@ -69,11 +71,9 @@ also applies when later migrations need baselining after a recorded expansion.
 Repair preserves business timestamps, Sync IDs, and all Owner values, including
 NULL. It produces no Activity, notifications or realtime events.
 
-Release does not rerun the historical Owner backfill for a completed migration.
-Assignments made while the trigger was unavailable can leave an Owner missing
-or prevent its first initialization. Their history cannot be reconstructed from
-the current Assignee. Any Owner correction requires independent historical
-evidence and an explicit repair; release does not infer it.
+Release never infers an Owner from the Creator or Assignee. Owner is nullable
+storage for explicit ownership semantics in a later write phase. This phase
+does not initialize Owner in migrations or application writes.
 
 `db:push` does not install SQL functions or triggers. Compatibility acceptance
 therefore uses a dedicated test database upgraded from the official old chain,
@@ -89,6 +89,8 @@ legacy SQL writes and deletes. Its isolated child script invokes unchanged
 main Core services for new workspace starter content, Issue creation and
 assignment changes, Grant upsert and MCP token validation. Release tests cover
 empty installation, missing and partial ledgers, artifact repair and repeats.
+Owner coverage checks that NULL remains NULL, an explicit Owner survives legacy
+writes and repeated backfill, and User deletion clears its Owner reference.
 
 The next reader phase should expose `creator`, `assignee` and `owner` from the
 new columns, retain legacy Human IDs, and use `deleted_at` for Agent tombstones.

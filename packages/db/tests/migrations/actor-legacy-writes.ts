@@ -57,7 +57,7 @@ async function runChecks(): Promise<void> {
     strictEqual(issue.creatorAgentId, null);
     strictEqual(issue.assigneeUserId, issue.assigneeId);
     strictEqual(issue.assigneeAgentId, null);
-    strictEqual(issue.ownerUserId, issue.assigneeId);
+    strictEqual(issue.ownerUserId, null);
   }
 
   const assignee = await createUser(`Legacy assignee ${suffix}`);
@@ -83,7 +83,7 @@ async function runChecks(): Promise<void> {
   );
   deepStrictEqual(
     [created.issue.assigneeId, created.issue.assigneeUserId, created.issue.ownerUserId],
-    [owner.id, owner.id, owner.id],
+    [owner.id, owner.id, null],
   );
 
   const unassigned = await issues.createIssue(principal, {
@@ -100,19 +100,19 @@ async function runChecks(): Promise<void> {
   });
   deepStrictEqual(
     [assigned.issue.assigneeId, assigned.issue.assigneeUserId, assigned.issue.ownerUserId],
-    [assignee.id, assignee.id, assignee.id],
+    [assignee.id, assignee.id, null],
   );
   const reassigned = await issues.updateIssue(principal, unassigned.issue.id, {
     assigneeId: owner.id,
   });
   deepStrictEqual(
     [reassigned.issue.assigneeId, reassigned.issue.assigneeUserId, reassigned.issue.ownerUserId],
-    [owner.id, owner.id, assignee.id],
+    [owner.id, owner.id, null],
   );
   const cleared = await issues.updateIssue(principal, unassigned.issue.id, { assigneeId: null });
   deepStrictEqual(
     [cleared.issue.assigneeId, cleared.issue.assigneeUserId, cleared.issue.ownerUserId],
-    [null, null, assignee.id],
+    [null, null, null],
   );
   strictEqual(cleared.issue.assigneeAgentId, null);
 

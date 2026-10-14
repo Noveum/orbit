@@ -329,7 +329,7 @@ describe('actor schema expansion compatibility', () => {
         creator_agent_id: null,
         assignee_user_id: 'expand-first',
         assignee_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
       expect(await readActors(tx, 'history-unassigned')).toMatchObject({
         creator_user_id: 'expand-creator',
@@ -361,7 +361,7 @@ describe('actor schema expansion compatibility', () => {
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
         assignee_id: 'expand-second',
         assignee_user_id: 'expand-second',
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
       const [issue] = await tx`
         select sync_id::text as sync_id, updated_at::text as updated_at
@@ -371,7 +371,7 @@ describe('actor schema expansion compatibility', () => {
     });
   });
 
-  it('synchronizes old inserts, reassignments and clearing without replacing the owner', async () => {
+  it('synchronizes old inserts, reassignments and clearing while leaving the owner null', async () => {
     await rolledBack(async (tx) => {
       await insertLegacyIssue(tx, 'expand-first');
       expect(await readActors(tx, 'legacy-write')).toEqual({
@@ -381,26 +381,26 @@ describe('actor schema expansion compatibility', () => {
         creator_agent_id: null,
         assignee_user_id: 'expand-first',
         assignee_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
       await tx`update issue set assignee_id = 'expand-second' where id = 'legacy-write'`;
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
         assignee_id: 'expand-second',
         assignee_user_id: 'expand-second',
         assignee_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
       await tx`update issue set assignee_id = null where id = 'legacy-write'`;
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
         assignee_id: null,
         assignee_user_id: null,
         assignee_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
     });
   });
 
-  it('initializes an empty owner on the first assignment and ignores unrelated updates', async () => {
+  it('leaves an empty owner null on assignments and unrelated updates', async () => {
     await rolledBack(async (tx) => {
       await insertLegacyIssue(tx, null);
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
@@ -410,9 +410,8 @@ describe('actor schema expansion compatibility', () => {
       await tx`update issue set assignee_id = 'expand-first' where id = 'legacy-write'`;
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
         assignee_user_id: 'expand-first',
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
-      await tx`update issue set owner_user_id = null where id = 'legacy-write'`;
       await tx`update issue set title = 'Unrelated change' where id = 'legacy-write'`;
       await tx`update issue set assignee_id = assignee_id where id = 'legacy-write'`;
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
@@ -422,7 +421,7 @@ describe('actor schema expansion compatibility', () => {
       await tx`update issue set assignee_id = 'expand-second' where id = 'legacy-write'`;
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
         assignee_user_id: 'expand-second',
-        owner_user_id: 'expand-second',
+        owner_user_id: null,
       });
     });
   });
@@ -434,13 +433,50 @@ describe('actor schema expansion compatibility', () => {
         creator_id: 'expand-second',
         creator_user_id: 'expand-second',
         creator_agent_id: null,
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
+      });
+    });
+  });
+
+  it('preserves an explicit owner during legacy inserts, changes and repeated backfill', async () => {
+    await rolledBack(async (tx) => {
+      await tx`
+        insert into issue (
+          id, organization_id, team_id, number, identifier, title, state_id,
+          creator_id, assignee_id, owner_user_id
+        ) values (
+          'legacy-write', 'expand-org', 'expand-team', 3, 'EXP-3', 'Explicit owner',
+          'expand-state', 'expand-creator', 'expand-first', 'expand-creator'
+        )
+      `;
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        assignee_user_id: 'expand-first',
+        owner_user_id: 'expand-creator',
+      });
+      await tx`
+        update issue set creator_id = 'expand-second', assignee_id = 'expand-second'
+        where id = 'legacy-write'
+      `;
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        creator_user_id: 'expand-second',
+        assignee_user_id: 'expand-second',
+        owner_user_id: 'expand-creator',
+      });
+      await tx`update issue set assignee_id = null where id = 'legacy-write'`;
+      await tx`update issue set creator_user_id = null where id = 'legacy-write'`;
+      await tx.unsafe(backfillStatement(expansion));
+      await tx.unsafe(backfillStatement(expansion));
+      expect(await readActors(tx, 'legacy-write')).toMatchObject({
+        creator_user_id: 'expand-second',
+        assignee_user_id: null,
+        owner_user_id: 'expand-creator',
       });
     });
   });
 
   it('allows deleting a former owner without undoing the owner foreign key action', async () => {
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`update issue set assignee_id = 'expand-second' where id = 'history-assigned'`;
       await tx`delete from "user" where id = 'expand-first'`;
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
@@ -455,6 +491,7 @@ describe('actor schema expansion compatibility', () => {
 
   it('allows deleting the current assignee with both old and new foreign keys', async () => {
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`update issue set assignee_id = 'expand-second' where id = 'history-assigned'`;
       await tx`delete from "user" where id = 'expand-second'`;
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
@@ -464,6 +501,7 @@ describe('actor schema expansion compatibility', () => {
       });
     });
     await rolledBack(async (tx) => {
+      await tx`update issue set owner_user_id = 'expand-first' where id = 'history-assigned'`;
       await tx`delete from "user" where id = 'expand-first'`;
       expect(await readActors(tx, 'history-assigned')).toMatchObject({
         assignee_id: null,
@@ -529,7 +567,7 @@ describe('actor schema expansion compatibility', () => {
       expect(await readActors(tx, 'legacy-write')).toMatchObject({
         creator_user_id: 'expand-creator',
         assignee_user_id: 'expand-first',
-        owner_user_id: 'expand-first',
+        owner_user_id: null,
       });
     });
   }, 60_000);
