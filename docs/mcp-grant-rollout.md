@@ -59,6 +59,11 @@ prevents a removed and rejoined owner from reviving an old grant.
 Deployable stage 3a artifact: commit
 `94b92a2e50f24defb8ce22a3a4110795de686e5c`, including compatibility commit
 `9d3e91fbe493519b1d3b15565b38f081f3183f17`.
+This artifact is on branch `feature/agent-grant-compatibility`; it contains
+`0031` and the stage 3a runtime, without `0032` or the stage 3b consent runtime.
+Use branch `feature/agent-consent-binding` for the final stage 3b artifact.
+Record the exact verified commit from that branch before release and build,
+then deploy the runtime built from the same checkout.
 
 Migration `0032_mcp_agent_grant_binding` removes only the old global unique
 index and adds one active agent grant per identity. It preserves the legacy
