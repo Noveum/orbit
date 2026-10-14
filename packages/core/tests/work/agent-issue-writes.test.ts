@@ -15,6 +15,7 @@ import {
   addMember,
   createWorkspace,
   resetDatabase,
+  stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
 import { agentIssueWriteContext } from '../../src/work/agent-issue-context.ts';
@@ -25,6 +26,7 @@ import {
   createSubIssues,
   deleteIssue,
   getIssue,
+  listIssues,
   markAsDuplicate,
   moveIssue,
   removeRelation,
@@ -394,6 +396,85 @@ describe('Agent Issue write boundary', () => {
 });
 
 describe('Issue Actor and Human responsibility', () => {
+  it.each(['edit', 'move', 'unassign'] as const)(
+    'includes Human-created Issues in AI-only results after canonical Agent %s activity',
+    async (operation) => {
+      const agent = await connection();
+      const row = await humanIssue();
+      await humanIssue('Human only');
+      expect((await listIssues(workspace.admin, { aiOnly: true })).issues).toEqual([]);
+
+      if (operation === 'edit')
+        await updateIssue(owner.principal, row.id, { title: 'Agent edited' }, db, agent.context);
+      if (operation === 'move')
+        await moveIssue(
+          owner.principal,
+          row.id,
+          { stateId: stateNamed(workspace, 'Todo').id },
+          agent.context,
+        );
+      if (operation === 'unassign') {
+        await updateIssue(
+          owner.principal,
+          row.id,
+          { assigneeAgentId: agent.context.identityId },
+          db,
+          agent.context,
+        );
+        await updateIssue(workspace.admin, row.id, { assigneeId: null });
+      }
+
+      const issue = await getIssue(workspace.admin, row.id);
+      expect(issue.creatorAgentId).toBeNull();
+      expect(issue.assigneeAgentId).toBeNull();
+      const activities = await db
+        .select()
+        .from(schema.issueActivity)
+        .where(eq(schema.issueActivity.issueId, row.id));
+      expect(
+        activities.some(
+          (activity) =>
+            activity.actorType === 'agent' && activity.actorId === agent.context.identityId,
+        ),
+      ).toBe(true);
+      expect(
+        (await listIssues(workspace.admin, { aiOnly: true })).issues.map(({ id }) => id),
+      ).toEqual([row.id]);
+    },
+  );
+
+  it('keeps canonical Agent activity scoped to its organization in AI-only results', async () => {
+    const row = await humanIssue();
+    const foreign = await createWorkspace('Foreign');
+    const agent = await connection('orbit.read orbit.write', foreign.admin);
+    const created = await createIssue(foreign.admin, {
+      teamId: foreign.teamId,
+      title: 'Foreign Human work',
+      assigneeId: null,
+    });
+    await updateIssue(
+      foreign.admin,
+      created.issue.id,
+      { title: 'Foreign Agent edited' },
+      db,
+      agent.context,
+    );
+    await db.insert(schema.issueActivity).values({
+      id: randomUUID(),
+      organizationId: foreign.organizationId,
+      issueId: row.id,
+      actorType: 'agent',
+      actorId: agent.context.identityId,
+      actorName: 'Foreign Agent',
+      field: 'title',
+    });
+
+    expect((await listIssues(workspace.admin, { aiOnly: true })).issues).toEqual([]);
+    expect((await listIssues(foreign.admin, { aiOnly: true })).issues.map(({ id }) => id)).toEqual([
+      created.issue.id,
+    ]);
+  });
+
   it('records canonical Agent assignment activity when moving an Issue with a NULL legacy assignee', async () => {
     const agent = await connection();
     const row = await humanIssue();

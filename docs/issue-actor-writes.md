@@ -19,11 +19,16 @@ The dependency synchronization on 2026-10-08 adopts PR1's Owner revision
 Stage A/B commits are retained. This synchronization imports those focused
 dependency changes without absorbing unrelated upstream main changes.
 
-PR1 remains open and unmerged at that revision. Its `0030` SQL is preserved
+PR1 was open and unmerged at that synchronization. Its `0030` SQL is preserved
 byte for byte, with SHA-256
 `e4c0f9da17988ac12dc53bc9e825d88dcea6e14a623330b003db190cfa36642b`.
 The `0030` snapshot and journal entry have no schema change and are retained.
 Official migrations `0000` through `0029` are unchanged.
+
+The 2026-10-14 review follow-up merges upstream main `16e4fd7`, including
+the merged PR1 expansion, while retaining the Stage A/B migration chain.
+It also imports PR2's compatibility Actor reconciliation and unrelated
+query freshness fixes from `a08e7b1` and `92faba0`.
 
 ## Stage A: write compatibility preparation
 
@@ -42,8 +47,8 @@ Owner. Later reassignment or unassignment preserves the Issue Owner.
 Release, baseline and trigger recovery install the latest committed compatible
 function and trigger. Recovery preserves Agent references, existing Owner
 values, business timestamps and Sync IDs. Historical migration files are not
-rewritten after application. The still-unmerged `0030` is synchronized with
-the current PR1 source as described above. Legacy columns and the expanded
+rewritten after application. The committed `0030` retains the reviewed PR1
+source as described above. Legacy columns and the expanded
 foreign keys remain installed. Human mirrors on mixed Actor rows are
 repaired independently. Neither the `0030` backfill nor baseline or recovery
 infers an Owner, including for previously uninitialized Human references.
@@ -118,6 +123,10 @@ handles and `me` keep their meanings. `agent` means the connected Agent;
 policy. `null` clears either kind. Human-only search filters retain their
 existing contract. The Web interface continues to use the canonical Actor
 reader from PR2; this change does not add a complete Agent selector UI.
+The properties menu, card controls, bulk edit and unassigned Board column
+allow editors to clear either Assignee type while retaining the Issue Owner.
+Optimistic updates clear the canonical Actor and both assignment references
+together with the legacy mirror.
 
 ## MCP mutation coverage
 
@@ -155,6 +164,10 @@ The existing transaction and event-delivery architecture is retained; no
 Outbox, permanent worker or separate idempotency subsystem is introduced.
 
 ## Review follow-up
+
+The AI-only filter includes organization-scoped canonical Agent activity on
+Human-created Issues, including after an Agent assignment is removed. Legacy
+Agent member participation continues to match the same filter.
 
 Column moves collect the moving Issue, anchors and potential rebalance
 candidates before taking any Issue row lock. The entire set is locked in
