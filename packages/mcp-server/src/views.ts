@@ -1,4 +1,6 @@
 import {
+  attachIssueActors,
+  type IssueActorRead,
   type IssueListRow,
   listMembers,
   listWorkflowStates,
@@ -8,6 +10,7 @@ import { db } from '@orbit/db';
 import { PRIORITY_LABELS } from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import type { IssueActor } from '@orbit/shared/validators';
 
 const PRIORITY_NAMES: Record<number, string> = PRIORITY_LABELS;
 
@@ -19,7 +22,10 @@ export interface IssueView {
   readonly state: string | null;
   readonly stateId: string;
   readonly priority: string;
-  readonly assignee: string | null;
+  readonly creator: IssueActor;
+  readonly assignee: IssueActor | null;
+  readonly owner: IssueActor | null;
+  readonly assigneeName: string | null;
   readonly assigneeId: string | null;
   readonly reviewers: readonly string[];
   readonly reviewerIds: readonly string[];
@@ -48,7 +54,7 @@ export function deltaViews(actions: readonly SyncAction[]): DeltaView[] {
 }
 
 function toView(
-  row: IssueListRow,
+  row: IssueActorRead<IssueListRow>,
   stateNames: ReadonlyMap<string, string>,
   userNames: ReadonlyMap<string, string>,
   reviewerIds: readonly string[],
@@ -61,7 +67,10 @@ function toView(
     state: stateNames.get(row.stateId) ?? null,
     stateId: row.stateId,
     priority: PRIORITY_NAMES[row.priority] ?? 'No priority',
-    assignee: row.assigneeId === null ? null : (userNames.get(row.assigneeId) ?? null),
+    creator: row.creator,
+    assignee: row.assignee,
+    owner: row.owner,
+    assigneeName: row.assignee?.name ?? null,
     assigneeId: row.assigneeId,
     reviewers: reviewerIds.map((id) => userNames.get(id) ?? id),
     reviewerIds: [...reviewerIds],
@@ -89,17 +98,18 @@ export async function describeIssues(
     }
   }
 
-  const [members, reviewers] = await Promise.all([
+  const [members, reviewers, actors] = await Promise.all([
     listMembers(principal),
     reviewerIdsByIssue(
       db,
       rows.map((row) => row.id),
     ),
+    attachIssueActors(db, principal.organizationId, rows),
   ]);
   const userNames = new Map<string, string>();
   for (const member of members) userNames.set(member.user.id, member.user.name);
 
-  return rows.map((row) => toView(row, stateNames, userNames, reviewers.get(row.id) ?? []));
+  return actors.map((row) => toView(row, stateNames, userNames, reviewers.get(row.id) ?? []));
 }
 
 export async function describeIssue(principal: Principal, row: IssueListRow): Promise<IssueView> {
