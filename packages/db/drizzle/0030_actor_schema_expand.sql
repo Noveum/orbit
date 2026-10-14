@@ -40,7 +40,6 @@ BEGIN
     NEW.creator_agent_id := NULL;
     NEW.assignee_user_id := NEW.assignee_id;
     NEW.assignee_agent_id := NULL;
-    NEW.owner_user_id := COALESCE(NEW.owner_user_id, NEW.assignee_id);
   ELSE
     IF NEW.creator_id IS DISTINCT FROM OLD.creator_id THEN
       NEW.creator_user_id := NEW.creator_id;
@@ -49,7 +48,6 @@ BEGIN
     IF NEW.assignee_id IS DISTINCT FROM OLD.assignee_id THEN
       NEW.assignee_user_id := NEW.assignee_id;
       NEW.assignee_agent_id := NULL;
-      NEW.owner_user_id := COALESCE(NEW.owner_user_id, NEW.assignee_id);
     END IF;
   END IF;
   RETURN NEW;
@@ -62,10 +60,8 @@ FOR EACH ROW EXECUTE FUNCTION sync_issue_human_actors();
 --> statement-breakpoint
 UPDATE "issue"
 SET creator_user_id = creator_id,
-    assignee_user_id = assignee_id,
-    owner_user_id = COALESCE(owner_user_id, assignee_id)
+    assignee_user_id = assignee_id
 WHERE creator_agent_id IS NULL
   AND assignee_agent_id IS NULL
   AND (creator_user_id IS DISTINCT FROM creator_id
-    OR assignee_user_id IS DISTINCT FROM assignee_id
-    OR (owner_user_id IS NULL AND assignee_id IS NOT NULL));
+    OR assignee_user_id IS DISTINCT FROM assignee_id);

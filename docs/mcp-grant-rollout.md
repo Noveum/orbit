@@ -6,7 +6,9 @@ stage 3a artifact before deploying the final stage 3b checkout.
 
 ## Stage 3a: compatibility preparation
 
-Start from PR1 commit `edcc0c6ac4c80fb1b6a95783b325ce0cb394a688`.
+Start from PR1 commit `911cfcbc19140b2b4e8f97ee3ce553f1b718d877`.
+This stage includes its synchronized `0030_actor_schema_expand` migration,
+which preserves all Owner values, including NULL.
 Apply migration `0031_mcp_grant_compatibility` before deploying stage 3a.
 The PR1 binary continues to use its global client/user index and old columns.
 No grants, tokens or consents are revoked by the migration. No identities are
@@ -54,8 +56,8 @@ prevents a removed and rejoined owner from reviving an old grant.
 
 ## Stage 3b: deployment prerequisites
 
-Implementation base: completed stage 3a commit
-`5a143898e268bae5a29c32a0840a32785713abab`, including compatibility commit
+Deployable stage 3a artifact: commit
+`94b92a2e50f24defb8ce22a3a4110795de686e5c`, including compatibility commit
 `9d3e91fbe493519b1d3b15565b38f081f3183f17`.
 
 Migration `0032_mcp_agent_grant_binding` removes only the old global unique
@@ -66,7 +68,8 @@ a missing or partial ledger, and on repeated releases after index drift. It
 does not remove unrelated undeclared indexes.
 
 Stage 3b must be a separate release based on completed stage 3a, even when
-both stages are reviewed in one pull request. The final checkout's
+both stages are reviewed in one pull request. First release PR1 at
+`911cfcbc19140b2b4e8f97ee3ce553f1b718d877` and deploy its runtime. The final checkout's
 `bun run db:release` applies every pending migration, including both `0031`
 and `0032`; it does not pause for stage 3a deployment. First use the stage 3a
 checkout and release artifact to apply `0031` and upgrade all related instances.
