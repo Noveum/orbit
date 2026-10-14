@@ -1,0 +1,20 @@
+[Unit]
+Description=Orbit Backup Retention and Pruning
+Documentation=https://github.com/Noveum/orbit
+After=network.target
+
+[Service]
+Type=oneshot
+User=orbit
+Group=orbit
+WorkingDirectory=/opt/orbit
+EnvironmentFile=/etc/orbit/orbit.env
+ExecStart=/usr/local/bin/bun run backup:prune --destination /var/backups/orbit --keep-count 30 --keep-days 14 --max-bytes 50GB --stale-alert-hours 26
+StandardOutput=journal
+StandardError=journal
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/orbit
+
+[Install]
+WantedBy=multi-user.target
