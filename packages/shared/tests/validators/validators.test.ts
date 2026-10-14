@@ -16,6 +16,7 @@ import {
   labelUpdateSchema,
   milestoneUpdateSchema,
   organizationUpdateSchema,
+  projectDuplicateSchema,
   projectUpdateSchema,
   teamUpdateSchema,
   viewUpdateSchema,
@@ -243,5 +244,24 @@ describe('calendar dates', () => {
     expect(projectUpdateSchema.safeParse({ startDate: true }).success).toBe(false);
     expect(milestoneUpdateSchema.safeParse({ targetDate: '10000-01-01' }).success).toBe(false);
     expect(milestoneUpdateSchema.safeParse({ targetDate: '2031-03-01' }).success).toBe(true);
+  });
+});
+
+describe('projectDuplicateSchema', () => {
+  it('defaults shiftDays to 0 and includeIssues to true', () => {
+    const parsed = projectDuplicateSchema.parse({});
+    expect(parsed.shiftDays).toBe(0);
+    expect(parsed.includeIssues).toBe(true);
+  });
+
+  it('accepts shiftDays within the supported bounds', () => {
+    expect(projectDuplicateSchema.safeParse({ shiftDays: -3650 }).success).toBe(true);
+    expect(projectDuplicateSchema.safeParse({ shiftDays: 3650 }).success).toBe(true);
+    expect(projectDuplicateSchema.safeParse({ shiftDays: 0 }).success).toBe(true);
+  });
+
+  it('rejects shiftDays outside the supported bounds', () => {
+    expect(projectDuplicateSchema.safeParse({ shiftDays: -3651 }).success).toBe(false);
+    expect(projectDuplicateSchema.safeParse({ shiftDays: 3651 }).success).toBe(false);
   });
 });

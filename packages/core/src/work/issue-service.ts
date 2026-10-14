@@ -1,4 +1,4 @@
-import type { Database } from '@orbit/db';
+import type { Database, Transaction } from '@orbit/db';
 import { and, asc, count, db, desc, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
@@ -848,14 +848,18 @@ async function assertAssignableToTeam(
   }
 }
 
-export async function createIssue(principal: Principal, input: unknown): Promise<CreatedIssue> {
+export async function createIssue(
+  principal: Principal,
+  input: unknown,
+  executor?: Transaction,
+): Promise<CreatedIssue> {
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
 
-  const allocationTeam = await requireTeam(principal, parsed.teamId);
-  const number = await allocateIssueNumber(db, allocationTeam);
+  const allocationTeam = await requireTeam(principal, parsed.teamId, executor ?? db);
+  const number = await allocateIssueNumber(executor ?? db, allocationTeam);
 
-  return await db.transaction(async (tx) => {
+  const perform = async (tx: Transaction) => {
     const team = await requireTeam(principal, parsed.teamId, tx);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -946,7 +950,12 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         ...notifications,
       ],
     };
-  });
+  };
+
+  if (executor !== undefined) {
+    return await perform(executor);
+  }
+  return await db.transaction(perform);
 }
 
 interface SubIssueContext {

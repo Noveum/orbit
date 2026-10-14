@@ -12,6 +12,7 @@ import {
   issueIdentifier,
   parseIssueIdentifier,
   relativeTime,
+  shiftCalendarDate,
   slugify,
   sortOrderBetween,
   truncate,
@@ -251,5 +252,39 @@ describe('identifiers a pull request description actually declares', () => {
     ].join('\n');
 
     expect(declaredIssueIdentifiers(body)).toEqual(['ENG-9']);
+  });
+});
+
+describe('shiftCalendarDate', () => {
+  it('shifts dates forward by calendar days', () => {
+    expect(shiftCalendarDate('2025-01-15', 10)).toBe('2025-01-25');
+    expect(shiftCalendarDate('2025-01-30', 2)).toBe('2025-02-01');
+    expect(shiftCalendarDate('2025-12-31', 1)).toBe('2026-01-01');
+  });
+
+  it('shifts dates backward with negative days', () => {
+    expect(shiftCalendarDate('2025-01-15', -5)).toBe('2025-01-10');
+    expect(shiftCalendarDate('2025-02-01', -2)).toBe('2025-01-30');
+  });
+
+  it('preserves the date when shifting by zero days', () => {
+    expect(shiftCalendarDate('2025-06-15', 0)).toBe('2025-06-15');
+  });
+
+  it('correctly shifts over leap years', () => {
+    expect(shiftCalendarDate('2024-02-28', 1)).toBe('2024-02-29');
+    expect(shiftCalendarDate('2024-02-28', 2)).toBe('2024-03-01');
+    expect(shiftCalendarDate('2023-02-28', 1)).toBe('2023-03-01');
+  });
+
+  it('returns null for missing, empty, or invalid dates', () => {
+    expect(shiftCalendarDate(null, 10)).toBeNull();
+    expect(shiftCalendarDate(undefined, 10)).toBeNull();
+    expect(shiftCalendarDate('', 10)).toBeNull();
+    expect(shiftCalendarDate('not-a-date', 10)).toBeNull();
+  });
+
+  it('accepts Date objects', () => {
+    expect(shiftCalendarDate(new Date('2025-04-10T00:00:00.000Z'), 5)).toBe('2025-04-15');
   });
 });
