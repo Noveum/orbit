@@ -3,7 +3,9 @@ import type { SyncAction } from '@orbit/shared/events';
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import { act, render, waitFor } from '@testing-library/react';
 import { ANALYTICS_ROOT } from '@/features/analytics/analytics-keys.ts';
+import { issueActorGroupKey } from '@/features/filters/grouping.ts';
 import { clientId } from '@/lib/query/client-id.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import {
   issueCacheRevisionGeneration,
   issueDeletionGeneration,
@@ -26,7 +28,7 @@ import {
   queryKeys,
   VIEWS_ROOT,
 } from '@/lib/query/keys.ts';
-import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
+import type { Issue, IssueDetail, IssueRelation } from '@/lib/query/schemas.ts';
 import { bootstrapSchema } from '@/lib/query/schemas.ts';
 import type { IssuePages } from '@/lib/query/sync.ts';
 
@@ -175,6 +177,100 @@ function trackInvalidations(client: QueryClient): unknown[][] {
 }
 
 describe('DeltaBridge Actor views', () => {
+  it('propagates ID-only reassignment and unassignment to every cached occurrence', () => {
+    const client = mount();
+    const human = {
+      type: 'user' as const,
+      id: 'user_1',
+      name: 'Alice',
+      avatar: '/alice.png',
+      deleted: false,
+    };
+    const row = issue({
+      creator: human,
+      assigneeId: human.id,
+      assigneeUserId: human.id,
+      assigneeAgentId: null,
+      assignee: human,
+      owner: null,
+    });
+    const listKey = queryKeys.issues(TEAM);
+    const oldColumnKey = queryKeys.issues(TEAM, `assigneeId=${human.id}`);
+    const newColumnKey = queryKeys.issues(TEAM, 'assigneeId=user_2');
+    const detailKey = queryKeys.issue(row.identifier);
+    const nestedKey = queryKeys.issue('ENG-2');
+    const relationKey = queryKeys.issueRelations('other_issue');
+    const boardKey = queryKeys.boardPage(`teamId=${TEAM}&groupBy=assignee`);
+    const pages: IssuePages = { pages: [{ issues: [row], nextCursor: null }], pageParams: [null] };
+    client.setQueryData(listKey, pages);
+    client.setQueryData(oldColumnKey, pages);
+    client.setQueryData(detailKey, detailFor(row, []));
+    client.setQueryData(nestedKey, {
+      ...detailFor(issue({ id: 'other_issue', identifier: 'ENG-2' }), [row]),
+      parent: row,
+    });
+    client.setQueryData(relationKey, [{ id: 'relation_1', type: 'related', issue: row }]);
+    client.setQueryData(boardKey, {
+      groups: [{ id: human.id, total: 1, issues: [row], nextCursor: null }],
+      truncated: false,
+    });
+    const occurrences = () => [
+      client.getQueryData<IssuePages>(listKey)?.pages[0]?.issues[0],
+      client.getQueryData<IssueDetail>(detailKey)?.issue,
+      client.getQueryData<IssueDetail>(nestedKey)?.parent,
+      client.getQueryData<IssueDetail>(nestedKey)?.subIssues[0],
+      client.getQueryData<readonly IssueRelation[]>(relationKey)?.[0]?.issue,
+    ];
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          syncId: 12,
+          data: { id: row.id, syncId: 12, assigneeId: 'user_2', assigneeUserId: 'user_2' },
+        }),
+      ]),
+    );
+    for (const current of occurrences()) {
+      expect(current).toBeDefined();
+      expect(current).not.toBeNull();
+      if (current === undefined || current === null) continue;
+      expect(resolveIssueActor(current, 'assignee')).toMatchObject({ type: 'user', id: 'user_2' });
+      expect(issueActorGroupKey(current, 'assignee')).toBe('user_2');
+      expect(current.creator).toEqual(human);
+      expect(current.owner).toBeNull();
+    }
+    expect(client.getQueryData<IssuePages>(oldColumnKey)?.pages[0]?.issues).toEqual([]);
+    expect(client.getQueryState(boardKey)?.isInvalidated).toBe(true);
+    const reassigned = client.getQueryData<IssuePages>(listKey);
+    if (reassigned === undefined) throw new Error('missing reassigned issue pages');
+    client.setQueryData(newColumnKey, reassigned);
+
+    act(() =>
+      capturedHandler?.([
+        action({
+          syncId: 13,
+          data: {
+            id: row.id,
+            syncId: 13,
+            assigneeId: null,
+            assigneeUserId: null,
+            assigneeAgentId: null,
+          },
+        }),
+      ]),
+    );
+    for (const current of occurrences()) {
+      expect(current).toBeDefined();
+      expect(current).not.toBeNull();
+      if (current === undefined || current === null) continue;
+      expect(resolveIssueActor(current, 'assignee')).toBeNull();
+      expect(issueActorGroupKey(current, 'assignee')).toBe('none');
+      expect(current.creator).toEqual(human);
+      expect(current.owner).toBeNull();
+    }
+    expect(client.getQueryData<IssuePages>(newColumnKey)?.pages[0]?.issues).toEqual([]);
+  });
+
   it.each(['remote', 'own'] as const)(
     'refreshes Human Actor profiles after a raw %s member event completes bootstrap',
     async (origin) => {

@@ -3,7 +3,7 @@ import type { IssueOrdering } from '@orbit/shared/filters';
 import { docCommentAnchorSchema } from '@orbit/shared/validators';
 import type { InfiniteData } from '@tanstack/react-query';
 import { z } from 'zod';
-import { resolveIssueActor } from './issue-actors.ts';
+import { type IssueActorRole, resolveIssueActor } from './issue-actors.ts';
 import type { Comment, DocComment, Issue, IssuePage, Reaction } from './schemas.ts';
 import { issueSchema, reactionSchema } from './schemas.ts';
 
@@ -64,6 +64,95 @@ function reviewerDelta(
 ) {
   if (data['reviewerIds'] === undefined || incoming.reviewerIds === undefined) return {};
   return { reviewerIds: incoming.reviewerIds };
+}
+
+const issueActorIdentityFields = {
+  creator: { legacy: 'creatorId', user: 'creatorUserId', agent: 'creatorAgentId' },
+  assignee: { legacy: 'assigneeId', user: 'assigneeUserId', agent: 'assigneeAgentId' },
+} as const;
+
+function reconcileIssueActor(issue: Issue, next: Issue, role: IssueActorRole): void {
+  const previous = resolveIssueActor(issue, role);
+  delete next[role];
+  const current = resolveIssueActor(next, role);
+  const cached = issue[role];
+  if (previous?.type === current?.type && previous?.id === current?.id && cached !== undefined)
+    next[role] = cached;
+}
+
+function preserveUntouchedActorIdentity(
+  next: Issue,
+  delta: IssueDelta,
+  role: 'creator' | 'assignee',
+): void {
+  const actor = next[role];
+  if (actor === undefined) return;
+  const fields = issueActorIdentityFields[role];
+  if (delta[fields.user] === undefined)
+    next[fields.user] = actor?.type === 'user' ? actor.id : null;
+  if (delta[fields.agent] === undefined)
+    next[fields.agent] = actor?.type === 'agent' ? actor.id : null;
+}
+
+function normalizeTypedIssueActor(
+  next: Issue,
+  delta: IssueDelta,
+  role: 'creator' | 'assignee',
+): void {
+  preserveUntouchedActorIdentity(next, delta, role);
+  const fields = issueActorIdentityFields[role];
+  if (typeof delta[fields.agent] === 'string' && delta[fields.user] === undefined)
+    next[fields.user] = null;
+  if (typeof delta[fields.user] === 'string' && delta[fields.agent] === undefined)
+    next[fields.agent] = null;
+  if (role === 'creator') {
+    if (typeof next.creatorAgentId !== 'string') next.creatorUserId ??= next.creatorId;
+    return;
+  }
+  if (delta.assigneeId !== undefined) return;
+  if (typeof next.assigneeAgentId === 'string') {
+    next.assigneeId = null;
+    return;
+  }
+  if (next.assigneeUserId !== undefined) next.assigneeId = next.assigneeUserId;
+}
+
+function reconcileIssueActorDelta(
+  issue: Issue,
+  next: Issue,
+  delta: IssueDelta,
+  role: 'creator' | 'assignee',
+): void {
+  if (delta[role] !== undefined) return;
+  const fields = issueActorIdentityFields[role];
+  const legacyId = delta[fields.legacy];
+  if (delta[fields.user] === undefined && delta[fields.agent] === undefined) {
+    if (legacyId === undefined || legacyId === issue[fields.legacy]) return;
+    next[fields.user] = legacyId;
+    next[fields.agent] = null;
+  } else {
+    normalizeTypedIssueActor(next, delta, role);
+  }
+  reconcileIssueActor(issue, next, role);
+}
+
+function mergeIssueDelta(
+  issue: Issue,
+  incoming: z.infer<typeof partialIssueSchema>,
+  source: Record<string, unknown>,
+): Issue {
+  const delta = definedFields(incoming, source);
+  const next: Issue = {
+    ...issue,
+    ...delta,
+    labelIds: issue.labelIds,
+    ...reviewerDelta(source, incoming),
+  };
+  for (const role of ['creator', 'assignee'] as const)
+    reconcileIssueActorDelta(issue, next, delta, role);
+  if (delta.owner === undefined && delta.ownerUserId !== undefined)
+    reconcileIssueActor(issue, next, 'owner');
+  return next;
 }
 
 export type IssueBelongs = (issue: Issue) => boolean;
@@ -180,12 +269,7 @@ export function applyIssueDelta(
   if (existing === undefined) return issues;
   if (isStale(incoming.syncId, existing.syncId)) return issues;
 
-  const merged: Issue = {
-    ...existing,
-    ...definedFields(incoming, action.data),
-    labelIds: existing.labelIds,
-    ...reviewerDelta(action.data, incoming),
-  };
+  const merged = mergeIssueDelta(existing, incoming, action.data);
   if (!belongs(merged)) return issues.filter((issue) => issue.id !== incoming.id);
 
   const next = [...issues];
@@ -259,12 +343,7 @@ export function applyIssueRowDelta(issue: Issue, action: Pick<SyncAction, 'data'
   const parsed = partialIssueSchema.safeParse(action.data);
   if (!parsed.success || parsed.data.id !== issue.id) return issue;
   if (isStale(parsed.data.syncId, issue.syncId)) return issue;
-  return {
-    ...issue,
-    ...definedFields(parsed.data, action.data),
-    labelIds: issue.labelIds,
-    ...reviewerDelta(action.data, parsed.data),
-  };
+  return mergeIssueDelta(issue, parsed.data, action.data);
 }
 
 export function applyIssueDetailDelta<
