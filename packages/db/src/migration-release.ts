@@ -303,6 +303,7 @@ async function baselineLedger(
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
+    await reconcileMcpGrantContract(tx, migrations);
     await reconcileHumanActorBaseline(tx, migrations, pendingMigrations);
     const notificationAuditMigration = migrations.find(
       (migration) => migration.folderMillis === NOTIFICATION_AUDIT_MIGRATION,
@@ -439,6 +440,26 @@ async function baselineLedger(
   });
 }
 
+function mcpGrantContractDropStatement(migrations: readonly MigrationMeta[]): string | undefined {
+  return migrations
+    .flatMap((migration) => migration.sql)
+    .find((statement) =>
+      /^\s*drop\s+index\s+if\s+exists\s+"mcp_grant_client_user_unique"\s*;?\s*$/iu.test(statement),
+    );
+}
+
+async function reconcileMcpGrantContract(
+  tx: postgres.TransactionSql,
+  migrations: readonly MigrationMeta[],
+): Promise<void> {
+  const statement = mcpGrantContractDropStatement(migrations);
+  if (statement === undefined) return;
+  const [index] = await tx<{ present: boolean }[]>`
+    select to_regclass('public.mcp_grant_client_user_unique') is not null as present
+  `;
+  if (index?.present === true) await tx.unsafe(statement);
+}
+
 function declaredTableCount(live: Awaited<ReturnType<typeof liveCatalog>>): number {
   const expectedNames = new Set(expectedCatalog(schema).tables.map((table) => table.name));
   return live.tables.filter((table) => expectedNames.has(table.name)).length;
@@ -535,15 +556,23 @@ export async function releaseDatabase(
     const humanActorMigration = migrations.find(
       (migration) => migration.folderMillis === HUMAN_ACTOR_MIGRATION,
     );
-    if (humanActorMigration !== undefined) {
-      await sql.begin(async (tx) => {
-        if (!(await humanActorArtifactsAreValid(tx))) {
-          await reconcileHumanActorArtifacts(tx, humanActorMigration);
-          await reconcileHumanActorMirrors(tx);
-        }
-      });
+    await sql.begin(async (tx) => {
+      await reconcileMcpGrantContract(tx, migrations);
+      if (humanActorMigration !== undefined && !(await humanActorArtifactsAreValid(tx))) {
+        await reconcileHumanActorArtifacts(tx, humanActorMigration);
+        await reconcileHumanActorMirrors(tx);
+      }
+    });
+    const catalog = await liveCatalog(url);
+    if (
+      mcpGrantContractDropStatement(migrations) !== undefined &&
+      catalog.tables.some((table) =>
+        table.indexes.some((index) => index.name === 'mcp_grant_client_user_unique'),
+      )
+    ) {
+      throw new Error('The MCP grant contract still contains the retired global unique index.');
     }
-    const drift = catalogDriftBetween(expectedCatalog(schema), await liveCatalog(url));
+    const drift = catalogDriftBetween(expectedCatalog(schema), catalog);
     if (isBehind(drift)) {
       throw new Error(
         'Migrations completed, but the database is still incompatible with the schema.',

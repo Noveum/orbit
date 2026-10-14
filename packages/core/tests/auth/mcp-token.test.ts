@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { createHmac, randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
+import { mcpConsentValueSchema } from '@orbit/shared/validators';
 import {
   bindMcpCredential,
   type FinalizeMcpConsentInput,
   finalizeMcpConsent,
   getMcpClient,
+  getMcpConsentRequest,
   listMcpGrants,
   passkeyVerifiedWithin,
   recordMcpGrant,
@@ -173,6 +175,19 @@ describe('recordMcpGrant', () => {
 });
 
 describe('verifyMcpAccessToken with a grant', () => {
+  it('lets a legacy owner disconnect after leaving the workspace', async () => {
+    const clientId = await createClient();
+    const grantId = await recordMcpGrant({
+      clientId,
+      userId: workspace.adminUser.id,
+      organizationId: workspace.organizationId,
+      scopes: SCOPES,
+    });
+    await db.delete(schema.member).where(eq(schema.member.userId, workspace.adminUser.id));
+    await revokeMcpGrant(grantId, workspace.adminUser.id);
+    const [grant] = await db.select().from(schema.mcpGrant).where(eq(schema.mcpGrant.id, grantId));
+    expect(grant?.revokedAt).toBeInstanceOf(Date);
+  });
   it('accepts only the immutable grant version carried by a late-issued token', async () => {
     const clientId = await createClient();
     const other = await createOrganizationFor(workspace.adminUser.id);
@@ -373,6 +388,51 @@ async function createConsentCode(
 }
 
 describe('finalizeMcpConsent', () => {
+  it('reads the owner, client, scopes, redirect and PKCE only from stored consent', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const [record] = await db
+      .select()
+      .from(schema.verification)
+      .where(eq(schema.verification.identifier, consentCode));
+    const stored = mcpConsentValueSchema.parse(JSON.parse(record?.value ?? '{}'));
+    expect(await getMcpConsentRequest(workspace.adminUser.id, consentCode)).toEqual(stored);
+    expect(stored).toMatchObject({
+      userId: workspace.adminUser.id,
+      scope: ['openid', 'orbit.read', 'orbit.write'],
+      redirectURI: 'http://127.0.0.1:9876/callback',
+      codeChallenge: 'challenge',
+      codeChallengeMethod: 'S256',
+      state: 'xyz',
+    });
+    await expect(getMcpConsentRequest('other-owner', consentCode)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    const client = await getMcpClient(stored.clientId);
+    expect(client?.clientId).toBe(stored.clientId);
+  });
+
+  it('commits one authorization code and grant for concurrent duplicate consent', async () => {
+    const consentCode = await createConsentCode(workspace.adminUser.id);
+    const input = {
+      userId: workspace.adminUser.id,
+      consentCode,
+      accept: true as const,
+      organizationId: workspace.organizationId,
+    };
+    const results = await Promise.allSettled([
+      finalizeMcpConsent(input),
+      finalizeMcpConsent(input),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected');
+    expect(rejected?.status === 'rejected' ? rejected.reason : null).toMatchObject({
+      code: 'unauthorized',
+    });
+    expect(await db.select().from(schema.verification)).toHaveLength(1);
+    expect(await db.select().from(schema.mcpGrant)).toHaveLength(1);
+    expect(await db.select().from(schema.oauthConsent)).toHaveLength(1);
+  });
+
   it('mints a code, records consent, and preserves PKCE on accept', async () => {
     const consentCode = await createConsentCode(workspace.adminUser.id);
     const { redirectUri } = await finalizeMcpConsent({
