@@ -1,4 +1,4 @@
-import type { Database } from '@orbit/db';
+import type { Database, Transaction } from '@orbit/db';
 import { and, asc, count, db, desc, eq, inArray, isNull, or, schema, sql } from '@orbit/db';
 import type { NotificationEvent } from '@orbit/services/notifications';
 import {
@@ -40,7 +40,7 @@ import {
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
-import { appendActivities, principalActor } from '../activity/activity-service.ts';
+import { appendActivities } from '../activity/activity-service.ts';
 import {
   captureCreatedCycleMembership,
   captureCycleMembershipChange,
@@ -59,6 +59,12 @@ import { requireTeam, type TeamRow } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
 import {
+  type AgentIssueWriteContext,
+  issueMutationActor,
+  issueWriteTransactionFor,
+} from './agent-issue-context.ts';
+import { attachIssueActors, type IssueActorRead } from './issue-actor-view.ts';
+import {
   applyStateTimestamps,
   type IssueRow,
   type IssueValues,
@@ -66,6 +72,13 @@ import {
   stateTimestamps,
 } from './issue-fields.ts';
 import { buildIssueWhere, visibleTeamFilters } from './issue-query.ts';
+import {
+  assignmentActivityValues,
+  assignmentRecipient,
+  initialAssigneeId,
+  issueAssignmentValues,
+  issueCreatorValues,
+} from './issue-responsibility.ts';
 import { assertLabelsUsable, dropLabelsForeignToTeam, labelIdsByIssue } from './label-service.ts';
 import { replaceReviewersFor, reviewerIdsByIssue } from './reviewer-service.ts';
 import { initialStateFor } from './workflow-state-service.ts';
@@ -78,6 +91,7 @@ export {
 } from './issue-fields.ts';
 
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
+export type IssueReadRow = IssueActorRead<IssueRow>;
 
 type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
 
@@ -103,7 +117,7 @@ async function assertParentAllowed(
   if (parentId === issueId) {
     throw conflict('An issue cannot be its own parent, directly or through its parent chain.');
   }
-  const parent = await loadIssue(executor, principal, parentId);
+  const parent = await loadIssueForUpdate(executor, principal, parentId);
   let cursor: string | null = parent.parentId;
   let depth = 1;
   while (cursor !== null) {
@@ -170,6 +184,23 @@ function issueDepartureAction(row: IssueRow, syncId: number, actor: Actor): Sync
       syncId,
     },
     actor,
+  });
+}
+
+function issueActorActions(actions: SyncAction[], rows: readonly IssueReadRow[]): SyncAction[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return actions.map((action) => {
+    const issue = action.model === 'issue' ? byId.get(action.modelId) : undefined;
+    if (issue === undefined || action.action === 'delete') return action;
+    return {
+      ...action,
+      data: {
+        ...action.data,
+        creator: issue.creator,
+        assignee: issue.assignee,
+        owner: issue.owner,
+      },
+    };
   });
 }
 
@@ -406,7 +437,6 @@ function collectIssueChanges(
   track('description', patch.description);
   track('stateId', patch.stateId);
   track('priority', patch.priority);
-  track('assigneeId', patch.assigneeId);
   track('projectId', patch.projectId);
   track(
     'milestoneId',
@@ -564,7 +594,7 @@ async function issueNotifications(
         },
         ...statusChangeGroups(entry, subscribers.get(entry.issue.id) ?? []),
       ],
-      [principal.userId],
+      actor.type === 'user' ? [principal.userId] : [],
     ),
   }));
 
@@ -657,11 +687,12 @@ function notificationsByEntity(actions: readonly SyncAction[]): Map<string, Sync
   return grouped;
 }
 
-function updateNotificationInputs(
+async function updateNotificationInputs(
+  tx: Executor,
   changing: readonly PendingUpdate[],
   updated: ReadonlyMap<string, IssueRow>,
   statusName: string | null,
-): IssueNotificationInput[] {
+): Promise<IssueNotificationInput[]> {
   const inputs: IssueNotificationInput[] = [];
   for (const entry of changing) {
     const issue = updated.get(entry.current.id);
@@ -672,7 +703,7 @@ function updateNotificationInputs(
       mentionHandles: changed.has('description')
         ? newMentions(entry.current.description, issue.description)
         : [],
-      assigneeId: changed.has('assigneeId') && issue.assigneeId !== null ? issue.assigneeId : null,
+      assigneeId: changed.has('assigneeId') ? await assignmentRecipient(tx, issue) : null,
       statusName: changed.has('stateId') ? statusName : null,
     });
   }
@@ -680,7 +711,7 @@ function updateNotificationInputs(
 }
 
 export interface CreatedIssue {
-  readonly issue: IssueRow;
+  readonly issue: IssueReadRow;
   readonly actions: SyncAction[];
 }
 
@@ -848,17 +879,33 @@ async function assertAssignableToTeam(
   }
 }
 
-export async function createIssue(principal: Principal, input: unknown): Promise<CreatedIssue> {
+export async function createIssue(
+  principal: Principal,
+  input: unknown,
+  writeContext?: AgentIssueWriteContext,
+): Promise<CreatedIssue> {
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
 
   const allocationTeam = await requireTeam(principal, parsed.teamId);
-  const number = await allocateIssueNumber(db, allocationTeam);
+  const allocatedNumber =
+    writeContext === undefined ? await allocateIssueNumber(db, allocationTeam) : undefined;
 
-  return await db.transaction(async (tx) => {
+  const transact = issueWriteTransactionFor(principal, 'issue:create', writeContext);
+  return await transact(async (tx, principal) => {
     const team = await requireTeam(principal, parsed.teamId, tx);
+    const id = newId();
+    if (parsed.parentId !== null) {
+      await assertParentAllowed(tx, principal, id, parsed.parentId);
+    }
+    await assertAssignableToTeam(tx, principal.organizationId, team.id, {
+      cycleId: parsed.cycleId,
+      projectId: parsed.projectId,
+      milestoneId: parsed.milestoneId,
+    });
+    const number = allocatedNumber ?? (await allocateIssueNumber(tx, team));
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const state =
       parsed.stateId === undefined
         ? await initialStateFor(tx, team.id)
@@ -866,22 +913,17 @@ export async function createIssue(principal: Principal, input: unknown): Promise
     if (state.teamId !== team.id) {
       throw validationFailed('That status belongs to another team.');
     }
-    const assigneeId = parsed.assigneeId === undefined ? principal.userId : parsed.assigneeId;
+    const assigneeId = initialAssigneeId(actor, parsed);
+    const assignment = await issueAssignmentValues(tx, principal, actor, team.id, {
+      ...parsed,
+      assigneeId,
+    });
     const reviewerIds = [...new Set(parsed.reviewerIds)].sort();
     await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
     await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
-    await assertAssignableToTeam(tx, principal.organizationId, team.id, {
-      cycleId: parsed.cycleId,
-      projectId: parsed.projectId,
-      milestoneId: parsed.milestoneId,
-    });
     await assertLabelsUsable(tx, principal.organizationId, team.id, parsed.labelIds);
 
     const now = new Date();
-    const id = newId();
-    if (parsed.parentId !== null) {
-      await assertParentAllowed(tx, principal, id, parsed.parentId);
-    }
 
     const [created] = await tx
       .insert(schema.issue)
@@ -895,8 +937,8 @@ export async function createIssue(principal: Principal, input: unknown): Promise
         description: parsed.description,
         stateId: state.id,
         priority: parsed.priority,
-        creatorId: principal.userId,
-        assigneeId,
+        ...issueCreatorValues(actor),
+        ...assignment,
         projectId: parsed.projectId,
         milestoneId: parsed.milestoneId,
         cycleId: parsed.cycleId,
@@ -914,7 +956,12 @@ export async function createIssue(principal: Principal, input: unknown): Promise
 
     await replaceLabels(tx, issue.id, parsed.labelIds);
     await replaceReviewersFor(tx, [issue.id], reviewerIds);
-    await subscribeUsers(tx, issue.id, [principal.userId, assigneeId, ...reviewerIds], syncId);
+    await subscribeUsers(
+      tx,
+      issue.id,
+      [principal.userId, await assignmentRecipient(tx, issue), ...reviewerIds],
+      syncId,
+    );
     await appendActivities(tx, [
       {
         organizationId: principal.organizationId,
@@ -931,15 +978,17 @@ export async function createIssue(principal: Principal, input: unknown): Promise
       {
         issue,
         mentionHandles: newMentions('', issue.description),
-        assigneeId: issue.assigneeId,
+        assigneeId: await assignmentRecipient(tx, issue),
         statusName: null,
       },
     ]);
 
+    const [readIssue] = await attachIssueActors(tx, principal.organizationId, [issue]);
+    const resultIssue = requireRow(readIssue, 'That issue does not exist.');
     return {
-      issue,
+      issue: resultIssue,
       actions: [
-        issueAction(issue, syncId, actor, 'insert', {
+        issueAction(resultIssue, syncId, actor, 'insert', {
           labelIds: parsed.labelIds,
           reviewerIds,
         }),
@@ -970,7 +1019,11 @@ async function insertSubIssue(
   if (state.teamId !== team.id) {
     throw validationFailed('That status belongs to another team.');
   }
-  const assigneeId = item.assigneeId === undefined ? principal.userId : item.assigneeId;
+  const assigneeId = initialAssigneeId(actor, item);
+  const assignment = await issueAssignmentValues(tx, principal, actor, team.id, {
+    ...item,
+    assigneeId,
+  });
   const reviewerIds = [...new Set(item.reviewerIds)].sort();
   if (assigneeId !== null) {
     await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
@@ -996,8 +1049,8 @@ async function insertSubIssue(
       description: item.description,
       stateId: state.id,
       priority: item.priority,
-      creatorId: principal.userId,
-      assigneeId,
+      ...issueCreatorValues(actor),
+      ...assignment,
       projectId: item.projectId ?? null,
       milestoneId: item.milestoneId ?? null,
       cycleId: item.cycleId ?? null,
@@ -1017,7 +1070,7 @@ async function insertSubIssue(
   await subscribeUsers(
     tx,
     issue.id,
-    [principal.userId, ...(assigneeId ? [assigneeId] : []), ...reviewerIds],
+    [principal.userId, await assignmentRecipient(tx, issue), ...reviewerIds],
     syncId,
   );
   await appendActivities(tx, [
@@ -1036,7 +1089,7 @@ async function insertSubIssue(
     {
       issue,
       mentionHandles: newMentions('', issue.description),
-      assigneeId: issue.assigneeId,
+      assigneeId: await assignmentRecipient(tx, issue),
       statusName: null,
     },
   ]);
@@ -1053,30 +1106,65 @@ async function insertSubIssue(
   };
 }
 
+async function lockSubIssueCycleAssignments(
+  executor: Executor,
+  organizationId: string,
+  teamId: string,
+  issues: readonly ReturnType<typeof subIssueItemSchema.parse>[],
+): Promise<void> {
+  if (!issues.some((item) => item.cycleId != null)) return;
+  await lockCycleAssignmentWorkspace(executor, organizationId);
+  await lockCycleAssignmentTeam(executor, teamId);
+}
+
+async function allocateCurrentSubIssueNumbers(
+  executor: Executor,
+  team: TeamRow,
+  reservation: { readonly teamId: string; readonly numbers: readonly number[] | undefined },
+  count: number,
+): Promise<readonly number[]> {
+  if (reservation.teamId === team.id && reservation.numbers !== undefined)
+    return reservation.numbers;
+  return await allocateIssueNumbers(executor, team, count);
+}
+
 export async function createSubIssues(
   principal: Principal,
   input: unknown,
-): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
+  writeContext?: AgentIssueWriteContext,
+): Promise<{ issues: IssueReadRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:create');
   const parsed = createSubIssuesSchema.parse(input);
 
   const parent = await loadIssue(db, principal, parsed.parentId);
   const allocationTeam = await requireTeam(principal, parent.teamId);
-  const numbers = await allocateIssueNumbers(db, allocationTeam, parsed.issues.length);
+  const allocatedNumbers =
+    writeContext === undefined
+      ? await allocateIssueNumbers(db, allocationTeam, parsed.issues.length)
+      : undefined;
 
-  return await db.transaction(async (tx) => {
-    const team = await requireTeam(principal, parent.teamId, tx);
-    await assertParentAllowed(tx, principal, newId(), parent.id);
+  const transact = issueWriteTransactionFor(principal, 'issue:create', writeContext);
+  return await transact(async (tx, principal) => {
+    const currentParent = await loadIssueForUpdate(tx, principal, parsed.parentId);
+    const team = await requireTeam(principal, currentParent.teamId, tx);
+    await lockSubIssueCycleAssignments(tx, principal.organizationId, team.id, parsed.issues);
+    const numbers = await allocateCurrentSubIssueNumbers(
+      tx,
+      team,
+      { teamId: allocationTeam.id, numbers: allocatedNumbers },
+      parsed.issues.length,
+    );
+    await assertParentAllowed(tx, principal, newId(), currentParent.id);
 
     const defaultState = await initialStateFor(tx, team.id);
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const now = new Date();
     const context: SubIssueContext = {
       tx,
       principal,
       team,
-      parent,
+      parent: currentParent,
       defaultState,
       syncId,
       actor,
@@ -1108,12 +1196,13 @@ export async function createSubIssues(
       }
     }
 
-    return { issues: createdIssues, actions: allActions };
+    const issues = await attachIssueActors(tx, principal.organizationId, createdIssues);
+    return { issues, actions: issueActorActions(allActions, issues) };
   });
 }
 
 export interface UpdatedIssue {
-  readonly issue: IssueRow;
+  readonly issue: IssueReadRow;
   readonly changes: FieldChange[];
   readonly actions: SyncAction[];
 }
@@ -1161,11 +1250,38 @@ interface UpdateContext {
   readonly reviewers: ReadonlyMap<string, string[]>;
 }
 
+async function collectAssignmentChanges(
+  tx: Executor,
+  principal: Principal,
+  parsed: ReturnType<typeof issueUpdateSchema.parse>,
+  current: IssueRow,
+  values: IssueValues,
+  changes: FieldChange[],
+): Promise<void> {
+  const actor = await issueMutationActor(tx, principal);
+  const assignment = await issueAssignmentValues(
+    tx,
+    principal,
+    actor,
+    current.teamId,
+    parsed,
+    current,
+  );
+  if (assignment.assigneeId === undefined) return;
+  Object.assign(values, assignment);
+  const change = await assignmentActivityValues(tx, principal.organizationId, current, {
+    ...current,
+    ...assignment,
+  });
+  changes.push({ field: 'assigneeId', ...change });
+}
+
 async function pendingUpdateFor(context: UpdateContext, current: IssueRow): Promise<PendingUpdate> {
   const { tx, principal, parsed, state, now, reviewers } = context;
   assertInTeam(principal, teamScope(current));
 
   const { values, changes } = collectIssueChanges(current, parsed);
+  await collectAssignmentChanges(tx, principal, parsed, current, values, changes);
   const currentReviewerIds = reviewers.get(current.id) ?? [];
   const reviewerIds =
     parsed.reviewerIds === undefined ? currentReviewerIds : [...new Set(parsed.reviewerIds)].sort();
@@ -1297,6 +1413,7 @@ export function assertExpectedIssueState(
 ): void {
   checkPropertyMatch(expected.stateId, current.stateId, 'state');
   checkPropertyMatch(expected.assigneeId, current.assigneeId, 'assignee');
+  checkPropertyMatch(expected.assigneeAgentId, current.assigneeAgentId, 'agent assignee');
   checkPropertyMatch(expected.priority, current.priority, 'priority');
   checkPropertyMatch(expected.estimate, current.estimate, 'estimate');
   checkPropertyMatch(expected.projectId, current.projectId, 'project');
@@ -1355,11 +1472,16 @@ async function applyIssueUpdates(
   const labelsChanged = parsed.labelIds !== undefined;
   const changing = pending.filter((entry) => entry.changes.length > 0 || labelsChanged);
   if (changing.length === 0) {
-    return pending.map((entry) => ({ issue: entry.current, changes: [], actions: [] }));
+    const issues = await attachIssueActors(
+      tx,
+      principal.organizationId,
+      pending.map((entry) => entry.current),
+    );
+    return issues.map((issue) => ({ issue, changes: [], actions: [] }));
   }
 
   const syncId = await nextSyncId(tx);
-  const actor = await principalActor(tx, principal);
+  const actor = await issueMutationActor(tx, principal);
 
   const updated = new Map<string, IssueRow>();
   for (const [, group] of updateGroups(changing)) {
@@ -1400,9 +1522,17 @@ async function applyIssueUpdates(
 
   await replaceChangedReviewers(tx, parsed, changing);
 
-  const assigned = changing
-    .filter((entry) => entry.values.assigneeId !== undefined)
-    .map((entry) => ({ issueId: entry.current.id, userId: entry.values.assigneeId ?? null }));
+  const assigned = await Promise.all(
+    changing
+      .filter((entry) => entry.values.assigneeId !== undefined)
+      .map(async (entry) => ({
+        issueId: entry.current.id,
+        userId: await assignmentRecipient(
+          tx,
+          requireRow(updated.get(entry.current.id), 'That issue does not exist.'),
+        ),
+      })),
+  );
   await subscribeToIssues(tx, assigned);
   await subscribeChangedReviewers(tx, parsed, changing, syncId);
 
@@ -1435,7 +1565,19 @@ async function applyIssueUpdates(
     pending.map((entry) => entry.current.id),
   );
 
-  return updateResults(pending, updated, { notifications, ...decorations }, syncId, actor);
+  const issues = await attachIssueActors(
+    tx,
+    principal.organizationId,
+    pending.map((entry) => updated.get(entry.current.id) ?? entry.current),
+  );
+  return updateResults(
+    pending,
+    updated,
+    new Map(issues.map((issue) => [issue.id, issue])),
+    { notifications, ...decorations },
+    syncId,
+    actor,
+  );
 }
 
 async function updateNotifications(
@@ -1449,7 +1591,7 @@ async function updateNotifications(
   },
 ): Promise<Map<string, SyncAction[]>> {
   const statusName = context.state === null ? null : context.state.name;
-  const inputs = updateNotificationInputs(context.changing, context.updated, statusName);
+  const inputs = await updateNotificationInputs(tx, context.changing, context.updated, statusName);
   return notificationsByEntity(await issueNotifications(tx, principal, actor, inputs));
 }
 
@@ -1462,13 +1604,14 @@ interface UpdateDecorations {
 function updateResults(
   pending: readonly PendingUpdate[],
   updated: ReadonlyMap<string, IssueRow>,
+  issues: ReadonlyMap<string, IssueReadRow>,
   decorations: UpdateDecorations,
   syncId: number,
   actor: Actor,
 ): UpdatedIssue[] {
   return pending.map((entry) => {
-    const issue = updated.get(entry.current.id);
-    if (issue === undefined) return { issue: entry.current, changes: [], actions: [] };
+    const issue = requireRow(issues.get(entry.current.id), 'That issue does not exist.');
+    if (!updated.has(issue.id)) return { issue, changes: [], actions: [] };
     return {
       issue,
       changes: entry.changes,
@@ -1498,49 +1641,115 @@ export async function updateIssue(
   issueId: string,
   patch: unknown,
   database: Database = db,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<UpdatedIssue> {
   assertCan(principal, 'issue:update');
   const parsed = issueUpdateSchema.parse(patch);
-  return await database.transaction(async (tx) => applyIssueUpdate(tx, principal, issueId, parsed));
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext, database);
+  return await transact(async (tx, principal) => applyIssueUpdate(tx, principal, issueId, parsed));
 }
 
-async function orderOf(executor: Executor, issueId: string | null): Promise<number | null> {
+function orderOf(issues: ReadonlyMap<string, IssueRow>, issueId: string | null): number | null {
   if (issueId === null) return null;
-  const [row] = await executor
-    .select({ sortOrder: schema.issue.sortOrder })
-    .from(schema.issue)
-    .where(eq(schema.issue.id, issueId))
-    .limit(1);
-  return row?.sortOrder ?? null;
+  return requireRow(issues.get(issueId), 'That issue does not exist.').sortOrder;
 }
 
-export async function rebalanceColumn(
-  executor: Executor,
+async function columnIssueIds(
+  executor: Transaction,
+  principal: Principal,
   teamId: string,
   stateId: string,
-  syncId: number,
-): Promise<IssueRow[]> {
+): Promise<string[]> {
   const rows = await executor
     .select({ id: schema.issue.id })
     .from(schema.issue)
-    .where(and(eq(schema.issue.teamId, teamId), eq(schema.issue.stateId, stateId)))
-    .orderBy(asc(schema.issue.sortOrder), asc(schema.issue.createdAt));
+    .where(
+      and(
+        eq(schema.issue.organizationId, principal.organizationId),
+        eq(schema.issue.teamId, teamId),
+        eq(schema.issue.stateId, stateId),
+      ),
+    )
+    .orderBy(asc(schema.issue.id));
+  return rows.map((row) => row.id);
+}
 
+async function lockMoveIssues(
+  executor: Transaction,
+  principal: Principal,
+  issueId: string,
+  parsed: MoveInput,
+): Promise<Map<string, IssueRow>> {
+  const current = await loadIssue(executor, principal, issueId);
+  const snapshots = new Map([[issueId, current]]);
+  for (const id of [parsed.beforeId, parsed.afterId]) {
+    if (id !== null && !snapshots.has(id))
+      snapshots.set(id, await loadIssue(executor, principal, id));
+  }
+  const before = orderOf(snapshots, parsed.beforeId);
+  const after = orderOf(snapshots, parsed.afterId);
+  const teamId = parsed.teamId ?? current.teamId;
+  const stateId = parsed.stateId ?? current.stateId;
+  const columnIds =
+    before !== null && after !== null && Math.abs(after - before) < REBALANCE_THRESHOLD
+      ? await columnIssueIds(executor, principal, teamId, stateId)
+      : [];
+  const locked = new Map<string, IssueRow>();
+  for (const id of [...new Set([...snapshots.keys(), ...columnIds])].sort()) {
+    locked.set(id, await loadIssueForUpdate(executor, principal, id));
+  }
+  const lockedCurrent = requireRow(locked.get(issueId), 'That issue does not exist.');
+  if (lockedCurrent.teamId !== current.teamId || lockedCurrent.stateId !== current.stateId)
+    throw conflict('The issue changed while moving. Retry the move.');
+  for (const id of columnIds) {
+    const issue = requireRow(locked.get(id), 'That issue does not exist.');
+    if (issue.teamId !== teamId || issue.stateId !== stateId)
+      throw conflict('The column changed while rebalancing. Retry the move.');
+  }
+  return locked;
+}
+
+async function rebalanceColumn(
+  executor: Transaction,
+  principal: Principal,
+  column: {
+    readonly teamId: string;
+    readonly stateId: string;
+    readonly issues: Map<string, IssueRow>;
+  },
+  syncId: number,
+): Promise<IssueRow[]> {
+  const rows = await columnIssueIds(executor, principal, column.teamId, column.stateId);
+  const locked = rows.map((id) => {
+    const issue = column.issues.get(id);
+    if (issue === undefined || issue.teamId !== column.teamId || issue.stateId !== column.stateId)
+      throw conflict('The column changed while rebalancing. Retry the move.');
+    return issue;
+  });
+  locked.sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder ||
+      left.createdAt.getTime() - right.createdAt.getTime() ||
+      left.id.localeCompare(right.id),
+  );
   const updated: IssueRow[] = [];
-  for (const [index, row] of rows.entries()) {
+  for (const [index, row] of locked.entries()) {
     const [next] = await executor
       .update(schema.issue)
       .set({ sortOrder: (index + 1) * SORT_ORDER_STEP, syncId })
       .where(eq(schema.issue.id, row.id))
       .returning();
-    if (next !== undefined) updated.push(next);
+    if (next !== undefined) {
+      updated.push(next);
+      column.issues.set(next.id, next);
+    }
   }
   return updated;
 }
 
 export interface MovedIssue {
-  readonly issue: IssueRow;
-  readonly rebalanced: IssueRow[];
+  readonly issue: IssueReadRow;
+  readonly rebalanced: IssueReadRow[];
   readonly actions: SyncAction[];
 }
 
@@ -1587,14 +1796,25 @@ interface RegroupActivityInput {
 
 async function recordRegroupings(tx: Executor, input: RegroupActivityInput): Promise<void> {
   for (const field of input.regrouped) {
+    const assignment =
+      field === 'assigneeId' &&
+      (input.current.assigneeAgentId !== null || input.issue.assigneeAgentId !== null)
+        ? await assignmentActivityValues(tx, input.organizationId, input.current, input.issue)
+        : undefined;
     await appendActivities(tx, [
       {
         organizationId: input.organizationId,
         issueId: input.issueId,
         actor: input.actor,
         field,
-        from: await describeValue(tx, field, input.current[field]),
-        to: await describeValue(tx, field, input.issue[field]),
+        from:
+          assignment === undefined
+            ? await describeValue(tx, field, input.current[field])
+            : assignment.from,
+        to:
+          assignment === undefined
+            ? await describeValue(tx, field, input.issue[field])
+            : assignment.to,
         syncId: input.syncId,
       },
     ]);
@@ -1695,23 +1915,27 @@ async function recordMovedIssueState(
 }
 
 async function landingOrder(
-  executor: Executor,
+  executor: Transaction,
+  principal: Principal,
   parsed: { beforeId: string | null; afterId: string | null },
-  teamId: string,
-  stateId: string,
+  column: {
+    readonly teamId: string;
+    readonly stateId: string;
+    readonly issues: Map<string, IssueRow>;
+  },
   syncId: number,
 ): Promise<Landing> {
   if (parsed.beforeId === null && parsed.afterId === null) {
     return { sortOrder: null, rebalanced: [] };
   }
 
-  let before = await orderOf(executor, parsed.beforeId);
-  let after = await orderOf(executor, parsed.afterId);
+  let before = orderOf(column.issues, parsed.beforeId);
+  let after = orderOf(column.issues, parsed.afterId);
   let rebalanced: IssueRow[] = [];
   if (before !== null && after !== null && Math.abs(after - before) < REBALANCE_THRESHOLD) {
-    rebalanced = await rebalanceColumn(executor, teamId, stateId, syncId);
-    before = await orderOf(executor, parsed.beforeId);
-    after = await orderOf(executor, parsed.afterId);
+    rebalanced = await rebalanceColumn(executor, principal, column, syncId);
+    before = orderOf(column.issues, parsed.beforeId);
+    after = orderOf(column.issues, parsed.afterId);
   }
   return { sortOrder: sortOrderBetween(before, after), rebalanced };
 }
@@ -1720,12 +1944,15 @@ export async function moveIssue(
   principal: Principal,
   issueId: string,
   input: unknown,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<MovedIssue> {
   assertCan(principal, 'issue:update');
   const parsed = issueMoveSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
-    const current = await loadIssueForUpdate(tx, principal, issueId);
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext);
+  return await transact(async (tx, principal) => {
+    const locked = await lockMoveIssues(tx, principal, issueId, parsed);
+    const current = requireRow(locked.get(issueId), 'That issue does not exist.');
 
     const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
     const teamId = team.id;
@@ -1747,7 +1974,7 @@ export async function moveIssue(
     }
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
 
     if (changingTeam) {
       await tx.insert(schema.issueIdentifierAlias).values({
@@ -1759,7 +1986,13 @@ export async function moveIssue(
       });
     }
 
-    const landing = await landingOrder(tx, parsed, teamId, state.id, syncId);
+    const landing = await landingOrder(
+      tx,
+      principal,
+      parsed,
+      { teamId, stateId: state.id, issues: locked },
+      syncId,
+    );
     const rebalanced = landing.rebalanced;
 
     const now = new Date();
@@ -1773,6 +2006,12 @@ export async function moveIssue(
     });
 
     const regrouped = applyRegrouping(parsed, current, values);
+    Object.assign(
+      values,
+      await issueAssignmentValues(tx, principal, actor, teamId, parsed, current),
+    );
+    if (values.assigneeUserId !== undefined && !regrouped.includes('assigneeId'))
+      regrouped.push('assigneeId');
 
     const [moved] = await tx
       .update(schema.issue)
@@ -1804,16 +2043,31 @@ export async function moveIssue(
       issue,
     });
 
-    const affected = [issue, ...rebalanced.filter((row) => row.id !== issueId)];
+    const affected = await attachIssueActors(tx, principal.organizationId, [
+      issue,
+      ...rebalanced.filter((row) => row.id !== issueId),
+    ]);
     const decorations = await issueDecorationsByIssue(
       tx,
       affected.map((row) => row.id),
     );
-    const notifications = await moveNotifications(tx, principal, actor, { current, issue, state });
+    const notifications = await moveNotifications(tx, principal, actor, {
+      current,
+      issue,
+      state,
+    });
 
     return {
-      issue,
-      rebalanced,
+      issue: requireRow(
+        affected.find((row) => row.id === issue.id),
+        'That issue does not exist.',
+      ),
+      rebalanced: rebalanced.map((row) =>
+        requireRow(
+          affected.find((read) => read.id === row.id),
+          'That issue does not exist.',
+        ),
+      ),
       actions: [
         ...(changingTeam ? [issueDepartureAction(current, syncId, actor)] : []),
         ...affected.map((row) =>
@@ -1846,14 +2100,17 @@ async function moveNotifications(
   },
 ): Promise<SyncAction[]> {
   const assigned =
-    move.issue.assigneeId !== null && move.issue.assigneeId !== move.current.assigneeId;
+    move.issue.assigneeId !== move.current.assigneeId ||
+    move.issue.assigneeAgentId !== move.current.assigneeAgentId;
   const changedState = move.state.id !== move.current.stateId;
   if (!(assigned || changedState)) return [];
+  const assigneeId = assigned ? await assignmentRecipient(tx, move.issue) : null;
+  if (assigned) await subscribeToIssues(tx, [{ issueId: move.issue.id, userId: assigneeId }]);
   return await issueNotifications(tx, principal, actor, [
     {
       issue: move.issue,
       mentionHandles: [],
-      assigneeId: assigned ? move.issue.assigneeId : null,
+      assigneeId,
       statusName: changedState ? move.state.name : null,
     },
   ]);
@@ -1862,11 +2119,13 @@ async function moveNotifications(
 export async function bulkUpdateIssues(
   principal: Principal,
   input: unknown,
-): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
+  writeContext?: AgentIssueWriteContext,
+): Promise<{ issues: IssueReadRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueBulkUpdateSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext);
+  return await transact(async (tx, principal) => {
     const results = await applyIssueUpdates(
       tx,
       principal,
@@ -1884,14 +2143,16 @@ async function setArchived(
   principal: Principal,
   issueId: string,
   archivedAt: Date | null,
-): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+  writeContext?: AgentIssueWriteContext,
+): Promise<{ issue: IssueReadRow; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
 
-  return await db.transaction(async (tx) => {
-    await loadIssue(tx, principal, issueId);
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext);
+  return await transact(async (tx, principal) => {
+    await loadIssueForUpdate(tx, principal, issueId);
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const [updated] = await tx
       .update(schema.issue)
       .set({ archivedAt, updatedAt: new Date(), syncId })
@@ -1912,10 +2173,12 @@ async function setArchived(
     ]);
 
     const decorations = await issueDecorationsByIssue(tx, [issue.id]);
+    const [readIssue] = await attachIssueActors(tx, principal.organizationId, [issue]);
+    const resultIssue = requireRow(readIssue, 'That issue does not exist.');
     return {
-      issue,
+      issue: resultIssue,
       actions: [
-        issueAction(issue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
+        issueAction(resultIssue, syncId, actor, archivedAt === null ? 'unarchive' : 'archive', {
           labelIds: decorations.labels.get(issue.id) ?? [],
           reviewerIds: decorations.reviewers.get(issue.id) ?? [],
         }),
@@ -1927,33 +2190,43 @@ async function setArchived(
 export async function archiveIssue(
   principal: Principal,
   issueId: string,
-): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
-  return await setArchived(principal, issueId, new Date());
+  writeContext?: AgentIssueWriteContext,
+): Promise<{ issue: IssueReadRow; actions: SyncAction[] }> {
+  return await setArchived(principal, issueId, new Date(), writeContext);
 }
 
 export async function unarchiveIssue(
   principal: Principal,
   issueId: string,
-): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
-  return await setArchived(principal, issueId, null);
+  writeContext?: AgentIssueWriteContext,
+): Promise<{ issue: IssueReadRow; actions: SyncAction[] }> {
+  return await setArchived(principal, issueId, null, writeContext);
 }
 
 export async function deleteIssue(
   principal: Principal,
   issueId: string,
   database: Database = db,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<SyncAction[]> {
   assertCan(principal, 'issue:delete');
 
-  return await database.transaction(async (tx) => {
-    const current = await loadIssueForUpdate(tx, principal, issueId);
+  const transact = issueWriteTransactionFor(principal, 'issue:delete', writeContext, database);
+  return await transact(async (tx, principal) => {
+    const current =
+      writeContext === undefined
+        ? await loadIssueForUpdate(tx, principal, issueId)
+        : requireRow(
+            (await lockAffectedIssues(tx, principal, issueId, 'delete')).get(issueId),
+            'That issue does not exist.',
+          );
     if (current.cycleId !== null) {
       await lockCycleAssignmentWorkspace(tx, principal.organizationId);
       await lockCycleAssignmentTeam(tx, current.teamId);
     }
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const now = new Date();
     const orphaned = await tx
       .update(schema.issue)
@@ -1976,6 +2249,7 @@ export async function deleteIssue(
       orphaned.map((child) => child.id),
     );
 
+    const orphanedReads = await attachIssueActors(tx, principal.organizationId, orphaned);
     return [
       buildSyncAction({
         syncId,
@@ -1987,7 +2261,7 @@ export async function deleteIssue(
         data: { id: issueId, teamId: current.teamId, identifier: current.identifier },
         actor,
       }),
-      ...orphaned.map((child) =>
+      ...orphanedReads.map((child) =>
         issueAction(child, syncId, actor, 'update', {
           labelIds: decorations.labels.get(child.id) ?? [],
           reviewerIds: decorations.reviewers.get(child.id) ?? [],
@@ -2094,7 +2368,7 @@ export type IssueListRow = Omit<IssueRow, TrimmedIssueColumn> &
   Partial<Pick<IssueRow, TrimmedIssueColumn>>;
 
 export interface IssuePage {
-  readonly issues: IssueListRow[];
+  readonly issues: IssueActorRead<IssueListRow>[];
   readonly nextCursor: string | null;
 }
 
@@ -2128,7 +2402,7 @@ export async function listIssues(principal: Principal, input: unknown = {}): Pro
     .orderBy(direction(ordering.expression), direction(schema.issue.id))
     .limit(filter.limit + 1);
 
-  const page = rows.slice(0, filter.limit);
+  const page = await attachIssueActors(db, principal.organizationId, rows.slice(0, filter.limit));
   const last = page.at(-1);
   const nextCursor =
     rows.length > filter.limit && last !== undefined
@@ -2200,7 +2474,10 @@ function tally(rows: readonly { key: string | null; total: number }[]): Record<s
   return counts;
 }
 
-async function facetOf(column: PgColumn, where: SQL | undefined): Promise<Record<string, number>> {
+async function facetOf(
+  column: PgColumn | SQL,
+  where: SQL | undefined,
+): Promise<Record<string, number>> {
   const rows = await db
     .select({ key: sql<string | null>`${column}::text`, total: count() })
     .from(schema.issue)
@@ -2253,7 +2530,7 @@ async function participantFacet(
     select participant.key, count(distinct participant.issue_id)::int as total
     from (
       select ${schema.issue.id} as issue_id,
-             coalesce(${schema.issue.assigneeId}, ${UNSET_FACET_VALUE}) as key
+             coalesce(${FACET_COLUMNS.assignee()}, ${UNSET_FACET_VALUE}) as key
       from ${schema.issue}
       where ${where ?? sql`true`} and ${workType !== 'reviewing'}
       union all
@@ -2268,10 +2545,16 @@ async function participantFacet(
   return tally(rows);
 }
 
-const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn> = {
+const FACET_COLUMNS: Record<Exclude<FacetProperty, 'label' | 'milestone'>, () => PgColumn | SQL> = {
   state: () => schema.issue.stateId,
-  assignee: () => schema.issue.assigneeId,
-  creator: () => schema.issue.creatorId,
+  assignee: () =>
+    sql`case when ${schema.issue.assigneeAgentId} is not null
+      then 'agent:' || ${schema.issue.assigneeAgentId}
+      else coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) end`,
+  creator: () =>
+    sql`case when ${schema.issue.creatorAgentId} is not null
+      then 'agent:' || ${schema.issue.creatorAgentId}
+      else coalesce(${schema.issue.creatorUserId}, ${schema.issue.creatorId}) end`,
   priority: () => schema.issue.priority,
   estimate: () => schema.issue.estimate,
   project: () => schema.issue.projectId,
@@ -2380,7 +2663,7 @@ const boardSchema = issueListSchema.extend({
 export interface BoardGroup {
   readonly id: string;
   readonly total: number;
-  readonly issues: IssueListRow[];
+  readonly issues: IssueActorRead<IssueListRow>[];
   readonly nextCursor: string | null;
 }
 
@@ -2454,11 +2737,12 @@ export async function listBoardGroups(
           )
           .orderBy(asc(ranked.seat));
 
-  const byGroup = new Map<string, IssueListRow[]>();
-  for (const row of rows) {
+  const byGroup = new Map<string, IssueActorRead<IssueListRow>[]>();
+  const readRows = await attachIssueActors(db, principal.organizationId, rows);
+  for (const row of readRows) {
     const { groupKey, seat: _seat, ...issue } = row;
     const key = groupKey ?? UNGROUPED_KEY;
-    byGroup.set(key, [...(byGroup.get(key) ?? []), issue as IssueListRow]);
+    byGroup.set(key, [...(byGroup.get(key) ?? []), issue]);
   }
 
   const groups: BoardGroup[] = [];
@@ -2532,7 +2816,10 @@ export async function getIssueFacets(
   return { scopeTotal: Number(scopeTotal[0]?.total ?? 0), facets };
 }
 
-export async function getIssue(principal: Principal, idOrIdentifier: string): Promise<IssueRow> {
+export async function getIssue(
+  principal: Principal,
+  idOrIdentifier: string,
+): Promise<IssueReadRow> {
   assertCan(principal, 'issue:read');
   const parsed = parseIssueIdentifier(idOrIdentifier);
   const identifier = parsed === null ? null : issueIdentifier(parsed.prefix, parsed.number);
@@ -2566,7 +2853,8 @@ export async function getIssue(principal: Principal, idOrIdentifier: string): Pr
   const row = direct ?? aliased?.issue;
   const issue = requireRow(row, 'That issue does not exist.');
   if (!isInTeam(principal, teamScope(issue))) throw notFound('That issue does not exist.');
-  return issue;
+  const [readIssue] = await attachIssueActors(db, principal.organizationId, [issue]);
+  return requireRow(readIssue, 'That issue does not exist.');
 }
 
 export async function listIssueLabels(
@@ -2594,6 +2882,7 @@ export async function setRelation(
   principal: Principal,
   issueId: string,
   input: unknown,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<{ relations: IssueRelationRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueRelationSchema.parse(input);
@@ -2601,24 +2890,39 @@ export async function setRelation(
     throw validationFailed('An issue cannot relate to itself.');
   }
   if (parsed.type === 'duplicate_of') {
-    const result = await markAsDuplicate(principal, issueId, {
-      survivorIssueId: parsed.relatedIssueId,
-    });
+    const result = await markAsDuplicate(
+      principal,
+      issueId,
+      {
+        survivorIssueId: parsed.relatedIssueId,
+      },
+      writeContext,
+    );
     return { relations: result.relations, actions: result.actions };
   }
   if (parsed.type === 'duplicated_by') {
-    const result = await markAsDuplicate(principal, parsed.relatedIssueId, {
-      survivorIssueId: issueId,
-    });
+    const result = await markAsDuplicate(
+      principal,
+      parsed.relatedIssueId,
+      {
+        survivorIssueId: issueId,
+      },
+      writeContext,
+    );
     return { relations: result.relations, actions: result.actions };
   }
 
-  return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal, issueId);
-    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext);
+  return await transact(async (tx, principal) => {
+    const { source, target } = await loadIssuesForUpdate(
+      tx,
+      principal,
+      issueId,
+      parsed.relatedIssueId,
+    );
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const inverse = INVERSE_RELATION[parsed.type];
 
     const relations = await tx
@@ -2680,16 +2984,22 @@ export async function removeRelation(
   principal: Principal,
   issueId: string,
   input: unknown,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<SyncAction[]> {
   assertCan(principal, 'issue:update');
   const parsed = issueRelationSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
-    const source = await loadIssue(tx, principal, issueId);
-    const target = await loadIssue(tx, principal, parsed.relatedIssueId);
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext);
+  return await transact(async (tx, principal) => {
+    const { source, target } = await loadIssuesForUpdate(
+      tx,
+      principal,
+      issueId,
+      parsed.relatedIssueId,
+    );
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const inverse = INVERSE_RELATION[parsed.type];
 
     const removed = await tx
@@ -2749,7 +3059,7 @@ export async function listRelations(
 export async function getParentIssue(
   principal: Principal,
   issueId: string,
-): Promise<IssueRow | null> {
+): Promise<IssueReadRow | null> {
   assertCan(principal, 'issue:read');
   const issue = await loadIssue(db, principal, issueId);
   if (issue.parentId === null) return null;
@@ -2764,13 +3074,14 @@ export async function getParentIssue(
     )
     .limit(1);
   if (row === undefined || !isInTeam(principal, teamScope(row))) return null;
-  return row;
+  const [readIssue] = await attachIssueActors(db, principal.organizationId, [row]);
+  return requireRow(readIssue, 'That issue does not exist.');
 }
 
 export interface RelatedIssue {
   readonly id: string;
   readonly type: IssueRelationType;
-  readonly issue: IssueRow;
+  readonly issue: IssueReadRow;
 }
 
 function relationTypeOf(value: string): IssueRelationType {
@@ -2796,13 +3107,18 @@ export async function listRelatedIssues(
     )
     .orderBy(asc(schema.issueRelation.createdAt));
 
-  return rows
-    .filter((row) => isInTeam(principal, teamScope(row.related)))
-    .map((row) => ({
-      id: row.relation.id,
-      type: relationTypeOf(row.relation.type),
-      issue: row.related,
-    }));
+  const visible = rows.filter((row) => isInTeam(principal, teamScope(row.related)));
+  const issues = await attachIssueActors(
+    db,
+    principal.organizationId,
+    visible.map((row) => row.related),
+  );
+  const byId = new Map(issues.map((issue) => [issue.id, issue]));
+  return visible.map((row) => ({
+    id: row.relation.id,
+    type: relationTypeOf(row.relation.type),
+    issue: requireRow(byId.get(row.related.id), 'That issue does not exist.'),
+  }));
 }
 
 export async function subscribe(
@@ -2814,7 +3130,7 @@ export async function subscribe(
   return await db.transaction(async (tx) => {
     const current = await loadIssue(tx, principal, issueId);
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     await subscribeUsers(tx, issueId, [principal.userId], syncId);
     return {
       subscribed: true,
@@ -2842,7 +3158,7 @@ export async function unsubscribe(
 
   return await db.transaction(async (tx) => {
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     await tx
       .delete(schema.issueSubscription)
       .where(
@@ -3112,6 +3428,85 @@ async function loadIssuesForUpdate(
   };
 }
 
+async function affectedIssueIds(
+  tx: Executor,
+  organizationId: string,
+  issueId: string,
+  operation: 'delete' | 'duplicate',
+): Promise<string[]> {
+  const relations = await tx
+    .select({
+      issueId: schema.issueRelation.issueId,
+      relatedIssueId: schema.issueRelation.relatedIssueId,
+    })
+    .from(schema.issueRelation)
+    .where(
+      and(
+        eq(schema.issueRelation.organizationId, organizationId),
+        operation === 'delete'
+          ? or(
+              eq(schema.issueRelation.issueId, issueId),
+              eq(schema.issueRelation.relatedIssueId, issueId),
+            )
+          : or(
+              and(
+                eq(schema.issueRelation.issueId, issueId),
+                eq(schema.issueRelation.type, 'duplicate_of'),
+              ),
+              and(
+                eq(schema.issueRelation.relatedIssueId, issueId),
+                eq(schema.issueRelation.type, 'duplicated_by'),
+              ),
+            ),
+      ),
+    );
+  const children =
+    operation === 'delete'
+      ? await tx
+          .select({ id: schema.issue.id })
+          .from(schema.issue)
+          .where(eq(schema.issue.parentId, issueId))
+      : [];
+  return [
+    ...children.map((child) => child.id),
+    ...relations.flatMap((relation) => [relation.issueId, relation.relatedIssueId]),
+  ];
+}
+
+async function lockAffectedIssues(
+  tx: Executor,
+  principal: Principal,
+  issueId: string,
+  operation: 'delete' | 'duplicate',
+  additionalIssueIds: readonly string[] = [],
+): Promise<Map<string, IssueRow>> {
+  const affectedIds = await affectedIssueIds(tx, principal.organizationId, issueId, operation);
+  const locked = new Map<string, IssueRow>();
+  for (const id of [...new Set([issueId, ...additionalIssueIds, ...affectedIds])].sort()) {
+    locked.set(id, await loadIssueForUpdate(tx, principal, id));
+  }
+  const currentIds = await affectedIssueIds(tx, principal.organizationId, issueId, operation);
+  if (currentIds.some((id) => !locked.has(id))) {
+    throw conflict('The affected issues changed. Retry the operation.');
+  }
+  return locked;
+}
+
+async function loadDuplicateIssuesForUpdate(
+  tx: Executor,
+  principal: Principal,
+  sourceId: string,
+  targetId: string,
+  writeContext: AgentIssueWriteContext | undefined,
+): Promise<{ source: IssueRow; target: IssueRow }> {
+  if (writeContext === undefined) return loadIssuesForUpdate(tx, principal, sourceId, targetId);
+  const affected = await lockAffectedIssues(tx, principal, sourceId, 'duplicate', [targetId]);
+  return {
+    source: requireRow(affected.get(sourceId), 'That issue does not exist.'),
+    target: requireRow(affected.get(targetId), 'That issue does not exist.'),
+  };
+}
+
 async function assertSourceAllowed(
   tx: Executor,
   organizationId: string,
@@ -3138,19 +3533,22 @@ export async function markAsDuplicate(
   principal: Principal,
   issueId: string,
   input: unknown,
-): Promise<{ issue: IssueRow; relations: IssueRelationRow[]; actions: SyncAction[] }> {
+  writeContext?: AgentIssueWriteContext,
+): Promise<{ issue: IssueReadRow; relations: IssueRelationRow[]; actions: SyncAction[] }> {
   assertCan(principal, 'issue:update');
   const parsed = issueMarkDuplicateSchema.parse(input);
   if (parsed.survivorIssueId === issueId) {
     throw validationFailed('An issue cannot be marked as a duplicate of itself.');
   }
 
-  return await db.transaction(async (tx) => {
-    const { source, target } = await loadIssuesForUpdate(
+  const transact = issueWriteTransactionFor(principal, 'issue:update', writeContext);
+  return await transact(async (tx, principal) => {
+    const { source, target } = await loadDuplicateIssuesForUpdate(
       tx,
       principal,
       issueId,
       parsed.survivorIssueId,
+      writeContext,
     );
 
     const [existingDuplicateOf] = await tx
@@ -3170,7 +3568,12 @@ export async function markAsDuplicate(
       existingDuplicateOf !== undefined &&
       existingDuplicateOf.relatedIssueId === target.id
     ) {
-      return { issue: source, relations: [existingDuplicateOf], actions: [] };
+      const [issue] = await attachIssueActors(tx, principal.organizationId, [source]);
+      return {
+        issue: requireRow(issue, 'That issue does not exist.'),
+        relations: [existingDuplicateOf],
+        actions: [],
+      };
     }
 
     await assertSurvivorAllowed(tx, principal.organizationId, source.id, target);
@@ -3195,7 +3598,7 @@ export async function markAsDuplicate(
     }
 
     const syncId = await nextSyncId(tx);
-    const actor = await principalActor(tx, principal);
+    const actor = await issueMutationActor(tx, principal);
     const now = new Date();
 
     const { actions: oldRelationDeleteActions } = await removeExistingDuplicates(
@@ -3329,13 +3732,15 @@ export async function markAsDuplicate(
     );
 
     const decorations = await issueDecorationsByIssue(tx, [updatedIssue.id]);
-    const updatedIssueAction = issueAction(updatedIssue, syncId, actor, 'update', {
+    const [readIssue] = await attachIssueActors(tx, principal.organizationId, [updatedIssue]);
+    const resultIssue = requireRow(readIssue, 'That issue does not exist.');
+    const updatedIssueAction = issueAction(resultIssue, syncId, actor, 'update', {
       labelIds: decorations.labels.get(updatedIssue.id) ?? [],
       reviewerIds: decorations.reviewers.get(updatedIssue.id) ?? [],
     });
 
     return {
-      issue: updatedIssue,
+      issue: resultIssue,
       relations,
       actions: [
         updatedIssueAction,

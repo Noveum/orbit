@@ -218,10 +218,10 @@ function TeamContent({
   keepBoardMounted,
   onVisibilityActivityStart,
 }: TeamContentProps) {
-  if (loading) return <ListSkeleton layout={layout} />;
-
   if (failed)
     return <LoadFailed subject="these issues" onRetry={onRetry} testId="retry-team-issues" />;
+
+  if (loading && !(layout === 'board' && keepBoardMounted)) return <ListSkeleton layout={layout} />;
 
   const showEmptyState = empty && !(layout === 'board' && keepBoardMounted);
 
