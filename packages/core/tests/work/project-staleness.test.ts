@@ -268,4 +268,43 @@ describe('nudgeStaleProjects', () => {
     expect((await staleRows(mutedProject.id)).length).toBe(1);
     expect((await staleRows(deliveredProject.id)).length).toBe(1);
   });
+
+  it('starts the cooldown at the delivered run after a mute longer than one interval', async () => {
+    const project = await newProject({ leadId: workspace.adminUser.id });
+    await backdateUpdate(project.id, new Date(BASE.getTime() - 15 * DAY_MS));
+    await muteStalenessNudges(workspace.adminUser.id);
+
+    const mutedRun = await nudgeStaleProjects(db, { now: BASE });
+    expect(mutedRun.nudged).toBe(0);
+
+    await restoreStalenessNudges(workspace.adminUser.id);
+    const deliveredAt = new Date(BASE.getTime() + 10 * DAY_MS);
+    const delivered = await nudgeStaleProjects(db, { now: deliveredAt });
+    expect(delivered.nudged).toBe(1);
+    expect((await staleRows(project.id)).length).toBe(1);
+
+    const immediate = await nudgeStaleProjects(db, { now: deliveredAt });
+    expect(immediate.nudged).toBe(0);
+
+    const nextDay = await nudgeStaleProjects(db, {
+      now: new Date(deliveredAt.getTime() + DAY_MS),
+    });
+    expect(nextDay.nudged).toBe(0);
+    expect((await staleRows(project.id)).length).toBe(1);
+
+    const early = await nudgeStaleProjects(db, {
+      now: new Date(deliveredAt.getTime() + PROJECT_STALENESS_NUDGE_INTERVAL_MS - DAY_MS),
+    });
+    expect(early.nudged).toBe(0);
+    expect((await staleRows(project.id)).length).toBe(1);
+
+    const resumed = await nudgeStaleProjects(db, {
+      now: new Date(deliveredAt.getTime() + PROJECT_STALENESS_NUDGE_INTERVAL_MS),
+    });
+    expect(resumed.nudged).toBe(1);
+    expect((await staleRows(project.id)).length).toBe(2);
+
+    const keys = await staleSourceKeys(project.id);
+    expect(keys.some((key) => key.endsWith(`:${deliveredAt.getTime()}`))).toBe(true);
+  });
 });

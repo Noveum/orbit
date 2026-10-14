@@ -136,7 +136,7 @@ async function lastNudgesByProject(
   const rows = await executor
     .select({
       sourceEventKey: schema.notificationSourceEvent.sourceEventKey,
-      occurredAt: schema.notificationSourceEvent.occurredAt,
+      fanoutCompletedAt: schema.notificationSourceEvent.fanoutCompletedAt,
     })
     .from(schema.notificationSourceEvent)
     .where(
@@ -150,7 +150,8 @@ async function lastNudgesByProject(
   for (const row of rows) {
     const projectId = row.sourceEventKey.slice(NUDGE_SOURCE_PREFIX.length).split(':')[0];
     if (projectId === undefined || projectId.length === 0) continue;
-    const sentAt = row.occurredAt;
+    const sentAt = row.fanoutCompletedAt;
+    if (sentAt === null) continue;
     const seen = latest.get(projectId);
     if (seen === undefined || sentAt.getTime() > seen.getTime()) latest.set(projectId, sentAt);
   }
@@ -212,7 +213,7 @@ export async function nudgeStaleProjects(
     );
     suppressed += candidate.suppressed;
     if (candidate.events.length === 0) continue;
-    const outcome = await notifyMany(executor, candidate.events);
+    const outcome = await notifyMany(executor, candidate.events, { now });
     nudged += outcome.notifications.length;
     actions.push(...outcome.actions);
     await options.publish?.(outcome.actions);
