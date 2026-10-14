@@ -14,6 +14,7 @@ import { releaseDatabase } from '../src/migration-release.ts';
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_migration_release', currentLane());
 const MIGRATIONS = fileURLToPath(new URL('../drizzle', import.meta.url));
+const HUMAN_ACTOR_MIGRATION = 1791120831827;
 
 function urlFor(database: string): string {
   const url = new URL(BASE);
@@ -42,6 +43,78 @@ async function migrateScratch(): Promise<void> {
   await run(urlFor(SCRATCH), async (sql) => {
     await migrate(drizzle({ client: sql }), { migrationsFolder: MIGRATIONS });
   });
+}
+
+async function seedHumanActorIssues(sql: postgres.Sql): Promise<void> {
+  await sql`
+    insert into "user" (id, name, email, handle) values
+      ('release-actor-creator', 'Creator', 'actor-creator@example.com', 'actor-creator'),
+      ('release-actor-assignee', 'Assignee', 'actor-assignee@example.com', 'actor-assignee'),
+      ('release-actor-owner', 'Owner', 'actor-owner@example.com', 'actor-owner')
+  `;
+  await sql`
+    insert into organization (id, name, slug)
+    values ('release-actor-org', 'Actor org', 'release-actor-org')
+  `;
+  await sql`
+    insert into team (id, organization_id, name, key)
+    values ('release-actor-team', 'release-actor-org', 'Actor team', 'ACTOR')
+  `;
+  await sql`
+    insert into workflow_state (id, organization_id, team_id, name, category, color)
+    values ('release-actor-state', 'release-actor-org', 'release-actor-team', 'Todo', 'unstarted', '#111111')
+  `;
+  await sql`
+    insert into issue (
+      id, organization_id, team_id, number, identifier, title, state_id,
+      creator_id, assignee_id, owner_user_id, updated_at, sync_id
+    ) values
+      (
+        'release-actor-history', 'release-actor-org', 'release-actor-team', 1, 'ACTOR-1',
+        'Unowned history', 'release-actor-state', 'release-actor-creator',
+        'release-actor-assignee', null, '2026-09-01T00:00:00Z', 79
+      ),
+      (
+        'release-actor-owned', 'release-actor-org', 'release-actor-team', 2, 'ACTOR-2',
+        'Preserved owner', 'release-actor-state', 'release-actor-creator',
+        'release-actor-assignee', 'release-actor-owner', '2026-09-01T00:00:00Z', 80
+      )
+  `;
+}
+
+async function humanActorBusinessRows(sql: postgres.Sql): Promise<Record<string, unknown>[]> {
+  const rows = await sql<{ payload: Record<string, unknown> }[]>`
+    select to_jsonb(issue)
+      - 'creator_user_id' - 'creator_agent_id' - 'assignee_user_id' - 'assignee_agent_id' as payload
+    from issue order by id
+  `;
+  return rows.map((row) => row.payload);
+}
+
+async function humanActorRows(sql: postgres.Sql): Promise<
+  {
+    id: string;
+    creator_user_id: string | null;
+    creator_agent_id: string | null;
+    assignee_user_id: string | null;
+    assignee_agent_id: string | null;
+    owner_user_id: string | null;
+  }[]
+> {
+  const rows = await sql<
+    {
+      id: string;
+      creator_user_id: string | null;
+      creator_agent_id: string | null;
+      assignee_user_id: string | null;
+      assignee_agent_id: string | null;
+      owner_user_id: string | null;
+    }[]
+  >`
+    select id, creator_user_id, creator_agent_id, assignee_user_id,
+      assignee_agent_id, owner_user_id from issue order by id
+  `;
+  return [...rows];
 }
 
 const migrationJournalEntrySchema = z.object({
@@ -151,6 +224,249 @@ describe('database release', () => {
     );
     expect([...preserved]).toEqual([{ payload: 'preserve me' }]);
   }, 60_000);
+
+  for (const ledgerState of ['missing', 'prefix'] as const) {
+    it(`installs human actor compatibility and backfills a catalog-complete ${ledgerState} ledger`, async () => {
+      await resetScratch();
+      await migrateScratch();
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+        await sql`drop function sync_issue_human_actors()`;
+        await seedHumanActorIssues(sql);
+        if (ledgerState === 'missing') {
+          await sql`drop schema drizzle cascade`;
+        } else {
+          await sql`delete from drizzle.__drizzle_migrations where created_at = ${HUMAN_ACTOR_MIGRATION}`;
+        }
+      });
+
+      const first = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(first.mode).toBe('baselined');
+      const issues = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<
+          {
+            id: string;
+            creator_user_id: string | null;
+            creator_agent_id: string | null;
+            assignee_user_id: string | null;
+            assignee_agent_id: string | null;
+            owner_user_id: string | null;
+            timestamp_preserved: boolean;
+            sync_id: number;
+          }[]
+        >`
+          select id, creator_user_id, creator_agent_id, assignee_user_id,
+            assignee_agent_id, owner_user_id,
+            updated_at = '2026-09-01T00:00:00Z'::timestamptz as timestamp_preserved,
+            sync_id::integer as sync_id
+          from issue
+          order by id
+        `,
+      );
+      expect([...issues]).toEqual([
+        {
+          id: 'release-actor-history',
+          creator_user_id: 'release-actor-creator',
+          creator_agent_id: null,
+          assignee_user_id: 'release-actor-assignee',
+          assignee_agent_id: null,
+          owner_user_id: null,
+          timestamp_preserved: true,
+          sync_id: 79,
+        },
+        {
+          id: 'release-actor-owned',
+          creator_user_id: 'release-actor-creator',
+          creator_agent_id: null,
+          assignee_user_id: 'release-actor-assignee',
+          assignee_agent_id: null,
+          owner_user_id: 'release-actor-owner',
+          timestamp_preserved: true,
+          sync_id: 80,
+        },
+      ]);
+
+      await run(urlFor(SCRATCH), async (sql) => {
+        await sql`delete from "user" where id = 'release-actor-owner'`;
+        await sql`update issue set assignee_id = null where id = 'release-actor-history'`;
+      });
+      const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(second.mode).toBe('current');
+      const retained = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<
+          { id: string; assignee_user_id: string | null; owner_user_id: string | null }[]
+        >`
+          select id, assignee_user_id, owner_user_id from issue order by id
+        `,
+      );
+      expect([...retained]).toEqual([
+        {
+          id: 'release-actor-history',
+          assignee_user_id: null,
+          owner_user_id: null,
+        },
+        {
+          id: 'release-actor-owned',
+          assignee_user_id: 'release-actor-assignee',
+          owner_user_id: null,
+        },
+      ]);
+      const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+      const ledger = await run(
+        urlFor(SCRATCH),
+        (sql) => sql<{ hash: string }[]>`
+          select hash from drizzle.__drizzle_migrations order by created_at
+        `,
+      );
+      expect(ledger.map((row) => row.hash)).toEqual(migrations.map((migration) => migration.hash));
+    }, 60_000);
+  }
+
+  it('repairs missing and disabled human actor artifacts with a current ledger', async () => {
+    await resetScratch();
+    await migrateScratch();
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+      await sql`drop function sync_issue_human_actors()`;
+    });
+
+    const first = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    expect(first.mode).toBe('current');
+    await run(urlFor(SCRATCH), async (sql) => {
+      await seedHumanActorIssues(sql);
+      const [issue] = await sql`
+        select creator_user_id, assignee_user_id, owner_user_id
+        from issue where id = 'release-actor-history'
+      `;
+      expect(issue).toEqual({
+        creator_user_id: 'release-actor-creator',
+        assignee_user_id: 'release-actor-assignee',
+        owner_user_id: null,
+      });
+      await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+    });
+
+    const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    expect(second.mode).toBe('current');
+    await run(urlFor(SCRATCH), async (sql) => {
+      await sql`
+        update issue set assignee_id = 'release-actor-creator'
+        where id = 'release-actor-history'
+      `;
+      const [issue] = await sql`
+        select assignee_user_id, owner_user_id from issue where id = 'release-actor-history'
+      `;
+      expect(issue).toEqual({
+        assignee_user_id: 'release-actor-creator',
+        owner_user_id: null,
+      });
+    });
+  }, 60_000);
+
+  for (const [artifactState, pendingBaseline] of [
+    ['disabled', false],
+    ['missing', false],
+    ['disabled', true],
+  ] as const) {
+    it(`repairs human fields with a ${artifactState} trigger and ${pendingBaseline ? 'pending' : 'current'} ledger without changing owners`, async () => {
+      await resetScratch();
+      await migrateScratch();
+      await run(urlFor(SCRATCH), async (sql) => {
+        await seedHumanActorIssues(sql);
+        await sql`update issue set owner_user_id = null where id = 'release-actor-history'`;
+        if (artifactState === 'disabled') {
+          await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+        } else {
+          await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+          await sql`drop function sync_issue_human_actors()`;
+        }
+        await sql`
+          update issue
+          set creator_id = 'release-actor-owner', assignee_id = 'release-actor-creator',
+            updated_at = '2026-10-05T00:00:00Z', sync_id = 179
+          where id = 'release-actor-history'
+        `;
+        await sql`
+          update issue
+          set creator_id = 'release-actor-owner', assignee_id = null,
+            updated_at = '2026-10-05T00:00:00Z', sync_id = 180
+          where id = 'release-actor-owned'
+        `;
+        await sql`
+          insert into issue (
+            id, organization_id, team_id, number, identifier, title, state_id,
+            creator_id, assignee_id, updated_at, sync_id
+          ) values (
+            'release-actor-gap-insert', 'release-actor-org', 'release-actor-team', 3,
+            'ACTOR-3', 'Legacy insert during trigger outage', 'release-actor-state',
+            'release-actor-creator', 'release-actor-assignee', '2026-10-05T00:00:00Z', 181
+          )
+        `;
+      });
+      const businessBefore = await run(urlFor(SCRATCH), humanActorBusinessRows);
+      const folder = pendingBaseline ? await migrationsFolderWithTrailer() : MIGRATIONS;
+
+      try {
+        const first = await releaseDatabase(urlFor(SCRATCH), folder);
+        expect(first.mode).toBe(pendingBaseline ? 'baselined' : 'current');
+        const repaired = await run(urlFor(SCRATCH), humanActorRows);
+        expect(repaired).toEqual([
+          {
+            id: 'release-actor-gap-insert',
+            creator_user_id: 'release-actor-creator',
+            creator_agent_id: null,
+            assignee_user_id: 'release-actor-assignee',
+            assignee_agent_id: null,
+            owner_user_id: null,
+          },
+          {
+            id: 'release-actor-history',
+            creator_user_id: 'release-actor-owner',
+            creator_agent_id: null,
+            assignee_user_id: 'release-actor-creator',
+            assignee_agent_id: null,
+            owner_user_id: null,
+          },
+          {
+            id: 'release-actor-owned',
+            creator_user_id: 'release-actor-owner',
+            creator_agent_id: null,
+            assignee_user_id: null,
+            assignee_agent_id: null,
+            owner_user_id: 'release-actor-owner',
+          },
+        ]);
+        expect(await run(urlFor(SCRATCH), humanActorBusinessRows)).toEqual(businessBefore);
+
+        const second = await releaseDatabase(urlFor(SCRATCH), folder);
+        expect(second).toEqual({ ...first, mode: 'current' });
+        expect(await run(urlFor(SCRATCH), humanActorRows)).toEqual(repaired);
+        expect(await run(urlFor(SCRATCH), humanActorBusinessRows)).toEqual(businessBefore);
+
+        await run(urlFor(SCRATCH), async (sql) => {
+          await sql`
+            update issue set creator_id = 'release-actor-owner', assignee_id = 'release-actor-owner'
+            where id = 'release-actor-gap-insert'
+          `;
+          const [issue] = await sql`
+            select creator_user_id, creator_agent_id, assignee_user_id, assignee_agent_id,
+              owner_user_id from issue where id = 'release-actor-gap-insert'
+          `;
+          expect(issue).toEqual({
+            creator_user_id: 'release-actor-owner',
+            creator_agent_id: null,
+            assignee_user_id: 'release-actor-owner',
+            assignee_agent_id: null,
+            owner_user_id: null,
+          });
+        });
+      } finally {
+        if (pendingBaseline) await rm(folder, { recursive: true, force: true });
+      }
+    }, 60_000);
+  }
 
   it('does not silently baseline a missing webhook ownership constraint', async () => {
     await resetScratch();
