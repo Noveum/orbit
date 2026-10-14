@@ -675,19 +675,20 @@ async function settleIssueOccurrences(client: QueryClient, issue: Issue): Promis
     fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
   );
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
-    if (detail !== undefined) client.setQueryData(key, applyIssueDetailDelta(detail, action));
+    if (detail === undefined) continue;
+    const next = applyIssueDetailDelta(detail, action);
+    if (next !== detail) client.setQueryData(key, next);
   }
   for (const [key, relations] of client.getQueriesData<readonly IssueRelation[]>({
     queryKey: [ISSUE_RELATIONS_ROOT],
   })) {
     if (relations === undefined) continue;
-    client.setQueryData(
-      key,
-      relations.map((relation) => {
-        const updated = applyIssueRowDelta(relation.issue, action);
-        return updated === relation.issue ? relation : { ...relation, issue: updated };
-      }),
-    );
+    const next = relations.map((relation) => {
+      const updated = applyIssueRowDelta(relation.issue, action);
+      return updated === relation.issue ? relation : { ...relation, issue: updated };
+    });
+    if (next.some((relation, index) => relation !== relations[index]))
+      client.setQueryData(key, next);
   }
   for (const key of fetchingKeys)
     client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);

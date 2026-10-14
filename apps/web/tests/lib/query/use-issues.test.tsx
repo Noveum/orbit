@@ -185,6 +185,58 @@ describe('useIssues', () => {
 
 describe('issue mutations patch the cache without a refetch drain', () => {
   it.each(['update', 'move'] as const)(
+    'preserves unrelated inactive query state after a successful %s',
+    async (operation) => {
+      const original = issue();
+      const canonical = issue({ priority: 1, sortOrder: 2048, syncId: 2 });
+      stubFetch((url) =>
+        url.endsWith('/move') ? { issue: canonical, rebalanced: [] } : { issue: canonical },
+      );
+      const client = newClient();
+      const unrelated = issue({ id: 'unrelated', identifier: 'ENG-2' });
+      const detailKey = queryKeys.issue(unrelated.identifier);
+      const relationKey = queryKeys.issueRelations('other_issue');
+      const emptyRelationKey = queryKeys.issueRelations('no_relations');
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+      client.setQueryData(detailKey, detailFor(unrelated, []), { updatedAt: 12345 });
+      client.setQueryData(relationKey, [{ id: 'relation_1', type: 'related', issue: unrelated }], {
+        updatedAt: 12345,
+      });
+      client.setQueryData(emptyRelationKey, [], { updatedAt: 12345 });
+      const keys = [detailKey, relationKey, emptyRelationKey];
+      for (const key of keys) {
+        await client.invalidateQueries({ queryKey: key, exact: true, refetchType: 'none' });
+        expect(client.getQueryCache().find({ queryKey: key, exact: true })?.isActive()).toBe(false);
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+        expect(client.getQueryState(key)?.dataUpdatedAt).toBe(12345);
+      }
+      const previousStates = keys.map((key) => client.getQueryState(key));
+      const mutations = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+        wrapper: wrapper(client),
+      });
+      await act(async () => {
+        if (operation === 'update')
+          await mutations.result.current.update.mutateAsync({
+            issue: original,
+            patch: { priority: 1 },
+          });
+        else
+          await mutations.result.current.move.mutateAsync({
+            issue: original,
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          });
+      });
+      expect(keys.map((key) => client.getQueryState(key))).toEqual(previousStates);
+      for (const [index, key] of keys.entries())
+        expect(client.getQueryData<unknown>(key)).toBe(previousStates[index]?.data);
+      expect(cachedIssue(client)?.syncId).toBe(canonical.syncId);
+    },
+  );
+
+  it.each(['update', 'move'] as const)(
     'restores the old assignment after a failed %s while retaining new Human profile information',
     async (mode) => {
       const pending = deferred<Response>();
