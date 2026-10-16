@@ -14,6 +14,10 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { groupIssues, mergeStatesByName } from '@/features/filters/grouping.ts';
 import type { BoardColumnSource } from '@/features/issues/board.tsx';
+import {
+  clearTabHistory,
+  getTabUndoStackForTests,
+} from '@/features/issues/use-issue-property-undo.ts';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
@@ -488,6 +492,94 @@ describe('Board card keyboard boundaries', () => {
     fireEvent.keyDown(card, { key: 'Escape', code: 'Escape' });
   });
 
+  it('records a successful board move in shared undo history', async () => {
+    clearTabHistory();
+    installBoardTestRects();
+
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        return Promise.resolve(Response.json({ issues: [], nextCursor: null }));
+      }
+
+      return Promise.resolve(
+        Response.json({
+          issue: issue({
+            stateId: doing.id,
+            sortOrder: 2048,
+            syncId: 2,
+          }),
+          rebalanced: [],
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    renderBoard(true, [issue(), second, third], undefined, true);
+
+    const card = screen.getByRole('listitem', {
+      name: 'ENG-1: Domain auto join',
+    });
+
+    card.focus();
+
+    fireEvent.keyDown(card, {
+      key: 'Enter',
+      code: 'Enter',
+    });
+
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, {
+        key: 'ArrowRight',
+        code: 'ArrowRight',
+      });
+      await settleKeyboardSensor();
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent('column In Progress');
+    });
+
+    fireEvent.keyDown(card, {
+      key: 'Enter',
+      code: 'Enter',
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent('Dropping ENG-1');
+    });
+
+    await waitFor(() => {
+      expect(getTabUndoStackForTests()).toHaveLength(1);
+    });
+
+    const entry = getTabUndoStackForTests()[0];
+
+    if (entry === undefined || !('forward' in entry) || !('inverse' in entry)) {
+      throw new Error('expected a move history entry');
+    }
+
+    expect(entry.issue.id).toBe('issue_1');
+
+    expect(entry.forward.issue.id).toBe('issue_1');
+    expect(entry.forward.stateId).toBe('state_doing');
+
+    expect(entry.inverse.issue.id).toBe('issue_1');
+    expect(entry.inverse.stateId).toBe('state_todo');
+    expect(entry.inverse.beforeId).toBeNull();
+    expect(entry.inverse.afterId).toBe('issue_2');
+    expect(entry.inverse.afterOrder).toBe(second.sortOrder);
+
+    expect(entry.expectedForUndo).toEqual({
+      stateId: 'state_doing',
+      sortOrder: 2048,
+    });
+
+    expect(entry.expectedForRedo).toEqual({
+      stateId: 'state_todo',
+      sortOrder: issue().sortOrder,
+    });
+  });
+
   it('ends an active visibility activity when the board unmounts', async () => {
     const end = mock();
     const start = mock(() => end);
@@ -545,6 +637,7 @@ describe('Board card keyboard boundaries', () => {
   });
 
   it('promotes a keyboard drop fallback to the optimistic card after a delayed handoff', async () => {
+    clearTabHistory();
     installBoardTestRects();
     const cancellation = deferredSignal();
     const pending = deferredResponse();
