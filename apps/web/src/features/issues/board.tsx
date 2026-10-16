@@ -486,6 +486,7 @@ function sourcePlacementFor(
   return {
     issue,
     ...regrouping,
+    ...(groupBy === 'project' ? { milestoneId: issue.milestoneId } : {}),
     beforeId: before?.id ?? null,
     afterId: after?.id ?? null,
     beforeOrder: before?.sortOrder ?? null,
@@ -511,6 +512,7 @@ function moveExpectedFor(issue: Issue, groupBy: GroupByField): IssueMoveExpected
         stateId: issue.stateId,
         sortOrder: issue.sortOrder,
         projectId: issue.projectId,
+        milestoneId: issue.milestoneId,
       };
     case 'assignee':
       return {

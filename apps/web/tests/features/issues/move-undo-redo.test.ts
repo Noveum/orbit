@@ -554,7 +554,7 @@ describe('Issue move undo and redo', () => {
     }
   });
 
-  it('restores a move to undo history and shows a toast when undo fails', async () => {
+  it('discards a move from undo history and shows a toast when undo fails permanently', async () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = ((_url: string | URL | Request, _init?: RequestInit) =>
@@ -580,9 +580,8 @@ describe('Issue move undo and redo', () => {
         await result.current.undo();
       });
 
-      expect(getTabUndoStackForTests()).toHaveLength(1);
+      expect(getTabUndoStackForTests()).toHaveLength(0);
       expect(getTabRedoStackForTests()).toHaveLength(0);
-      expect(getTabUndoStackForTests()[0]?.propertyLabel).toBe('Move');
 
       expect(toast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -602,7 +601,7 @@ describe('Issue move undo and redo', () => {
     }
   });
 
-  it('restores a move to redo history and shows a toast when redo fails', async () => {
+  it('discards a move from redo history and shows a toast when redo fails permanently', async () => {
     const originalFetch = globalThis.fetch;
     let requestCount = 0;
 
@@ -644,18 +643,11 @@ describe('Issue move undo and redo', () => {
 
       await act(async () => {
         await result.current.undo();
-      });
-
-      expect(getTabUndoStackForTests()).toHaveLength(0);
-      expect(getTabRedoStackForTests()).toHaveLength(1);
-
-      await act(async () => {
         await result.current.redo();
       });
 
       expect(getTabUndoStackForTests()).toHaveLength(0);
-      expect(getTabRedoStackForTests()).toHaveLength(1);
-      expect(getTabRedoStackForTests()[0]?.propertyLabel).toBe('Move');
+      expect(getTabRedoStackForTests()).toHaveLength(0);
 
       expect(toast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -794,6 +786,125 @@ describe('Issue move undo and redo', () => {
     expect(entry.inverse.afterOrder).toBe(issueAfter.sortOrder);
   });
 
+  it('unblocks older undo history after a newer move hits a permanent conflict', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+
+    const olderIssue = {
+      ...mockIssue,
+      id: 'issue_older',
+      identifier: 'MOVE-8',
+    };
+
+    const newerIssue = {
+      ...mockIssue,
+      id: 'issue_newer',
+      identifier: 'MOVE-9',
+    };
+
+    globalThis.fetch = ((_url: string | URL | Request, _init?: RequestInit) => {
+      requestCount += 1;
+
+      if (requestCount === 1) {
+        return Promise.resolve(
+          response(
+            {
+              error: 'Cannot undo: position was changed by another update.',
+            },
+            409,
+          ),
+        );
+      }
+
+      return Promise.resolve(
+        response({
+          issue: {
+            ...olderIssue,
+            stateId: 'state_todo',
+            sortOrder: 400,
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    const queryClient = createQueryClient();
+
+    try {
+      const olderEntry = moveEntry({
+        sequence: 1,
+        issue: olderIssue,
+        forward: moveInput({
+          issue: olderIssue,
+        }),
+        inverse: moveInput({
+          issue: olderIssue,
+          stateId: 'state_todo',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        }),
+      });
+
+      const newerEntry = moveEntry({
+        sequence: 2,
+        issue: newerIssue,
+        forward: moveInput({
+          issue: newerIssue,
+        }),
+        inverse: moveInput({
+          issue: newerIssue,
+          stateId: 'state_todo',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        }),
+      });
+
+      recordTabMove(olderEntry);
+      recordTabMove(newerEntry);
+
+      const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(getTabUndoStackForTests()).toHaveLength(1);
+      expect(getTabUndoStackForTests()[0]?.sequence).toBe(1);
+
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Could not undo',
+          tone: 'danger',
+        }),
+      );
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(requestCount).toBe(2);
+      expect(getTabUndoStackForTests()).toHaveLength(0);
+      expect(getTabRedoStackForTests()).toHaveLength(1);
+      expect(getTabRedoStackForTests()[0]?.issue.id).toBe('issue_older');
+
+      unmount();
+
+      await act(async () => {
+        await queryClient.cancelQueries();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      queryClient.clear();
+    }
+  });
+
   it('uses grouping-aware expected state for undo and redo', () => {
     const entry = moveEntry();
 
@@ -814,5 +925,163 @@ describe('Issue move undo and redo', () => {
       cycleId: null,
       priority: 2,
     });
+  });
+
+  it('restores a move to undo history and shows a toast when undo encounters a retryable 500 error', async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = ((_url: string | URL | Request, _init?: RequestInit) =>
+      Promise.resolve(
+        response(
+          {
+            error: 'Internal Server Error',
+          },
+          500,
+        ),
+      )) as typeof globalThis.fetch;
+
+    const queryClient = createQueryClient();
+
+    try {
+      recordTabMove(moveEntry());
+
+      const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(getTabUndoStackForTests()).toHaveLength(1);
+      expect(getTabRedoStackForTests()).toHaveLength(0);
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Could not undo',
+          tone: 'danger',
+        }),
+      );
+
+      unmount();
+
+      await act(async () => {
+        await queryClient.cancelQueries();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      queryClient.clear();
+    }
+  });
+
+  it('restores project and milestone together in move undo', async () => {
+    const originalFetch = globalThis.fetch;
+
+    const requestBodies: Array<{
+      projectId?: string | null;
+      milestoneId?: string | null;
+      expected?: {
+        projectId?: string | null;
+        milestoneId?: string | null;
+      };
+    }> = [];
+
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      const body =
+        typeof init?.body === 'string'
+          ? (JSON.parse(init.body) as {
+              projectId?: string | null;
+              milestoneId?: string | null;
+              expected?: {
+                projectId?: string | null;
+                milestoneId?: string | null;
+              };
+            })
+          : undefined;
+
+      if (body !== undefined) {
+        requestBodies.push(body);
+      }
+
+      return Promise.resolve(
+        response({
+          issue: {
+            ...mockIssue,
+            projectId: 'project_a',
+            milestoneId: 'milestone_m',
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as typeof globalThis.fetch;
+
+    const queryClient = createQueryClient();
+
+    try {
+      const entry = moveEntry({
+        issue: {
+          ...mockIssue,
+          projectId: 'project_b',
+          milestoneId: null,
+        },
+        forward: moveInput({
+          projectId: 'project_b',
+          milestoneId: null,
+        }),
+        inverse: moveInput({
+          projectId: 'project_a',
+          milestoneId: 'milestone_m',
+        }),
+        expectedForUndo: {
+          stateId: 'state_done',
+          sortOrder: 800,
+          projectId: 'project_b',
+          milestoneId: null,
+        },
+        expectedForRedo: {
+          stateId: 'state_todo',
+          sortOrder: 500,
+          projectId: 'project_a',
+          milestoneId: 'milestone_m',
+        },
+      });
+
+      recordTabMove(entry);
+
+      const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+        wrapper: createWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(requestBodies).toHaveLength(1);
+      expect(requestBodies[0]).toMatchObject({
+        projectId: 'project_a',
+        milestoneId: 'milestone_m',
+        expected: {
+          projectId: 'project_b',
+          milestoneId: null,
+        },
+      });
+
+      const redoStack = getTabRedoStackForTests();
+
+      expect(redoStack).toHaveLength(1);
+      expect(redoStack[0]?.expectedForRedo).toMatchObject({
+        projectId: 'project_a',
+        milestoneId: 'milestone_m',
+      });
+
+      unmount();
+
+      await act(async () => {
+        await queryClient.cancelQueries();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      queryClient.clear();
+    }
   });
 });

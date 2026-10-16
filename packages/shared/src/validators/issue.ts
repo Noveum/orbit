@@ -69,6 +69,7 @@ export const issueMoveExpectedSchema = issueExpectedPropertiesSchema
     assigneeId: true,
     priority: true,
     projectId: true,
+    milestoneId: true,
     cycleId: true,
   })
   .extend({
@@ -101,6 +102,7 @@ export const issueMoveSchema = z.object({
   teamId: idSchema.optional(),
   cycleId: idSchema.nullable().optional(),
   projectId: idSchema.nullable().optional(),
+  milestoneId: idSchema.nullable().optional(),
   assigneeId: idSchema.nullable().optional(),
   priority: prioritySchema.optional(),
   beforeId: idSchema.nullable().default(null),

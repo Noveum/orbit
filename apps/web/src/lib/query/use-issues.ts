@@ -1080,6 +1080,7 @@ export interface IssueRegrouping {
   readonly stateId?: string;
   readonly cycleId?: string | null;
   readonly projectId?: string | null;
+  readonly milestoneId?: string | null;
   readonly assigneeId?: string | null;
   readonly priority?: number;
 }
@@ -1119,6 +1120,7 @@ function regroupingOf(input: MoveInput): IssueRegrouping {
     ...(input.stateId === undefined ? {} : { stateId: input.stateId }),
     ...(input.cycleId === undefined ? {} : { cycleId: input.cycleId }),
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    ...(input.milestoneId === undefined ? {} : { milestoneId: input.milestoneId }),
     ...(input.assigneeId === undefined ? {} : { assigneeId: input.assigneeId }),
     ...(input.priority === undefined ? {} : { priority: input.priority }),
   };

@@ -78,7 +78,7 @@ export {
 
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 
-type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
+type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId' | 'milestoneId';
 
 export { visibleTeamFilters } from './issue-query.ts';
 export { REBALANCE_THRESHOLD };
@@ -1369,6 +1369,7 @@ interface RegroupingInput {
   readonly assigneeId?: string | null | undefined;
   readonly priority?: number | undefined;
   readonly projectId?: string | null | undefined;
+  readonly milestoneId?: string | null | undefined;
 }
 
 function applyRegrouping(
@@ -1390,8 +1391,11 @@ function applyRegrouping(
   regroup('priority', parsed.priority);
   if (parsed.projectId !== undefined && parsed.projectId !== current.projectId) {
     regroup('projectId', parsed.projectId);
-    values.milestoneId = null;
+    if (parsed.milestoneId === undefined) {
+      values.milestoneId = null;
+    }
   }
+  regroup('milestoneId', parsed.milestoneId);
   return regrouped;
 }
 
@@ -1560,6 +1564,10 @@ function assertExpectedMoveState(current: IssueRow, expected: IssueMoveExpected)
   if (expected.priority !== undefined && expected.priority !== current.priority) {
     throw conflict('Cannot undo: priority was changed by another update.');
   }
+
+  if (expected.milestoneId !== undefined && expected.milestoneId !== current.milestoneId) {
+    throw conflict('Cannot undo: milestone was changed by another update.');
+  }
 }
 
 export async function moveIssue(
@@ -1619,6 +1627,7 @@ export async function moveIssue(
     await assertAssignableToTeam(tx, principal.organizationId, teamId, {
       cycleId: parsed.cycleId,
       projectId: parsed.projectId,
+      milestoneId: parsed.milestoneId,
     });
 
     const regrouped = applyRegrouping(parsed, current, values);

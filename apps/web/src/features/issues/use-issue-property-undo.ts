@@ -4,6 +4,7 @@ import type { IssueExpectedProperties, IssueMoveExpected } from '@orbit/shared/v
 import { useCallback, useRef } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { useHotkey } from '@/lib/keyboard/use-hotkey.ts';
+import { ApiError } from '@/lib/query/fetcher.ts';
 import type { Issue, MoveInput } from '@/lib/query/use-issues.ts';
 import { useMoveIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 
@@ -108,6 +109,10 @@ function refreshMoveExpected(issue: Issue, expected: IssueMoveExpected): IssueMo
     refreshed.projectId = issue.projectId;
   }
 
+  if (expected.milestoneId !== undefined) {
+    refreshed.milestoneId = issue.milestoneId;
+  }
+
   if (expected.cycleId !== undefined) {
     refreshed.cycleId = issue.cycleId;
   }
@@ -117,6 +122,20 @@ function refreshMoveExpected(issue: Issue, expected: IssueMoveExpected): IssueMo
   }
 
   return refreshed;
+}
+
+function shouldRetainEntry(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return error.status >= 500;
+  }
+
+  return true;
+}
+
+function restoreFailedEntry(stack: IssueUndoEntry[], entry: IssueUndoEntry, error: unknown): void {
+  if (shouldRetainEntry(error)) {
+    stack.push(entry);
+  }
 }
 
 export function useIssuePropertyUndo() {
@@ -186,7 +205,7 @@ export function useIssuePropertyUndo() {
         tone: 'neutral',
       });
     } catch (error) {
-      tabUndoStack.push(entry);
+      restoreFailedEntry(tabUndoStack, entry, error);
 
       toast({
         title: 'Could not undo',
@@ -258,7 +277,7 @@ export function useIssuePropertyUndo() {
         tone: 'neutral',
       });
     } catch (error) {
-      tabRedoStack.push(entry);
+      restoreFailedEntry(tabRedoStack, entry, error);
 
       toast({
         title: 'Could not redo',
