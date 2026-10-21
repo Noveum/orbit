@@ -150,6 +150,7 @@ async function humanIssue(title = 'Human work', principal = workspace.admin) {
 }
 
 async function cycle(target = workspace) {
+  const now = Date.now();
   const [created] = await db
     .insert(schema.cycle)
     .values({
@@ -158,8 +159,8 @@ async function cycle(target = workspace) {
       teamId: target.teamId,
       number: 100,
       name: 'Write test cycle',
-      startsAt: new Date('2026-10-01'),
-      endsAt: new Date('2026-10-15'),
+      startsAt: new Date(now - 86_400_000),
+      endsAt: new Date(now + 30 * 86_400_000),
     })
     .returning();
   if (created === undefined) throw new Error('Missing cycle.');
