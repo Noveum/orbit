@@ -13,7 +13,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { cn } from '@/lib/cn.ts';
 import { dangerMenuAction, rowHover } from '@/lib/interaction.ts';
-import { useHotkey } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
 import type { Cycle, Issue, Milestone, Project } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useMilestones } from '@/lib/query/use-milestones.ts';
@@ -51,9 +51,15 @@ export interface IssuePropertiesProps {
   readonly issue: Issue;
   readonly parent?: Issue | null;
   readonly onDeleted?: (() => void) | undefined;
+  readonly hotkeyPriority?: number;
 }
 
-export function IssueProperties({ issue, parent = null, onDeleted }: IssuePropertiesProps) {
+export function IssueProperties({
+  issue,
+  parent = null,
+  onDeleted,
+  hotkeyPriority = HOTKEY_PRIORITY.surface,
+}: IssuePropertiesProps) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
@@ -87,51 +93,66 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const toggle = (key: MenuKey) => (open: boolean) => setOpenMenu(open ? key : null);
 
   useHotkey('s', () => setOpenMenu('status'), {
+    priority: hotkeyPriority,
     label: 'Change status',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('p', () => setOpenMenu('priority'), {
+    priority: hotkeyPriority,
     label: 'Change priority',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('a', () => setOpenMenu('assignee'), {
+    priority: hotkeyPriority,
     label: 'Assign issue',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('r', () => setOpenMenu('reviewers'), {
+    priority: hotkeyPriority,
     label: 'Change reviewers',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('i', () => setOpenMenu('project'), {
+    priority: hotkeyPriority,
     label: 'Change project',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('l', () => setOpenMenu('labels'), {
+    priority: hotkeyPriority,
     label: 'Change labels',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('shift+e', () => setOpenMenu('estimate'), {
+    priority: hotkeyPriority,
     label: 'Change estimate',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('shift+d', () => setOpenMenu('dueDate'), {
+    priority: hotkeyPriority,
     label: 'Change due date',
     section: 'Issues',
     scope: 'issues',
   });
-  useHotkey('m', () => setOpenMenu('milestone'), {
-    label: 'Change milestone',
-    section: 'Issues',
-    scope: 'issues',
-    enabled: issue.projectId !== null,
-  });
+  useHotkey(
+    'm',
+    () => {
+      if (issue.projectId !== null) setOpenMenu('milestone');
+    },
+    {
+      priority: hotkeyPriority,
+      label: 'Change milestone',
+      section: 'Issues',
+      scope: 'issues',
+      advertised: issue.projectId !== null,
+    },
+  );
 
   return (
     <aside

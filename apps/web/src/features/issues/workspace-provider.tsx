@@ -15,6 +15,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useHotkey } from '@/lib/keyboard/index.ts';
@@ -139,8 +140,13 @@ export function workspaceFrom(
 export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
   const bootstrap = useBootstrap(null);
   const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
   const [createTeamId, setCreateTeamId] = useState<string | null>(null);
   const [createStateId, setCreateStateId] = useState<string | null>(null);
+  const [createAssigneeId, setCreateAssigneeId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   useIssuePropertyUndo();
 
@@ -165,9 +171,14 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
       if (!canCreate) return;
       setCreateTeamId(teamId ?? null);
       setCreateStateId(stateId ?? null);
+      const person =
+        pathnameRef.current === '/standup'
+          ? new URLSearchParams(window.location.search).get('person')
+          : null;
+      setCreateAssigneeId(data?.members.find((member) => member.id === person)?.id ?? null);
       setCreateOpen(true);
     },
-    [canCreate],
+    [canCreate, data?.members],
   );
 
   const value = useMemo<WorkspaceData>(
@@ -183,13 +194,16 @@ export function IssueWorkspaceProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceContext.Provider value={value}>
-      <IssueDeletionProvider>{children}</IssueDeletionProvider>
-      <QuickCreateDialog
-        open={createOpen && canCreate}
-        onOpenChange={setCreateOpen}
-        defaultTeamId={createTeamId ?? routeTeamId}
-        defaultStateId={createStateId}
-      />
+      <IssueDeletionProvider>
+        {children}
+        <QuickCreateDialog
+          open={createOpen && canCreate}
+          onOpenChange={setCreateOpen}
+          defaultTeamId={createTeamId ?? routeTeamId}
+          defaultStateId={createStateId}
+          defaultAssigneeId={createAssigneeId}
+        />
+      </IssueDeletionProvider>
     </WorkspaceContext.Provider>
   );
 }
