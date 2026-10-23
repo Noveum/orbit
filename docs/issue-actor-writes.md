@@ -30,9 +30,20 @@ the merged PR1 expansion, while retaining the Stage A/B migration chain.
 It also imports PR2's compatibility Actor reconciliation and unrelated
 query freshness fixes from `a08e7b1` and `92faba0`.
 
+The 2026-10-23 synchronization merges upstream main `ad1206e`, PR2
+`5ce28a7` and PR3 stage 3b `4ae17a6`. Published migrations through
+`0031_broad_lifeguard`, their journal entries and snapshots remain unchanged.
+The unpublished PR3 stages are regenerated as `0032_mcp_grant_compatibility`
+and `0033_mcp_agent_grant_binding`. This checkout regenerates the Issue write
+schema delta as `0034_issue_actor_write_compatibility` against the stage 3b
+snapshot and retains its existing compatibility function and trigger.
+Each new journal timestamp follows its predecessor. The rollout remains
+staged: release and deploy stage 3a before releasing stage 3b, then release
+the Issue write migration with the write gate disabled.
+
 ## Stage A: write compatibility preparation
 
-Migration `0033_issue_actor_write_compatibility` follows `0032` and makes
+Migration `0034_issue_actor_write_compatibility` follows `0033` and makes
 legacy `creator_id` nullable. New writers set canonical Human or Agent
 references. The compatibility trigger mirrors Human references into legacy
 columns and Agent references into legacy NULL. Changed canonical references
@@ -52,7 +63,7 @@ source as described above. Legacy columns and the expanded
 foreign keys remain installed. Human mirrors on mixed Actor rows are
 repaired independently. Neither the `0030` backfill nor baseline or recovery
 infers an Owner, including for previously uninitialized Human references.
-NULL and explicit Owner values remain unchanged. The `0033` responsibility
+NULL and explicit Owner values remain unchanged. The `0034` responsibility
 rule applies when a writer establishes a new assignment, rather than when
 the migration or release repairs historical rows.
 

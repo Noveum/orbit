@@ -1,6 +1,6 @@
 {
-  "id": "dd5d41a3-1f95-4ab1-8fee-6dead0186af7",
-  "prevId": "38738564-df14-4676-8b15-70985ba4d4bc",
+  "id": "015f21e8-3a23-47a1-acf6-7c52e430dfc8",
+  "prevId": "4291fc20-d8be-42c7-8c4c-43461c6a0673",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -11085,18 +11085,23 @@
         }
       },
       "indexes": {
-        "mcp_grant_active_agent_unique": {
-          "name": "mcp_grant_active_agent_unique",
+        "mcp_grant_client_user_unique": {
+          "name": "mcp_grant_client_user_unique",
           "columns": [
             {
-              "expression": "agent_identity_id",
+              "expression": "client_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"mcp_grant\".\"identity_kind\" = 'agent' and \"mcp_grant\".\"revoked_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -11957,6 +11962,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "''"
+        },
+        "project_staleness_days": {
+          "name": "project_staleness_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 14
         }
       },
       "indexes": {},
@@ -16542,6 +16554,7 @@
         "review_approved",
         "pull_request_merged",
         "due_soon",
+        "stale",
         "access_requested",
         "access_granted",
         "manual"

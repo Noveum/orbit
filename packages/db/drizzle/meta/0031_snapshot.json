@@ -1,5 +1,5 @@
 {
-  "id": "38738564-df14-4676-8b15-70985ba4d4bc",
+  "id": "4291fc20-d8be-42c7-8c4c-43461c6a0673",
   "prevId": "db22bc08-21c6-4060-8a0a-5b9781a0ab59",
   "version": "7",
   "dialect": "postgresql",
@@ -11045,25 +11045,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "identity_kind": {
-          "name": "identity_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'legacy'"
-        },
-        "agent_identity_id": {
-          "name": "agent_identity_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "owner_member_id": {
-          "name": "owner_member_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11102,28 +11083,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "mcp_grant_legacy_unique": {
-          "name": "mcp_grant_legacy_unique",
-          "columns": [
-            {
-              "expression": "client_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"mcp_grant\".\"identity_kind\" = 'legacy'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -11182,19 +11141,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "mcp_grant_agent_identity_id_agent_identity_id_fk": {
-          "name": "mcp_grant_agent_identity_id_agent_identity_id_fk",
-          "tableFrom": "mcp_grant",
-          "tableTo": "agent_identity",
-          "columnsFrom": [
-            "agent_identity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -11255,12 +11201,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "mcp_grant_id": {
-          "name": "mcp_grant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -11962,6 +11902,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "''"
+        },
+        "project_staleness_days": {
+          "name": "project_staleness_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 14
         }
       },
       "indexes": {},
@@ -16547,6 +16494,7 @@
         "review_approved",
         "pull_request_merged",
         "due_soon",
+        "stale",
         "access_requested",
         "access_granted",
         "manual"

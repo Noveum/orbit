@@ -1,6 +1,6 @@
 {
-  "id": "2cd5aae6-c527-4225-a37d-06a20fc3ed8c",
-  "prevId": "dd5d41a3-1f95-4ab1-8fee-6dead0186af7",
+  "id": "4df56240-0ac0-4c1b-b0c1-a6b892f25a99",
+  "prevId": "015f21e8-3a23-47a1-acf6-7c52e430dfc8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -11957,6 +11957,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "''"
+        },
+        "project_staleness_days": {
+          "name": "project_staleness_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 14
         }
       },
       "indexes": {},
@@ -13812,7 +13819,7 @@
           "name": "creator_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "assignee_id": {
           "name": "assignee_id",
@@ -16542,6 +16549,7 @@
         "review_approved",
         "pull_request_merged",
         "due_soon",
+        "stale",
         "access_requested",
         "access_granted",
         "manual"

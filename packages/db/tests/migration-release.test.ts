@@ -157,6 +157,58 @@ describe('database release', () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);
 
+  it('upgrades the released staleness ledger without changing actor history or workspace settings', async () => {
+    await resetScratch();
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const released = migrations.filter((migration) => migration.folderMillis <= 1791997887851);
+    expect(released).toHaveLength(32);
+    const before = await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of released) {
+        for (const statement of migration.sql) await sql.unsafe(statement);
+        await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+      }
+      await seedHumanActorIssues(sql);
+      await sql`update organization set project_staleness_days = 27 where id = 'release-actor-org'`;
+      return humanActorBusinessRows(sql);
+    });
+
+    expect(await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).toEqual({
+      mode: 'migrated',
+      applied: migrations.length - released.length,
+      total: migrations.length,
+    });
+    await run(urlFor(SCRATCH), async (sql) => {
+      expect(await humanActorBusinessRows(sql)).toEqual(before);
+      const [organization] = await sql`
+        select project_staleness_days from organization where id = 'release-actor-org'
+      `;
+      expect(organization?.['project_staleness_days']).toBe(27);
+      const [staleReason] = await sql`
+        select exists (
+          select 1 from pg_enum
+          where enumtypid = 'notification_reason'::regtype and enumlabel = 'stale'
+        ) as present
+      `;
+      expect(staleReason?.['present']).toBe(true);
+      const [creator] = await sql`
+        select is_nullable from information_schema.columns
+        where table_schema = 'public' and table_name = 'issue' and column_name = 'creator_id'
+      `;
+      expect(creator?.['is_nullable']).toBe('YES');
+      const ledger = await sql`select hash from drizzle.__drizzle_migrations order by created_at`;
+      expect(ledger.map((row) => row['hash'])).toEqual(
+        migrations.map((migration) => migration.hash),
+      );
+    });
+    expect(await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).toEqual({
+      mode: 'current',
+      applied: 0,
+      total: migrations.length,
+    });
+  }, 60_000);
+
   for (const artifact of ['missing', 'disabled'] as const) {
     it(`upgrades the previous ledger with a ${artifact} compatibility trigger`, async () => {
       await resetScratch();
