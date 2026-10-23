@@ -1270,6 +1270,119 @@ describe('notifyMany', () => {
     }
   });
 
+  it('keeps a durable source retryable until a run actually delivers it', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.insert(notificationPreference).values(
+        [fixture.adaId, fixture.graceId].flatMap((userId) =>
+          NOTIFICATION_CHANNELS.map((channel) => ({
+            id: `np_${randomUUIDv7()}`,
+            userId,
+            channel,
+            type: 'comment_created',
+            enabled: false,
+          })),
+        ),
+      );
+      const sourceEventKey = `source_muted_${randomUUIDv7()}`;
+      const now = new Date('2026-07-22T12:00:00.000Z');
+
+      const muted = await notifyMany(tx, [sourcedEventFor(fixture, sourceEventKey)], { now });
+
+      expect(muted.notifications).toHaveLength(0);
+      const [mutedSource] = await tx
+        .select({ fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt })
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.sourceEventKey, sourceEventKey));
+      expect(mutedSource?.fanoutCompletedAt).toBeNull();
+
+      await tx
+        .delete(notificationPreference)
+        .where(inArray(notificationPreference.userId, [fixture.adaId, fixture.graceId]));
+      const restored = await notifyMany(tx, [sourcedEventFor(fixture, sourceEventKey)], {
+        now: new Date(now.getTime() + 24 * 60 * 60_000),
+      });
+
+      expect(restored.notifications).toHaveLength(2);
+      const [deliveredSource] = await tx
+        .select({ fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt })
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.sourceEventKey, sourceEventKey));
+      expect(deliveredSource?.fanoutCompletedAt).not.toBeNull();
+    });
+  });
+
+  it('completes generated sources even when a fanout delivers nothing', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await tx.insert(notificationPreference).values(
+        NOTIFICATION_CHANNELS.map((channel) => ({
+          id: `np_${randomUUIDv7()}`,
+          userId: fixture.adaId,
+          channel,
+          type: 'comment_created',
+          enabled: false,
+        })),
+      );
+
+      const muted = await notifyMany(tx, [eventFor(fixture, { userIds: [fixture.adaId] })]);
+      const empty = await notifyMany(tx, [eventFor(fixture, { userIds: [] })]);
+
+      expect(muted.notifications).toHaveLength(0);
+      expect(empty.notifications).toHaveLength(0);
+      const sources = await tx
+        .select({ fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt })
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.organizationId, fixture.organizationId));
+      expect(sources).toHaveLength(2);
+      expect(sources.every((source) => source.fanoutCompletedAt !== null)).toBe(true);
+    });
+  });
+
+  it('completes a durable source whose only delivery is a shared Slack channel', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seed(tx);
+      await seedSlackDmConnection(tx, fixture, { mapped: false });
+      const [slackIntegration] = await tx
+        .select({ id: integration.id })
+        .from(integration)
+        .where(eq(integration.organizationId, fixture.organizationId));
+      if (slackIntegration === undefined) throw new Error('Expected a Slack integration.');
+      await tx.insert(slackChannelSync).values({
+        id: `scs_${randomUUIDv7()}`,
+        organizationId: fixture.organizationId,
+        integrationId: slackIntegration.id,
+        channelId: 'C-SHARED-ONLY',
+        channelName: 'workspace-updates',
+      });
+      const sourceEventKey = `source_shared_${randomUUIDv7()}`;
+
+      const outcome = await notifyMany(
+        tx,
+        [
+          {
+            ...sourcedEventFor(fixture, sourceEventKey),
+            reason: 'state_changed' as const,
+            userIds: [],
+          },
+        ],
+        { slackEnabled: true },
+      );
+
+      expect(outcome.notifications).toHaveLength(0);
+      const shared = await tx
+        .select({ id: notificationDelivery.id })
+        .from(notificationDelivery)
+        .where(eq(notificationDelivery.channel, 'slack'));
+      expect(shared).toHaveLength(1);
+      const [source] = await tx
+        .select({ fanoutCompletedAt: notificationSourceEvent.fanoutCompletedAt })
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.sourceEventKey, sourceEventKey));
+      expect(source?.fanoutCompletedAt).not.toBeNull();
+    });
+  });
+
   it('deduplicates Slack DMs across retries of the same source delivery', async () => {
     await withRollback(async (tx) => {
       const fixture = await seed(tx);

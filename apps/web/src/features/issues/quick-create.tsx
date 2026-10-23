@@ -7,7 +7,9 @@ import {
 } from '@orbit/shared/constants';
 
 import { sprintLabel } from '@orbit/shared/utils';
+import type { Editor, JSONContent } from '@tiptap/core';
 import { Box, ChevronRight, RefreshCw, Tag, Users } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -22,12 +24,21 @@ import {
 } from '@/features/docs/editor/rich-text-editor.tsx';
 import { assertUploadable, uploadAttachment } from '@/features/docs/upload.ts';
 import { messageOf } from '@/lib/query/fetcher.ts';
-import type { Cycle, Issue, Project, WorkflowState } from '@/lib/query/schemas.ts';
+import type {
+  Cycle,
+  DuplicateIssueMatch,
+  Issue,
+  Member,
+  Project,
+  Team,
+  WorkflowState,
+} from '@/lib/query/schemas.ts';
 import { useDuplicateIssues } from '@/lib/query/use-duplicate-issues.ts';
-import { useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { type CreateIssueInput, useCreateIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { sprintOptions } from '@/lib/sprint-options.ts';
 import { DuplicateSuggestions } from './duplicate-suggestions.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
+import { IssuePeek } from './issue-peek.tsx';
 import {
   attachPending,
   holdAttachment,
@@ -45,6 +56,7 @@ export interface QuickCreateDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly defaultTeamId: string | null;
   readonly defaultStateId?: string | null;
+  readonly defaultAssigneeId?: string | null;
 }
 
 const chipClassName =
@@ -66,6 +78,39 @@ function initialState(
   defaultStateId: string | null | undefined,
 ): string | null {
   return statesForTeam(states, teamId).find((state) => state.id === defaultStateId)?.id ?? null;
+}
+
+function initialAssignee(members: readonly Member[], defaultAssigneeId: string | null | undefined) {
+  return members.find((member) => member.id === defaultAssigneeId)?.id ?? null;
+}
+
+function initialTeam(teams: readonly Team[], defaultTeamId: string | null) {
+  return teams.find((team) => team.id === defaultTeamId)?.id ?? teams[0]?.id ?? null;
+}
+
+type DraftDefaults = {
+  readonly teamId: string | null;
+  readonly stateId: string | null;
+  readonly assigneeId: string | null;
+};
+
+function hasDraftChanges(
+  draft: Omit<CreateIssueInput, 'teamId' | 'stateId'> & DraftDefaults,
+  defaults: DraftDefaults,
+) {
+  return (
+    draft.teamId !== defaults.teamId ||
+    draft.stateId !== defaults.stateId ||
+    draft.assigneeId !== defaults.assigneeId ||
+    draft.title.length > 0 ||
+    draft.description.length > 0 ||
+    draft.priority !== 0 ||
+    (draft.reviewerIds?.length ?? 0) > 0 ||
+    draft.labelIds.length > 0 ||
+    draft.projectId !== null ||
+    draft.cycleId !== null ||
+    draft.estimate !== null
+  );
 }
 
 function compatibleTeamId(
@@ -177,13 +222,12 @@ export function QuickCreateDialog({
   onOpenChange,
   defaultTeamId,
   defaultStateId,
+  defaultAssigneeId,
 }: QuickCreateDialogProps) {
   const { teams, states, members, labels, projects, cycles, ready } = useWorkspace();
   const { toast } = useToast();
-  const firstTeamId =
-    defaultTeamId !== null && teams.some((team) => team.id === defaultTeamId)
-      ? defaultTeamId
-      : (teams[0]?.id ?? null);
+  const pathname = usePathname();
+  const firstTeamId = initialTeam(teams, defaultTeamId);
   const [teamId, setTeamId] = useState<string | null>(firstTeamId);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -199,8 +243,13 @@ export function QuickCreateDialog({
   const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
   const [composerKey, setComposerKey] = useState(0);
   const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
+  const [preview, setPreview] = useState<DuplicateIssueMatch | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const draftInitialized = useRef(false);
+  const editorRef = useRef<Editor | null>(null);
+  const descriptionDocument = useRef<JSONContent | null>(null);
+  const previewPath = useRef(pathname);
 
   const { duplicates } = useDuplicateIssues(teamId, title);
 
@@ -208,23 +257,46 @@ export function QuickCreateDialog({
   const update = useUpdateIssue();
 
   const firstStateId = initialState(states, firstTeamId, defaultStateId);
-  const defaultsRef = useRef({ teamId: firstTeamId, stateId: firstStateId });
-  defaultsRef.current = { teamId: firstTeamId, stateId: firstStateId };
+  const firstAssigneeId = initialAssignee(members, defaultAssigneeId);
+  const defaultsRef = useRef({
+    teamId: firstTeamId,
+    stateId: firstStateId,
+    assigneeId: firstAssigneeId,
+  });
+  defaultsRef.current = {
+    teamId: firstTeamId,
+    stateId: firstStateId,
+    assigneeId: firstAssigneeId,
+  };
+  const draftDefaults = useRef(defaultsRef.current);
   const heldRef = useRef<readonly PendingAttachment[]>(pending);
   heldRef.current = pending;
 
   useEffect(() => {
-    if (!open) {
-      releasePending(heldRef.current);
-      setPending([]);
-      return;
-    }
+    return () => releasePending(heldRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (open) setPreview(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (previewPath.current === pathname) return;
+    previewPath.current = pathname;
+    setPreview(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open || draftInitialized.current) return;
+    draftInitialized.current = true;
+    draftDefaults.current = defaultsRef.current;
     setTeamId(defaultsRef.current.teamId);
     setTitle('');
     setDescription('');
+    descriptionDocument.current = null;
     setStateId(defaultsRef.current.stateId);
     setPriority(0);
-    setAssigneeId(null);
+    setAssigneeId(defaultsRef.current.assigneeId);
     setReviewerIds([]);
     setLabelIds([]);
     setProjectId(null);
@@ -353,14 +425,17 @@ export function QuickCreateDialog({
         },
         onSuccess: (issue) => {
           submittingRef.current = false;
+          heldRef.current = heldRef.current.filter((entry) => !held.includes(entry));
           setPending((current) => current.filter((entry) => !held.includes(entry)));
           finalize(issue, body, held);
           if (!createMore) {
+            draftInitialized.current = false;
             onOpenChange(false);
             return;
           }
           setTitle('');
           setDescription('');
+          descriptionDocument.current = null;
           setLabelIds([]);
           setComposerKey((value) => value + 1);
           titleRef.current?.focus();
@@ -369,11 +444,40 @@ export function QuickCreateDialog({
     );
   };
 
+  const changeOpen = (next: boolean) => {
+    if (
+      !next &&
+      pending.length === 0 &&
+      !hasDraftChanges(
+        {
+          teamId,
+          stateId,
+          assigneeId,
+          title,
+          description,
+          priority,
+          reviewerIds,
+          labelIds,
+          projectId,
+          cycleId,
+          estimate,
+        },
+        draftDefaults.current,
+      )
+    ) {
+      draftInitialized.current = false;
+    }
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent
         data-testid="quick-create"
         className="flex max-w-xl flex-col overflow-y-hidden"
+        onCloseAutoFocus={(event) => {
+          if (preview !== null) event.preventDefault();
+        }}
       >
         <DialogTitle className="sr-only">Create issue</DialogTitle>
         <p
@@ -423,13 +527,24 @@ export function QuickCreateDialog({
               <DuplicateSuggestions
                 duplicates={duplicates}
                 onDismiss={() => setDismissedDuplicates(true)}
+                onOpen={(issue) => {
+                  setPreview(issue);
+                  onOpenChange(false);
+                }}
               />
             ) : null}
             <RichTextEditor
               key={composerKey}
               className="shrink-0"
               value={description}
-              onChange={setDescription}
+              initialDocument={descriptionDocument.current}
+              onChange={(markdown) => {
+                setDescription(markdown);
+                descriptionDocument.current = editorRef.current?.getJSON() ?? null;
+              }}
+              onReady={(editor) => {
+                editorRef.current = editor;
+              }}
               members={members}
               placeholder="Add a description, markdown works."
               ariaLabel="Issue description"
@@ -626,6 +741,13 @@ export function QuickCreateDialog({
           </div>
         </form>
       </DialogContent>
+      <IssuePeek
+        issueId={preview?.id ?? null}
+        issue={undefined}
+        preview={preview}
+        retainOnIssueInteraction={false}
+        onClose={() => setPreview(null)}
+      />
     </Dialog>
   );
 }
