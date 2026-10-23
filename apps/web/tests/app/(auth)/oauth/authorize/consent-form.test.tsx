@@ -101,3 +101,88 @@ describe('when approving cannot be completed', () => {
     expect(screen.queryByTestId('consent-blocked')).toBeNull();
   });
 });
+
+const agentProps = {
+  ...props,
+  scope: 'openid orbit.read orbit.write offline_access',
+  scopes: ['openid', 'orbit.read', 'orbit.write', 'offline_access'],
+  agentMcpEnabled: true,
+  organizations: [...props.organizations, { id: 'org_2', name: 'Other workspace' }],
+  agentIdentities: [
+    { id: 'identity_1', name: 'Review assistant', organizationId: 'org_1' },
+    { id: 'identity_2', name: 'Other assistant', organizationId: 'org_2' },
+  ],
+};
+
+describe('explicit read-only Agent consent', () => {
+  it('preserves legacy approval when the feature is disabled or no Agent is selected', async () => {
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc' }]);
+    const { rerender } = render(<ConsentForm {...agentProps} agentMcpEnabled={false} />);
+    expect(screen.queryByLabelText('Connection identity')).toBeNull();
+    expect(screen.getByText(/Create and update issues/)).toBeTruthy();
+    rerender(<ConsentForm {...agentProps} />);
+    expect(screen.getByLabelText('Connection identity')).toHaveValue('legacy');
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(JSON.parse(sent[0] ?? '{}')).not.toHaveProperty('agent');
+  });
+
+  it('requires an explicit new name and advertises only read permissions for an Agent', async () => {
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc' }]);
+    render(<ConsentForm {...agentProps} />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    expect(screen.getByText(/This Agent connection is read-only/)).toBeTruthy();
+    expect(screen.queryByText(/Create and update issues/)).toBeNull();
+    expect(screen.getByLabelText('Agent name')).toHaveValue('');
+    expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Agent name'), {
+      target: { value: '  Research reader  ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({
+      organizationId: 'org_1',
+      agent: { name: 'Research reader' },
+    });
+  });
+
+  it('reuses only an Identity offered for the selected workspace', async () => {
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?code=abc' }]);
+    render(<ConsentForm {...agentProps} />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    expect(screen.getByRole('option', { name: 'Review assistant' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Other assistant' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Agent Identity'), { target: { value: 'identity_1' } });
+    expect(screen.queryByLabelText('Agent name')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({ agent: { identityId: 'identity_1' } });
+  });
+
+  it('clears the identity choice when the workspace changes', () => {
+    render(<ConsentForm {...agentProps} />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    fireEvent.change(screen.getByLabelText('Agent Identity'), { target: { value: 'identity_1' } });
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'org_2' } });
+    expect(screen.getByLabelText('Agent Identity')).toHaveValue('');
+    expect(screen.getByLabelText('Agent name')).toHaveValue('');
+    expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled();
+    expect(screen.queryByRole('option', { name: 'Review assistant' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'Other assistant' })).toBeTruthy();
+  });
+
+  it('does not offer Agent access when the trusted request has no read scope', () => {
+    render(<ConsentForm {...agentProps} scopes={['orbit.write']} scope="orbit.write" />);
+    expect(screen.queryByLabelText('Connection identity')).toBeNull();
+  });
+
+  it('allows denial without naming an Agent', async () => {
+    const sent = answerWith([{ redirectUri: 'https://northwind.example/cb?error=access_denied' }]);
+    render(<ConsentForm {...agentProps} />);
+    fireEvent.change(screen.getByLabelText('Connection identity'), { target: { value: 'agent' } });
+    fireEvent.click(screen.getByRole('button', { name: /deny/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({ decision: 'deny' });
+    expect(JSON.parse(sent[0] ?? '{}')).not.toHaveProperty('agent');
+  });
+});

@@ -17,6 +17,12 @@ export interface ConsentOrganization {
   readonly name: string;
 }
 
+export interface ConsentAgentIdentity {
+  readonly id: string;
+  readonly name: string;
+  readonly organizationId: string;
+}
+
 export interface ConsentFormProps {
   readonly consentCode: string;
   readonly clientId: string;
@@ -26,6 +32,8 @@ export interface ConsentFormProps {
   readonly organizations: readonly ConsentOrganization[];
   readonly requirePasskey: boolean;
   readonly userEmail: string;
+  readonly agentMcpEnabled?: boolean;
+  readonly agentIdentities?: readonly ConsentAgentIdentity[];
 }
 
 type Pending = 'allow' | 'deny' | null;
@@ -50,19 +58,44 @@ export function ConsentForm({
   organizations,
   requirePasskey,
   userEmail,
+  agentMcpEnabled = false,
+  agentIdentities = [],
 }: ConsentFormProps) {
   const { toast } = useToast();
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
   const [pending, setPending] = useState<Pending>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
+  const [connectionKind, setConnectionKind] = useState('legacy');
+  const [identityId, setIdentityId] = useState('');
+  const [agentName, setAgentName] = useState('');
 
-  const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
+  const agentAvailable = agentMcpEnabled && scopes.includes('orbit.read');
+  const agentMode = agentAvailable && connectionKind === 'agent';
+  const identities = agentIdentities.filter(
+    (identity) => identity.organizationId === organizationId,
+  );
+  const identitySelected =
+    identityId === ''
+      ? agentName.trim().length > 0
+      : identities.some((identity) => identity.id === identityId);
+  const permissions = scopes.filter(
+    (entry) => SCOPE_LABELS[entry] !== undefined && !(agentMode && entry === 'orbit.write'),
+  );
 
   async function post(decision: 'allow' | 'deny'): Promise<DecisionResponse> {
     const response = await fetch('/oauth/authorize/decision', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, consentCode, clientId, scope, organizationId }),
+      body: JSON.stringify({
+        decision,
+        consentCode,
+        clientId,
+        scope,
+        organizationId,
+        ...(decision === 'allow' && agentMode
+          ? { agent: identityId === '' ? { name: agentName.trim() } : { identityId } }
+          : {}),
+      }),
     });
     const data = (await response.json().catch(() => ({}))) as DecisionResponse;
     if (response.status === 200) return data;
@@ -115,7 +148,8 @@ export function ConsentForm({
   return (
     <div className="flex flex-col gap-5">
       <p className="text-center text-muted text-sm">
-        <span className="font-medium text-text">{clientName}</span> wants to act in Orbit as{' '}
+        <span className="font-medium text-text">{clientName}</span>{' '}
+        {agentMode ? 'wants read-only access to Orbit authorized by' : 'wants to act in Orbit as'}{' '}
         <span className="font-medium text-text">{userEmail}</span>.
       </p>
 
@@ -123,7 +157,11 @@ export function ConsentForm({
         Workspace
         <select
           value={organizationId}
-          onChange={(event) => setOrganizationId(event.target.value)}
+          onChange={(event) => {
+            setOrganizationId(event.target.value);
+            setIdentityId('');
+            setAgentName('');
+          }}
           disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
         >
@@ -134,6 +172,58 @@ export function ConsentForm({
           ))}
         </select>
       </label>
+
+      {agentAvailable ? (
+        <label className="flex flex-col gap-1.5 text-2xs text-faint">
+          Connection identity
+          <select
+            value={connectionKind}
+            onChange={(event) => setConnectionKind(event.target.value)}
+            disabled={pending !== null}
+            className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+          >
+            <option value="legacy">Human Principal ({userEmail})</option>
+            <option value="agent">Agent Identity (read-only)</option>
+          </select>
+        </label>
+      ) : null}
+
+      {agentMode ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-muted text-sm">
+            This Agent connection is read-only. It cannot create or update issues, comments,
+            projects, or other workspace data. get_me and me still refer to you.
+          </p>
+          <label className="flex flex-col gap-1.5 text-2xs text-faint">
+            Agent Identity
+            <select
+              value={identityId}
+              onChange={(event) => setIdentityId(event.target.value)}
+              disabled={pending !== null}
+              className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+            >
+              <option value="">Create a new Identity</option>
+              {identities.map((identity) => (
+                <option key={identity.id} value={identity.id}>
+                  {identity.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {identityId === '' ? (
+            <label className="flex flex-col gap-1.5 text-2xs text-faint">
+              Agent name
+              <input
+                value={agentName}
+                onChange={(event) => setAgentName(event.target.value)}
+                maxLength={100}
+                disabled={pending !== null}
+                className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+              />
+            </label>
+          ) : null}
+        </div>
+      ) : null}
 
       {permissions.length > 0 ? (
         <div className="flex flex-col gap-1.5">
@@ -163,7 +253,7 @@ export function ConsentForm({
           type="button"
           variant="primary"
           block
-          disabled={pending !== null || organizationId === ''}
+          disabled={pending !== null || organizationId === '' || (agentMode && !identitySelected)}
           onClick={() => run('allow')}
         >
           {pending === 'allow' ? (

@@ -225,6 +225,20 @@
       "when": 1791997887851,
       "tag": "0031_broad_lifeguard",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792745492266,
+      "tag": "0032_mcp_grant_compatibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792745840280,
+      "tag": "0033_mcp_agent_grant_binding",
+      "breakpoints": true
     }
   ]
 }

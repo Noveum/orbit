@@ -7,6 +7,7 @@ export async function loadMcpConnections(userId: string): Promise<readonly McpCo
     id: grant.id,
     clientName: grant.clientName,
     organizationName: grant.organizationName,
+    identityName: grant.agentName,
     lastUsedAt: grant.lastUsedAt === null ? null : grant.lastUsedAt.toISOString(),
   }));
 }
