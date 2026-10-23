@@ -7,6 +7,6 @@ export async function POST(request: Request): Promise<Response> {
   return await handle(async (principal) => {
     const result = await bulkUpdateIssues(principal, body);
     await publish(result.actions);
-    return { issues: await attachIssueDecorations(result.issues) };
+    return { issues: await attachIssueDecorations(result.issues, principal.organizationId) };
   });
 }

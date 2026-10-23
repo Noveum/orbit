@@ -5,6 +5,7 @@ import { assertCan, can, type Principal } from '@orbit/shared/policy';
 import { DOC_COLUMNS, docReadFilter } from '../content/doc-service.ts';
 import type { Executor } from '../internal.ts';
 import { inviteAnnouncement, inviteReference } from '../org/invite-service.ts';
+import { attachIssueActors } from '../work/issue-actor-view.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
 import { viewReadFilter, viewScopes } from '../work/view-service.ts';
@@ -445,11 +446,12 @@ const LOADERS: Record<SyncModel, Loader> = {
       .orderBy(asc(schema.issue.syncId))
       .limit(limit);
     const issueIds = rows.map((row) => row.id);
-    const [labels, reviewers] = await Promise.all([
+    const [labels, reviewers, actors] = await Promise.all([
       labelIdsByIssue(executor, issueIds),
       reviewerIdsByIssue(executor, issueIds),
+      attachIssueActors(executor, principal.organizationId, rows),
     ]);
-    return rows.map((row) => ({
+    return actors.map((row) => ({
       modelId: row.id,
       syncId: row.syncId,
       scopes: [
