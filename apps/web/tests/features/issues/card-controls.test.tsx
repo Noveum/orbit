@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -28,9 +28,17 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
   useWorkspace: () => ({ ...realUseWorkspace(), members: [member], states: [] }),
 }));
 
+const patches: Record<string, unknown>[] = [];
+
 mock.module('@/lib/query/use-issues.ts', () => ({
-  useUpdateIssue: () => ({ mutate: mock() }),
+  useUpdateIssue: () => ({
+    mutate: (input: { patch: Record<string, unknown> }) => patches.push(input.patch),
+  }),
 }));
+
+beforeEach(() => {
+  patches.length = 0;
+});
 
 const { AssigneeControl } = await import('@/features/issues/card-controls.tsx');
 
@@ -66,6 +74,40 @@ const issue = {
 } satisfies Issue;
 
 describe('AssigneeControl', () => {
+  it('shows the agent actor and keeps the picker limited to existing human assignments', async () => {
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ToastProvider>
+          <AssigneeControl
+            issue={{
+              ...issue,
+              assignee: {
+                type: 'agent',
+                id: 'agent_1',
+                name: 'Build bot',
+                avatar: null,
+                deleted: false,
+              },
+            }}
+            assignee={undefined}
+          />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole('img', { name: 'Build bot' })).toBeInTheDocument();
+    await user.click(screen.getByTestId('card-assignee-ENG-1'));
+    const menu = await screen.findByTestId('card-assignee-menu');
+    const clear = within(menu).getByRole('menuitemradio', { name: 'No assignee' });
+    expect(clear).not.toHaveAttribute('data-disabled');
+    expect(clear).toHaveAttribute('aria-checked', 'false');
+    expect(within(menu).getByRole('menuitemradio', { name: member.name })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitemradio', { name: 'Build bot' })).toBeNull();
+    await user.click(clear);
+    expect(patches).toEqual([{ assigneeId: null }]);
+  });
+
   it('shows member profile pictures in the Kanban assignee picker', async () => {
     const user = userEvent.setup();
     const client = new QueryClient();

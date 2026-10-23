@@ -12,7 +12,10 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
   return await handle(async (principal) => {
     const result = await moveIssue(principal, id, body);
     await publish(result.actions);
-    const [issue] = await attachIssueDecorations([result.issue]);
-    return { issue, rebalanced: await attachIssueDecorations(result.rebalanced) };
+    const [issue] = await attachIssueDecorations([result.issue], principal.organizationId);
+    return {
+      issue,
+      rebalanced: await attachIssueDecorations(result.rebalanced, principal.organizationId),
+    };
   });
 }

@@ -174,6 +174,7 @@ function fullCard(properties: readonly DisplayProperty[]) {
   return (
     <IssueCard
       issue={issue({
+        creatorId: creator.id,
         milestoneId: 'ms_1',
         dueDate: '2026-03-04T00:00:00.000Z',
         startedAt: '2026-03-01T00:00:00.000Z',
@@ -192,6 +193,45 @@ function fullCard(properties: readonly DisplayProperty[]) {
 }
 
 describe('IssueCard display properties', () => {
+  it('shows canonical agent creator and assignee while dragging without member entries', () => {
+    render(
+      <IssueCard
+        issue={issue({
+          creatorId: null,
+          creatorUserId: null,
+          creatorAgentId: 'agent_creator',
+          creator: {
+            type: 'agent',
+            id: 'agent_creator',
+            name: 'Planning bot',
+            avatar: '/planning.png',
+            deleted: false,
+          },
+          assignee: {
+            type: 'agent',
+            id: 'agent_assignee',
+            name: 'Build bot',
+            avatar: '/build.png',
+            deleted: true,
+          },
+          assigneeId: null,
+        })}
+        assignee={undefined}
+        labels={[]}
+        dragging
+        properties={['creator', 'assignee']}
+      />,
+    );
+
+    expect(screen.getByTitle('Planning bot (Agent)')).toHaveAttribute('data-actor-type', 'agent');
+    expect(screen.getByTitle('Build bot (Agent) (Deleted)')).toHaveAttribute(
+      'data-actor-deleted',
+      'true',
+    );
+    expect(screen.getByRole('img', { name: 'Build bot (Deleted)' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Unassigned')).toBeNull();
+  });
+
   it('renders every property that is toggled on', async () => {
     render(fullCard([...DISPLAY_PROPERTIES]));
 

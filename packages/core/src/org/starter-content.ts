@@ -6,6 +6,7 @@ import { captureCreatedCycleMembership } from '../analytics/membership.ts';
 import { type Executor, newId } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import type { CycleRow } from '../work/cycle-service.ts';
+import { attachIssueActors } from '../work/issue-actor-view.ts';
 import type { WorkflowStateRow } from '../work/workflow-state-service.ts';
 
 interface SeedParams {
@@ -203,6 +204,7 @@ export async function seedStarterContent(
   }
 
   const now = new Date();
+  const issues: (typeof schema.issue.$inferSelect)[] = [];
   for (const [index, seed] of STARTER_ISSUES.entries()) {
     const number = index + 1;
     const state = stateFor(params.states, seed.category);
@@ -231,6 +233,9 @@ export async function seedStarterContent(
       .returning();
     if (issue === undefined) continue;
     await captureCreatedCycleMembership(executor, { issue, occurredAt: now });
+    issues.push(issue);
+  }
+  for (const issue of await attachIssueActors(executor, params.organizationId, issues)) {
     actions.push(
       buildSyncAction({
         syncId: params.syncId,

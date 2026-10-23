@@ -6,8 +6,10 @@ import { useToast } from '@/components/ui/toast.tsx';
 import { Tooltip } from '@/components/ui/tooltip.tsx';
 import { cn } from '@/lib/cn.ts';
 import { rowHover } from '@/lib/interaction.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { branchCopy } from './copy-branch-name.tsx';
+import { issueActorLabel } from './issue-actor.tsx';
 import { priorityLabel } from './priority-glyph.tsx';
 import { useWorkspace } from './workspace-provider.tsx';
 
@@ -36,8 +38,12 @@ export function IssueCopyActions({ issue }: IssueCopyActionsProps) {
   const promptText = (): string => {
     const team = workspace.teams.find((entry) => entry.id === issue.teamId);
     const state = workspace.stateById.get(issue.stateId);
-    const assignee =
-      issue.assigneeId === null ? null : (workspace.memberById.get(issue.assigneeId)?.name ?? null);
+    const assigneeActor = resolveIssueActor(
+      issue,
+      'assignee',
+      workspace.memberById.get(issue.assigneeUserId ?? issue.assigneeId ?? ''),
+    );
+    const assignee = assigneeActor === null ? null : issueActorLabel(assigneeActor);
     const project =
       issue.projectId === null
         ? null

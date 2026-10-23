@@ -39,6 +39,7 @@ import { writeCycleSnapshotsInTransaction } from '../analytics/snapshot.ts';
 import { addUtcDays, type Executor, newId, requireRow, startOfUtcDay } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { attachIssueActors } from './issue-actor-view.ts';
 import { issueScopes } from './issue-service.ts';
 import { labelIdsByIssue } from './label-service.ts';
 import { reviewerIdsByIssue } from './reviewer-service.ts';
@@ -511,6 +512,7 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
     }
 
     const decorations = await issueDecorations(tx, detached);
+    const actors = await attachIssueActors(tx, principal.organizationId, detached);
     await tx.delete(schema.cycle).where(eq(schema.cycle.id, cycleId));
     return [
       buildSyncAction({
@@ -523,7 +525,7 @@ export async function deleteCycle(principal: Principal, cycleId: string): Promis
         data: { id: cycleId, teamId: cycle.teamId },
         actor,
       }),
-      ...detached.map((row) =>
+      ...actors.map((row) =>
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
@@ -1325,6 +1327,7 @@ async function closeCycle(
     const completed = requireRow(closed, 'That cycle does not exist.');
     const affectedIssues = [...released, ...rolled];
     const decorations = await issueDecorations(tx, affectedIssues);
+    const actors = await attachIssueActors(tx, scope.organizationId, affectedIssues);
 
     return {
       cycle: completed,
@@ -1343,7 +1346,7 @@ async function closeCycle(
           data: completed,
           actor,
         }),
-        ...affectedIssues.map((row) =>
+        ...actors.map((row) =>
           buildSyncAction({
             syncId,
             organizationId: scope.organizationId,

@@ -2,9 +2,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { getOrganization, verifyMcpAccessToken } from '@orbit/core';
+import {
+  type AgentIssueWriteContext,
+  agentIssueWriteContext,
+  getOrganization,
+  verifyMcpAccessToken,
+} from '@orbit/core';
 import { forbidden, toDomainError, unauthorized } from '@orbit/shared/errors';
-import type { Principal } from '@orbit/shared/policy';
+import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { errorFields, logger } from './logger.ts';
 import { registerTools } from './tools/index.ts';
 import { allowTools } from './tools/support.ts';
@@ -17,7 +22,16 @@ const JSONRPC_SERVER_ERROR = -32000;
 const INSTRUCTIONS = [
   'Orbit is a task manager. Issues live on teams and carry identifiers such as ENG-42.',
   'Call get_me first to learn the caller role and teams, then list_teams, list_states and list_labels before writing.',
-  'Every tool acts as the user who owns the API key, so a request can fail with a forbidden error when their role does not allow it.',
+  'The Human Principal is the user who authorized the OAuth connection. get_me, me and my issues refer to that Human Principal.',
+  'Every tool uses the current workspace permissions of that user and the connection scopes.',
+].join(' ');
+
+const AGENT_INSTRUCTIONS = [
+  'Orbit is a task manager. Issues live on teams and carry identifiers such as ENG-42.',
+  'This connection has an explicit Agent Identity. Issue writes require explicit write consent and the Issue write gate. Other writes and reads with write side effects are unavailable.',
+  'Read-only Agent Grants remain read-only.',
+  'Call get_agent_identity for the Agent Identity. get_me, me and my issues still refer to the Human Principal who authorized this connection.',
+  'Available read tools use the current workspace permissions of that Human Principal and the orbit.read scope.',
 ].join(' ');
 
 export function wwwAuthenticate(publicUrl: string): string {
@@ -45,16 +59,25 @@ export function createOrbitMcpServer(
   principal: Principal,
   scopes = EVERY_ORBIT_SCOPE,
   workspaceInstructions = '',
+  identity: McpIdentity = { kind: 'legacy' },
+  writeContext?: AgentIssueWriteContext,
 ): McpServer {
-  const instructions = [INSTRUCTIONS, workspaceInstructions]
+  const instructions = [
+    identity.kind === 'agent' ? AGENT_INSTRUCTIONS : INSTRUCTIONS,
+    workspaceInstructions,
+  ]
     .filter((entry) => entry.length > 0)
     .join('\n\n');
   const server = new McpServer(
     { name: 'orbit', version: SERVER_VERSION },
     { capabilities: { tools: {} }, instructions },
   );
-  allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes) });
-  registerTools(server, principal);
+  allowTools(
+    server,
+    { reads: grantsReads(scopes), writes: grantsWrites(scopes), identity },
+    writeContext,
+  );
+  registerTools(server, principal, identity);
   return server;
 }
 
@@ -107,7 +130,13 @@ async function dispatch(
     grantsReads(identity.scopes) && (await requestInitializesConnection(request))
       ? await instructionsLoader(identity.organizationId)
       : '';
-  const server = createOrbitMcpServer(identity.principal, identity.scopes, workspaceInstructions);
+  const server = createOrbitMcpServer(
+    identity.principal,
+    identity.scopes,
+    workspaceInstructions,
+    identity.identity,
+    identity.identity.kind === 'agent' ? agentIssueWriteContext(identity) : undefined,
+  );
   const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
   await server.connect(transport as unknown as Transport);
 
