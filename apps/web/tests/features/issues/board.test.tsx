@@ -580,6 +580,176 @@ describe('Board card keyboard boundaries', () => {
     });
   });
 
+  it('captures the original project and milestone in move undo history', async () => {
+    clearTabHistory();
+
+    const projectAlpha = {
+      id: 'project_1',
+      name: 'Alpha',
+      status: 'started',
+      slug: 'alpha',
+      color: '#5a63c8',
+      icon: 'box',
+      teamIds: ['team_1'],
+    };
+
+    const projectBeta = {
+      id: 'project_2',
+      name: 'Beta',
+      status: 'started',
+      slug: 'beta',
+      color: '#967AE9',
+      icon: 'box',
+      teamIds: ['team_1'],
+    };
+
+    const sourceIssue = issue({
+      projectId: 'project_1',
+      milestoneId: 'milestone_1',
+    });
+
+    const targetIssue = issue({
+      id: 'issue_2',
+      number: 2,
+      identifier: 'ENG-2',
+      title: 'Second task',
+      projectId: 'project_2',
+      sortOrder: 2048,
+    });
+
+    const projectGroups = groupIssues(
+      [sourceIssue, targetIssue],
+      'project',
+      {
+        states: [todo, doing],
+        members: [],
+        projects: [projectAlpha, projectBeta],
+        cycles: [],
+        labels: [],
+      },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+
+    const previousWorkspace = workspace;
+    workspace = {
+      ...workspace,
+      projects: [projectAlpha, projectBeta],
+    };
+
+    const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+
+    HTMLElement.prototype.getBoundingClientRect = function getProjectBoardTestRect() {
+      const inBeta = this.closest('[data-testid="board-column-Beta"]') !== null;
+      const card = this.matches('li');
+
+      return new DOMRect(inBeta ? 320 : 0, card ? 80 : 0, card ? 260 : 280, card ? 72 : 500);
+    };
+
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        return Promise.resolve(Response.json({ issues: [], nextCursor: null }));
+      }
+
+      return Promise.resolve(
+        Response.json({
+          issue: {
+            ...sourceIssue,
+            projectId: 'project_2',
+            milestoneId: null,
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      render(
+        <QueryClientProvider
+          client={
+            new QueryClient({
+              defaultOptions: {
+                queries: {
+                  retry: false,
+                  staleTime: Number.POSITIVE_INFINITY,
+                },
+              },
+            })
+          }
+        >
+          <TooltipProvider>
+            <ToastProvider>
+              <HotkeyProvider>
+                <Board groups={projectGroups} draggable groupBy="project" />
+              </HotkeyProvider>
+            </ToastProvider>
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
+
+      const card = screen.getByRole('listitem', {
+        name: 'ENG-1: Domain auto join',
+      });
+
+      card.focus();
+
+      fireEvent.keyDown(card, {
+        key: 'Enter',
+        code: 'Enter',
+      });
+
+      await act(async () => {
+        await settleKeyboardSensor();
+        fireEvent.keyDown(card, {
+          key: 'ArrowRight',
+          code: 'ArrowRight',
+        });
+        await settleKeyboardSensor();
+      });
+
+      await waitFor(() => {
+        expect(dndStatus()).toHaveTextContent('column Beta');
+      });
+
+      fireEvent.keyDown(card, {
+        key: 'Enter',
+        code: 'Enter',
+      });
+
+      await waitFor(() => {
+        expect(dndStatus()).toHaveTextContent('Dropping ENG-1');
+      });
+
+      await waitFor(() => {
+        expect(getTabUndoStackForTests()).toHaveLength(1);
+      });
+
+      const entry = getTabUndoStackForTests()[0];
+
+      if (entry === undefined || !('forward' in entry) || !('inverse' in entry)) {
+        throw new Error('expected a move history entry');
+      }
+
+      expect(entry.issue.id).toBe(sourceIssue.id);
+
+      expect(entry.inverse.projectId).toBe('project_1');
+      expect(entry.inverse.milestoneId).toBe('milestone_1');
+
+      expect(entry.expectedForUndo).toMatchObject({
+        projectId: 'project_2',
+        milestoneId: null,
+      });
+
+      expect(entry.expectedForRedo).toMatchObject({
+        projectId: 'project_1',
+        milestoneId: 'milestone_1',
+      });
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = nativeRect;
+      workspace = previousWorkspace;
+    }
+  });
+
   it('ends an active visibility activity when the board unmounts', async () => {
     const end = mock();
     const start = mock(() => end);

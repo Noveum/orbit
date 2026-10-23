@@ -1624,11 +1624,17 @@ export async function moveIssue(
     const values = await moveValues(tx, current, team, state, landing, now);
 
     await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
-    await assertAssignableToTeam(tx, principal.organizationId, teamId, {
-      cycleId: parsed.cycleId,
-      projectId: parsed.projectId,
-      milestoneId: parsed.milestoneId,
-    });
+    await assertAssignableToTeam(
+      tx,
+      principal.organizationId,
+      teamId,
+      {
+        cycleId: parsed.cycleId,
+        projectId: parsed.projectId,
+        milestoneId: parsed.milestoneId,
+      },
+      values.projectId === undefined ? current.projectId : values.projectId,
+    );
 
     const regrouped = applyRegrouping(parsed, current, values);
 

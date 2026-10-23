@@ -41,28 +41,28 @@ export function nextActionSequence(): number {
   return actionSequenceCounter;
 }
 
-function insertHistoryEntry(entry: IssueUndoEntry): void {
-  const insertIndex = tabUndoStack.findIndex((item) => item.sequence > entry.sequence);
+function insertHistoryEntry(stack: IssueUndoEntry[], entry: IssueUndoEntry): void {
+  const insertIndex = stack.findIndex((item) => item.sequence > entry.sequence);
 
   if (insertIndex === -1) {
-    tabUndoStack.push(entry);
+    stack.push(entry);
   } else {
-    tabUndoStack.splice(insertIndex, 0, entry);
+    stack.splice(insertIndex, 0, entry);
   }
 
-  if (tabUndoStack.length > MAX_HISTORY) {
-    tabUndoStack.shift();
+  if (stack.length > MAX_HISTORY) {
+    stack.shift();
   }
 }
 
 export function recordTabPropertyChange(entry: PropertyUndoEntry): void {
   tabRedoStack.length = 0;
-  insertHistoryEntry(entry);
+  insertHistoryEntry(tabUndoStack, entry);
 }
 
 export function recordTabMove(entry: MoveUndoEntry): void {
   tabRedoStack.length = 0;
-  insertHistoryEntry(entry);
+  insertHistoryEntry(tabUndoStack, entry);
 }
 
 export function getTabUndoStack(): readonly PropertyUndoEntry[] {
@@ -134,7 +134,7 @@ function shouldRetainEntry(error: unknown): boolean {
 
 function restoreFailedEntry(stack: IssueUndoEntry[], entry: IssueUndoEntry, error: unknown): void {
   if (shouldRetainEntry(error)) {
-    stack.push(entry);
+    insertHistoryEntry(stack, entry);
   }
 }
 
