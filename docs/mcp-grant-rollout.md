@@ -1,15 +1,16 @@
 # MCP grant compatibility rollout
 
-Stages 3a and 3b are submitted together in one pull request depending on PR1.
+Stages 3a and 3b are submitted together in one pull request based on released main.
 Production still requires two separate rollout stages. Preserve a deployable
 stage 3a artifact before deploying the final stage 3b checkout.
 
 ## Stage 3a: compatibility preparation
 
-Start from PR1 commit `911cfcbc19140b2b4e8f97ee3ce553f1b718d877`.
-This stage includes its synchronized `0030_actor_schema_expand` migration,
-which preserves all Owner values, including NULL.
-Apply migration `0031_mcp_grant_compatibility` before deploying stage 3a.
+Start from published main commit `ad1206e85fff322ae5ae1cf6ca39bc5bfc6d471c`.
+Keep its released `0030_actor_schema_expand` and `0031_broad_lifeguard`
+migrations, snapshots and journal entries unchanged. The actor expansion
+preserves all Owner values, including NULL.
+Apply migration `0032_mcp_grant_compatibility` before deploying stage 3a.
 The PR1 binary continues to use its global client/user index and old columns.
 No grants, tokens or consents are revoked by the migration. No identities are
 created. PR1 identity fixtures and nullable owner/client references stay valid.
@@ -57,15 +58,15 @@ prevents a removed and rejoined owner from reviving an old grant.
 ## Stage 3b: deployment prerequisites
 
 Deployable stage 3a artifact: commit
-`94b92a2e50f24defb8ce22a3a4110795de686e5c`, including compatibility commit
+`037e941376a42ba730e3d75d974ad1f6bbc415ca`, including compatibility commit
 `9d3e91fbe493519b1d3b15565b38f081f3183f17`.
 This artifact is on branch `feature/agent-grant-compatibility`; it contains
-`0031` and the stage 3a runtime, without `0032` or the stage 3b consent runtime.
+`0032` and the stage 3a runtime, without `0033` or the stage 3b consent runtime.
 Use branch `feature/agent-consent-binding` for the final stage 3b artifact.
 Record the exact verified commit from that branch before release and build,
 then deploy the runtime built from the same checkout.
 
-Migration `0032_mcp_agent_grant_binding` removes only the old global unique
+Migration `0033_mcp_agent_grant_binding` removes only the old global unique
 index and adds one active agent grant per identity. It preserves the legacy
 partial index, all credentials, consent records, identities and historical
 grants. Release also reconciles this explicitly retired index when baselining
@@ -73,12 +74,12 @@ a missing or partial ledger, and on repeated releases after index drift. It
 does not remove unrelated undeclared indexes.
 
 Stage 3b must be a separate release based on completed stage 3a, even when
-both stages are reviewed in one pull request. First release PR1 at
-`911cfcbc19140b2b4e8f97ee3ce553f1b718d877` and deploy its runtime. The final checkout's
-`bun run db:release` applies every pending migration, including both `0031`
-and `0032`; it does not pause for stage 3a deployment. First use the stage 3a
-checkout and release artifact to apply `0031` and upgrade all related instances.
-Only then use the final checkout to apply `0032` and deploy stage 3b. Follow
+both stages are reviewed in one pull request. First release the main baseline
+and deploy its runtime. The final checkout's `bun run db:release` applies every
+pending migration, including both `0032` and `0033`; it does not pause for stage
+3a deployment. First use the stage 3a checkout and release artifact to apply
+`0032` and upgrade all related instances. Only then use the final checkout to
+apply `0033` and deploy stage 3b. Follow
 this sequence before merging schema-dependent code into a deployment branch.
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
@@ -149,17 +150,7 @@ and read-only scopes. The consent race test uses separate database connections
 and observes an ungranted PostgreSQL advisory lock before releasing competing
 duplicate and distinct authorization requests. All original assertions remain.
 
-Test preparation initially invoked `db:test-setup` in error and reset the six
-local base test databases. Existing isolated lanes were unaffected. It was
-stopped, and subsequent preparation updated only explicitly named local lanes.
-Windows root tests fail on existing POSIX permission and symlink assumptions.
-Initial parallel Linux runs encountered a shared PostgreSQL checkpoint wait
-longer than the scratch cleanup timeout and a large-file UI test timeout.
-Final full verification uses the local Linux image, a dedicated PostgreSQL 18
-cluster on local tmpfs with fsync, synchronous commits and full-page writes
-enabled, and the same local Redis and S3 services. The twelve precreated
-`pr3a-final` and `pr3b-final` lane databases use the committed 32 and 33 migration
-prefixes respectively. Two dedicated root catalogs support existing tests
-which read DATABASE_URL directly. The two stages run sequentially with all
-original assertions and unchanged timeouts. None of the six shared base test
-databases is used or reset by this final preparation.
+The rollout baselines include the released `0031_broad_lifeguard` migration.
+Stage 3a upgrades its 32-migration baseline with `0032`; stage 3b upgrades its
+33-migration compatibility baseline with `0033`. Both exercise repeat release
+and compare the resulting live catalog with the schema declared for that stage.

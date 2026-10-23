@@ -1,0 +1,2 @@
+ALTER TYPE "public"."notification_reason" ADD VALUE 'stale' BEFORE 'access_requested';--> statement-breakpoint
+ALTER TABLE "organization" ADD COLUMN "project_staleness_days" integer DEFAULT 14 NOT NULL;
