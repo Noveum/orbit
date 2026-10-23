@@ -50,9 +50,9 @@ describe('importing a markdown file', () => {
     Object.defineProperty(huge, 'size', { value: DOC_CONTENT_LIMIT * 8, configurable: true });
     pick(huge);
 
-    await waitFor(() =>
-      expect(screen.getByTestId<HTMLButtonElement>('doc-import').disabled).toBe(false),
-    );
+    const button = screen.getByTestId<HTMLButtonElement>('doc-import');
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(button).not.toBeDisabled();
     expect(read).not.toHaveBeenCalled();
     expect(created).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
