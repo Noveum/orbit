@@ -10,7 +10,7 @@ import * as schema from '../src/schema/index.ts';
 const BASE = process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 const SCRATCH = laneDatabase('orbit_test_mcp_rollout', currentLane());
 const MIGRATIONS = fileURLToPath(new URL('../drizzle', import.meta.url));
-const PR1_MIGRATION = 1791120831827;
+const MAIN_MIGRATION = 1791997887851;
 
 function urlFor(database: string): string {
   const url = new URL(BASE);
@@ -51,8 +51,8 @@ describe('MCP grant compatibility rollout', () => {
       await sql.unsafe(`create database "${SCRATCH}"`);
     }, 'postgres');
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
-    const prefix = migrations.filter((migration) => migration.folderMillis <= PR1_MIGRATION);
-    expect(prefix).toHaveLength(31);
+    const prefix = migrations.filter((migration) => migration.folderMillis <= MAIN_MIGRATION);
+    expect(prefix).toHaveLength(32);
     await run(async (sql) => {
       await sql`create extension if not exists pg_trgm`;
       for (const migration of prefix) {
