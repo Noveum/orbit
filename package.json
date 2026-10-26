@@ -79,10 +79,10 @@
     "preview:storage-check": "docker compose --env-file .env.docker.local -f deploy/docker/compose.yaml run --rm tools bun scripts/smoke-docker-storage.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@orbit/shared": "workspace:*",
-    "@types/bun": "1.3.14",
-    "lefthook": "2.1.16",
+    "@types/bun": "1.4.4",
+    "lefthook": "2.2.2",
     "typescript": "5.9.3",
     "vitepress": "1.6.4"
   },
