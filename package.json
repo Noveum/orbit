@@ -82,8 +82,8 @@
     "@biomejs/biome": "2.5.15",
     "@orbit/shared": "workspace:*",
     "@types/bun": "1.3.14",
-    "lefthook": "2.1.16",
-    "typescript": "5.9.3",
+    "lefthook": "2.2.2",
+    "typescript": "7.0.2",
     "vitepress": "1.6.4"
   },
   "overrides": {
