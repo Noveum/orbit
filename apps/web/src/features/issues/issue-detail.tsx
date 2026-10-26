@@ -41,6 +41,7 @@ export interface IssueDetailViewProps {
   readonly onDeleted?: (() => void) | undefined;
   readonly focusCommentId?: string | null;
   readonly focusActivity?: boolean;
+  readonly hotkeyPriority?: number;
 }
 
 export function teamIssuesPath(teams: readonly Team[], teamId: string): string {
@@ -197,6 +198,7 @@ export function IssueDetailView({
   onDeleted,
   focusCommentId = null,
   focusActivity = false,
+  hotkeyPriority = HOTKEY_PRIORITY.surface,
 }: IssueDetailViewProps) {
   const { toast } = useToast();
   const router = useRouter();
@@ -257,7 +259,7 @@ export function IssueDetailView({
     label: 'Delete issue',
     section: 'Issues',
     scope: 'issues',
-    priority: HOTKEY_PRIORITY.layer,
+    priority: hotkeyPriority,
     enabled: issue !== undefined && deletion?.allowed === true,
   });
 
@@ -267,7 +269,7 @@ export function IssueDetailView({
     label: 'Mark as duplicate of...',
     section: 'Issues',
     scope: 'issues',
-    priority: HOTKEY_PRIORITY.layer,
+    priority: hotkeyPriority,
     enabled: issue !== undefined && canMarkDuplicate,
   });
 
@@ -315,7 +317,10 @@ export function IssueDetailView({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col lg:flex-row" data-testid="issue-detail">
+    <div
+      className="flex h-full min-h-0 flex-col overflow-y-auto lg:flex-row lg:overflow-visible"
+      data-testid="issue-detail"
+    >
       {pickingDuplicate ? (
         <IssuePicker
           open={pickingDuplicate}
@@ -329,7 +334,10 @@ export function IssueDetailView({
         </IssuePicker>
       ) : null}
 
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+      <div
+        className="min-h-0 min-w-0 flex-none lg:flex-1 lg:overflow-y-auto"
+        data-testid="issue-detail-main"
+      >
         <header className="flex items-center gap-2 border-border border-b px-5 py-2.5">
           <span data-numeric className="text-2xs text-faint">
             {issue.identifier}
@@ -412,7 +420,12 @@ export function IssueDetailView({
         </div>
       </div>
 
-      <IssueProperties issue={issue} parent={detail.data.parent} onDeleted={leave} />
+      <IssueProperties
+        issue={issue}
+        parent={detail.data.parent}
+        onDeleted={leave}
+        hotkeyPriority={hotkeyPriority}
+      />
     </div>
   );
 }

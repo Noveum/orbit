@@ -287,6 +287,26 @@ that is unset. `bun run db:test-lanes-drop --all` drops every lane on the
 server, including lanes another worktree is using. Neither mode touches the six
 base databases.
 
+## Backup and retention
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `ORBIT_BACKUP_DESTINATION` | `./backups` | Target directory where backup archives are stored and discovered |
+| `ORBIT_BACKUP_ENCRYPTION_KEY` | unset | 32-byte master key encoded as 64-character hex or 44-character base64 |
+| `ORBIT_BACKUP_ENCRYPTION_KEY_FILE` | unset | Path to a file containing the 32-byte master encryption key |
+| `ORBIT_BACKUP_ENCRYPTION_COMMAND` | unset | Secret helper command executed to print the master key to stdout |
+| `ORBIT_BACKUP_ENCRYPTION_KEY_ID` | `default` | Key identifier stamped into manifest encryption metadata |
+| `ORBIT_BACKUP_KEEP_COUNT` | unset | Number of newest backups to retain during pruning |
+| `ORBIT_BACKUP_KEEP_DAYS` | unset | Number of days to retain backups during pruning |
+| `ORBIT_BACKUP_KEEP_HOURLY` | unset | Number of hourly GFS slots to retain |
+| `ORBIT_BACKUP_KEEP_DAILY` | unset | Number of daily GFS slots to retain |
+| `ORBIT_BACKUP_KEEP_WEEKLY` | unset | Number of weekly GFS slots to retain |
+| `ORBIT_BACKUP_KEEP_MONTHLY` | unset | Number of monthly GFS slots to retain |
+| `ORBIT_BACKUP_MAX_BYTES` | unset | Storage quota (e.g. `50GB`); prunes oldest non-pinned backups when exceeded |
+| `ORBIT_BACKUP_PINNED` | unset | Comma-separated list of backup directory IDs immune from prune deletion |
+| `ORBIT_BACKUP_STALE_ALERT_HOURS` | unset | Alert threshold in hours; prune exits with code 2 if newest backup exceeds it |
+| `ORBIT_BACKUP_INCOMPLETE_MAX_AGE_HOURS` | `24` | Maximum age in hours before abandoned temporary or incomplete backups are purged |
+
 ## Reference: a deployment environment
 
 ```bash
