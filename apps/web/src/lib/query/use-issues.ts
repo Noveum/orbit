@@ -658,6 +658,17 @@ function refreshCounts(client: QueryClient): void {
   staleBoardPages(client);
 }
 
+async function cancelIssueListFetches(client: QueryClient): Promise<void> {
+  const firstLoads = client
+    .getQueryCache()
+    .findAll({ queryKey: [ISSUES_ROOT], fetchStatus: 'fetching' })
+    .flatMap((query) => (query.state.data === undefined ? [query.queryKey] : []));
+  await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+  for (const key of firstLoads) {
+    client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
+  }
+}
+
 async function invalidateIssueCaches(client: QueryClient): Promise<void> {
   await Promise.allSettled([
     client.invalidateQueries({ queryKey: [ISSUES_ROOT] }),
@@ -966,7 +977,7 @@ export function useUpdateIssue() {
 
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
-        client.cancelQueries({ queryKey: [ISSUES_ROOT] }),
+        cancelIssueListFetches(client),
         client.cancelQueries({ queryKey: detailKey, exact: true }),
       ]);
       const previousDetail = client.getQueryData<IssueDetail>(detailKey);
@@ -1239,7 +1250,7 @@ export function useMoveIssue() {
     },
     onMutate: async (input) => {
       moveDeletionGenerations.set(input, issueDeletionGeneration(client, input.issue.id));
-      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+      await cancelIssueListFetches(client);
       const before = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
       const optimistic: Issue = {
         ...input.issue,
@@ -1514,7 +1525,7 @@ export function useDeleteIssues() {
   return useMutation({
     mutationFn: deleteEach,
     onMutate: async (issues) => {
-      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+      await cancelIssueListFetches(client);
       const before = client.getQueriesData<IssuePages>({
         queryKey: [ISSUES_ROOT],
       });
@@ -1541,7 +1552,7 @@ export function useDeleteIssues() {
       if (partiallyDeleted) {
         recordIssueDeletions(client, error.gone);
         recordIssueListRevisions(client, issueListKeys(client));
-        await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+        await cancelIssueListFetches(client);
       }
       const resetChanged =
         context?.lists.some((snapshot) =>
@@ -1562,7 +1573,7 @@ export function useDeleteIssues() {
         issues.map((issue) => issue.id),
       );
       recordIssueListRevisions(client, issueListKeys(client));
-      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+      await cancelIssueListFetches(client);
       dropFromIssueLists(client, removed);
       await dropFromIssueDetails(client, removed);
     },

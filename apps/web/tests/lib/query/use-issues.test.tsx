@@ -2618,3 +2618,92 @@ describe('deleting an issue', () => {
     expect(deletes).toEqual(['/api/issues/issue_parent', '/api/issues/issue_child']);
   });
 });
+
+describe('a mutation during a list first load', () => {
+  const seed = [issue({ title: 'Seeded row' })];
+
+  function stubFirstLoadThenServer(write: (init: RequestInit | undefined) => unknown) {
+    const firstLoad = deferred<Response>();
+    const lists: string[] = [];
+    globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (method !== 'GET') return Promise.resolve(Response.json(write(init)));
+      lists.push(String(input));
+      return lists.length === 1
+        ? firstLoad.promise
+        : Promise.resolve(
+            Response.json({
+              issues: [issue({ title: 'Server row' }), issue({ id: 'issue_2', number: 2 })],
+              nextCursor: null,
+            }),
+          );
+    }) as unknown as typeof fetch;
+    return lists;
+  }
+
+  async function mountFirstLoad(client: QueryClient) {
+    const list = renderHook(() => useIssues(TEAM, seed), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+    expect(list.result.current.isPlaceholderData).toBe(true);
+    return list;
+  }
+
+  it('still loads the list when a move cancels its first fetch', async () => {
+    const lists = stubFirstLoadThenServer(() => ({
+      issue: issue({ stateId: 'state_doing', syncId: 2 }),
+      rebalanced: [],
+    }));
+    const client = newClient();
+    const list = await mountFirstLoad(client);
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    await act(async () => {
+      await move.result.current.mutateAsync({
+        issue: issue(),
+        stateId: 'state_doing',
+        beforeId: null,
+        afterId: null,
+        beforeOrder: null,
+        afterOrder: null,
+      });
+    });
+
+    await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+    expect(list.result.current.data?.map((row) => row.id)).toEqual(['issue_1', 'issue_2']);
+    expect(lists).toHaveLength(2);
+  });
+
+  it('still loads the list when an update cancels its first fetch', async () => {
+    const lists = stubFirstLoadThenServer(() => ({
+      issue: issue({ title: 'Renamed', syncId: 2 }),
+    }));
+    const client = newClient();
+    const list = await mountFirstLoad(client);
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    await act(async () => {
+      await update.result.current.mutateAsync({ issue: issue(), patch: { title: 'Renamed' } });
+    });
+
+    await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+    expect(list.result.current.data?.map((row) => row.id)).toEqual(['issue_1', 'issue_2']);
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('still loads the list when a delete cancels its first fetch', async () => {
+    const lists = stubFirstLoadThenServer(() => ({
+      deleted: { id: 'issue_3', identifier: 'ENG-3' },
+    }));
+    const client = newClient();
+    const list = await mountFirstLoad(client);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    await act(async () => {
+      await remove.result.current.mutateAsync([issue({ id: 'issue_3', identifier: 'ENG-3' })]);
+    });
+
+    await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+    expect(list.result.current.data?.map((row) => row.id)).toEqual(['issue_1', 'issue_2']);
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+  });
+});
