@@ -537,44 +537,47 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     ).toEqual(original);
   });
 
-  it('clears Actor display during a Human unassignment and restores it after a failed move', async () => {
-    const pending = deferred<Response>();
-    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
-      init?.method === 'POST' ? pending.promise : Promise.reject(new Error('offline')),
-    ) as unknown as typeof fetch;
-    const client = newClient();
-    const original = issue({
-      assigneeAgentId: 'agent_1',
-      assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: true },
-      owner: null,
-    });
-    client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
-    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
-    let settlement: Promise<unknown> | undefined;
-    await act(async () => {
-      settlement = move.result.current
-        .mutateAsync({
-          issue: original,
-          assigneeId: null,
-          beforeId: null,
-          afterId: null,
-          beforeOrder: null,
-          afterOrder: null,
-        })
-        .catch(() => undefined);
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(cachedIssue(client)?.assignee).toBeNull());
-    expect(cachedIssue(client)?.assigneeAgentId).toBeNull();
-    expect(cachedIssue(client)?.owner).toBeNull();
-    await act(async () => {
-      pending.resolve(
-        Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
-      );
-      await settlement;
-    });
-    expect(cachedIssue(client)).toEqual(original);
-  });
+  it.each(['assigneeId', 'assigneeAgentId'] as const)(
+    'clears Actor display with %s and restores it after a failed move',
+    async (field) => {
+      const pending = deferred<Response>();
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === 'POST' ? pending.promise : Promise.reject(new Error('offline')),
+      ) as unknown as typeof fetch;
+      const client = newClient();
+      const original = issue({
+        assigneeAgentId: 'agent_1',
+        assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: true },
+        owner: null,
+      });
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+      let settlement: Promise<unknown> | undefined;
+      await act(async () => {
+        settlement = move.result.current
+          .mutateAsync({
+            issue: original,
+            [field]: null,
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          })
+          .catch(() => undefined);
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(cachedIssue(client)?.assignee).toBeNull());
+      expect(cachedIssue(client)?.assigneeAgentId).toBeNull();
+      expect(cachedIssue(client)?.owner).toBeNull();
+      await act(async () => {
+        pending.resolve(
+          Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
+        );
+        await settlement;
+      });
+      expect(cachedIssue(client)).toEqual(original);
+    },
+  );
 
   it('does not roll back an update across an issue cache reset', async () => {
     const pending = deferred<Response>();

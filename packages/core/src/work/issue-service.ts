@@ -26,6 +26,7 @@ import {
   duplicateIssueQuerySchema,
   type IssueExpectedProperties,
   type IssueFilterInput,
+  type IssueMoveExpected,
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
@@ -93,7 +94,7 @@ export {
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 export type IssueReadRow = IssueActorRead<IssueRow>;
 
-type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
+type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId' | 'milestoneId';
 
 export { visibleTeamFilters } from './issue-query.ts';
 export { REBALANCE_THRESHOLD };
@@ -1758,6 +1759,7 @@ interface RegroupingInput {
   readonly assigneeId?: string | null | undefined;
   readonly priority?: number | undefined;
   readonly projectId?: string | null | undefined;
+  readonly milestoneId?: string | null | undefined;
 }
 
 function applyRegrouping(
@@ -1779,8 +1781,11 @@ function applyRegrouping(
   regroup('priority', parsed.priority);
   if (parsed.projectId !== undefined && parsed.projectId !== current.projectId) {
     regroup('projectId', parsed.projectId);
-    values.milestoneId = null;
+    if (parsed.milestoneId === undefined) {
+      values.milestoneId = null;
+    }
   }
+  regroup('milestoneId', parsed.milestoneId);
   return regrouped;
 }
 
@@ -1940,6 +1945,65 @@ async function landingOrder(
   return { sortOrder: sortOrderBetween(before, after), rebalanced };
 }
 
+function assertExpectedMoveState(current: IssueRow, expected: IssueMoveExpected | undefined): void {
+  if (expected === undefined) return;
+  if (expected.stateId !== undefined && expected.stateId !== current.stateId) {
+    throw conflict('Cannot undo: state was changed by another update.');
+  }
+
+  if (expected.sortOrder !== undefined && expected.sortOrder !== current.sortOrder) {
+    throw conflict('Cannot undo: position was changed by another update.');
+  }
+
+  if (expected.assigneeId !== undefined && expected.assigneeId !== current.assigneeId) {
+    throw conflict('Cannot undo: assignee was changed by another update.');
+  }
+
+  if (
+    expected.assigneeAgentId !== undefined &&
+    expected.assigneeAgentId !== current.assigneeAgentId
+  ) {
+    throw conflict('Cannot undo: agent assignee was changed by another update.');
+  }
+
+  if (expected.projectId !== undefined && expected.projectId !== current.projectId) {
+    throw conflict('Cannot undo: project was changed by another update.');
+  }
+
+  if (expected.cycleId !== undefined && expected.cycleId !== current.cycleId) {
+    throw conflict('Cannot undo: cycle was changed by another update.');
+  }
+
+  if (expected.priority !== undefined && expected.priority !== current.priority) {
+    throw conflict('Cannot undo: priority was changed by another update.');
+  }
+
+  if (expected.milestoneId !== undefined && expected.milestoneId !== current.milestoneId) {
+    throw conflict('Cannot undo: milestone was changed by another update.');
+  }
+}
+
+async function assertMoveAssignableToTeam(
+  tx: Executor,
+  organizationId: string,
+  teamId: string,
+  parsed: MoveInput,
+  current: IssueRow,
+  values: IssueValues,
+): Promise<void> {
+  await assertAssignableToTeam(
+    tx,
+    organizationId,
+    teamId,
+    {
+      cycleId: parsed.cycleId,
+      projectId: parsed.projectId,
+      milestoneId: parsed.milestoneId,
+    },
+    values.projectId === undefined ? current.projectId : values.projectId,
+  );
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -1953,6 +2017,7 @@ export async function moveIssue(
   return await transact(async (tx, principal) => {
     const locked = await lockMoveIssues(tx, principal, issueId, parsed);
     const current = requireRow(locked.get(issueId), 'That issue does not exist.');
+    assertExpectedMoveState(current, parsed.expected);
 
     const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
     const teamId = team.id;
@@ -2000,10 +2065,7 @@ export async function moveIssue(
     const values = await moveValues(tx, current, team, state, landing, now);
 
     await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
-    await assertAssignableToTeam(tx, principal.organizationId, teamId, {
-      cycleId: parsed.cycleId,
-      projectId: parsed.projectId,
-    });
+    await assertMoveAssignableToTeam(tx, principal.organizationId, teamId, parsed, current, values);
 
     const regrouped = applyRegrouping(parsed, current, values);
     Object.assign(

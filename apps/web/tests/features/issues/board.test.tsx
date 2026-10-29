@@ -14,6 +14,10 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { groupIssues, mergeStatesByName } from '@/features/filters/grouping.ts';
 import type { BoardColumnSource } from '@/features/issues/board.tsx';
+import {
+  clearTabHistory,
+  getTabUndoStackForTests,
+} from '@/features/issues/use-issue-property-undo.ts';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
 import { HotkeyProvider } from '@/lib/keyboard/index.ts';
@@ -497,6 +501,7 @@ describe('Board agent manual sorting', () => {
   it.each(['mouse', 'keyboard'] as const)(
     'submits only placement when sorting within an agent column using %s',
     async (input) => {
+      clearTabHistory();
       const assignee = {
         type: 'agent' as const,
         id: 'agent_1',
@@ -633,6 +638,19 @@ describe('Board agent manual sorting', () => {
         expect(requests[0]).not.toHaveProperty('assigneeId');
         expect(requests[0]).not.toHaveProperty('assigneeAgentId');
         expect(requests[0]).not.toHaveProperty('assigneeUserId');
+        await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
+        const entry = getTabUndoStackForTests()[0];
+        if (entry === undefined || !('inverse' in entry)) throw new Error('Missing move history');
+        expect(entry.inverse).not.toHaveProperty('assigneeId');
+        expect(entry.inverse).not.toHaveProperty('assigneeAgentId');
+        expect(entry.expectedForUndo).toMatchObject({
+          assigneeId: null,
+          assigneeAgentId: assignee.id,
+        });
+        expect(entry.expectedForRedo).toMatchObject({
+          assigneeId: null,
+          assigneeAgentId: assignee.id,
+        });
       } finally {
         fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
         rendered.unmount();
@@ -643,6 +661,86 @@ describe('Board agent manual sorting', () => {
 });
 
 describe('Board visibility during drag settlement', () => {
+  it('clears an Agent by dragging to Unassigned and records its canonical inverse', async () => {
+    clearTabHistory();
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build bot',
+      avatar: null,
+      deleted: false,
+    };
+    const row = issue({ assignee, ownerUserId: 'user_owner' });
+    const groups = groupIssues(
+      [row],
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+    HTMLElement.prototype.getBoundingClientRect = function actorBoardRect() {
+      const unassigned = this.closest('[data-testid="board-column-No assignee"]') !== null;
+      const card = this.matches('li');
+      return new DOMRect(unassigned ? 320 : 0, card ? 80 : 0, card ? 260 : 280, card ? 72 : 500);
+    };
+    const requests: unknown[] = [];
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST')
+        return Promise.resolve(Response.json({ issues: [], nextCursor: null }));
+      requests.push(JSON.parse(String(init.body)));
+      return Promise.resolve(
+        Response.json({
+          issue: {
+            ...row,
+            assignee: null,
+            assigneeId: null,
+            assigneeAgentId: null,
+            assigneeUserId: null,
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const rendered = render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <ToastProvider>
+            <HotkeyProvider>
+              <Board groups={groups} draggable groupBy="assignee" />
+            </HotkeyProvider>
+          </ToastProvider>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    try {
+      const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+      card.focus();
+      fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+      await act(async () => {
+        await settleKeyboardSensor();
+        fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+        await settleKeyboardSensor();
+      });
+      await waitFor(() => expect(dndStatus()).toHaveTextContent('column No assignee'));
+      fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+      await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
+      expect(requests[0]).toMatchObject({ assigneeId: null });
+      const entry = getTabUndoStackForTests()[0];
+      if (entry === undefined || !('inverse' in entry)) throw new Error('Missing move history');
+      expect(entry.inverse).toMatchObject({ assigneeAgentId: assignee.id });
+      expect(entry.expectedForUndo).toMatchObject({ assigneeId: null, assigneeAgentId: null });
+      expect(entry.expectedForRedo).toMatchObject({
+        assigneeId: null,
+        assigneeAgentId: assignee.id,
+      });
+      expect(entry.issue.ownerUserId).toBe('user_owner');
+    } finally {
+      rendered.unmount();
+      await settleKeyboardSensor();
+    }
+  });
+
   it('does not remount a board for cosmetic card property changes', () => {
     const config = {
       filter: emptyFilterGroup(),
@@ -949,6 +1047,264 @@ describe('Board card keyboard boundaries', () => {
     fireEvent.keyDown(card, { key: 'Escape', code: 'Escape' });
   });
 
+  it('records a successful board move in shared undo history', async () => {
+    clearTabHistory();
+    installBoardTestRects();
+
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        return Promise.resolve(Response.json({ issues: [], nextCursor: null }));
+      }
+
+      return Promise.resolve(
+        Response.json({
+          issue: issue({
+            stateId: doing.id,
+            sortOrder: 2048,
+            syncId: 2,
+          }),
+          rebalanced: [],
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    renderBoard(true, [issue(), second, third], undefined, true);
+
+    const card = screen.getByRole('listitem', {
+      name: 'ENG-1: Domain auto join',
+    });
+
+    card.focus();
+
+    fireEvent.keyDown(card, {
+      key: 'Enter',
+      code: 'Enter',
+    });
+
+    await act(async () => {
+      await settleKeyboardSensor();
+      fireEvent.keyDown(card, {
+        key: 'ArrowRight',
+        code: 'ArrowRight',
+      });
+      await settleKeyboardSensor();
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent('column In Progress');
+    });
+
+    fireEvent.keyDown(card, {
+      key: 'Enter',
+      code: 'Enter',
+    });
+
+    await waitFor(() => {
+      expect(dndStatus()).toHaveTextContent('Dropping ENG-1');
+    });
+
+    await waitFor(() => {
+      expect(getTabUndoStackForTests()).toHaveLength(1);
+    });
+
+    const entry = getTabUndoStackForTests()[0];
+
+    if (entry === undefined || !('forward' in entry) || !('inverse' in entry)) {
+      throw new Error('expected a move history entry');
+    }
+
+    expect(entry.issue.id).toBe('issue_1');
+
+    expect(entry.forward.issue.id).toBe('issue_1');
+    expect(entry.forward.stateId).toBe('state_doing');
+
+    expect(entry.inverse.issue.id).toBe('issue_1');
+    expect(entry.inverse.stateId).toBe('state_todo');
+    expect(entry.inverse.beforeId).toBeNull();
+    expect(entry.inverse.afterId).toBe('issue_2');
+    expect(entry.inverse.afterOrder).toBe(second.sortOrder);
+
+    expect(entry.expectedForUndo).toEqual({
+      stateId: 'state_doing',
+      sortOrder: 2048,
+    });
+
+    expect(entry.expectedForRedo).toEqual({
+      stateId: 'state_todo',
+      sortOrder: issue().sortOrder,
+    });
+  });
+
+  it('captures the original project and milestone in move undo history', async () => {
+    clearTabHistory();
+
+    const projectAlpha = {
+      id: 'project_1',
+      name: 'Alpha',
+      status: 'started',
+      slug: 'alpha',
+      color: '#5a63c8',
+      icon: 'box',
+      teamIds: ['team_1'],
+    };
+
+    const projectBeta = {
+      id: 'project_2',
+      name: 'Beta',
+      status: 'started',
+      slug: 'beta',
+      color: '#967AE9',
+      icon: 'box',
+      teamIds: ['team_1'],
+    };
+
+    const sourceIssue = issue({
+      projectId: 'project_1',
+      milestoneId: 'milestone_1',
+    });
+
+    const targetIssue = issue({
+      id: 'issue_2',
+      number: 2,
+      identifier: 'ENG-2',
+      title: 'Second task',
+      projectId: 'project_2',
+      sortOrder: 2048,
+    });
+
+    const projectGroups = groupIssues(
+      [sourceIssue, targetIssue],
+      'project',
+      {
+        states: [todo, doing],
+        members: [],
+        projects: [projectAlpha, projectBeta],
+        cycles: [],
+        labels: [],
+      },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+
+    const previousWorkspace = workspace;
+    workspace = {
+      ...workspace,
+      projects: [projectAlpha, projectBeta],
+    };
+
+    const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+
+    HTMLElement.prototype.getBoundingClientRect = function getProjectBoardTestRect() {
+      const inBeta = this.closest('[data-testid="board-column-Beta"]') !== null;
+      const card = this.matches('li');
+
+      return new DOMRect(inBeta ? 320 : 0, card ? 80 : 0, card ? 260 : 280, card ? 72 : 500);
+    };
+
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        return Promise.resolve(Response.json({ issues: [], nextCursor: null }));
+      }
+
+      return Promise.resolve(
+        Response.json({
+          issue: {
+            ...sourceIssue,
+            projectId: 'project_2',
+            milestoneId: null,
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      render(
+        <QueryClientProvider
+          client={
+            new QueryClient({
+              defaultOptions: {
+                queries: {
+                  retry: false,
+                  staleTime: Number.POSITIVE_INFINITY,
+                },
+              },
+            })
+          }
+        >
+          <TooltipProvider>
+            <ToastProvider>
+              <HotkeyProvider>
+                <Board groups={projectGroups} draggable groupBy="project" />
+              </HotkeyProvider>
+            </ToastProvider>
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
+
+      const card = screen.getByRole('listitem', {
+        name: 'ENG-1: Domain auto join',
+      });
+
+      card.focus();
+
+      fireEvent.keyDown(card, {
+        key: 'Enter',
+        code: 'Enter',
+      });
+
+      await act(async () => {
+        await settleKeyboardSensor();
+        fireEvent.keyDown(card, {
+          key: 'ArrowRight',
+          code: 'ArrowRight',
+        });
+        await settleKeyboardSensor();
+      });
+
+      await waitFor(() => {
+        expect(dndStatus()).toHaveTextContent('column Beta');
+      });
+
+      fireEvent.keyDown(card, {
+        key: 'Enter',
+        code: 'Enter',
+      });
+
+      await waitFor(() => {
+        expect(dndStatus()).toHaveTextContent('Dropping ENG-1');
+      });
+
+      await waitFor(() => {
+        expect(getTabUndoStackForTests()).toHaveLength(1);
+      });
+
+      const entry = getTabUndoStackForTests()[0];
+
+      if (entry === undefined || !('forward' in entry) || !('inverse' in entry)) {
+        throw new Error('expected a move history entry');
+      }
+
+      expect(entry.issue.id).toBe(sourceIssue.id);
+
+      expect(entry.inverse.projectId).toBe('project_1');
+      expect(entry.inverse.milestoneId).toBe('milestone_1');
+
+      expect(entry.expectedForUndo).toMatchObject({
+        projectId: 'project_2',
+        milestoneId: null,
+      });
+
+      expect(entry.expectedForRedo).toMatchObject({
+        projectId: 'project_1',
+        milestoneId: 'milestone_1',
+      });
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = nativeRect;
+      workspace = previousWorkspace;
+    }
+  });
+
   it('ends an active visibility activity when the board unmounts', async () => {
     const end = mock();
     const start = mock(() => end);
@@ -1006,6 +1362,7 @@ describe('Board card keyboard boundaries', () => {
   });
 
   it('promotes a keyboard drop fallback to the optimistic card after a delayed handoff', async () => {
+    clearTabHistory();
     installBoardTestRects();
     const cancellation = deferredSignal();
     const pending = deferredResponse();

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import { newId } from '../../src/internal.ts';
 import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-support.ts';
-import { createIssue, getIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createIssue, getIssue, moveIssue, updateIssue } from '../../src/work/issue-service.ts';
 
 let workspace: Workspace;
 
@@ -78,5 +78,55 @@ describe('canonical Human assignment undo conditions', () => {
     });
     expect(redone.issue.assigneeId).toBeNull();
     expect(redone.issue.assigneeAgentId).toBeNull();
+  });
+});
+
+describe('canonical board move undo conditions', () => {
+  it('rejects a stale move after an intervening Agent assignment without changing the Issue', async () => {
+    const { issue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Board assignment history',
+    });
+    await moveIssue(workspace.admin, issue.id, { assigneeId: null });
+    const agentId = newId();
+    await db.insert(schema.agentIdentity).values({
+      id: agentId,
+      organizationId: workspace.organizationId,
+      ownerUserId: workspace.admin.userId,
+      name: 'Current board assignee',
+      ownerNameSnapshot: workspace.adminUser.name,
+      clientNameSnapshot: 'Board history client',
+    });
+    await updateIssue(workspace.admin, issue.id, { assigneeAgentId: agentId });
+    const before = await getIssue(workspace.admin, issue.id);
+    await expect(
+      moveIssue(workspace.admin, issue.id, {
+        assigneeId: workspace.admin.userId,
+        expected: {
+          stateId: before.stateId,
+          sortOrder: before.sortOrder,
+          assigneeId: null,
+          assigneeAgentId: null,
+        },
+      }),
+    ).rejects.toThrow('Cannot undo: agent assignee was changed by another update.');
+    const [stored] = await db.select().from(schema.issue).where(eq(schema.issue.id, issue.id));
+    expect(stored).toMatchObject({
+      assigneeId: null,
+      assigneeUserId: null,
+      assigneeAgentId: agentId,
+      ownerUserId: before.ownerUserId,
+      syncId: before.syncId,
+      updatedAt: before.updatedAt,
+    });
+    const result = await moveIssue(workspace.admin, issue.id, {
+      assigneeId: workspace.admin.userId,
+      expected: { assigneeId: null, assigneeAgentId: agentId },
+    });
+    expect(result.issue).toMatchObject({
+      assigneeId: workspace.admin.userId,
+      assigneeAgentId: null,
+      ownerUserId: before.ownerUserId,
+    });
   });
 });

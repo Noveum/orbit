@@ -397,6 +397,55 @@ describe('Agent Issue write boundary', () => {
 });
 
 describe('Issue Actor and Human responsibility', () => {
+  it('preserves Agent assignment move undo and redo while rejecting a newer Agent', async () => {
+    const agent = await connection();
+    const replacement = await connection();
+    const row = await humanIssue();
+    const assigned = await moveIssue(
+      owner.principal,
+      row.id,
+      { assigneeAgentId: agent.context.identityId },
+      agent.context,
+    );
+    const cleared = await moveIssue(owner.principal, row.id, { assigneeId: null });
+    expect(cleared.issue.assigneeAgentId).toBeNull();
+    const restored = await moveIssue(owner.principal, row.id, {
+      assigneeAgentId: agent.context.identityId,
+      expected: { assigneeId: null, assigneeAgentId: null },
+    });
+    expect(restored.issue.assignee).toMatchObject({
+      type: 'agent',
+      id: agent.context.identityId,
+      name: 'Issue writer',
+    });
+    expect(restored.issue.ownerUserId).toBe(assigned.issue.ownerUserId);
+    const redone = await moveIssue(owner.principal, row.id, {
+      assigneeId: null,
+      expected: { assigneeId: null, assigneeAgentId: agent.context.identityId },
+    });
+    expect(redone.issue.assignee).toBeNull();
+    expect(redone.issue.ownerUserId).toBe(assigned.issue.ownerUserId);
+    const replaced = await moveIssue(owner.principal, row.id, {
+      assigneeAgentId: replacement.context.identityId,
+    });
+    await expect(
+      moveIssue(
+        owner.principal,
+        row.id,
+        {
+          assigneeId: null,
+          expected: { assigneeId: null, assigneeAgentId: agent.context.identityId },
+        },
+        agent.context,
+      ),
+    ).rejects.toThrow('Cannot undo: agent assignee was changed by another update.');
+    const current = await getIssue(owner.principal, row.id);
+    expect(current.assigneeAgentId).toBe(replacement.context.identityId);
+    expect(current.ownerUserId).toBe(assigned.issue.ownerUserId);
+    expect(current.syncId).toBe(replaced.issue.syncId);
+    expect(current.updatedAt).toEqual(replaced.issue.updatedAt);
+  });
+
   it.each(['edit', 'move', 'unassign'] as const)(
     'includes Human-created Issues in AI-only results after canonical Agent %s activity',
     async (operation) => {
