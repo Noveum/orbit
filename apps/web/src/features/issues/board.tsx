@@ -25,6 +25,7 @@ import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
+import type { IssueMoveExpected } from '@orbit/shared/validators';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -68,6 +69,11 @@ import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { projectSupportsTeam } from './project-scope.ts';
 import { useBoardAutoScroll } from './use-board-autoscroll.ts';
+import {
+  type MoveUndoEntry,
+  nextActionSequence,
+  recordTabMove,
+} from './use-issue-property-undo.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BoardColumnSource {
@@ -464,6 +470,80 @@ function currentSourceFor(groups: readonly IssueGroup[], issueId: string): Board
   if (group === undefined) return null;
   const position = positionInGroup(group, issueId);
   return position === null ? null : { ...position, groupId: group.id };
+}
+
+function sourcePlacementFor(
+  groups: readonly IssueGroup[],
+  issue: Issue,
+  groupBy: GroupByField,
+  resolveState: StateResolver | undefined,
+): MoveInput | null {
+  const group = groups.find((entry) => entry.issues.some((item) => item.id === issue.id));
+  if (group === undefined) return null;
+
+  const groupId =
+    groupBy === 'state' && resolveState !== undefined ? resolveState(group.id, issue) : group.id;
+
+  if (groupId === null) return null;
+
+  const regrouping = regroupPatch(groupBy, groupId);
+  if (regrouping === null) return null;
+
+  const issueIndex = group.issues.findIndex((item) => item.id === issue.id);
+  if (issueIndex === -1) return null;
+
+  const before = group.issues[issueIndex - 1] ?? null;
+  const after = group.issues[issueIndex + 1] ?? null;
+
+  return {
+    issue,
+    ...regrouping,
+    ...(groupBy === 'project' ? { milestoneId: issue.milestoneId } : {}),
+    beforeId: before?.id ?? null,
+    afterId: after?.id ?? null,
+    beforeOrder: before?.sortOrder ?? null,
+    afterOrder: after?.sortOrder ?? null,
+  };
+}
+
+function moveExpectedFor(issue: Issue, groupBy: GroupByField): IssueMoveExpected {
+  switch (groupBy) {
+    case 'state':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+      };
+    case 'cycle':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        cycleId: issue.cycleId,
+      };
+    case 'project':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        projectId: issue.projectId,
+        milestoneId: issue.milestoneId,
+      };
+    case 'assignee':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        assigneeId: issue.assigneeId,
+      };
+    case 'priority':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        priority: issue.priority as 0 | 1 | 2 | 3 | 4,
+      };
+    default:
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+      };
+  }
 }
 
 function newestIssueFor(groups: readonly IssueGroup[], issueId: string): Issue | undefined {
@@ -877,8 +957,10 @@ function SortableCard({
 
 interface ActiveDragSession {
   readonly session: number;
+  readonly sequence: number;
   readonly issueId: string;
   readonly source: BoardSource;
+  readonly sourcePlacement: MoveInput;
   readonly keyboard: boolean;
   readonly departedSource: boolean;
   readonly endVisibilityActivity: () => void;
@@ -1541,8 +1623,10 @@ export function Board({
     }
     activeSession.current = {
       session: session.session,
+      sequence: session.sequence,
       issueId: session.issueId,
       source: sourceState.source,
+      sourcePlacement: session.sourcePlacement,
       keyboard: session.keyboard,
       departedSource: session.departedSource,
       endVisibilityActivity: session.endVisibilityActivity,
@@ -1562,26 +1646,38 @@ export function Board({
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
     if (pendingIssueIds.current.has(id)) return;
+
     const issue = issuesInPlay().find((entry) => entry.id === id);
-    const source = currentSourceFor(loadedGroups(), id);
+    const currentGroups = loadedGroups();
+    const source = currentSourceFor(currentGroups, id);
+    const sourcePlacement =
+      issue === undefined ? null : sourcePlacementFor(currentGroups, issue, groupBy, resolveState);
+
     latestSession.current += 1;
     latestFocusRequest.current += 1;
     boardFocusOwnership.current = undefined;
     dragDelta.current = { x: 0, y: 0 };
     suppressedOverDelta.current = undefined;
+
+    const sequence = nextActionSequence();
+
     activeSession.current =
-      issue === undefined || source === null
+      issue === undefined || source === null || sourcePlacement === null
         ? undefined
         : {
             session: latestSession.current,
+            sequence,
             issueId: issue.id,
             source,
+            sourcePlacement,
             keyboard: event.activatorEvent.type === 'keydown',
             departedSource: false,
             endVisibilityActivity: onVisibilityActivityStart?.() ?? (() => undefined),
           };
+
     dragged.current = issue;
     setActiveId(id);
+
     if (issue !== undefined && source !== null) {
       setDragStatus(
         `Picked up ${issue.identifier}: ${issue.title} in ${boardPositionLabel(source)}.`,
@@ -1605,8 +1701,10 @@ export function Board({
     if (event.over === null) {
       activeSession.current = {
         session: session.session,
+        sequence: session.sequence,
         issueId: session.issueId,
         source: session.source,
+        sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
         departedSource: true,
         endVisibilityActivity: session.endVisibilityActivity,
@@ -1618,8 +1716,10 @@ export function Board({
     if (overId === session.issueId) {
       activeSession.current = {
         session: session.session,
+        sequence: session.sequence,
         issueId: session.issueId,
         source: session.source,
+        sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
         departedSource: session.departedSource,
         endVisibilityActivity: session.endVisibilityActivity,
@@ -1642,8 +1742,10 @@ export function Board({
     if (targetState.kind !== 'found') {
       activeSession.current = {
         session: session.session,
+        sequence: session.sequence,
         issueId: session.issueId,
         source: session.source,
+        sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
         departedSource: true,
         endVisibilityActivity: session.endVisibilityActivity,
@@ -1867,18 +1969,41 @@ export function Board({
     );
     const pendingMove = move.mutateAsync(placement);
     restoreCompletedKeyboardFocus(destination.groupId, session.source.groupId);
+
     pendingMove
       .then(
         (settlement) => {
+          const settledIssue = settlement.issues.find((issue) => issue.id === dragId);
+
+          if (settledIssue !== undefined) {
+            const moveEntry: MoveUndoEntry = {
+              sequence: session.sequence,
+              issue: settledIssue,
+              propertyLabel: 'Move',
+
+              forward: {
+                ...placement,
+                issue: settledIssue,
+              },
+
+              inverse: {
+                ...session.sourcePlacement,
+                issue: settledIssue,
+              },
+
+              expectedForUndo: moveExpectedFor(settledIssue, groupBy),
+              expectedForRedo: moveExpectedFor(session.sourcePlacement.issue, groupBy),
+            };
+
+            recordTabMove(moveEntry);
+          }
+
           if (!lifecycle.current.mounted || lifecycle.current.generation !== lifecycleGeneration) {
             releasePendingSettlement(completed.session, true);
             return;
           }
-          publishResult(
-            'success',
-            settlement.issues.find((issue) => issue.id === dragId),
-            settlement,
-          );
+
+          publishResult('success', settledIssue, settlement);
           setIssuePending(dragId, false);
         },
         () => {
@@ -1886,6 +2011,7 @@ export function Board({
             releasePendingSettlement(completed.session, true);
             return;
           }
+
           publishResult('error', placement.issue);
           setIssuePending(dragId, false);
         },
