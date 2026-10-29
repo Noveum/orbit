@@ -149,9 +149,11 @@ function patchActorCaches(client: QueryClient): void {
       const next = patchActorQueryData(query.queryKey[0], current, update);
       if (next === current) continue;
       const bootstrapSource = cache.bootstrapSources.get(query);
+      const wasInvalidated = query.state.isInvalidated;
       const stored = client.setQueryData(query.queryKey, next, {
         updatedAt: query.state.dataUpdatedAt,
       });
+      if (wasInvalidated) query.invalidate();
       if (bootstrapSource !== undefined)
         cache.bootstrapSources.set(query, { ...bootstrapSource, data: stored });
       if (query.queryKey[0] === ISSUES_ROOT) {
