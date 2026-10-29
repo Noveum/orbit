@@ -498,9 +498,101 @@ describe('Board actor columns outside the base page', () => {
 });
 
 describe('Board agent manual sorting', () => {
+  it('reassigns an Agent issue to a Human without recording unsupported Agent restoration', async () => {
+    clearTabHistory();
+    const agent = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build bot',
+      avatar: null,
+      deleted: false,
+    };
+    const human = { ...agent, type: 'user' as const, id: 'user_2', name: 'Reviewer' };
+    const source = issue({ assignee: agent, assigneeAgentId: agent.id });
+    const target = issue({
+      id: 'issue_2',
+      identifier: 'ENG-2',
+      title: 'Second task',
+      assignee: human,
+      assigneeId: human.id,
+    });
+    const moved = {
+      ...source,
+      assignee: human,
+      assigneeId: human.id,
+      assigneeUserId: human.id,
+      assigneeAgentId: null,
+      sortOrder: 0,
+      syncId: 2,
+    };
+    const requests: unknown[] = [];
+    globalThis.fetch = mock((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        requests.push(JSON.parse(String(init.body)));
+        return Promise.resolve(Response.json({ issue: moved, rebalanced: [] }));
+      }
+      return Promise.resolve(Response.json({ issues: [moved, target], nextCursor: null }));
+    }) as unknown as typeof fetch;
+    HTMLElement.prototype.getBoundingClientRect = function assignmentCardRect() {
+      const humanColumn =
+        this.closest('section')?.getAttribute('data-testid') === 'board-column-Reviewer';
+      const card = this.matches('li, [inert]');
+      return new DOMRect(humanColumn ? 300 : 0, card ? 80 : 0, card ? 260 : 280, card ? 72 : 500);
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+    });
+    client.setQueryData(queryKeys.issues('team_1'), {
+      pages: [{ issues: [source, target], nextCursor: null }],
+      pageParams: [null],
+    });
+    const groups = groupIssues(
+      [source, target],
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: false, ordering: 'manual' },
+    ).toSorted((left, right) => Number(left.id === human.id) - Number(right.id === human.id));
+    const rendered = render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <ToastProvider>
+            <HotkeyProvider>
+              <Board groups={groups} groupBy="assignee" />
+            </HotkeyProvider>
+          </ToastProvider>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    try {
+      const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+      card.focus();
+      fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+      await act(async () => {
+        await settleKeyboardSensor();
+        fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+        await settleKeyboardSensor();
+      });
+      await waitFor(() => expect(dndStatus()).toHaveTextContent('column Reviewer'));
+      fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+      await waitFor(() => {
+        expect(requests).toHaveLength(1);
+        expect(client.isMutating()).toBe(0);
+      });
+      expect(requests[0]).toMatchObject({ assigneeId: human.id });
+      expect(getTabUndoStackForTests()).toHaveLength(0);
+    } finally {
+      fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
+      rendered.unmount();
+      client.clear();
+      clearTabHistory();
+      await settleKeyboardSensor();
+    }
+  });
+
   it.each(['mouse', 'keyboard'] as const)(
     'submits only placement when sorting within an agent column using %s',
     async (input) => {
+      clearTabHistory();
       const assignee = {
         type: 'agent' as const,
         id: 'agent_1',
@@ -637,9 +729,15 @@ describe('Board agent manual sorting', () => {
         expect(requests[0]).not.toHaveProperty('assigneeId');
         expect(requests[0]).not.toHaveProperty('assigneeAgentId');
         expect(requests[0]).not.toHaveProperty('assigneeUserId');
+        await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
+        expect(getTabUndoStackForTests()[0]).toMatchObject({
+          inverse: { beforeId: null, afterId: secondAgent.id },
+        });
+        expect(getTabUndoStackForTests()[0]).not.toHaveProperty('inverse.assigneeId');
       } finally {
         fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
         rendered.unmount();
+        clearTabHistory();
         await settleKeyboardSensor();
       }
     },

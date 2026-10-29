@@ -486,7 +486,9 @@ function sourcePlacementFor(
 
   if (groupId === null) return null;
 
-  const regrouping = regroupPatch(groupBy, groupId);
+  const assignee = resolveIssueActor(issue, 'assignee');
+  const regrouping =
+    groupBy === 'assignee' && assignee?.type === 'agent' ? {} : regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
 
   const issueIndex = group.issues.findIndex((item) => item.id === issue.id);
@@ -1975,7 +1977,10 @@ export function Board({
         (settlement) => {
           const settledIssue = settlement.issues.find((issue) => issue.id === dragId);
 
-          if (settledIssue !== undefined) {
+          const restoresAgentAssignment =
+            placement.assigneeId !== undefined &&
+            resolveIssueActor(session.sourcePlacement.issue, 'assignee')?.type === 'agent';
+          if (settledIssue !== undefined && !restoresAgentAssignment) {
             const moveEntry: MoveUndoEntry = {
               sequence: session.sequence,
               issue: settledIssue,
