@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
 import { dehydrate, hydrate, QueryClient, QueryObserver } from '@tanstack/react-query';
 import { waitFor } from '@testing-library/react';
@@ -16,6 +16,7 @@ import {
 } from '@/lib/query/issue-cache-generation.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import { restorable } from '@/lib/query/persist.ts';
+import { createQueryClient } from '@/lib/query/provider.tsx';
 import {
   type BoardPage,
   type Bootstrap,
@@ -26,6 +27,7 @@ import {
   issueSchema,
 } from '@/lib/query/schemas.ts';
 import type { IssuePages } from '@/lib/query/sync.ts';
+import { issuesQueryOptions } from '@/lib/query/use-issues.ts';
 
 const human = {
   type: 'user' as const,
@@ -106,6 +108,74 @@ function client(): QueryClient {
 }
 
 describe('member events refresh Issue Human Actors', () => {
+  it.each([true, false])(
+    'retains required list fetching after a profile patch with invalidation %s',
+    async (invalidated) => {
+      const cache = createQueryClient();
+      const options = issuesQueryOptions('team_1');
+      const updatedAt = Date.now() - 1_000;
+      cache.setQueryData(
+        options.queryKey,
+        { pages: [{ issues: [issue()], nextCursor: null }], pageParams: [null] },
+        { updatedAt },
+      );
+      const stop = observeIssueActorProfiles(cache, 'org_1', ['team_1']);
+      const originalFetch = globalThis.fetch;
+      const renamed = { ...human, name: 'New name', avatar: null };
+      const fetchIssues = mock(async () =>
+        Response.json({
+          issues: [
+            issue({
+              title: 'Refreshed title',
+              stateId: 'state_2',
+              creator: renamed,
+              assignee: renamed,
+              owner: renamed,
+            }),
+          ],
+          nextCursor: null,
+        }),
+      );
+      globalThis.fetch = fetchIssues as unknown as typeof fetch;
+      try {
+        expect(cache.getDefaultOptions().queries?.staleTime).toBe(30_000);
+        if (invalidated)
+          await cache.invalidateQueries({
+            queryKey: options.queryKey,
+            exact: true,
+            refetchType: 'none',
+          });
+        recordMemberActorUpdate(
+          cache,
+          action({ userId: human.id, name: renamed.name, image: renamed.avatar }),
+          'org_1',
+        );
+        expect(cache.getQueryState(options.queryKey)?.dataUpdatedAt).toBe(updatedAt);
+        expect(
+          cache.getQueryData<IssuePages>(options.queryKey)?.pages[0]?.issues[0]?.creator,
+        ).toEqual(renamed);
+        const wasInvalidated = cache.getQueryState(options.queryKey)?.isInvalidated;
+        await cache.fetchInfiniteQuery(options);
+        expect(fetchIssues).toHaveBeenCalledTimes(invalidated ? 1 : 0);
+        expect(wasInvalidated).toBe(invalidated);
+        expect(cache.getQueryData<IssuePages>(options.queryKey)?.pages[0]?.issues[0]).toMatchObject(
+          {
+            title: invalidated ? 'Refreshed title' : 'Title',
+            stateId: invalidated ? 'state_2' : 'state_1',
+            creator: renamed,
+            assignee: renamed,
+            owner: renamed,
+          },
+        );
+        expect(cache.getQueryState(options.queryKey)?.isInvalidated).toBe(false);
+      } finally {
+        globalThis.fetch = originalFetch;
+        stop();
+        cache.clear();
+      }
+    },
+  );
+
   it.each(['fetch', 'cached', 'hydrate-added', 'hydrate-existing'] as const)(
     'refreshes persisted Actors without a member event through %s while Issue reads are offline',
     async (source) => {
@@ -429,64 +499,83 @@ describe('member events refresh Issue Human Actors', () => {
     cache.clear();
   });
 
-  it('patches every cache occurrence and fences late reads without changing Issue versions', () => {
-    const cache = client();
-    const row = issue();
-    const pages: IssuePages = { pages: [{ issues: [row], nextCursor: null }], pageParams: [null] };
-    const detail: IssueDetail = {
-      issue: row,
-      descriptionHtml: 'Body',
-      parent: row,
-      subIssues: [row],
-      subscribed: false,
-      activity: [],
-      activityCursor: null,
-      attachments: [],
-    };
-    const relations: IssueRelation[] = [{ id: 'r_1', type: 'related', issue: row }];
-    const board: BoardPage = {
-      groups: [{ id: human.id, total: 1, issues: [row], nextCursor: null }],
-      truncated: false,
-    };
-    const seed = { ...bootstrap(), issues: [row] };
-    cache.setQueryData(queryKeys.issues('team_1'), pages);
-    cache.setQueryData(queryKeys.issue(row.identifier), detail);
-    cache.setQueryData(queryKeys.issueRelations('other'), relations);
-    cache.setQueryData(queryKeys.boardPage(''), board);
-    cache.setQueryData(queryKeys.bootstrap(null), seed);
-    const mutationRevision = issueMutationRevisionGeneration(cache, row.id);
-    const cacheRevision = issueCacheRevisionGeneration(cache);
-    const listKey = queryKeys.issues('team_1');
-    const listRevision = issueListRevisionGeneration(cache, listKey);
-    const mutationListRevision = issueMutationListRevisionGeneration(cache, listKey);
-    recordMemberActorUpdate(
-      cache,
-      action({ userId: human.id, name: 'New name', image: null }),
-      'org_1',
-    );
-    const updated = replayIssueActorProfiles(cache, row);
-    for (const role of ['creator', 'assignee', 'owner'] as const)
-      expect(updated[role]).toEqual({ ...human, name: 'New name', avatar: null });
-    expect(updated.syncId).toBe(row.syncId);
-    expect(issueMutationRevisionGeneration(cache, row.id)).toBe(mutationRevision);
-    expect(issueCacheRevisionGeneration(cache)).toBeGreaterThan(cacheRevision);
-    expect(issueListRevisionGeneration(cache, listKey)).toBeGreaterThan(listRevision);
-    expect(issueMutationListRevisionGeneration(cache, listKey)).toBe(mutationListRevision);
-    recordIssueListRevisions(cache, [listKey]);
-    expect(issueMutationListRevisionGeneration(cache, listKey)).toBe(mutationListRevision + 1);
-    const readRows = () => [
-      cache.getQueryData<IssuePages>(queryKeys.issues('team_1'))?.pages[0]?.issues[0],
-      cache.getQueryData<IssueDetail>(queryKeys.issue(row.identifier))?.issue,
-      cache.getQueryData<IssueDetail>(queryKeys.issue(row.identifier))?.parent,
-      cache.getQueryData<IssueDetail>(queryKeys.issue(row.identifier))?.subIssues[0],
-      cache.getQueryData<IssueRelation[]>(queryKeys.issueRelations('other'))?.[0]?.issue,
-      cache.getQueryData<BoardPage>(queryKeys.boardPage(''))?.groups[0]?.issues[0],
-      cache.getQueryData<Bootstrap>(queryKeys.bootstrap(null))?.issues[0],
-    ];
-    expect(readRows()).toEqual(Array.from({ length: 7 }, () => updated));
-    cache.setQueryData(queryKeys.issue(row.identifier), detail);
-    expect(readRows()).toEqual(Array.from({ length: 7 }, () => updated));
-  });
+  it.each([true, false])(
+    'patches every cache occurrence without changing Issue versions or invalidation %s',
+    async (invalidated) => {
+      const cache = client();
+      const row = issue();
+      const pages: IssuePages = {
+        pages: [{ issues: [row], nextCursor: null }],
+        pageParams: [null],
+      };
+      const detail: IssueDetail = {
+        issue: row,
+        descriptionHtml: 'Body',
+        parent: row,
+        subIssues: [row],
+        subscribed: false,
+        activity: [],
+        activityCursor: null,
+        attachments: [],
+      };
+      const relations: IssueRelation[] = [{ id: 'r_1', type: 'related', issue: row }];
+      const board: BoardPage = {
+        groups: [{ id: human.id, total: 1, issues: [row], nextCursor: null }],
+        truncated: false,
+      };
+      const seed = { ...bootstrap(), issues: [row] };
+      cache.setQueryData(queryKeys.issues('team_1'), pages);
+      cache.setQueryData(queryKeys.issue(row.identifier), detail);
+      cache.setQueryData(queryKeys.issueRelations('other'), relations);
+      cache.setQueryData(queryKeys.boardPage(''), board);
+      cache.setQueryData(queryKeys.bootstrap(null), seed);
+      if (invalidated) await cache.invalidateQueries({ refetchType: 'none' });
+      const queryStates = cache
+        .getQueryCache()
+        .findAll()
+        .map((query) => ({
+          query,
+          dataUpdatedAt: query.state.dataUpdatedAt,
+          isInvalidated: query.state.isInvalidated,
+        }));
+      const mutationRevision = issueMutationRevisionGeneration(cache, row.id);
+      const cacheRevision = issueCacheRevisionGeneration(cache);
+      const listKey = queryKeys.issues('team_1');
+      const listRevision = issueListRevisionGeneration(cache, listKey);
+      const mutationListRevision = issueMutationListRevisionGeneration(cache, listKey);
+      recordMemberActorUpdate(
+        cache,
+        action({ userId: human.id, name: 'New name', image: null }),
+        'org_1',
+      );
+      const updated = replayIssueActorProfiles(cache, row);
+      for (const role of ['creator', 'assignee', 'owner'] as const)
+        expect(updated[role]).toEqual({ ...human, name: 'New name', avatar: null });
+      expect(updated.syncId).toBe(row.syncId);
+      expect(issueMutationRevisionGeneration(cache, row.id)).toBe(mutationRevision);
+      expect(issueCacheRevisionGeneration(cache)).toBeGreaterThan(cacheRevision);
+      expect(issueListRevisionGeneration(cache, listKey)).toBeGreaterThan(listRevision);
+      expect(issueMutationListRevisionGeneration(cache, listKey)).toBe(mutationListRevision);
+      recordIssueListRevisions(cache, [listKey]);
+      expect(issueMutationListRevisionGeneration(cache, listKey)).toBe(mutationListRevision + 1);
+      const readRows = () => [
+        cache.getQueryData<IssuePages>(queryKeys.issues('team_1'))?.pages[0]?.issues[0],
+        cache.getQueryData<IssueDetail>(queryKeys.issue(row.identifier))?.issue,
+        cache.getQueryData<IssueDetail>(queryKeys.issue(row.identifier))?.parent,
+        cache.getQueryData<IssueDetail>(queryKeys.issue(row.identifier))?.subIssues[0],
+        cache.getQueryData<IssueRelation[]>(queryKeys.issueRelations('other'))?.[0]?.issue,
+        cache.getQueryData<BoardPage>(queryKeys.boardPage(''))?.groups[0]?.issues[0],
+        cache.getQueryData<Bootstrap>(queryKeys.bootstrap(null))?.issues[0],
+      ];
+      expect(readRows()).toEqual(Array.from({ length: 7 }, () => updated));
+      for (const state of queryStates) {
+        expect(state.query.state.dataUpdatedAt).toBe(state.dataUpdatedAt);
+        expect(state.query.state.isInvalidated).toBe(state.isInvalidated);
+      }
+      cache.setQueryData(queryKeys.issue(row.identifier), detail);
+      expect(readRows()).toEqual(Array.from({ length: 7 }, () => updated));
+    },
+  );
 
   it('applies only present profile fields and preserves deleted status, Agent type and NULL owner', () => {
     const cache = client();
