@@ -68,6 +68,46 @@ function issue(overrides: Partial<Issue>): Issue {
 }
 
 describe('assignedTo', () => {
+  it('prioritizes canonical actors over retained legacy assignment IDs', () => {
+    const rows = assignedTo(
+      [
+        issue({
+          id: 'agent',
+          assigneeId: 'me',
+          assignee: {
+            type: 'agent',
+            id: 'agent_1',
+            name: 'Build bot',
+            avatar: null,
+            deleted: false,
+          },
+        }),
+        issue({ id: 'unassigned', assigneeId: 'me', assignee: null }),
+        issue({
+          id: 'human',
+          assigneeId: null,
+          assignee: { type: 'user', id: 'me', name: 'Viewer', avatar: null, deleted: false },
+        }),
+        issue({
+          id: 'reviewing',
+          assigneeId: null,
+          reviewerIds: ['me'],
+          assignee: {
+            type: 'agent',
+            id: 'agent_1',
+            name: 'Build bot',
+            avatar: null,
+            deleted: false,
+          },
+        }),
+      ],
+      'me',
+      'updated',
+    );
+
+    expect(rows.map((row) => row.id)).toEqual(['human', 'reviewing']);
+  });
+
   it('keeps only the viewer issues and orders them', () => {
     const rows = assignedTo(
       [

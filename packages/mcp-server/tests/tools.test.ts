@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { updateOrganization } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
+import type { IssueActor } from '@orbit/shared/validators';
 import {
   addMember,
   connect,
@@ -22,7 +23,9 @@ interface IssueShape {
   readonly title: string;
   readonly state: string | null;
   readonly priority: string;
-  readonly assignee: string | null;
+  readonly creator: IssueActor;
+  readonly assignee: IssueActor | null;
+  readonly owner: IssueActor | null;
   readonly reviewers: readonly string[];
   readonly reviewerIds: readonly string[];
   readonly cycleId: string | null;
@@ -207,6 +210,46 @@ describe('permissions', () => {
 });
 
 describe('issues', () => {
+  it('reads Agent names, avatars and tombstones without inferring a Human Owner', async () => {
+    const created = await newIssue('Agent reader fixture', { assignee: 'me' });
+    const id = crypto.randomUUID();
+    await db.insert(schema.agentIdentity).values({
+      id,
+      organizationId: workspace.organizationId,
+      ownerUserId: workspace.adminUser.id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deletedAt: new Date(),
+      ownerNameSnapshot: workspace.adminUser.name,
+      clientNameSnapshot: 'Fixture',
+    });
+    await db
+      .update(schema.issue)
+      .set({
+        creatorUserId: null,
+        creatorAgentId: id,
+        assigneeUserId: null,
+        assigneeAgentId: id,
+        ownerUserId: null,
+      })
+      .where(eq(schema.issue.id, created.id));
+    const fetched = issueOf(await admin.result('get_issue', { issue: created.identifier }));
+    const expected = {
+      type: 'agent',
+      id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deleted: true,
+    } as const;
+    expect(fetched.creator).toEqual(expected);
+    expect(fetched.assignee).toEqual(expected);
+    expect(fetched.owner).toBeNull();
+    const searched = issuesOf(
+      await admin.result('search_issues', { query: 'Agent reader fixture' }),
+    );
+    expect(searched.find((issue) => issue.id === created.id)?.assignee).toEqual(expected);
+  });
+
   it('round trips a created issue by human identifier', async () => {
     const created = await newIssue('Ship the MCP server', {
       description: 'Serve tools over streamable HTTP.',
@@ -215,7 +258,13 @@ describe('issues', () => {
     });
     expect(created.identifier).toMatch(new RegExp(`^${workspace.teamKey}-\\d+$`));
     expect(created.priority).toBe('High');
-    expect(created.assignee).toBe(workspace.adminUser.name);
+    expect(created.assignee).toEqual({
+      type: 'user',
+      id: workspace.adminUser.id,
+      name: workspace.adminUser.name,
+      avatar: null,
+      deleted: false,
+    });
 
     const fetched = await admin.result('get_issue', { issue: created.identifier });
     const issue = issueOf(fetched) as IssueShape & { description: string; labels: string[] };

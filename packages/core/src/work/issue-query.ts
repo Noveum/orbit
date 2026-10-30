@@ -47,12 +47,16 @@ function visibilityFilters(principal: Principal, visibility: IssueVisibility): S
   return visibleTeamFilters(principal);
 }
 
+function assignmentColumn(): SQL<string> {
+  return sql<string>`case when ${schema.issue.assigneeAgentId} is not null then 'agent:' || ${schema.issue.assigneeAgentId} else coalesce(${schema.issue.assigneeUserId}, ${schema.issue.assigneeId}) end`;
+}
+
 function participantFilters(
   participantId: string | undefined,
   workType: IssueFilterInput['workType'],
 ): SQL[] {
   if (participantId === undefined) {
-    if (workType === 'assigned') return [sql`${schema.issue.assigneeId} is not null`];
+    if (workType === 'assigned') return [sql`${assignmentColumn()} is not null`];
     if (workType === 'reviewing')
       return [
         sql`exists (select 1 from ${schema.issueReviewer} where ${schema.issueReviewer.issueId} = ${schema.issue.id})`,
@@ -66,13 +70,13 @@ function participantFilters(
   if (workType === 'assigned')
     return [
       participantId === UNSET_FILTER_VALUE
-        ? isNull(schema.issue.assigneeId)
-        : eq(schema.issue.assigneeId, participantId),
+        ? isNull(assignmentColumn())
+        : eq(assignmentColumn(), participantId),
     ];
-  if (participantId === UNSET_FILTER_VALUE) return [isNull(schema.issue.assigneeId)];
+  if (participantId === UNSET_FILTER_VALUE) return [isNull(assignmentColumn())];
   return [
     or(
-      eq(schema.issue.assigneeId, participantId),
+      eq(assignmentColumn(), participantId),
       sql`exists (
         select 1 from ${schema.issueReviewer}
         where ${schema.issueReviewer.issueId} = ${schema.issue.id}
@@ -85,7 +89,7 @@ function participantFilters(
 function agentFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   if (!filter.aiOnly) return [];
   return [
-    sql`exists (
+    sql`(${schema.issue.creatorAgentId} is not null or ${schema.issue.assigneeAgentId} is not null or exists (
     select 1 from ${schema.member}
     where ${schema.member.organizationId} = ${principal.organizationId}
       and ${schema.member.isAgent} = true
@@ -97,7 +101,7 @@ function agentFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
         or exists (select 1 from ${schema.issueActivity} where ${schema.issueActivity.issueId} = ${schema.issue.id} and ${schema.issueActivity.actorId} = ${schema.member.userId} and ${schema.issueActivity.actorType} = 'user')
         or exists (select 1 from ${schema.reaction} where ${schema.reaction.userId} = ${schema.member.userId} and (${schema.reaction.issueId} = ${schema.issue.id} or ${schema.reaction.commentId} in (select ${schema.comment.id} from ${schema.comment} where ${schema.comment.issueId} = ${schema.issue.id} and ${schema.comment.deletedAt} is null)))
       )
-  )`,
+  ))`,
   ];
 }
 
@@ -126,8 +130,8 @@ function directFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   if (filter.assigneeId !== undefined) {
     filters.push(
       filter.assigneeId === UNSET_FILTER_VALUE
-        ? isNull(schema.issue.assigneeId)
-        : eq(schema.issue.assigneeId, filter.assigneeId),
+        ? isNull(assignmentColumn())
+        : eq(assignmentColumn(), filter.assigneeId),
     );
   }
   filters.push(...participantFilters(filter.participantId, filter.workType));
