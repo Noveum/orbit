@@ -225,6 +225,13 @@
       "when": 1791997887851,
       "tag": "0031_broad_lifeguard",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793340399305,
+      "tag": "0032_rich_storm",
+      "breakpoints": true
     }
   ]
 }

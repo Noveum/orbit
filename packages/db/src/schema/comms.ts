@@ -997,6 +997,7 @@ export const githubPullRequestActivity = pgTable(
     ),
     index('github_pull_request_activity_timeline_idx').on(table.pullRequestId, table.occurredAt),
     index('github_pull_request_activity_org_idx').on(table.organizationId),
+    index('github_pull_request_activity_check_idx').on(table.organizationId, table.checkActivityId),
     foreignKey({
       name: 'github_pull_request_activity_org_check_activity_fk',
       columns: [table.organizationId, table.checkActivityId],
@@ -1253,6 +1254,13 @@ export const githubCheckActivity = pgTable(
       table.repositorySyncId,
       table.headSha,
       table.createdAt,
+    ),
+    index('github_check_activity_delivery_idx').on(table.organizationId, table.webhookDeliveryId),
+    index('github_check_activity_retention_idx').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.createdAt,
+      table.id,
     ),
     foreignKey({
       name: 'github_check_activity_repository_fk',
