@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { createIssue } from '@orbit/core';
 import { addMember } from '@orbit/core/test-support';
+import { db, eq, schema } from '@orbit/db';
 import { ISSUE_DESCRIPTION_MAX_LENGTH } from '@orbit/shared/constants';
 import { issueEnvelopeSchema } from '@/lib/query/schemas.ts';
 import {
@@ -29,6 +30,56 @@ beforeEach(() => {
 });
 
 describe('PATCH /api/issues/[id]', () => {
+  it('preserves the same complete Agent Actors in GET and Human PATCH responses', async () => {
+    const created = await createIssue(world.workspace.admin, {
+      teamId: world.workspace.teamId,
+      title: 'Actor response fixture',
+      assigneeId: null,
+    });
+    const id = crypto.randomUUID();
+    await db.insert(schema.agentIdentity).values({
+      id,
+      organizationId: world.workspace.organizationId,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deletedAt: new Date(),
+      ownerNameSnapshot: world.admin.name,
+      clientNameSnapshot: 'Fixture',
+    });
+    await db
+      .update(schema.issue)
+      .set({ creatorUserId: null, creatorAgentId: id, assigneeAgentId: id, ownerUserId: null })
+      .where(eq(schema.issue.id, created.issue.id));
+    const getResponse = await issueRoute.GET(
+      new Request(`${ISSUES_BASE}/${created.issue.id}`),
+      contextFor(created.issue.id),
+    );
+    expect(getResponse.status).toBe(200);
+    const get = issueEnvelopeSchema.parse(await getResponse.json());
+    const expected = {
+      type: 'agent',
+      id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deleted: true,
+    } as const;
+    expect(get.issue.creator).toEqual(expected);
+    expect(get.issue.assignee).toEqual(expected);
+    expect(get.issue.owner).toBeNull();
+    const patchResponse = await issueRoute.PATCH(
+      new Request(`${ISSUES_BASE}/${created.issue.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: 'Human edited title' }),
+      }),
+      contextFor(created.issue.id),
+    );
+    expect(patchResponse.status).toBe(200);
+    const patch = issueEnvelopeSchema.parse(await patchResponse.json());
+    expect(patch.issue.creator).toEqual(get.issue.creator);
+    expect(patch.issue.assignee).toEqual(get.issue.assignee);
+    expect(patch.issue.owner).toBeNull();
+  });
+
   it('stores a due date the client sends', async () => {
     const response = await issueRoute.PATCH(
       new Request(`${ISSUES_BASE}/${world.second.id}`, {

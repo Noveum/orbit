@@ -1,9 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { publishDeltas } from '@orbit/core';
+import { type AgentIssueWriteContext, isAgentIssueWriteEnabled, publishDeltas } from '@orbit/core';
 import type { DomainError } from '@orbit/shared/errors';
-import { toDomainError, validationFailed } from '@orbit/shared/errors';
+import { forbidden, toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
+import { assertMcpToolAccess, canUseMcpTool, type McpToolAccess } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { errorFields, logger } from '../logger.ts';
 
@@ -48,28 +49,57 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
   readonly title: string;
   readonly description: string;
   readonly readOnly: boolean;
+  readonly agentSafe?: boolean;
+  readonly agentWrite?: boolean;
   readonly destructive?: boolean;
   readonly idempotent?: boolean;
   readonly openWorld?: boolean;
   readonly inputSchema: Shape;
 }
 
-export interface ToolAccess {
-  readonly reads: boolean;
-  readonly writes: boolean;
-}
+export type ToolAccess = McpToolAccess;
 
-const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
+const DENY_EVERYTHING: ToolAccess = {
+  reads: false,
+  writes: false,
+  identity: { kind: 'legacy' },
+};
 
 const GRANTED = new WeakMap<McpServer, ToolAccess>();
+const WRITE_CONTEXTS = new WeakMap<McpServer, AgentIssueWriteContext>();
 
-export function allowTools(server: McpServer, access: ToolAccess): void {
+export function allowTools(
+  server: McpServer,
+  access: ToolAccess,
+  context?: AgentIssueWriteContext,
+): void {
   GRANTED.set(server, access);
+  if (context !== undefined) WRITE_CONTEXTS.set(server, context);
 }
 
-function mayRegister(server: McpServer, readOnly: boolean): boolean {
+function currentToolAccess(server: McpServer): ToolAccess {
   const access = GRANTED.get(server) ?? DENY_EVERYTHING;
-  return readOnly ? access.reads : access.writes;
+  const context = WRITE_CONTEXTS.get(server);
+  const agentIssueWrites =
+    access.identity.kind === 'agent' &&
+    context?.identityId === access.identity.id &&
+    context.scopes.split(/\s+/).includes('orbit.write') &&
+    isAgentIssueWriteEnabled();
+  return { ...access, agentIssueWrites };
+}
+
+export function canWriteAgentIssues(server: McpServer): boolean {
+  const access = currentToolAccess(server);
+  return (
+    access.identity.kind === 'agent' && canUseMcpTool(access, { readOnly: false, agentWrite: true })
+  );
+}
+
+export function issueWriteContextFor(server: McpServer): AgentIssueWriteContext | undefined {
+  if (GRANTED.get(server)?.identity.kind !== 'agent') return undefined;
+  const context = WRITE_CONTEXTS.get(server);
+  if (context === undefined) throw forbidden('A verified Agent write context is required.');
+  return context;
 }
 
 export function defineTool<Shape extends z.ZodRawShape>(
@@ -77,7 +107,7 @@ export function defineTool<Shape extends z.ZodRawShape>(
   config: ToolConfig<Shape>,
   run: (args: z.infer<z.ZodObject<Shape>>) => Promise<ToolPayload>,
 ): void {
-  if (!mayRegister(server, config.readOnly)) return;
+  if (!canUseMcpTool(currentToolAccess(server), config)) return;
   const inputSchema = z.strictObject(config.inputSchema) as unknown as z.ZodObject<Shape>;
   server.registerTool<z.ZodRawShape, z.ZodObject<Shape>>(
     config.name,
@@ -87,14 +117,16 @@ export function defineTool<Shape extends z.ZodRawShape>(
       inputSchema,
       annotations: {
         title: config.title,
-        readOnlyHint: config.readOnly,
+        readOnlyHint: config.readOnly && config.agentSafe !== false,
         destructiveHint: config.destructive ?? false,
-        idempotentHint: config.readOnly || (config.idempotent ?? false),
+        idempotentHint:
+          (config.readOnly && config.agentSafe !== false) || (config.idempotent ?? false),
         openWorldHint: config.openWorld ?? false,
       },
     },
     async (args) => {
       try {
+        assertMcpToolAccess(currentToolAccess(server), config);
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {
         return failed(config.name, error);

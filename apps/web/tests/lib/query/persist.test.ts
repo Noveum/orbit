@@ -1,11 +1,39 @@
 import { describe, expect, it } from 'bun:test';
 import type { Query } from '@tanstack/react-query';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import {
   CACHE_MAX_AGE_MS,
   cacheBuster,
   restorable,
   shouldPersistQuery,
 } from '@/lib/query/persist.ts';
+import { bootstrapSchema, issueListSchema } from '@/lib/query/schemas.ts';
+
+const legacyIssue = {
+  id: 'issue-1',
+  teamId: 'team-1',
+  number: 1,
+  identifier: 'ENG-1',
+  title: 'Title',
+  stateId: 'state-1',
+  priority: 0,
+  creatorId: 'user-1',
+  assigneeId: 'user-2',
+  projectId: null,
+  milestoneId: null,
+  cycleId: null,
+  parentId: null,
+  estimate: null,
+  dueDate: null,
+  sortOrder: 1,
+  startedAt: null,
+  completedAt: null,
+  canceledAt: null,
+  syncId: 1,
+  createdAt: '',
+  updatedAt: '',
+  archivedAt: null,
+};
 
 const bootstrap = {
   userId: 'user-1',
@@ -38,9 +66,76 @@ function keysOf(client: ReturnType<typeof restorable>): string[] {
 }
 
 describe('restorable', () => {
+  it('restores old Issue caches with omitted actors and retains complete new actors', () => {
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent-1',
+      name: 'Helper',
+      avatar: null,
+      deleted: true,
+    };
+    const pages = [
+      { issues: [legacyIssue], nextCursor: null },
+      {
+        issues: [
+          {
+            ...legacyIssue,
+            creatorId: null,
+            creatorUserId: null,
+            creatorAgentId: assignee.id,
+            creator: assignee,
+            assigneeId: null,
+            assignee,
+            owner: null,
+          },
+        ],
+        nextCursor: null,
+      },
+    ];
+    const client = restorable(
+      persisted([query(['issues', 'team-1', ''], { pages, pageParams: [null, null] })]),
+    );
+    expect(client.clientState.queries).toHaveLength(1);
+    const restored = client.clientState.queries[0]?.state.data as { pages: unknown[] };
+    const legacy = issueListSchema.parse(restored.pages[0]).issues[0];
+    const current = issueListSchema.parse(restored.pages[1]).issues[0];
+    expect(legacy?.assignee).toBeUndefined();
+    expect(legacy === undefined ? null : resolveIssueActor(legacy, 'assignee')?.deleted).toBe(
+      false,
+    );
+    expect(current?.assignee).toEqual(assignee);
+    expect(current?.creatorId).toBeNull();
+    expect(current?.creator).toEqual(assignee);
+    expect(current?.owner).toBeNull();
+  });
+
   it('keeps a bootstrap entry that still matches the schema', () => {
     const client = restorable(persisted([query(['bootstrap', 'default'], bootstrap)]));
     expect(keysOf(client)).toEqual(['bootstrap']);
+  });
+
+  it('restores Agent-created issues in a bootstrap snapshot', () => {
+    const creator = {
+      type: 'agent' as const,
+      id: 'agent-1',
+      name: 'Helper',
+      avatar: null,
+      deleted: false,
+    };
+    const row = {
+      ...legacyIssue,
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: creator.id,
+      creator,
+    };
+    const client = restorable(
+      persisted([query(['bootstrap', 'default'], { ...bootstrap, issues: [row] })]),
+    );
+    expect(keysOf(client)).toEqual(['bootstrap']);
+    const restored = bootstrapSchema.parse(client.clientState.queries[0]?.state.data);
+    expect(restored.issues[0]?.creatorId).toBeNull();
+    expect(restored.issues[0]?.creator).toEqual(creator);
   });
 
   it('drops an entry whose shape has drifted since it was written', () => {
