@@ -6,6 +6,7 @@ import {
   connect,
   createWorkspace,
   errorPayload,
+  MCP_TEST_PUBLIC_URL,
   mintToken,
   resetDatabase,
 } from '../../src/test-helpers.ts';
@@ -219,5 +220,6 @@ describe('reading the pull requests on an issue', () => {
     const listed = await admin.result('list_issue_pull_requests', { issue: issue.identifier });
 
     expect(listed['links']).toHaveLength(0);
+    expect(listed['url']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${issue.identifier}`);
   });
 });

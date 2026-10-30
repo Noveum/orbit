@@ -23,6 +23,7 @@ import {
 import { DOC_KINDS, DOC_VISIBILITIES } from '@orbit/shared/constants';
 import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { docCommentUrl, docUrl } from '@orbit/shared/utils';
 import { DOC_CONTENT_LIMIT } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { resolveDocCollectionId, resolveProject } from '../resolve.ts';
@@ -41,6 +42,7 @@ const visibilityRef = z
 interface DocSummary {
   readonly id: string;
   readonly title: string;
+  readonly url: string;
   readonly kind: string;
   readonly visibility: string;
   readonly projectId: string | null;
@@ -49,19 +51,23 @@ interface DocSummary {
   readonly updatedAt: string;
 }
 
-function describeDoc(row: {
-  id: string;
-  title: string;
-  kind: string;
-  visibility: string;
-  projectId: string | null;
-  collectionId: string | null;
-  parentId: string | null;
-  updatedAt: Date;
-}): DocSummary {
+function describeDoc(
+  appUrl: string,
+  row: {
+    id: string;
+    title: string;
+    kind: string;
+    visibility: string;
+    projectId: string | null;
+    collectionId: string | null;
+    parentId: string | null;
+    updatedAt: Date;
+  },
+): DocSummary {
   return {
     id: row.id,
     title: row.title,
+    url: `${appUrl}${docUrl(row.id)}`,
     kind: row.kind,
     visibility: row.visibility,
     projectId: row.projectId,
@@ -151,7 +157,7 @@ async function landingAnchors(
   return anchorsAround(siblings, neighbourId, side);
 }
 
-export function registerDocTools(server: McpServer, principal: Principal): void {
+export function registerDocTools(server: McpServer, principal: Principal, appUrl: string): void {
   defineTool(
     server,
     {
@@ -189,7 +195,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         ...(args.unfiled === undefined ? {} : { unfiled: args.unfiled }),
         ...(args.includeArchived === undefined ? {} : { includeArchived: args.includeArchived }),
       });
-      return { docs: rows.map(describeDoc) };
+      return { docs: rows.map((row) => describeDoc(appUrl, row)) };
     },
   );
 
@@ -206,7 +212,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
     async (args) => {
       const id = await resolveDoc(principal, args.doc);
       const detail = await getDoc(principal, id);
-      return { doc: { ...describeDoc(detail.doc), content: detail.doc.content } };
+      return { doc: { ...describeDoc(appUrl, detail.doc), content: detail.doc.content } };
     },
   );
 
@@ -259,7 +265,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         ...(args.visibility === undefined ? {} : { visibility: args.visibility }),
       });
       await publish(saved.actions);
-      return { doc: describeDoc(saved.doc) };
+      return { doc: describeDoc(appUrl, saved.doc) };
     },
   );
 
@@ -316,7 +322,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         ...(args.visibility === undefined ? {} : { visibility: args.visibility }),
       });
       await publish(saved.actions);
-      return { doc: describeDoc(saved.doc) };
+      return { doc: describeDoc(appUrl, saved.doc) };
     },
   );
 
@@ -336,7 +342,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       const id = await resolveDoc(principal, args.doc);
       const saved = await archiveDoc(principal, id);
       await publish(saved.actions);
-      return { archived: describeDoc(saved.doc) };
+      return { archived: describeDoc(appUrl, saved.doc) };
     },
   );
 
@@ -355,6 +361,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       return {
         comments: page.comments.map((row) => ({
           id: row.id,
+          url: `${appUrl}${docCommentUrl(id, row.id)}`,
           body: row.body,
           authorId: row.authorId,
           createdAt: row.createdAt.toISOString(),
@@ -377,7 +384,13 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       const id = await resolveDoc(principal, args.doc);
       const saved = await createDocComment(principal, id, { body: args.body });
       await publish(saved.actions);
-      return { comment: { id: saved.comment.id, body: saved.comment.body } };
+      return {
+        comment: {
+          id: saved.comment.id,
+          url: `${appUrl}${docCommentUrl(saved.comment.docId, saved.comment.id)}`,
+          body: saved.comment.body,
+        },
+      };
     },
   );
 
@@ -397,7 +410,13 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
     async (args) => {
       const saved = await updateDocComment(principal, args.commentId, { body: args.body });
       await publish(saved.actions);
-      return { comment: { id: saved.comment.id, body: saved.comment.body } };
+      return {
+        comment: {
+          id: saved.comment.id,
+          url: `${appUrl}${docCommentUrl(saved.comment.docId, saved.comment.id)}`,
+          body: saved.comment.body,
+        },
+      };
     },
   );
 
@@ -586,7 +605,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
         ...anchors,
       });
       await publish(saved.actions);
-      return { doc: describeDoc(saved.doc) };
+      return { doc: describeDoc(appUrl, saved.doc) };
     },
   );
 
@@ -604,7 +623,7 @@ export function registerDocTools(server: McpServer, principal: Principal): void 
       const id = await resolveDoc(principal, args.doc);
       const saved = await archiveDoc(principal, id, false);
       await publish(saved.actions);
-      return { doc: describeDoc(saved.doc) };
+      return { doc: describeDoc(appUrl, saved.doc) };
     },
   );
 
