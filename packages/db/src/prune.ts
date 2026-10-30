@@ -17,6 +17,7 @@ export interface PrunedTable {
   readonly table: string;
   readonly days: number;
   readonly deleted: number;
+  readonly deferred?: number;
 }
 
 export async function pruneOperationalTables(
@@ -37,7 +38,7 @@ export async function pruneOperationalTables(
       window.table === 'webhook_delivery'
         ? sql`
             created_at < now() - make_interval(days => ${window.days})
-            and status <> 'quarantined'
+            and status in ('processed', 'ignored')
             and not exists (
               select 1
               from webhook_delivery_quarantine

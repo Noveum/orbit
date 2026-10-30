@@ -229,15 +229,29 @@
     {
       "idx": 32,
       "version": "7",
-      "when": 1792745492266,
-      "tag": "0032_mcp_grant_compatibility",
+      "when": 1793340399305,
+      "tag": "0032_rich_storm",
       "breakpoints": true
     },
     {
       "idx": 33,
       "version": "7",
-      "when": 1792745840280,
-      "tag": "0033_mcp_agent_grant_binding",
+      "when": 1793342168851,
+      "tag": "0033_polite_lord_tyger",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793346817840,
+      "tag": "0034_mcp_grant_compatibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793347010047,
+      "tag": "0035_mcp_agent_grant_binding",
       "breakpoints": true
     }
   ]

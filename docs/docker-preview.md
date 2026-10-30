@@ -17,7 +17,7 @@ and a maintenance scheduler calls the application's authenticated cron routes.
 | Email OTP, invitations, password-reset email, email notifications | Resend and a verified sender domain | Not configured; supply your own credentials to enable |
 | Realtime, presence, live updates | Node WebSocket host, Redis and gateway | Same-origin `/api/ws`, origin checks and shared ticket authorization |
 | Notification retries and sprint rollover | Scheduled authenticated HTTP requests | Every minute through the scheduler service |
-| Analytics snapshots and retention cleanup | Scheduled authenticated HTTP requests | Every six hours and daily at 04:00 UTC |
+| Analytics snapshots and retention cleanup | Scheduled authenticated HTTP requests | Every six hours and hourly |
 | GitHub integration | GitHub App credentials and webhook secret | Optional, not configured |
 | Slack integration | Slack app credentials and feature flag | Optional, disabled |
 | Remote MCP | This application's `/mcp` route and OAuth | Embedded in web; no additional MCP container or external API key |
@@ -126,8 +126,8 @@ hostname, configure scoped CORS, use appropriately restricted storage credential
 complete real authentication, and provide backups and an upgrade procedure.
 
 Scheduled jobs are declared in `apps/web/vercel.json`: notifications and sprint
-rollover every minute, analytics snapshots every six hours, and pruning daily at
-04:00 UTC. The Docker scheduler uses the same UTC schedule and a fresh `CRON_SECRET`
+rollover every minute, analytics snapshots every six hours, and pruning hourly.
+The Docker scheduler uses the same UTC schedule and a fresh `CRON_SECRET`
 shared with the web service. Each job makes a GET request with
 `Authorization: Bearer <CRON_SECRET>`. Never expose that secret in a public template.
 
