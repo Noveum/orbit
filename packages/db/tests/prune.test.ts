@@ -121,6 +121,17 @@ describe('pruneOperationalTables', () => {
     expect(await deliveries()).toBe(3);
   });
 
+  it('expires terminal ignored deliveries', async () => {
+    const id = await seedDelivery(OLD);
+    await db
+      .update(schema.webhookDelivery)
+      .set({ status: 'ignored' })
+      .where(eq(schema.webhookDelivery.id, id));
+    const pruned = await pruneOperationalTables(db, [{ table: 'webhook_delivery', days: 30 }]);
+    expect(pruned[0]?.deleted).toBe(1);
+    expect(await deliveries()).toBe(0);
+  });
+
   it('exempts terminal quarantine parents from ordinary retention', async () => {
     await seedDelivery(OLD);
     const quarantinedId = await seedDelivery(OLD);

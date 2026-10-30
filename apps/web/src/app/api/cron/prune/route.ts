@@ -24,7 +24,8 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  const operational = await pruneOperationalTables(db);
   const history = await pruneHistoryTables(db);
-  const pruned = [...history, ...(await pruneOperationalTables(db))];
+  const pruned = [...history, ...operational];
   return Response.json({ pruned });
 }

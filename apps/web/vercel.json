@@ -11,7 +11,7 @@
   "crons": [
     { "path": "/api/cron/analytics-snapshots", "schedule": "0 */6 * * *" },
     { "path": "/api/cron/notifications", "schedule": "* * * * *" },
-    { "path": "/api/cron/prune", "schedule": "0 4 * * *" },
+    { "path": "/api/cron/prune", "schedule": "0 * * * *" },
     { "path": "/api/cron/sprint-rollover", "schedule": "* * * * *" },
     { "path": "/api/cron/project-staleness", "schedule": "0 9 * * *" }
   ]

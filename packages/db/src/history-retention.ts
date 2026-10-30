@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { Database, Transaction } from './client.ts';
 import type { PrunedTable } from './prune.ts';
 import * as schema from './schema/index.ts';
@@ -11,20 +11,92 @@ export const HISTORY_RETENTION = {
   documentVersionDays: 30,
   documentVersionLimit: 5,
   batchSize: 1000,
-  batchesPerRepository: 10,
+  contextBatchSize: 100,
+  batchesPerRun: 10,
+  documentsPerRun: 100,
+  durationMs: 120_000,
+  documentDurationMs: 30_000,
 } as const;
 
-async function pruneRepositoryBatch(database: HistoryDatabase, repositoryId: string) {
+function isRetentionTimeout(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (current === null || typeof current !== 'object') return false;
+    if ('code' in current && current.code === '57014') return true;
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+}
+
+async function limitStatementTime(tx: Transaction, deadline: number) {
+  const remaining = Math.max(1, Math.min(20_000, deadline - Date.now()));
+  await tx.execute(sql`select set_config('statement_timeout', ${String(remaining)}, true)`);
+}
+
+async function nextRepository(
+  database: HistoryDatabase,
+  visited: readonly string[],
+  deadline: number,
+) {
   return await database.transaction(async (tx) => {
+    if (Date.now() >= deadline) return null;
+    await limitStatementTime(tx, deadline);
     const [repository] = await tx
       .select({
         id: schema.githubRepositorySync.id,
         organizationId: schema.githubRepositorySync.organizationId,
       })
       .from(schema.githubRepositorySync)
+      .where(
+        and(
+          visited.length === 0
+            ? undefined
+            : notInArray(schema.githubRepositorySync.id, [...visited]),
+          sql`(exists (
+            select 1 from github_check_activity a
+            where a.organization_id = ${schema.githubRepositorySync.organizationId}
+              and a.repository_sync_id = ${schema.githubRepositorySync.id}
+              and a.created_at < now() - make_interval(days => ${HISTORY_RETENTION.checkActivityDays})
+          ) or exists (
+            select 1 from github_check_head_context c
+            where c.organization_id = ${schema.githubRepositorySync.organizationId}
+              and c.repository_sync_id = ${schema.githubRepositorySync.id}
+              and c.updated_at < now() - make_interval(days => ${HISTORY_RETENTION.obsoleteCheckDays})
+          ))`,
+        ),
+      )
+      .orderBy(
+        asc(schema.githubRepositorySync.historyPrunedAt),
+        asc(schema.githubRepositorySync.id),
+      )
+      .limit(1)
+      .for('update', { skipLocked: true });
+    if (repository === undefined) return null;
+    const repositoryId = repository.id;
+    await tx
+      .update(schema.githubRepositorySync)
+      .set({ historyPrunedAt: sql`clock_timestamp()` })
+      .where(eq(schema.githubRepositorySync.id, repositoryId));
+
+    return repository;
+  });
+}
+
+async function pruneRepositoryBatch(
+  database: HistoryDatabase,
+  repository: { readonly id: string; readonly organizationId: string },
+  deadline: number,
+) {
+  return await database.transaction(async (tx) => {
+    if (Date.now() >= deadline) return { contexts: 0, activities: 0, deferred: true };
+    await limitStatementTime(tx, deadline);
+    const repositoryId = repository.id;
+    const [locked] = await tx
+      .select({ id: schema.githubRepositorySync.id })
+      .from(schema.githubRepositorySync)
       .where(eq(schema.githubRepositorySync.id, repositoryId))
       .for('update', { skipLocked: true });
-    if (repository === undefined) return { contexts: 0, activities: 0 };
+    if (locked === undefined) return { contexts: 0, activities: 0, deferred: true };
 
     const contexts = await tx.execute<{ deleted: number }>(sql`
       with candidates as (
@@ -44,7 +116,7 @@ async function pruneRepositoryBatch(database: HistoryDatabase, repositoryId: str
               and h.repository_sync_id = c.repository_sync_id
               and h.head_sha = c.head_sha and h.status in ('pending', 'processing')
           )
-        limit ${HISTORY_RETENTION.batchSize}
+        limit ${HISTORY_RETENTION.contextBatchSize}
       ), gone as (
         delete from github_check_head_context where id in (select id from candidates)
         returning 1
@@ -77,7 +149,8 @@ async function pruneRepositoryBatch(database: HistoryDatabase, repositoryId: str
       limit ${HISTORY_RETENTION.batchSize}
     `);
     const ids = candidates.map((row) => row.id);
-    if (ids.length === 0) return { contexts: contexts[0]?.deleted ?? 0, activities: 0 };
+    if (ids.length === 0)
+      return { contexts: contexts[0]?.deleted ?? 0, activities: 0, deferred: false };
 
     await tx
       .update(schema.githubPullRequestActivity)
@@ -97,29 +170,44 @@ async function pruneRepositoryBatch(database: HistoryDatabase, repositoryId: str
         ),
       )
       .returning({ id: schema.githubCheckActivity.id });
-    return { contexts: contexts[0]?.deleted ?? 0, activities: activities.length };
+    return { contexts: contexts[0]?.deleted ?? 0, activities: activities.length, deferred: false };
   });
 }
 
-async function pruneDocumentVersions(database: HistoryDatabase) {
-  const documents = await database.execute<{ docId: string }>(sql`
+async function pruneDocumentVersions(database: HistoryDatabase, deadline: number) {
+  let documents: readonly { readonly docId: string }[];
+  try {
+    documents = await database.transaction(async (tx) => {
+      if (Date.now() >= deadline) return [];
+      await limitStatementTime(tx, deadline);
+      return await tx.execute<{ docId: string }>(sql`
     select doc_id as "docId" from doc_version
     group by doc_id
     having count(*) > ${HISTORY_RETENTION.documentVersionLimit}
       or (count(*) > 1 and min(last_saved_at) < now() - make_interval(days => ${HISTORY_RETENTION.documentVersionDays}))
     order by doc_id
-    limit ${HISTORY_RETENTION.batchSize}
+    limit ${HISTORY_RETENTION.documentsPerRun}
   `);
+    });
+  } catch (error) {
+    if (!isRetentionTimeout(error)) throw error;
+    console.warn('Document retention selection exceeded its statement budget.');
+    return { deleted: 0, deferred: 1 };
+  }
   let deleted = 0;
+  let deferred = 0;
   for (const document of documents) {
-    deleted += await database.transaction(async (tx) => {
-      const [locked] = await tx
-        .select({ id: schema.doc.id })
-        .from(schema.doc)
-        .where(eq(schema.doc.id, document.docId))
-        .for('update', { skipLocked: true });
-      if (locked === undefined) return 0;
-      const rows = await tx.execute<{ deleted: number }>(sql`
+    if (Date.now() >= deadline) break;
+    try {
+      deleted += await database.transaction(async (tx) => {
+        await limitStatementTime(tx, deadline);
+        const [locked] = await tx
+          .select({ id: schema.doc.id })
+          .from(schema.doc)
+          .where(eq(schema.doc.id, document.docId))
+          .for('update', { skipLocked: true });
+        if (locked === undefined) return 0;
+        const rows = await tx.execute<{ deleted: number }>(sql`
         with ranked as (
           select id, last_saved_at,
             row_number() over (order by last_saved_at desc, id desc) as position
@@ -130,32 +218,57 @@ async function pruneDocumentVersions(database: HistoryDatabase) {
               position > ${HISTORY_RETENTION.documentVersionLimit}
               or last_saved_at < now() - make_interval(days => ${HISTORY_RETENTION.documentVersionDays})
             )
+            order by position desc
+            limit ${HISTORY_RETENTION.batchSize}
           ) returning 1
         ) select count(*)::int as deleted from gone
       `);
-      return rows[0]?.deleted ?? 0;
-    });
+        return rows[0]?.deleted ?? 0;
+      });
+    } catch (error) {
+      if (!isRetentionTimeout(error)) throw error;
+      deferred += 1;
+      console.warn('Document retention deferred a timed-out document.', document.docId);
+    }
   }
-  return deleted;
+  return { deleted, deferred };
 }
 
 export async function pruneHistoryTables(database: HistoryDatabase): Promise<PrunedTable[]> {
-  const repositories = await database
-    .select({ id: schema.githubRepositorySync.id })
-    .from(schema.githubRepositorySync)
-    .orderBy(schema.githubRepositorySync.id);
+  const deadline = Date.now() + HISTORY_RETENTION.durationMs;
+  const documents = await pruneDocumentVersions(
+    database,
+    Math.min(deadline, Date.now() + HISTORY_RETENTION.documentDurationMs),
+  );
+  const visited: string[] = [];
   let contexts = 0;
   let activities = 0;
-  for (const repository of repositories) {
-    for (let batch = 0; batch < HISTORY_RETENTION.batchesPerRepository; batch += 1) {
-      const pruned = await pruneRepositoryBatch(database, repository.id);
+  let deferred = 0;
+  for (
+    let batch = 0;
+    batch < HISTORY_RETENTION.batchesPerRun && Date.now() < deadline;
+    batch += 1
+  ) {
+    let repository: Awaited<ReturnType<typeof nextRepository>>;
+    try {
+      repository = await nextRepository(database, visited, deadline);
+    } catch (error) {
+      if (!isRetentionTimeout(error)) throw error;
+      deferred += 1;
+      console.warn('GitHub retention selection exceeded its statement budget.');
+      break;
+    }
+    if (repository === null) break;
+    visited.push(repository.id);
+    try {
+      const pruned = await pruneRepositoryBatch(database, repository, deadline);
       contexts += pruned.contexts;
       activities += pruned.activities;
-      if (
-        pruned.activities < HISTORY_RETENTION.batchSize &&
-        pruned.contexts < HISTORY_RETENTION.batchSize
-      )
-        break;
+      deferred += pruned.deferred ? 1 : 0;
+    } catch (error) {
+      if (!isRetentionTimeout(error)) throw error;
+      deferred += 1;
+      console.warn('GitHub retention deferred a timed-out repository.', repository.id);
     }
   }
   return [
@@ -163,16 +276,19 @@ export async function pruneHistoryTables(database: HistoryDatabase): Promise<Pru
       table: 'github_check_head_context',
       days: HISTORY_RETENTION.obsoleteCheckDays,
       deleted: contexts,
+      deferred,
     },
     {
       table: 'github_check_activity',
       days: HISTORY_RETENTION.checkActivityDays,
       deleted: activities,
+      deferred,
     },
     {
       table: 'doc_version',
       days: HISTORY_RETENTION.documentVersionDays,
-      deleted: await pruneDocumentVersions(database),
+      deleted: documents.deleted,
+      deferred: documents.deferred,
     },
   ];
 }

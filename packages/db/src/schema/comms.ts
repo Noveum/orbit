@@ -894,6 +894,9 @@ export const githubRepositorySync = pgTable(
     enabled: boolean('enabled').notNull().default(true),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     pullRequestsBackfilledAt: timestamp('pull_requests_backfilled_at', { withTimezone: true }),
+    historyPrunedAt: timestamp('history_pruned_at', { withTimezone: true })
+      .notNull()
+      .default(sql`'1970-01-01 00:00:00+00'::timestamp with time zone`),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -902,6 +905,7 @@ export const githubRepositorySync = pgTable(
     unique('github_repository_sync_org_id_unique').on(table.organizationId, table.id),
     uniqueIndex('github_repository_sync_unique').on(table.organizationId, table.repositoryId),
     index('github_repository_sync_team_idx').on(table.teamId),
+    index('github_repository_sync_history_pruned_idx').on(table.historyPrunedAt, table.id),
   ],
 );
 

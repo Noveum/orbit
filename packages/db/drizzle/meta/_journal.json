@@ -232,6 +232,13 @@
       "when": 1793340399305,
       "tag": "0032_rich_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793342168851,
+      "tag": "0033_polite_lord_tyger",
+      "breakpoints": true
     }
   ]
 }

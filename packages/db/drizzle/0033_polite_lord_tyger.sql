@@ -1,0 +1,2 @@
+ALTER TABLE "github_repository_sync" ADD COLUMN "history_pruned_at" timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL;--> statement-breakpoint
+CREATE INDEX "github_repository_sync_history_pruned_idx" ON "github_repository_sync" USING btree ("history_pruned_at","id");

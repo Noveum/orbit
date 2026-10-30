@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { pruneHistoryTables } from '../src/history-retention.ts';
-import { db, eq, schema, type Transaction } from '../src/index.ts';
+import { db, eq, schema, sql, type Transaction } from '../src/index.ts';
 
 const OLD = new Date(Date.now() - 60 * 86_400_000);
 const RECENT = new Date(Date.now() - 60_000);
@@ -130,6 +130,127 @@ async function pullRequest(tx: Transaction, fixture: Fixture, state = 'open') {
 }
 
 describe('history retention', () => {
+  it('defers a timed-out repository without blocking later repositories', async () => {
+    await withFixture(async (tx, fixture) => {
+      const [template] = await tx
+        .select()
+        .from(schema.githubRepositorySync)
+        .where(eq(schema.githubRepositorySync.id, fixture.repositorySyncId));
+      if (template === undefined) throw new Error('Missing repository fixture');
+      await tx.insert(schema.githubRepositorySync).values({
+        ...template,
+        id: '000-timeout-retention',
+        repositoryId: '000-timeout-retention',
+      });
+      const timedOut = await activity(
+        tx,
+        { ...fixture, repositorySyncId: '000-timeout-retention' },
+        OLD,
+      );
+      const removable = await activity(tx, fixture, OLD);
+      await tx.execute(
+        sql`create function pg_temp.retention_timeout() returns trigger language plpgsql as $$ begin raise exception 'retention timeout fixture' using errcode = '57014'; end $$`,
+      );
+      await tx.execute(
+        sql`create trigger retention_timeout before delete on github_check_activity for each row when (old.repository_sync_id = '000-timeout-retention') execute function pg_temp.retention_timeout()`,
+      );
+      const result = await pruneHistoryTables(tx);
+      expect(
+        await tx
+          .select()
+          .from(schema.githubCheckActivity)
+          .where(eq(schema.githubCheckActivity.id, timedOut)),
+      ).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(schema.githubCheckActivity)
+          .where(eq(schema.githubCheckActivity.id, removable)),
+      ).toHaveLength(0);
+      const [visited] = await tx
+        .select()
+        .from(schema.githubRepositorySync)
+        .where(eq(schema.githubRepositorySync.id, '000-timeout-retention'));
+      expect(visited?.historyPrunedAt.getTime()).toBeGreaterThan(0);
+      expect(result.find((row) => row.table === 'github_check_activity')?.deferred).toBe(1);
+    });
+  });
+
+  it('defers timed-out document history without blocking GitHub cleanup', async () => {
+    await withFixture(async (tx, fixture) => {
+      const docId = '000-retention-timeout-doc';
+      await tx.insert(schema.doc).values({
+        id: docId,
+        organizationId: fixture.organizationId,
+        authorId: fixture.userId,
+        title: 'Current',
+        content: 'Keep current content',
+      });
+      for (let index = 0; index < 2; index += 1)
+        await tx.insert(schema.docVersion).values({
+          id: `${docId}-${index}`,
+          docId,
+          organizationId: fixture.organizationId,
+          ownedById: fixture.userId,
+          title: 'Old',
+          content: 'Old',
+          lastSavedAt: new Date(OLD.getTime() + index),
+        });
+      const removable = await activity(tx, fixture, OLD);
+      await tx.execute(
+        sql`create function pg_temp.retention_timeout() returns trigger language plpgsql as $$ begin raise exception 'retention timeout fixture' using errcode = '57014'; end $$`,
+      );
+      await tx.execute(
+        sql`create trigger retention_timeout before delete on doc_version for each row when (old.doc_id = '000-retention-timeout-doc') execute function pg_temp.retention_timeout()`,
+      );
+      const result = await pruneHistoryTables(tx);
+      expect(
+        await tx.select().from(schema.docVersion).where(eq(schema.docVersion.docId, docId)),
+      ).toHaveLength(2);
+      expect(
+        await tx
+          .select()
+          .from(schema.githubCheckActivity)
+          .where(eq(schema.githubCheckActivity.id, removable)),
+      ).toHaveLength(0);
+      expect(result.find((row) => row.table === 'doc_version')?.deferred).toBe(1);
+    });
+  });
+
+  it('bounds work across repositories and resumes remaining work on the next run', async () => {
+    await withFixture(async (tx, fixture) => {
+      const [template] = await tx
+        .select()
+        .from(schema.githubRepositorySync)
+        .where(eq(schema.githubRepositorySync.id, fixture.repositorySyncId));
+      if (template === undefined) throw new Error('Missing repository fixture');
+      for (let index = 0; index < 11; index += 1) {
+        const repositorySyncId = `000-budget-${String(index).padStart(2, '0')}-${randomUUIDv7()}`;
+        await tx
+          .insert(schema.githubRepositorySync)
+          .values({ ...template, id: repositorySyncId, repositoryId: repositorySyncId });
+        const repositoryFixture = { ...fixture, repositorySyncId };
+        const pinned = await activity(tx, repositoryFixture, OLD);
+        await headContext(tx, repositoryFixture, pinned);
+        await pullRequest(tx, repositoryFixture);
+        await activity(tx, repositoryFixture, OLD);
+      }
+      await pruneHistoryTables(tx);
+      const remaining = await tx
+        .select({ id: schema.githubCheckActivity.id })
+        .from(schema.githubCheckActivity)
+        .where(eq(schema.githubCheckActivity.organizationId, fixture.organizationId));
+      expect(remaining).toHaveLength(12);
+      await pruneHistoryTables(tx);
+      expect(
+        await tx
+          .select({ id: schema.githubCheckActivity.id })
+          .from(schema.githubCheckActivity)
+          .where(eq(schema.githubCheckActivity.organizationId, fixture.organizationId)),
+      ).toHaveLength(11);
+    });
+  });
+
   it('deletes old unreferenced checks and keeps recent checks', async () => {
     await withFixture(async (tx, fixture) => {
       const oldId = await activity(tx, fixture, OLD);
