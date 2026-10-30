@@ -85,6 +85,45 @@ or delivery history. Require the verifier to return `ok: true` with zero drift
 before enabling conversation reads and resuming provider delivery. Environment
 flag changes require a new deployment before they affect running functions.
 
+## History retention
+
+The authenticated `/api/cron/prune` job runs hourly in Vercel and through the
+Docker maintenance scheduler. Operational pruning runs before history cleanup,
+so a large history backlog cannot prevent webhook and telemetry retention.
+Deliveries released by history cleanup become eligible on the next hourly run.
+
+| History | Retention |
+| --- | --- |
+| GitHub check activity | Seven days, retaining evidence referenced by current check state or pending reconciliation |
+| Obsolete GitHub check contexts | Thirty days, retaining open pull request heads and pending or processing reconciliation |
+| Document versions | At most five snapshots per document and thirty days, always retaining the newest snapshot |
+| Processed or ignored webhook deliveries | Thirty days, retaining check provenance and quarantined deliveries |
+| Web vitals | Ninety days |
+
+Expired GitHub audit links are detached from PR timeline entries without deleting
+their visible content. Live document contents are stored separately from version
+history and are never changed by retention. Pending, processing and failed
+webhook deliveries remain available for retries.
+
+History cleanup has a two-minute work budget and twenty-second statement limits.
+GitHub cleanup takes the same repository lock as event ingestion and processes
+at most ten repository batches per invocation, each containing up to 1,000 audit
+rows and 100 obsolete contexts. A persisted `history_pruned_at` timestamp orders
+repositories by their last visit, so incomplete repositories resume fairly on
+later runs. Attempt timestamps are committed before cleanup, so a statement
+timeout cannot roll them back and repeatedly starve later repositories. Busy
+repositories are skipped, and expected timeouts are logged and reported as
+deferred work. Document work receives at most thirty seconds of the total budget.
+Document pruning handles at most 100 documents and 1,000 versions per document
+per invocation, locking each document before ranking its snapshots. Busy
+documents are skipped, and remaining eligible versions resume on a later run.
+
+PostgreSQL reuses space reclaimed by ordinary vacuuming. Bulk incident cleanup
+may additionally need a separately scheduled `VACUUM FULL` to reduce disk usage;
+that operation takes an exclusive table lock and needs room for the rewritten
+table. Do not use `TRUNCATE CASCADE` on GitHub audit tables, because it can remove
+PR timeline and current check state through their foreign keys.
+
 ## Rollback
 
 Do not rewrite or delete an applied migration. Roll application code back while

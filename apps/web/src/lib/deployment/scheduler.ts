@@ -4,7 +4,7 @@ export const maintenanceJobs = [
   { path: '/api/cron/notifications', interval: MINUTE, offset: 0 },
   { path: '/api/cron/sprint-rollover', interval: MINUTE, offset: 0 },
   { path: '/api/cron/analytics-snapshots', interval: 360 * MINUTE, offset: 0 },
-  { path: '/api/cron/prune', interval: 1_440 * MINUTE, offset: 240 * MINUTE },
+  { path: '/api/cron/prune', interval: 60 * MINUTE, offset: 0 },
 ] as const;
 
 export function createMaintenanceScheduler(

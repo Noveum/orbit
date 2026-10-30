@@ -894,6 +894,9 @@ export const githubRepositorySync = pgTable(
     enabled: boolean('enabled').notNull().default(true),
     lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
     pullRequestsBackfilledAt: timestamp('pull_requests_backfilled_at', { withTimezone: true }),
+    historyPrunedAt: timestamp('history_pruned_at', { withTimezone: true })
+      .notNull()
+      .default(sql`'1970-01-01 00:00:00+00'::timestamp with time zone`),
     syncId: bigint('sync_id', { mode: 'number' }).notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -902,6 +905,7 @@ export const githubRepositorySync = pgTable(
     unique('github_repository_sync_org_id_unique').on(table.organizationId, table.id),
     uniqueIndex('github_repository_sync_unique').on(table.organizationId, table.repositoryId),
     index('github_repository_sync_team_idx').on(table.teamId),
+    index('github_repository_sync_history_pruned_idx').on(table.historyPrunedAt, table.id),
   ],
 );
 
@@ -997,6 +1001,7 @@ export const githubPullRequestActivity = pgTable(
     ),
     index('github_pull_request_activity_timeline_idx').on(table.pullRequestId, table.occurredAt),
     index('github_pull_request_activity_org_idx').on(table.organizationId),
+    index('github_pull_request_activity_check_idx').on(table.organizationId, table.checkActivityId),
     foreignKey({
       name: 'github_pull_request_activity_org_check_activity_fk',
       columns: [table.organizationId, table.checkActivityId],
@@ -1253,6 +1258,13 @@ export const githubCheckActivity = pgTable(
       table.repositorySyncId,
       table.headSha,
       table.createdAt,
+    ),
+    index('github_check_activity_delivery_idx').on(table.organizationId, table.webhookDeliveryId),
+    index('github_check_activity_retention_idx').on(
+      table.organizationId,
+      table.repositorySyncId,
+      table.createdAt,
+      table.id,
     ),
     foreignKey({
       name: 'github_check_activity_repository_fk',

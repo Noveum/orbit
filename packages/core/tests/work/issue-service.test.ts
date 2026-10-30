@@ -1580,6 +1580,67 @@ describe('an issue milestone has to belong to the project the issue is on', () =
     return { projectId: project.id, milestoneId: milestone.id };
   }
 
+  it('refuses a milestone from a sibling project on move when projectId is omitted', async () => {
+    const alpha = await projectWithMilestone('Alpha');
+    const beta = await projectWithMilestone('Beta');
+    const issue = await newIssue('Alpha issue', { projectId: alpha.projectId });
+
+    await expect(
+      moveIssue(workspace.admin, issue.id, { milestoneId: beta.milestoneId }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+
+    const [stored] = await db
+      .select({
+        milestoneId: schema.issue.milestoneId,
+        projectId: schema.issue.projectId,
+      })
+      .from(schema.issue)
+      .where(eq(schema.issue.id, issue.id));
+
+    expect(stored?.projectId).toBe(alpha.projectId);
+    expect(stored?.milestoneId).toBeNull();
+  });
+
+  it('restores project and milestone atomically across move undo and redo', async () => {
+    const alpha = await projectWithMilestone('Alpha');
+    const { project: beta } = await createProject(workspace.admin, {
+      name: 'Beta',
+      teamIds: [workspace.teamId],
+    });
+    const issue = await newIssue('Moving issue', {
+      projectId: alpha.projectId,
+      milestoneId: alpha.milestoneId,
+    });
+
+    const moved = await moveIssue(workspace.admin, issue.id, {
+      projectId: beta.id,
+    });
+    expect(moved.issue.projectId).toBe(beta.id);
+    expect(moved.issue.milestoneId).toBeNull();
+
+    const undone = await moveIssue(workspace.admin, issue.id, {
+      projectId: alpha.projectId,
+      milestoneId: alpha.milestoneId,
+      expected: {
+        projectId: beta.id,
+        milestoneId: null,
+      },
+    });
+    expect(undone.issue.projectId).toBe(alpha.projectId);
+    expect(undone.issue.milestoneId).toBe(alpha.milestoneId);
+
+    const redone = await moveIssue(workspace.admin, issue.id, {
+      projectId: beta.id,
+      milestoneId: null,
+      expected: {
+        projectId: alpha.projectId,
+        milestoneId: alpha.milestoneId,
+      },
+    });
+    expect(redone.issue.projectId).toBe(beta.id);
+    expect(redone.issue.milestoneId).toBeNull();
+  });
+
   it('refuses a milestone from a sibling project on the same team', async () => {
     const here = await projectWithMilestone('Here');
     const elsewhere = await projectWithMilestone('Elsewhere');

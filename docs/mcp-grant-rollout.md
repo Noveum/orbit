@@ -2,11 +2,12 @@
 
 ## Stage 3a: compatibility preparation
 
-Start from published main commit `ad1206e85fff322ae5ae1cf6ca39bc5bfc6d471c`.
-Keep its released `0030_actor_schema_expand` and `0031_broad_lifeguard`
-migrations, snapshots and journal entries unchanged. The actor expansion
+Start from published main commit `4f904217441616002e96dfcf76ed3b95b0b8a905`.
+Keep its released migrations through `0033_polite_lord_tyger`, snapshots
+and journal entries unchanged, including `0030_actor_schema_expand` and
+`0031_broad_lifeguard`. The actor expansion
 preserves all Owner values, including NULL.
-Apply migration `0032_mcp_grant_compatibility` before deploying stage 3a.
+Apply migration `0034_mcp_grant_compatibility` before deploying stage 3a.
 The PR1 binary continues to use its global client/user index and old columns.
 No grants, tokens or consents are revoked by the migration. No identities are
 created. PR1 identity fixtures and nullable owner/client references stay valid.
@@ -54,13 +55,18 @@ prevents a removed and rejoined owner from reviving an old grant.
 ## Stage 3b: deployment prerequisites
 
 Stages 3a and 3b may be reviewed together, but require separate release and
-deployment artifacts. This checkout contains `0032_mcp_grant_compatibility`
+deployment artifacts. This checkout contains `0034_mcp_grant_compatibility`
 and the stage 3a runtime, without the stage 3b migration or consent runtime.
 Release the main baseline and deploy its runtime first. Then use this stage 3a checkout to
-apply `0032` and deploy its runtime to all related instances. Only afterward
+apply `0034` and deploy its runtime to all related instances. Only afterward
 release and deploy stage 3b from its separate checkout. Running release from
 the final stage 3b checkout applies all pending migrations without pausing for
 the required intermediate stage 3a deployment.
+
+The earlier stage 3a artifact `037e941376a42ba730e3d75d974ad1f6bbc415ca`
+retains its original migration history. Its release command cannot upgrade
+the newer main ledger. Use this current-main compatibility artifact for the
+34-migration baseline and record its exact commit before release and build.
 
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
