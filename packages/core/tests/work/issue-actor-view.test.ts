@@ -42,7 +42,7 @@ beforeAll(async () => {
   `);
   if (existing !== undefined) return;
   const migration = await readFile(
-    new URL('../../../db/drizzle/0034_issue_actor_write_compatibility.sql', import.meta.url),
+    new URL('../../../db/drizzle/0036_issue_actor_write_compatibility.sql', import.meta.url),
     'utf8',
   );
   const statements = migration.split('--> statement-breakpoint');

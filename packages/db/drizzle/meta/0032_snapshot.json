@@ -1,5 +1,5 @@
 {
-  "id": "015f21e8-3a23-47a1-acf6-7c52e430dfc8",
+  "id": "d5aea017-5328-4300-8121-93a8a72c019e",
   "prevId": "4291fc20-d8be-42c7-8c4c-43461c6a0673",
   "version": "7",
   "dialect": "postgresql",
@@ -1467,6 +1467,60 @@
             },
             {
               "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "github_check_activity_delivery_idx": {
+          "name": "github_check_activity_delivery_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "webhook_delivery_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "github_check_activity_retention_idx": {
+          "name": "github_check_activity_retention_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "repository_sync_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3493,6 +3547,27 @@
           "columns": [
             {
               "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "github_pull_request_activity_check_idx": {
+          "name": "github_pull_request_activity_check_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "check_activity_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -11045,25 +11120,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "identity_kind": {
-          "name": "identity_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'legacy'"
-        },
-        "agent_identity_id": {
-          "name": "agent_identity_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "owner_member_id": {
-          "name": "owner_member_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -11102,28 +11158,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "mcp_grant_legacy_unique": {
-          "name": "mcp_grant_legacy_unique",
-          "columns": [
-            {
-              "expression": "client_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"mcp_grant\".\"identity_kind\" = 'legacy'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -11182,19 +11216,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "mcp_grant_agent_identity_id_agent_identity_id_fk": {
-          "name": "mcp_grant_agent_identity_id_agent_identity_id_fk",
-          "tableFrom": "mcp_grant",
-          "tableTo": "agent_identity",
-          "columnsFrom": [
-            "agent_identity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -11255,12 +11276,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "mcp_grant_id": {
-          "name": "mcp_grant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",

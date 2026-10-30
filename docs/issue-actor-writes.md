@@ -30,20 +30,23 @@ the merged PR1 expansion, while retaining the Stage A/B migration chain.
 It also imports PR2's compatibility Actor reconciliation and unrelated
 query freshness fixes from `a08e7b1` and `92faba0`.
 
-The 2026-10-23 synchronization merges upstream main `ad1206e`, PR2
-`5ce28a7` and PR3 stage 3b `4ae17a6`. Published migrations through
-`0031_broad_lifeguard`, their journal entries and snapshots remain unchanged.
-The unpublished PR3 stages are regenerated as `0032_mcp_grant_compatibility`
-and `0033_mcp_agent_grant_binding`. This checkout regenerates the Issue write
-schema delta as `0034_issue_actor_write_compatibility` against the stage 3b
-snapshot and retains its existing compatibility function and trigger.
-Each new journal timestamp follows its predecessor. The rollout remains
-staged: release and deploy stage 3a before releasing stage 3b, then release
-the Issue write migration with the write gate disabled.
+The 2026-10-30 synchronization merges upstream main `4f904217` and PR2
+`5cf0db8`. Published migrations through `0033_polite_lord_tyger`, including
+`0030_actor_schema_expand` and `0031_broad_lifeguard`, their journal entries
+and snapshots remain unchanged. The unpublished PR3 stages are regenerated
+as `0034_mcp_grant_compatibility` and `0035_mcp_agent_grant_binding`.
+This checkout regenerates the Issue write schema delta as
+`0036_issue_actor_write_compatibility` against the stage 3b snapshot and
+retains its existing compatibility function and trigger. Each new journal
+timestamp follows its predecessor. The stage 3a source artifact is
+`8cc84621a17919f0340aaec674ae271a9ff7f980`. Release and deploy that artifact
+to every affected instance before releasing stage 3b, then release the Issue
+write migration with the write gate disabled. These source changes do not
+perform any rollout step or enable either Agent gate.
 
 ## Stage A: write compatibility preparation
 
-Migration `0034_issue_actor_write_compatibility` follows `0033` and makes
+Migration `0036_issue_actor_write_compatibility` follows `0035` and makes
 legacy `creator_id` nullable. New writers set canonical Human or Agent
 references. The compatibility trigger mirrors Human references into legacy
 columns and Agent references into legacy NULL. Changed canonical references
@@ -63,7 +66,7 @@ source as described above. Legacy columns and the expanded
 foreign keys remain installed. Human mirrors on mixed Actor rows are
 repaired independently. Neither the `0030` backfill nor baseline or recovery
 infers an Owner, including for previously uninitialized Human references.
-NULL and explicit Owner values remain unchanged. The `0034` responsibility
+NULL and explicit Owner values remain unchanged. The `0036` responsibility
 rule applies when a writer establishes a new assignment, rather than when
 the migration or release repairs historical rows.
 

@@ -1,6 +1,6 @@
 {
-  "id": "f81faaab-c45b-42ca-ba53-45637c3c01f9",
-  "prevId": "4df56240-0ac0-4c1b-b0c1-a6b892f25a99",
+  "id": "13343c65-1567-4914-8672-940dd40e0750",
+  "prevId": "31afcfcd-adc3-42cd-8db9-55deff6fc8c8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1467,6 +1467,60 @@
             },
             {
               "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "github_check_activity_delivery_idx": {
+          "name": "github_check_activity_delivery_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "webhook_delivery_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "github_check_activity_retention_idx": {
+          "name": "github_check_activity_retention_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "repository_sync_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3502,6 +3556,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "github_pull_request_activity_check_idx": {
+          "name": "github_pull_request_activity_check_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "check_activity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -4482,6 +4557,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "history_pruned_at": {
+          "name": "history_pruned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'1970-01-01 00:00:00+00'::timestamp with time zone"
+        },
         "sync_id": {
           "name": "sync_id",
           "type": "bigint",
@@ -4531,6 +4613,27 @@
           "columns": [
             {
               "expression": "team_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "github_repository_sync_history_pruned_idx": {
+          "name": "github_repository_sync_history_pruned_idx",
+          "columns": [
+            {
+              "expression": "history_pruned_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -11085,18 +11188,23 @@
         }
       },
       "indexes": {
-        "mcp_grant_active_agent_unique": {
-          "name": "mcp_grant_active_agent_unique",
+        "mcp_grant_client_user_unique": {
+          "name": "mcp_grant_client_user_unique",
           "columns": [
             {
-              "expression": "agent_identity_id",
+              "expression": "client_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"mcp_grant\".\"identity_kind\" = 'agent' and \"mcp_grant\".\"revoked_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -13819,7 +13927,7 @@
           "name": "creator_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "assignee_id": {
           "name": "assignee_id",

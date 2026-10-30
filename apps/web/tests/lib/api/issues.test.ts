@@ -35,7 +35,7 @@ beforeAll(async () => {
   if (existing !== undefined) return;
   const migration = await readFile(
     new URL(
-      '../../../../../packages/db/drizzle/0034_issue_actor_write_compatibility.sql',
+      '../../../../../packages/db/drizzle/0036_issue_actor_write_compatibility.sql',
       import.meta.url,
     ),
     'utf8',
