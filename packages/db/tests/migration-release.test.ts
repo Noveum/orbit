@@ -992,6 +992,61 @@ describe('database release', () => {
     expect(ledger?.count).toBe(migrations.length);
   }, 60_000);
 
+  it('removes only the retired grant index when baselining or repairing catalog-complete ledgers', async () => {
+    for (const ledger of ['missing', 'prefix', 'current'] as const) {
+      await resetScratch();
+      await migrateScratch();
+      const before = await run(urlFor(SCRATCH), async (sql) => {
+        await sql`create unique index mcp_grant_client_user_unique on mcp_grant (client_id, user_id)`;
+        await sql`create index release_grant_extra_idx on mcp_grant (organization_id)`;
+        await sql`insert into "user" (id, name, email, handle) values ('contract-owner', 'Owner', 'contract@example.com', 'contract-owner')`;
+        await sql`insert into organization (id, name, slug) values ('contract-org', 'Workspace', 'contract-org')`;
+        await sql`
+          insert into oauth_application (id, name, client_id, redirect_urls, type)
+          values ('contract-app', 'Client', 'contract-client', 'https://example.com/callback', 'public')
+        `;
+        await sql`
+          insert into mcp_grant (id, client_id, user_id, organization_id, scopes)
+          values ('contract-grant', 'contract-client', 'contract-owner', 'contract-org', 'orbit.read orbit.write')
+        `;
+        await sql`
+          insert into oauth_access_token (
+            id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, client_id, user_id, scopes
+          ) values ('contract-token', 'old-access', 'old-refresh', now() + interval '1 day', now() + interval '30 days',
+            'contract-client', 'contract-owner', 'orbit.read orbit.write')
+        `;
+        if (ledger === 'missing') await sql`drop schema drizzle cascade`;
+        if (ledger === 'prefix') {
+          await sql`delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`;
+        }
+        return [
+          ...(await sql`select to_jsonb(mcp_grant) as payload from mcp_grant union all select to_jsonb(oauth_access_token) from oauth_access_token`),
+        ];
+      });
+      const first = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(first.mode).toBe(ledger === 'current' ? 'current' : 'baselined');
+      const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(second.mode).toBe('current');
+      await run(urlFor(SCRATCH), async (sql) => {
+        const [indexes] = await sql`
+          select to_regclass('mcp_grant_client_user_unique') as retired,
+            to_regclass('mcp_grant_legacy_unique') as legacy,
+            to_regclass('mcp_grant_active_agent_unique') as bound,
+            to_regclass('release_grant_extra_idx') as unrelated
+        `;
+        expect(indexes).toMatchObject({
+          retired: null,
+          legacy: 'mcp_grant_legacy_unique',
+          bound: 'mcp_grant_active_agent_unique',
+          unrelated: 'release_grant_extra_idx',
+        });
+        const after =
+          await sql`select to_jsonb(mcp_grant) as payload from mcp_grant union all select to_jsonb(oauth_access_token) from oauth_access_token`;
+        expect([...after]).toEqual(before);
+      });
+    }
+  }, 60_000);
+
   it('runs a pending table-drop migration instead of baselining it away', async () => {
     await resetScratch();
     const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });

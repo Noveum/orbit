@@ -136,6 +136,7 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
       name: 'list_inbox_conversations',
       title: 'List inbox conversations',
       readOnly: true,
+      agentSafe: false,
       description:
         'Your inbox grouped into one conversation per pull request, document, or issue activity family. Filters run before pagination. Cursors describe a live feed: fetch a fresh first page to reconcile conversations moved by new activity. Counts are unread conversations, not events.',
       inputSchema: inboxConversationQuerySchema.shape,
