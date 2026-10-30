@@ -85,6 +85,36 @@ or delivery history. Require the verifier to return `ok: true` with zero drift
 before enabling conversation reads and resuming provider delivery. Environment
 flag changes require a new deployment before they affect running functions.
 
+## History retention
+
+The authenticated `/api/cron/prune` job runs daily at 04:00 UTC in Vercel and
+through the Docker maintenance scheduler. It prunes history before webhook
+deliveries so expired audit provenance does not pin processed deliveries forever.
+
+| History | Retention |
+| --- | --- |
+| GitHub check activity | Seven days, retaining evidence referenced by current check state or pending reconciliation |
+| Obsolete GitHub check contexts | Thirty days, retaining open pull request heads and pending or processing reconciliation |
+| Document versions | At most five snapshots per document and thirty days, always retaining the newest snapshot |
+| Processed webhook deliveries | Thirty days, retaining check provenance and quarantined deliveries |
+| Web vitals | Ninety days |
+
+Expired GitHub audit links are detached from PR timeline entries without deleting
+their visible content. Live document contents are stored separately from version
+history and are never changed by retention. Pending, processing and failed
+webhook deliveries remain available for retries.
+
+GitHub cleanup takes the same repository lock as event ingestion and processes
+at most ten batches of 1,000 audit rows per repository per invocation. Busy
+repositories and documents are skipped, allowing the next run to retry them.
+Document pruning locks each document before ranking its snapshots.
+
+PostgreSQL reuses space reclaimed by ordinary vacuuming. Bulk incident cleanup
+may additionally need a separately scheduled `VACUUM FULL` to reduce disk usage;
+that operation takes an exclusive table lock and needs room for the rewritten
+table. Do not use `TRUNCATE CASCADE` on GitHub audit tables, because it can remove
+PR timeline and current check state through their foreign keys.
+
 ## Rollback
 
 Do not rewrite or delete an applied migration. Roll application code back while
