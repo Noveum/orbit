@@ -27,14 +27,14 @@
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
     "@react-email/components": "1.0.12",
-    "@react-email/render": "2.1.1",
+    "@react-email/render": "2.2.0",
     "drizzle-orm": "0.45.4",
     "ioredis": "^6.0.0",
-    "linkedom": "^0.18.13",
+    "linkedom": "^0.18.14",
     "lowlight": "^3",
-    "marked": "18.1.1",
+    "marked": "18.1.2",
     "postgres": "^3.4.9",
-    "resend": "6.34.1",
+    "resend": "6.37.0",
     "zod": "4.6.7"
   },
   "peerDependencies": {
