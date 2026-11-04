@@ -273,3 +273,20 @@ export function sprintLabel(sprint: { readonly name: string; readonly number: nu
   const named = sprint.name.trim();
   return named.length > 0 ? named : `Sprint ${sprint.number}`;
 }
+
+export function shiftCalendarDate(
+  value: string | Date | null | undefined,
+  days: number,
+): string | null {
+  if (value === null || value === undefined) return null;
+  const raw = typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const parts = raw.split('-');
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}

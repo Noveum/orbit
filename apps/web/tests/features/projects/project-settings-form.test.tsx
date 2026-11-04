@@ -139,4 +139,23 @@ describe('ProjectSettingsForm', () => {
     expect(screen.queryByTestId('project-archive')).toBeNull();
     expect(screen.getByTestId('project-name')).toBeDisabled();
   });
+
+  it('does not trigger settings save when duplicating a project', async () => {
+    renderForm();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId('duplicate-project-trigger'));
+    await user.click(screen.getByTestId('duplicate-project-submit'));
+
+    await waitFor(() => {
+      const duplicateCalls = calls.filter((c) => c.url.includes('/duplicate'));
+      expect(duplicateCalls).toHaveLength(1);
+    });
+
+    const patchCalls = calls.filter((c) => {
+      const init = c.init as RequestInit | undefined;
+      return init?.method === 'PATCH';
+    });
+    expect(patchCalls).toHaveLength(0);
+  });
 });
