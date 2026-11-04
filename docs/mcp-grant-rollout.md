@@ -66,7 +66,7 @@ The earlier artifact `037e941376a42ba730e3d75d974ad1f6bbc415ca` remains
 unchanged for historical reference; its old migration ledger cannot upgrade
 the current main baseline. Build and verify the new exact artifact for each
 target environment before proceeding.
-Use branch `feature/agent-consent-binding` for the final stage 3b artifact.
+Use branch `fix/agent-consent-binding-current` for the final stage 3b artifact.
 Record the exact verified commit from that branch before release and build,
 then deploy the runtime built from the same checkout.
 
