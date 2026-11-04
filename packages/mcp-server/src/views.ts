@@ -114,7 +114,9 @@ export async function describeIssues(
   const userNames = new Map<string, string>();
   for (const member of members) userNames.set(member.user.id, member.user.name);
 
-  return actors.map((row) => toView(appUrl, row, stateNames, userNames, reviewers.get(row.id) ?? []));
+  return actors.map((row) =>
+    toView(appUrl, row, stateNames, userNames, reviewers.get(row.id) ?? []),
+  );
 }
 
 export async function describeIssue(

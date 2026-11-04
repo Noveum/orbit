@@ -21,6 +21,7 @@ let guest: TestClient;
 interface IssueShape {
   readonly id: string;
   readonly identifier: string;
+  readonly url: string;
   readonly title: string;
   readonly state: string | null;
   readonly priority: string;
@@ -243,13 +244,16 @@ describe('issues', () => {
       avatar: 'https://orbit.test/helper.png',
       deleted: true,
     } as const;
+    expect(fetched.url).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${created.identifier}`);
     expect(fetched.creator).toEqual(expected);
     expect(fetched.assignee).toEqual(expected);
     expect(fetched.owner).toBeNull();
     const searched = issuesOf(
       await admin.result('search_issues', { query: 'Agent reader fixture' }),
     );
-    expect(searched.find((issue) => issue.id === created.id)?.assignee).toEqual(expected);
+    const searchResult = searched.find((issue) => issue.id === created.id);
+    expect(searchResult?.assignee).toEqual(expected);
+    expect(searchResult?.url).toBe(fetched.url);
   });
 
   it('round trips a created issue by human identifier', async () => {
