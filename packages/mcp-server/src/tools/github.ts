@@ -9,6 +9,7 @@ import {
 import { notFound } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
+import { issueUrl } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { resolveProject } from '../resolve.ts';
 import { defineTool } from './support.ts';
@@ -57,7 +58,7 @@ async function projectIdFor(
   return project.id;
 }
 
-export function registerGithubTools(server: McpServer, principal: Principal): void {
+export function registerGithubTools(server: McpServer, principal: Principal, appUrl: string): void {
   defineTool(
     server,
     {
@@ -177,6 +178,7 @@ export function registerGithubTools(server: McpServer, principal: Principal): vo
 
       return {
         issue: issue.identifier,
+        url: `${appUrl}${issueUrl(issue.identifier)}`,
         links: rows.map((row) => ({
           kind: row.kind,
           repository: row.repository,

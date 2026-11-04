@@ -13,6 +13,7 @@ import {
 } from '@orbit/services/notifications';
 import { NOTIFICATION_TYPES } from '@orbit/shared/constants';
 import type { Principal } from '@orbit/shared/policy';
+import { docUrl, issueUrl } from '@orbit/shared/utils';
 import {
   idSchema,
   inboxConversationQuerySchema,
@@ -26,11 +27,30 @@ interface IssueSummary {
   readonly identifier: string;
   readonly title: string;
   readonly teamKey: string;
+  readonly url: string;
 }
 
 interface DocSummary {
   readonly id: string;
   readonly title: string;
+  readonly url: string;
+}
+
+function appLink(appUrl: string, url: string): string {
+  return new URL(url, `${appUrl}/`).toString();
+}
+
+function withAppLinks<Page extends { readonly conversations: readonly { readonly url: string }[] }>(
+  appUrl: string,
+  page: Page,
+): Page {
+  return {
+    ...page,
+    conversations: page.conversations.map((conversation) => ({
+      ...conversation,
+      url: appLink(appUrl, conversation.url),
+    })),
+  };
 }
 
 async function docIdsForComments(
@@ -52,6 +72,7 @@ async function docIdsForComments(
 
 async function docSummaries(
   principal: Principal,
+  appUrl: string,
   docIds: readonly string[],
 ): Promise<Map<string, DocSummary>> {
   if (docIds.length === 0) return new Map();
@@ -70,7 +91,12 @@ async function docSummaries(
       .where(
         and(eq(schema.doc.organizationId, principal.organizationId), inArray(schema.doc.id, ids)),
       );
-    return new Map(rows.map((row) => [row.id, { id: row.id, title: row.title }]));
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        { id: row.id, title: row.title, url: appLink(appUrl, docUrl(row.id)) },
+      ]),
+    );
   });
 }
 
@@ -93,6 +119,7 @@ async function issueIdsForComments(
 
 async function issueSummaries(
   principal: Principal,
+  appUrl: string,
   issueIds: readonly string[],
 ): Promise<Map<string, IssueSummary>> {
   if (issueIds.length === 0) return new Map();
@@ -123,13 +150,18 @@ async function issueSummaries(
     return new Map(
       rows.map((row) => [
         row.id,
-        { identifier: row.identifier, title: row.title, teamKey: row.teamKey },
+        {
+          identifier: row.identifier,
+          title: row.title,
+          teamKey: row.teamKey,
+          url: appLink(appUrl, issueUrl(row.identifier)),
+        },
       ]),
     );
   });
 }
 
-export function registerInboxTools(server: McpServer, principal: Principal): void {
+export function registerInboxTools(server: McpServer, principal: Principal, appUrl: string): void {
   defineTool(
     server,
     {
@@ -140,7 +172,7 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         'Your inbox grouped into one conversation per pull request, document, or issue activity family. Filters run before pagination. Cursors describe a live feed: fetch a fresh first page to reconcile conversations moved by new activity. Counts are unread conversations, not events.',
       inputSchema: inboxConversationQuerySchema.shape,
     },
-    async (input) => ({ ...(await listInboxConversations(principal, input)) }),
+    async (input) => ({ ...withAppLinks(appUrl, await listInboxConversations(principal, input)) }),
   );
   defineTool(
     server,
@@ -152,9 +184,13 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         'Read immutable notification events newest first for one of your currently accessible conversations. Use the returned cursor for older updates.',
       inputSchema: { conversationId: idSchema, ...inboxHistoryQuerySchema.shape },
     },
-    async ({ conversationId, ...input }) => ({
-      ...(await listInboxConversationEvents(principal, conversationId, input)),
-    }),
+    async ({ conversationId, ...input }) => {
+      const page = await listInboxConversationEvents(principal, conversationId, input);
+      return {
+        ...page,
+        events: page.events.map((event) => ({ ...event, url: appLink(appUrl, event.url) })),
+      };
+    },
   );
   defineTool(
     server,
@@ -169,7 +205,7 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
     async (input) => {
       const { actions, ...result } = await markInboxConversationsRead(principal, input);
       await publish(actions);
-      return result;
+      return withAppLinks(appUrl, result);
     },
   );
   defineTool(
@@ -215,14 +251,14 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
         const resolved = byDocComment.get(item.entityId);
         return resolved === undefined ? [] : [resolved];
       });
-      const byDoc = await docSummaries(principal, docIds);
+      const byDoc = await docSummaries(principal, appUrl, docIds);
 
       const issueIds = page.items.flatMap((item) => {
         if (item.entityType === 'issue') return [item.entityId];
         const resolved = byComment.get(item.entityId);
         return resolved === undefined ? [] : [resolved];
       });
-      const byIssue = await issueSummaries(principal, issueIds);
+      const byIssue = await issueSummaries(principal, appUrl, issueIds);
 
       return {
         notifications: page.items.map((item) => {
@@ -236,7 +272,7 @@ export function registerInboxTools(server: McpServer, principal: Principal): voi
             actorName: item.actorName,
             title: item.title,
             body: item.body,
-            url: item.url,
+            url: appLink(appUrl, item.url),
             createdAt: item.createdAt.toISOString(),
             read: item.readAt !== null,
             issue: issueId === undefined ? null : (byIssue.get(issueId) ?? null),

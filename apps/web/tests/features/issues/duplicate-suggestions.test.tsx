@@ -6,7 +6,7 @@ import { DuplicateSuggestions } from '@/features/issues/duplicate-suggestions.ts
 describe('DuplicateSuggestions', () => {
   it('renders nothing when duplicates list is empty', () => {
     const { container } = render(
-      <DuplicateSuggestions duplicates={[]} onDismiss={() => undefined} />,
+      <DuplicateSuggestions duplicates={[]} onDismiss={() => undefined} onOpen={() => undefined} />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -39,7 +39,13 @@ describe('DuplicateSuggestions', () => {
       },
     ];
 
-    render(<DuplicateSuggestions duplicates={duplicates} onDismiss={() => undefined} />);
+    render(
+      <DuplicateSuggestions
+        duplicates={duplicates}
+        onDismiss={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
 
     expect(screen.getByTestId('duplicate-suggestions')).toBeInTheDocument();
     expect(screen.getByText('Similar existing issues (2)')).toBeInTheDocument();
@@ -52,8 +58,7 @@ describe('DuplicateSuggestions', () => {
 
     const link = screen.getByRole('link', { name: /Safari passkey failure/i });
     expect(link).toHaveAttribute('href', '/issue/ENG-10');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(link).not.toHaveAttribute('target');
     expect(screen.getByRole('link', { name: /Passkey login broken on Safari/i })).toHaveAttribute(
       'href',
       '/issue/ENG-12',
@@ -78,7 +83,20 @@ describe('DuplicateSuggestions', () => {
       },
     ];
 
-    render(<DuplicateSuggestions duplicates={duplicates} onDismiss={onDismiss} />);
+    const onOpen = mock(() => undefined);
+    render(<DuplicateSuggestions duplicates={duplicates} onDismiss={onDismiss} onOpen={onOpen} />);
+
+    const link = screen.getByRole('link', { name: /Safari passkey failure/i });
+    await user.click(link);
+    expect(onOpen).toHaveBeenCalledWith(duplicates[0]);
+    onOpen.mockClear();
+    await user.keyboard('{Control>}');
+    await user.click(link);
+    await user.keyboard('{/Control}');
+    expect(onOpen).not.toHaveBeenCalled();
+    link.focus();
+    await user.keyboard(' ');
+    expect(onOpen).toHaveBeenCalledWith(duplicates[0]);
 
     await user.click(screen.getByRole('button', { name: 'Dismiss similar issues' }));
     expect(onDismiss).toHaveBeenCalledTimes(1);
