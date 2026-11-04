@@ -104,6 +104,7 @@ export async function listTeamBadges(principal: Principal): Promise<TeamBadge[]>
 
 export interface TeamDetail extends TeamBadge {
   readonly description: string;
+  readonly instructions: string;
   readonly archivedAt: string | null;
   readonly memberIds: string[];
 }
@@ -131,6 +132,7 @@ export async function listTeamDetails(principal: Principal): Promise<TeamDetail[
     key: team.key,
     name: team.name,
     description: team.description,
+    instructions: team.instructions,
     archivedAt: team.archivedAt?.toISOString() ?? null,
     memberIds: byTeam.get(team.id) ?? [],
   }));

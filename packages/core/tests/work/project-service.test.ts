@@ -773,3 +773,18 @@ describe('listWorkspaceProjectUpdates', () => {
     expect(updates.map((u) => u.projectId)).not.toContain(otherProject.id);
   });
 });
+
+describe('project agent instructions', () => {
+  it('creates and updates a project with instructions', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Agent Project Instructions',
+      instructions: 'Deliver MVP with full test coverage.',
+    });
+    expect(project.instructions).toBe('Deliver MVP with full test coverage.');
+
+    const updated = await updateProject(workspace.admin, project.id, {
+      instructions: 'Follow release checklist before shipping.',
+    });
+    expect(updated.project.instructions).toBe('Follow release checklist before shipping.');
+  });
+});

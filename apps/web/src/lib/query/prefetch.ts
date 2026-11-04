@@ -20,7 +20,7 @@ function asWire<T>(schema: { parse: (value: unknown) => T }, payload: unknown): 
 async function serverIssuePage(principal: Principal, teamId: string): Promise<IssuePage> {
   const page = await listIssues(principal, { teamId, limit: ISSUE_PAGE_SIZE });
   return asWire(issueListSchema, {
-    issues: await attachIssueDecorations(page.issues),
+    issues: await attachIssueDecorations(page.issues, principal.organizationId),
     nextCursor: page.nextCursor,
   });
 }
@@ -32,7 +32,7 @@ async function serverAssignedPage(principal: Principal): Promise<IssuePage> {
     limit: ISSUE_PAGE_SIZE,
   });
   return asWire(issueListSchema, {
-    issues: await attachIssueDecorations(page.issues),
+    issues: await attachIssueDecorations(page.issues, principal.organizationId),
     nextCursor: page.nextCursor,
   });
 }

@@ -131,6 +131,7 @@ export const project = pgTable(
     health: text('health').notNull().default('no_update'),
     icon: text('icon').notNull().default('box'),
     color: text('color').notNull().default('#5A63C8'),
+    instructions: text('instructions').notNull().default(''),
     leadId: text('lead_id').references(() => user.id, { onDelete: 'set null' }),
     estimateScaleId: text('estimate_scale_id').references(() => estimateScale.id, {
       onDelete: 'set null',
@@ -366,9 +367,7 @@ export const issue = pgTable(
       .notNull()
       .references(() => workflowState.id, { onDelete: 'restrict' }),
     priority: smallint('priority').notNull().default(0),
-    creatorId: text('creator_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    creatorId: text('creator_id').references(() => user.id, { onDelete: 'restrict' }),
     assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
     creatorUserId: text('creator_user_id').references(() => user.id, { onDelete: 'set null' }),
     creatorAgentId: text('creator_agent_id').references(() => agentIdentity.id, {

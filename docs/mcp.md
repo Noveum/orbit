@@ -88,8 +88,15 @@ edit it, through the existing `org:manage` permission. Rules written in this
 field are advisory. Policy checks and OAuth scopes remain the authorization
 boundary for every action.
 
-The first version stores one set of instructions per workspace. Team-specific
-overrides are not supported yet.
+Teams and projects can also configure their own agent instructions. The
+`get_workspace_instructions` tool accepts an optional `team` or `project`
+parameter to return the resolved guidance layered in order (workspace, then
+team, then project) under markdown headings. When an agent calls `get_issue`, the
+response automatically includes the resolved layered instructions for that
+issue's team and project. This uses the explicit OAuth Agent identity, while
+Human connections retain their compact Issue response. Saving another team or
+project setting leaves untouched instructions unchanged; editing or clearing
+the instruction field explicitly updates it.
 
 ## Connect a client
 

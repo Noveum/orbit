@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
+import { issueActorGroupKey } from '../../../src/features/filters/grouping.ts';
+import { type IssueActorRole, resolveIssueActor } from '../../../src/lib/query/issue-actors.ts';
 import type { Comment, DocComment, Issue } from '../../../src/lib/query/schemas.ts';
 import {
   admitsNewRows,
@@ -8,10 +10,12 @@ import {
   applyIssueDelta,
   applyIssueDeltaToPages,
   applyIssueDetailDelta,
+  applyIssueRowDelta,
   applyReactionDelta,
   awaitsServerRefresh,
   belongsInList,
   flattenIssuePages,
+  isGroupColumn,
   mapIssuePages,
   orderingOf,
   searchOf,
@@ -108,7 +112,474 @@ describe('sync id staleness guard', () => {
   });
 });
 
+describe('issue identity changes without Actor payloads', () => {
+  const human = {
+    type: 'user' as const,
+    id: 'user_1',
+    name: 'Alice',
+    avatar: '/alice.png',
+    deleted: true,
+  };
+  const agent = {
+    type: 'agent' as const,
+    id: 'agent_1',
+    name: 'Helper',
+    avatar: '/helper.png',
+    deleted: true,
+  };
+  const original = issue({
+    creatorUserId: human.id,
+    creatorAgentId: null,
+    creator: human,
+    assigneeId: human.id,
+    assigneeUserId: human.id,
+    assigneeAgentId: null,
+    assignee: human,
+    ownerUserId: human.id,
+    owner: human,
+  });
+  const agentAssignment = {
+    assigneeId: null,
+    assigneeUserId: null,
+    assigneeAgentId: agent.id,
+    assignee: agent,
+  };
+  const emptyAssignment = {
+    assigneeId: null,
+    assigneeUserId: null,
+    assigneeAgentId: null,
+    assignee: null,
+  };
+  type Identity = { readonly type: 'user' | 'agent'; readonly id: string } | null;
+  interface IdentityChange {
+    readonly name: string;
+    readonly role: IssueActorRole;
+    readonly before: Partial<Issue>;
+    readonly delta: Partial<Issue>;
+    readonly expected: Identity;
+  }
+  const changes: readonly IdentityChange[] = [
+    {
+      name: 'reassigns a Human using typed IDs',
+      role: 'assignee',
+      before: {},
+      delta: { assigneeId: 'user_2', assigneeUserId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'reassigns a Human using only the legacy ID',
+      role: 'assignee',
+      before: {},
+      delta: { assigneeId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'clears a Human assignment using typed IDs',
+      role: 'assignee',
+      before: {},
+      delta: { assigneeId: null, assigneeUserId: null, assigneeAgentId: null },
+      expected: null,
+    },
+    {
+      name: 'clears a Human assignment using only the legacy ID',
+      role: 'assignee',
+      before: {},
+      delta: { assigneeId: null },
+      expected: null,
+    },
+    {
+      name: 'switches a Human assignment to an Agent',
+      role: 'assignee',
+      before: {},
+      delta: { assigneeId: null, assigneeUserId: null, assigneeAgentId: 'agent_2' },
+      expected: { type: 'agent', id: 'agent_2' },
+    },
+    {
+      name: 'switches to an Agent when only the typed Agent ID is supplied',
+      role: 'assignee',
+      before: {},
+      delta: { assigneeAgentId: 'agent_2' },
+      expected: { type: 'agent', id: 'agent_2' },
+    },
+    {
+      name: 'switches an Agent assignment to a Human using typed IDs',
+      role: 'assignee',
+      before: agentAssignment,
+      delta: { assigneeId: 'user_2', assigneeUserId: 'user_2', assigneeAgentId: null },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'switches an Agent assignment to a Human using only the legacy ID',
+      role: 'assignee',
+      before: agentAssignment,
+      delta: { assigneeId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'switches to a Human when only the typed User ID is supplied',
+      role: 'assignee',
+      before: agentAssignment,
+      delta: { assigneeUserId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'assigns an issue whose Actor was explicitly null',
+      role: 'assignee',
+      before: emptyAssignment,
+      delta: { assigneeId: 'user_2', assigneeUserId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'changes the creator using typed IDs',
+      role: 'creator',
+      before: {},
+      delta: { creatorId: 'user_2', creatorUserId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'changes the creator using only the legacy ID',
+      role: 'creator',
+      before: {},
+      delta: { creatorId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'switches the creator to an Agent',
+      role: 'creator',
+      before: {},
+      delta: { creatorUserId: null, creatorAgentId: 'agent_2' },
+      expected: { type: 'agent', id: 'agent_2' },
+    },
+    {
+      name: 'changes the owner',
+      role: 'owner',
+      before: {},
+      delta: { ownerUserId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+    {
+      name: 'clears the owner',
+      role: 'owner',
+      before: {},
+      delta: { ownerUserId: null },
+      expected: null,
+    },
+    {
+      name: 'sets an owner whose Actor was explicitly null',
+      role: 'owner',
+      before: { ownerUserId: null, owner: null },
+      delta: { ownerUserId: 'user_2' },
+      expected: { type: 'user', id: 'user_2' },
+    },
+  ];
+  const paths: readonly {
+    readonly name: string;
+    readonly apply: (row: Issue, update: SyncAction) => Issue | undefined;
+  }[] = [
+    { name: 'row', apply: applyIssueRowDelta },
+    { name: 'list', apply: (row, update) => applyIssueDelta([row], update, TEAM)[0] },
+    {
+      name: 'detail',
+      apply: (row, update) => applyIssueDetailDelta({ issue: row }, update)?.issue,
+    },
+    {
+      name: 'parent',
+      apply: (row, update) =>
+        applyIssueDetailDelta({ issue: issue({ id: 'other' }), parent: row }, update)?.parent,
+    },
+    {
+      name: 'sub-issue',
+      apply: (row, update) =>
+        applyIssueDetailDelta({ issue: issue({ id: 'other' }), subIssues: [row] }, update)
+          ?.subIssues[0],
+    },
+    {
+      name: 'paged list',
+      apply: (row, update) =>
+        applyIssueDeltaToPages(
+          { pages: [{ issues: [row], nextCursor: null }], pageParams: [null] },
+          update,
+          TEAM,
+        )?.pages[0]?.issues[0],
+    },
+  ];
+
+  function identityKey(identity: Identity): string {
+    if (identity === null) return 'none';
+    return identity.type === 'agent' ? `agent:${identity.id}` : identity.id;
+  }
+
+  for (const path of paths) {
+    describe(path.name, () => {
+      for (const change of changes) {
+        it(change.name, () => {
+          const before = { ...original, ...change.before };
+          const update = action({ data: { id: before.id, syncId: 12, ...change.delta } });
+          const next = path.apply(before, update);
+          expect(next).toBeDefined();
+          if (next === undefined) return;
+          const actor = resolveIssueActor(next, change.role);
+          expect(actor === null ? null : { type: actor.type, id: actor.id }).toEqual(
+            change.expected,
+          );
+          for (const role of ['creator', 'assignee', 'owner'] as const) {
+            if (role !== change.role) expect(next[role]).toBe(before[role]);
+          }
+          if (change.role !== 'owner') {
+            expect(issueActorGroupKey(next, change.role)).toBe(identityKey(change.expected));
+          }
+          if (change.role !== 'assignee') return;
+          expect(belongsInList('participantId=none', next)).toBe(change.expected === null);
+          expect(belongsInList('workType=assigned', next)).toBe(change.expected !== null);
+          if (change.expected === null) return;
+          const key = identityKey(change.expected);
+          expect(belongsInList(`assigneeId=${key}`, next)).toBe(true);
+          expect(isGroupColumn(`assigneeId=${key}`, next)).toBe(true);
+          expect(belongsInList(`participantId=${change.expected.id}`, next)).toBe(
+            change.expected.type === 'user',
+          );
+        });
+      }
+
+      it('retains complete profiles when IDs do not change', () => {
+        const update = action({
+          data: {
+            id: original.id,
+            syncId: 12,
+            creatorId: human.id,
+            creatorUserId: human.id,
+            creatorAgentId: null,
+            assigneeId: human.id,
+            assigneeUserId: human.id,
+            assigneeAgentId: null,
+            ownerUserId: human.id,
+            priority: 1,
+          },
+        });
+        const next = path.apply(original, update);
+        expect(next?.creator).toEqual(human);
+        expect(next?.assignee).toEqual(human);
+        expect(next?.owner).toEqual(human);
+      });
+
+      it('retains complete profiles through unrelated partial updates', () => {
+        const update = action({ data: { id: original.id, syncId: 12, priority: 1 } });
+        const humanIssue = path.apply(original, update);
+        expect(humanIssue?.creator).toEqual(human);
+        expect(humanIssue?.assignee).toEqual(human);
+        expect(humanIssue?.owner).toEqual(human);
+        const agentIssue = path.apply(
+          {
+            ...original,
+            ...agentAssignment,
+            creatorUserId: null,
+            creatorAgentId: agent.id,
+            creator: agent,
+            ownerUserId: null,
+            owner: null,
+          },
+          update,
+        );
+        expect(agentIssue?.creator).toEqual(agent);
+        expect(agentIssue?.assignee).toEqual(agent);
+        expect(agentIssue?.owner).toBeNull();
+      });
+
+      it('retains an Agent when its unchanged legacy ID is null', () => {
+        const next = path.apply(
+          { ...original, ...agentAssignment },
+          action({ data: { id: original.id, syncId: 12, assigneeId: null, priority: 1 } }),
+        );
+        expect(next?.assignee).toEqual(agent);
+      });
+
+      it('gives supplied Actors and explicit null priority over raw IDs', () => {
+        const next = path.apply(
+          original,
+          action({
+            data: {
+              id: original.id,
+              syncId: 12,
+              creatorId: 'user_2',
+              creatorUserId: 'user_2',
+              creator: agent,
+              assigneeId: 'user_2',
+              assigneeUserId: 'user_2',
+              assignee: null,
+              ownerUserId: 'user_2',
+              owner: null,
+            },
+          }),
+        );
+        expect(next?.creator).toEqual(agent);
+        expect(next?.assignee).toBeNull();
+        expect(next?.owner).toBeNull();
+      });
+    });
+  }
+
+  it.each(['user', 'agent'] as const)(
+    'does not resurrect a stale opposite identity after reaffirming the same typed %s ID',
+    (type) => {
+      const before = {
+        ...original,
+        assigneeAgentId: agent.id,
+        assignee: type === 'user' ? human : agent,
+      };
+      const delta = type === 'user' ? { assigneeUserId: human.id } : { assigneeAgentId: agent.id };
+      const reaffirmed = applyIssueRowDelta(
+        before,
+        action({ data: { id: original.id, syncId: 12, ...delta } }),
+      );
+      expect(reaffirmed.assignee).toEqual(before.assignee);
+      const cleared = applyIssueRowDelta(
+        reaffirmed,
+        action({
+          data: {
+            id: original.id,
+            syncId: 13,
+            ...(type === 'user' ? { assigneeUserId: null } : { assigneeAgentId: null }),
+          },
+        }),
+      );
+      expect(resolveIssueActor(cleared, 'assignee')).toBeNull();
+    },
+  );
+
+  it('replaces a cached null Actor when a supplied typed ID equals the masked raw ID', () => {
+    const next = applyIssueRowDelta(
+      { ...original, assignee: null },
+      action({ data: { id: original.id, syncId: 12, assigneeUserId: human.id } }),
+    );
+    expect(resolveIssueActor(next, 'assignee')).toMatchObject({ type: 'user', id: human.id });
+  });
+
+  it('retains a canonical-only Agent when a partial update clears only the Human ID', () => {
+    const next = applyIssueRowDelta(
+      issue({ assigneeId: null, assignee: agent }),
+      action({ data: { id: original.id, syncId: 12, assigneeUserId: null } }),
+    );
+    expect(resolveIssueActor(next, 'assignee')).toEqual(agent);
+  });
+
+  it('does not restore an old Agent after a canonical-only Human update is cleared', () => {
+    const reassigned = applyIssueRowDelta(
+      { ...original, ...agentAssignment },
+      action({ data: { id: original.id, syncId: 12, assignee: human } }),
+    );
+    expect(resolveIssueActor(reassigned, 'assignee')).toEqual(human);
+    const cleared = applyIssueRowDelta(
+      reassigned,
+      action({ data: { id: original.id, syncId: 13, assigneeUserId: null } }),
+    );
+    expect(resolveIssueActor(cleared, 'assignee')).toBeNull();
+  });
+
+  it('restores the legacy Human creator after a partial update clears the Agent ID', () => {
+    const next = applyIssueRowDelta(
+      {
+        ...original,
+        creatorUserId: null,
+        creatorAgentId: agent.id,
+        creator: agent,
+      },
+      action({ data: { id: original.id, syncId: 12, creatorAgentId: null } }),
+    );
+    expect(resolveIssueActor(next, 'creator')).toMatchObject({ type: 'user', id: human.id });
+  });
+
+  it('removes ID-only reassignment from the previous assignee list', () => {
+    const search = 'assigneeId=user_1';
+    const next = applyIssueDelta(
+      [original],
+      action({
+        data: { id: original.id, syncId: 12, assigneeId: 'user_2', assigneeUserId: 'user_2' },
+      }),
+      (row) => belongsInList(search, row),
+      search,
+    );
+    expect(next).toEqual([]);
+  });
+});
+
 describe('applyIssueDelta', () => {
+  it('accepts a real Agent-created insert with no legacy Human creator', () => {
+    const creator = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build helper',
+      avatar: null,
+      deleted: false,
+    };
+    const incoming = issue({
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: creator.id,
+      creator,
+    });
+    const rows = applyIssueDelta([], action({ action: 'insert', data: incoming }), TEAM);
+    expect(rows[0]?.creatorId).toBeNull();
+    expect(rows[0]?.creator).toEqual(creator);
+  });
+
+  it('preserves complete actors and nonempty defaulted fields through partial updates', () => {
+    const agent = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build helper',
+      avatar: 'https://example.com/helper.png',
+      deleted: true,
+    };
+    const original = issue({
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: agent.id,
+      creator: agent,
+      assignee: agent,
+      owner: null,
+      description: 'Notes',
+    });
+    const delta = action({ data: { id: original.id, priority: 1, syncId: 12 } });
+    const row = applyIssueDelta([original], delta, TEAM)[0];
+    expect(row?.creator).toEqual(agent);
+    expect(row?.creatorId).toBeNull();
+    expect(row?.assignee).toEqual(agent);
+    expect(row?.owner).toBeNull();
+    expect(row?.description).toBe('Notes');
+    expect(row?.organizationId).toBe(original.organizationId);
+    expect(row?.stateEnteredAt).toBe(original.stateEnteredAt);
+    expect(applyIssueDetailDelta({ issue: original }, delta)?.issue).toEqual(row);
+  });
+
+  it('accepts explicit null assignment and owner updates without clearing creator', () => {
+    const creator = {
+      type: 'user' as const,
+      id: 'user_1',
+      name: 'Alex',
+      avatar: null,
+      deleted: false,
+    };
+    const next = applyIssueDelta(
+      [issue({ creator, assignee: creator, owner: creator })],
+      action({ data: { id: 'issue_1', assignee: null, owner: null, syncId: 12 } }),
+      TEAM,
+    );
+    expect(next[0]?.creator).toEqual(creator);
+    expect(next[0]?.assignee).toBeNull();
+    expect(next[0]?.owner).toBeNull();
+  });
+
+  it('treats Agents as assigned while preserving Human participation and group matching', () => {
+    const row = issue({
+      assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: false },
+    });
+    expect(belongsInList('workType=assigned', row)).toBe(true);
+    expect(belongsInList('participantId=none', row)).toBe(false);
+    expect(belongsInList('participantId=user_1', row)).toBe(false);
+    expect(belongsInList('assigneeId=agent:agent_1', row)).toBe(true);
+    expect(belongsInList('assigneeId=user_1', row)).toBe(false);
+  });
+
   it('merges a partial update and keeps labels the delta does not carry', () => {
     const list = [issue({ reviewerIds: ['user_reviewer'] })];
     const next = applyIssueDelta(
@@ -188,6 +659,25 @@ describe('applyIssueDelta', () => {
 });
 
 describe('applyIssueDetailDelta', () => {
+  it('updates Actor views in cached parent and sub-issues', () => {
+    const related = issue({ id: 'related', syncId: 10 });
+    const detail = { issue: issue(), parent: related, subIssues: [related] };
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Helper',
+      avatar: null,
+      deleted: false,
+    };
+    const next = applyIssueDetailDelta(
+      detail,
+      action({ modelId: related.id, data: { id: related.id, assignee, syncId: 12 } }),
+    );
+    expect(next?.issue).toBe(detail.issue);
+    expect(next?.parent?.assignee).toEqual(assignee);
+    expect(next?.subIssues[0]?.assignee).toEqual(assignee);
+  });
+
   it('drops the rendered description when the markdown changes so the viewer sees the new text', () => {
     const detail = { issue: issue(), descriptionHtml: '<p>old</p>' };
     const patched = applyIssueDetailDelta(

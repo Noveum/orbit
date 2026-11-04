@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { updateOrganization } from '@orbit/core';
-import { db, eq, schema } from '@orbit/db';
+import {
+  bindAgentMcpCredential,
+  createProject,
+  createTeam,
+  getIssue,
+  prepareAgentMcpGrant,
+  updateOrganization,
+  updateProject,
+} from '@orbit/core';
+import { db, eq, schema, sql } from '@orbit/db';
+import type { IssueActor } from '@orbit/shared/validators';
 import {
   addMember,
   connect,
@@ -20,10 +29,13 @@ let guest: TestClient;
 interface IssueShape {
   readonly id: string;
   readonly identifier: string;
+  readonly url: string;
   readonly title: string;
   readonly state: string | null;
   readonly priority: string;
-  readonly assignee: string | null;
+  readonly creator: IssueActor;
+  readonly assignee: IssueActor | null;
+  readonly owner: IssueActor | null;
   readonly reviewers: readonly string[];
   readonly reviewerIds: readonly string[];
   readonly cycleId: string | null;
@@ -69,6 +81,55 @@ async function newIssue(title: string, extra: Record<string, unknown> = {}): Pro
     ...extra,
   });
   return issueOf(payload);
+}
+
+async function withReadOnlyAgent(
+  userId: string,
+  work: (client: TestClient) => Promise<void>,
+): Promise<void> {
+  const previousGate = process.env['ORBIT_AGENT_MCP'];
+  process.env['ORBIT_AGENT_MCP'] = 'true';
+  try {
+    const clientId = crypto.randomUUID();
+    const accessToken = crypto.randomUUID();
+    await db.insert(schema.oauthApplication).values({
+      id: crypto.randomUUID(),
+      clientId,
+      name: 'Scoped guidance client',
+      redirectUrls: 'https://example.test/callback',
+      type: 'public',
+    });
+    const grantId = await db.transaction((tx) =>
+      prepareAgentMcpGrant(
+        tx,
+        { userId, organizationId: workspace.organizationId, clientId, scopes: 'orbit.read' },
+        { name: 'Scoped guidance reader' },
+        new Date(),
+      ),
+    );
+    await db.insert(schema.oauthAccessToken).values({
+      id: crypto.randomUUID(),
+      accessToken,
+      refreshToken: crypto.randomUUID(),
+      clientId,
+      userId,
+      scopes: 'orbit.read',
+      mcpGrantId: grantId,
+      accessTokenExpiresAt: new Date(Date.now() + 60_000),
+      refreshTokenExpiresAt: new Date(Date.now() + 120_000),
+    });
+    const secret = process.env['BETTER_AUTH_SECRET'];
+    if (secret === undefined) throw new Error('Missing test credential secret.');
+    const client = await connect(bindAgentMcpCredential(accessToken, grantId, secret));
+    try {
+      await work(client);
+    } finally {
+      await client.close();
+    }
+  } finally {
+    if (previousGate === undefined) delete process.env['ORBIT_AGENT_MCP'];
+    else process.env['ORBIT_AGENT_MCP'] = previousGate;
+  }
 }
 
 beforeAll(async () => {
@@ -184,6 +245,44 @@ describe('discovery', () => {
       await connected.close();
     }
   });
+
+  it('returns layered workspace, team, and project instructions with markdown headings', async () => {
+    const wsGuidance = 'Workspace level guidance.';
+    const teamGuidance = 'Team conventions and branch rules.';
+    const projectGuidance = 'Project scope and acceptance criteria.';
+
+    await updateOrganization(workspace.admin, { agentInstructions: wsGuidance });
+    await db
+      .update(schema.team)
+      .set({ instructions: teamGuidance })
+      .where(eq(schema.team.id, workspace.teamId));
+
+    const projectCreated = await createProject(workspace.admin, {
+      name: 'Layered Project',
+      instructions: projectGuidance,
+      teamIds: [workspace.teamId],
+    });
+
+    const teamOnly = await admin.result('get_workspace_instructions', { team: workspace.teamKey });
+    expect(teamOnly).toEqual({
+      agentInstructions: `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}`,
+    });
+
+    const projectOnly = await admin.result('get_workspace_instructions', {
+      project: projectCreated.project.slug,
+    });
+    expect(projectOnly).toEqual({
+      agentInstructions: `## Workspace\n\n${wsGuidance}\n\n## Project\n\n${projectGuidance}`,
+    });
+
+    const layered = await admin.result('get_workspace_instructions', {
+      team: workspace.teamKey,
+      project: projectCreated.project.slug,
+    });
+    expect(layered).toEqual({
+      agentInstructions: `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}\n\n## Project\n\n${projectGuidance}`,
+    });
+  });
 });
 
 describe('permissions', () => {
@@ -209,6 +308,126 @@ describe('permissions', () => {
 });
 
 describe('issues', () => {
+  it('keeps an Agent Issue readable after its project becomes hidden from the owner', async () => {
+    const workspaceGuidance = 'Readable workspace guidance.';
+    const teamGuidance = 'Readable Team A guidance.';
+    const hiddenGuidance = 'Private Team B project guidance.';
+    await updateOrganization(workspace.admin, { agentInstructions: workspaceGuidance });
+    await db
+      .update(schema.team)
+      .set({ instructions: teamGuidance })
+      .where(eq(schema.team.id, workspace.teamId));
+    const member = await addMember(workspace, 'member', 'Scoped guidance owner');
+    const otherTeam = await createTeam(workspace.admin, { name: 'Guidance Team B', key: 'GTB' });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Restricted guidance project',
+      teamIds: [workspace.teamId],
+      instructions: hiddenGuidance,
+    });
+    const created = await newIssue('Readable Issue with a hidden project', { project: project.id });
+    const human = await connect(await mintToken(workspace.organizationId, member.user.id));
+    try {
+      await withReadOnlyAgent(member.user.id, async (agent) => {
+        const visible = await agent.result('get_issue', { issue: created.identifier });
+        expect(visible['instructions']).toContain(hiddenGuidance);
+        await updateProject(workspace.admin, project.id, { teamIds: [otherTeam.team.id] });
+        expect((await getIssue(member.principal, created.identifier)).projectId).toBe(project.id);
+        expect(issueOf(await human.result('get_issue', { issue: created.identifier })).id).toBe(
+          created.id,
+        );
+        const explicit = await agent.call('get_workspace_instructions', { project: project.id });
+        expect(explicit.isError).toBe(true);
+        expect(errorPayload(explicit).code).toBe('not_found');
+        const read = await agent.call('get_issue', { issue: created.identifier });
+        expect(read.isError).not.toBe(true);
+        const fetched = await agent.result('get_issue', { issue: created.identifier });
+        const expected = `## Workspace\n\n${workspaceGuidance}\n\n## Team\n\n${teamGuidance}`;
+        expect(fetched['instructions']).toBe(expected);
+        expect((fetched['issue'] as Record<string, unknown>)['instructions']).toBe(expected);
+        expect(JSON.stringify(fetched)).not.toContain(hiddenGuidance);
+      });
+    } finally {
+      await human.close();
+    }
+  });
+
+  it('propagates genuine database failures while loading optional project guidance', async () => {
+    const member = await addMember(workspace, 'member', 'Database guidance owner');
+    const { project } = await createProject(workspace.admin, {
+      name: 'Database guidance project',
+      teamIds: [workspace.teamId],
+      instructions: 'Visible project guidance.',
+    });
+    const created = await newIssue('Project guidance database failure', { project: project.id });
+    const human = await connect(await mintToken(workspace.organizationId, member.user.id));
+    try {
+      await withReadOnlyAgent(member.user.id, async (agent) => {
+        await db.execute(
+          sql`ALTER TABLE "project" RENAME COLUMN "instructions" TO "unavailable_test_instructions"`,
+        );
+        try {
+          expect(issueOf(await human.result('get_issue', { issue: created.identifier })).id).toBe(
+            created.id,
+          );
+          const read = await agent.call('get_issue', { issue: created.identifier });
+          expect(read.isError).toBe(true);
+          expect(errorPayload(read).code).toBe('internal');
+        } finally {
+          await db.execute(
+            sql`ALTER TABLE "project" RENAME COLUMN "unavailable_test_instructions" TO "instructions"`,
+          );
+        }
+      });
+    } finally {
+      await human.close();
+    }
+  });
+
+  it('reads Agent names, avatars and tombstones without inferring a Human Owner', async () => {
+    const created = await newIssue('Agent reader fixture', { assignee: 'me' });
+    const id = crypto.randomUUID();
+    await db.insert(schema.agentIdentity).values({
+      id,
+      organizationId: workspace.organizationId,
+      ownerUserId: workspace.adminUser.id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deletedAt: new Date(),
+      ownerNameSnapshot: workspace.adminUser.name,
+      clientNameSnapshot: 'Fixture',
+    });
+    await db
+      .update(schema.issue)
+      .set({
+        creatorId: null,
+        creatorUserId: null,
+        creatorAgentId: id,
+        assigneeId: null,
+        assigneeUserId: null,
+        assigneeAgentId: id,
+      })
+      .where(eq(schema.issue.id, created.id));
+    await db.update(schema.issue).set({ ownerUserId: null }).where(eq(schema.issue.id, created.id));
+    const fetched = issueOf(await admin.result('get_issue', { issue: created.identifier }));
+    const expected = {
+      type: 'agent',
+      id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deleted: true,
+    } as const;
+    expect(fetched.url).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${created.identifier}`);
+    expect(fetched.creator).toEqual(expected);
+    expect(fetched.assignee).toEqual(expected);
+    expect(fetched.owner).toBeNull();
+    const searched = issuesOf(
+      await admin.result('search_issues', { query: 'Agent reader fixture' }),
+    );
+    const searchResult = searched.find((issue) => issue.id === created.id);
+    expect(searchResult?.assignee).toEqual(expected);
+    expect(searchResult?.url).toBe(fetched.url);
+  });
+
   it('round trips a created issue by human identifier', async () => {
     const created = await newIssue('Ship the MCP server', {
       description: 'Serve tools over streamable HTTP.',
@@ -217,13 +436,99 @@ describe('issues', () => {
     });
     expect(created.identifier).toMatch(new RegExp(`^${workspace.teamKey}-\\d+$`));
     expect(created.priority).toBe('High');
-    expect(created.assignee).toBe(workspace.adminUser.name);
+    expect(created.assignee).toEqual({
+      type: 'user',
+      id: workspace.adminUser.id,
+      name: workspace.adminUser.name,
+      avatar: null,
+      deleted: false,
+    });
 
     const fetched = await admin.result('get_issue', { issue: created.identifier });
     const issue = issueOf(fetched) as IssueShape & { description: string; labels: string[] };
     expect(issue.id).toBe(created.id);
     expect(issue.description).toBe('Serve tools over streamable HTTP.');
     expect(issue.labels).toEqual([]);
+  });
+
+  it('includes resolved instructions in get_issue when caller is an agent and omits them for humans', async () => {
+    const wsGuidance = 'Workspace issue guidance.';
+    const teamGuidance = 'Team issue guidance.';
+    const projectGuidance = 'Project issue guidance.';
+
+    await updateOrganization(workspace.admin, { agentInstructions: wsGuidance });
+    await db
+      .update(schema.team)
+      .set({ instructions: teamGuidance })
+      .where(eq(schema.team.id, workspace.teamId));
+
+    const projectCreated = await createProject(workspace.admin, {
+      name: 'Agent Project',
+      instructions: projectGuidance,
+      teamIds: [workspace.teamId],
+    });
+
+    const issueCreated = await newIssue('Agent issue', {
+      project: projectCreated.project.name,
+    });
+
+    const humanFetched = await admin.result('get_issue', { issue: issueCreated.identifier });
+    expect(humanFetched['instructions']).toBeUndefined();
+    expect((humanFetched['issue'] as Record<string, unknown>)['instructions']).toBeUndefined();
+
+    const previousGate = process.env['ORBIT_AGENT_MCP'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    try {
+      const clientId = crypto.randomUUID();
+      const accessToken = crypto.randomUUID();
+      await db.insert(schema.oauthApplication).values({
+        id: crypto.randomUUID(),
+        clientId,
+        name: 'Guidance client',
+        redirectUrls: 'https://example.test/callback',
+        type: 'public',
+      });
+      const grantId = await db.transaction((tx) =>
+        prepareAgentMcpGrant(
+          tx,
+          {
+            userId: workspace.admin.userId,
+            organizationId: workspace.organizationId,
+            clientId,
+            scopes: 'orbit.read',
+          },
+          { name: 'Guidance reader' },
+          new Date(),
+        ),
+      );
+      await db.insert(schema.oauthAccessToken).values({
+        id: crypto.randomUUID(),
+        accessToken,
+        refreshToken: crypto.randomUUID(),
+        clientId,
+        userId: workspace.admin.userId,
+        scopes: 'orbit.read',
+        mcpGrantId: grantId,
+        accessTokenExpiresAt: new Date(Date.now() + 60_000),
+        refreshTokenExpiresAt: new Date(Date.now() + 120_000),
+      });
+      const secret = process.env['BETTER_AUTH_SECRET'];
+      if (secret === undefined) throw new Error('Missing test credential secret.');
+      const agentClient = await connect(bindAgentMcpCredential(accessToken, grantId, secret));
+      try {
+        const agentFetched = await agentClient.result('get_issue', {
+          issue: issueCreated.identifier,
+        });
+        const expected = `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}\n\n## Project\n\n${projectGuidance}`;
+        expect(agentFetched['instructions']).toBe(expected);
+        expect((agentFetched['issue'] as Record<string, unknown>)['instructions']).toBe(expected);
+      } finally {
+        await agentClient.close();
+      }
+    } finally {
+      if (previousGate === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previousGate;
+    }
   });
 
   it('filters a search by text, assignee and state category', async () => {
@@ -987,7 +1292,7 @@ describe('what a token is allowed to do', () => {
       expect(names).not.toContain('invite_member');
 
       for (const tool of tools) {
-        expect(tool.annotations?.readOnlyHint).toBe(true);
+        expect(tool.annotations?.readOnlyHint).toBe(tool.name !== 'list_inbox_conversations');
       }
     } finally {
       await readOnly.close();

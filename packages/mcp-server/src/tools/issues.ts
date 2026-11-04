@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  type AgentIssueWriteContext,
   attachFile,
   bulkUpdateIssues,
   createComment,
@@ -30,9 +31,10 @@ import {
   STATE_CATEGORIES,
 } from '@orbit/shared/constants';
 import { DomainError, notFound, validationFailed } from '@orbit/shared/errors';
-import type { Principal } from '@orbit/shared/policy';
+import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { branchName, issueCommentUrl, issueUrl } from '@orbit/shared/utils';
 import { z } from 'zod';
+import { resolveIssueInstructions } from '../instructions.ts';
 import {
   resolveCycle,
   resolveLabelIds,
@@ -43,7 +45,7 @@ import {
   resolveUserId,
 } from '../resolve.ts';
 import { deltaViews, describeIssue, describeIssues } from '../views.ts';
-import { defineTool, publish } from './support.ts';
+import { defineTool, issueWriteContextFor, publish } from './support.ts';
 
 const PRIORITY_VALUES = { none: 0, urgent: 1, high: 2, medium: 3, low: 4 } as const;
 
@@ -97,6 +99,7 @@ function registerCreateIssue(server: McpServer, principal: Principal, appUrl: st
       description:
         'Create an issue on a team. The workflow state defaults to the team first unstarted state. Returns the new issue with its identifier such as "ENG-42".',
       readOnly: false,
+      agentWrite: true,
       destructive: false,
       inputSchema: {
         team: z.string().min(1).describe('Team key like "ENG", team name, or team id.'),
@@ -112,7 +115,9 @@ function registerCreateIssue(server: McpServer, principal: Principal, appUrl: st
           .string()
           .min(1)
           .optional()
-          .describe('Assignee name, handle, email, id, or "me".'),
+          .describe(
+            'Human Assignee name, handle, email, id or "me"; use "agent" for self or "agent:<id>" for a Personal Agent.',
+          ),
         reviewers: reviewersRef.optional(),
         project: z.string().min(1).optional().describe('Project name, slug or id.'),
         cycle: z
@@ -128,12 +133,22 @@ function registerCreateIssue(server: McpServer, principal: Principal, appUrl: st
     },
     async (args) => {
       const team = await resolveTeam(principal, args.team);
-      const patch = await buildIssuePatch(principal, team.id, args);
-      const created = await createIssue(principal, {
-        ...patch,
-        teamId: team.id,
-        title: args.title,
-      });
+      const patch = await buildIssuePatch(
+        principal,
+        team.id,
+        args,
+        null,
+        issueWriteContextFor(server),
+      );
+      const created = await createIssue(
+        principal,
+        {
+          ...patch,
+          teamId: team.id,
+          title: args.title,
+        },
+        issueWriteContextFor(server),
+      );
       await publish(created.actions);
       return {
         issue: await describeIssue(principal, appUrl, created.issue),
@@ -149,6 +164,7 @@ interface ResolvedSubIssue {
   readonly stateId?: string | undefined;
   readonly priority: number;
   readonly assigneeId?: string | null | undefined;
+  readonly assigneeAgentId?: string | null | undefined;
   readonly estimate: number | null;
   readonly dueDate: string | null;
   readonly labelIds: string[];
@@ -169,11 +185,14 @@ async function resolveSubIssueItem(
   principal: Principal,
   teamId: string,
   item: SubIssueArg,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<ResolvedSubIssue> {
   const stateId =
     item.state === undefined ? undefined : await resolveStateId(principal, teamId, item.state);
-  const assigneeId =
-    item.assignee === undefined ? undefined : await resolveUserId(principal, item.assignee);
+  const assignment =
+    item.assignee === undefined
+      ? {}
+      : await resolveIssueAssignee(principal, item.assignee, writeContext);
   const labelIds =
     item.labels === undefined ? [] : await resolveLabelIds(principal, item.labels, teamId);
   return {
@@ -181,7 +200,7 @@ async function resolveSubIssueItem(
     description: item.description ?? '',
     ...(stateId === undefined ? {} : { stateId }),
     priority: item.priority === undefined ? 0 : PRIORITY_VALUES[item.priority],
-    ...(assigneeId === undefined ? {} : { assigneeId }),
+    ...assignment,
     estimate: item.estimate ?? null,
     dueDate: item.dueDate ?? null,
     labelIds,
@@ -197,6 +216,7 @@ function registerCreateSubIssues(server: McpServer, principal: Principal, appUrl
       description:
         'Create up to 50 sub-issues under a parent issue in one transaction. Returns the created identifiers in order.',
       readOnly: false,
+      agentWrite: true,
       inputSchema: {
         parent: issueRef.describe('Parent issue identifier like "ENG-42" or id.'),
         issues: z
@@ -218,7 +238,9 @@ function registerCreateSubIssues(server: McpServer, principal: Principal, appUrl
                 .string()
                 .min(1)
                 .optional()
-                .describe('Assignee name, handle, email, id, or "me".'),
+                .describe(
+                  'Human Assignee name, handle, email, id or "me"; use "agent" for self or "agent:<id>" for a Personal Agent.',
+                ),
               estimate: z.number().int().min(0).max(100).optional().describe('Estimate points.'),
               dueDate: dueDateRef.optional(),
               labels: labelsRef.optional(),
@@ -236,7 +258,9 @@ function registerCreateSubIssues(server: McpServer, principal: Principal, appUrl
       for (const item of args.issues) {
         index += 1;
         try {
-          items.push(await resolveSubIssueItem(principal, parent.teamId, item));
+          items.push(
+            await resolveSubIssueItem(principal, parent.teamId, item, issueWriteContextFor(server)),
+          );
         } catch (error) {
           if (error instanceof DomainError) {
             throw new DomainError(error.code, `Failed on item ${index}: ${error.message}`, {
@@ -248,10 +272,14 @@ function registerCreateSubIssues(server: McpServer, principal: Principal, appUrl
         }
       }
 
-      const result = await createSubIssues(principal, {
-        parentId: parent.id,
-        issues: items,
-      });
+      const result = await createSubIssues(
+        principal,
+        {
+          parentId: parent.id,
+          issues: items,
+        },
+        issueWriteContextFor(server),
+      );
       await publish(result.actions);
       return {
         parent: parent.identifier,
@@ -274,6 +302,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal, appUrl: st
       description:
         'Change fields on an existing issue. Only the fields you pass are touched. Pass null to assignee, project or cycle to clear it, or an empty reviewers array to clear the reviewer list.',
       readOnly: false,
+      agentWrite: true,
       inputSchema: {
         issue: issueRef,
         title: z.string().min(1).max(255).optional(),
@@ -293,7 +322,7 @@ function registerUpdateIssue(server: McpServer, principal: Principal, appUrl: st
           .min(1)
           .nullable()
           .optional()
-          .describe('Assignee name, handle, email, id, "me", or null to unassign.'),
+          .describe('Human reference, "me", "agent", "agent:<id>", or null to unassign.'),
         reviewers: reviewersRef.optional(),
         project: z
           .string()
@@ -321,8 +350,20 @@ function registerUpdateIssue(server: McpServer, principal: Principal, appUrl: st
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const patch = await buildIssuePatch(principal, issue.teamId, args, issue.projectId);
-      const updated = await updateIssue(principal, issue.id, patch);
+      const patch = await buildIssuePatch(
+        principal,
+        issue.teamId,
+        args,
+        issue.projectId,
+        issueWriteContextFor(server),
+      );
+      const updated = await updateIssue(
+        principal,
+        issue.id,
+        patch,
+        undefined,
+        issueWriteContextFor(server),
+      );
       await publish(updated.actions);
       return {
         issue: await describeIssue(principal, appUrl, updated.issue),
@@ -435,6 +476,7 @@ function registerBulkUpdateIssues(server: McpServer, principal: Principal, appUr
       description:
         'Update multiple issues at once (up to 50). Changes state, assignee, labels, priority, sprint (cycle) or project across all issues in one atomic operation.',
       readOnly: false,
+      agentWrite: true,
       inputSchema: {
         issues: z
           .array(issueRef)
@@ -453,7 +495,7 @@ function registerBulkUpdateIssues(server: McpServer, principal: Principal, appUr
             .min(1)
             .nullable()
             .optional()
-            .describe('Assignee name, handle, email, id, "me", or null to unassign.'),
+            .describe('Human reference, "me", "agent", "agent:<id>", or null to unassign.'),
           project: z
             .string()
             .min(1)
@@ -484,7 +526,13 @@ function registerBulkUpdateIssues(server: McpServer, principal: Principal, appUr
         await assertBulkProjectTeam(resolvedIssues, args.issues, project.id);
       }
 
-      const patch = await buildIssuePatch(principal, firstIssue.teamId, args.patch);
+      const patch = await buildIssuePatch(
+        principal,
+        firstIssue.teamId,
+        args.patch,
+        null,
+        issueWriteContextFor(server),
+      );
 
       if (args.patch.labels !== undefined) {
         await assertBulkLabelsTeam(
@@ -496,10 +544,14 @@ function registerBulkUpdateIssues(server: McpServer, principal: Principal, appUr
         );
       }
 
-      const result = await bulkUpdateIssues(principal, {
-        issueIds: resolvedIssues.map((issue) => issue.id),
-        patch,
-      });
+      const result = await bulkUpdateIssues(
+        principal,
+        {
+          issueIds: resolvedIssues.map((issue) => issue.id),
+          patch,
+        },
+        issueWriteContextFor(server),
+      );
       await publish(result.actions);
       return {
         count: result.issues.length,
@@ -550,11 +602,31 @@ function literalIssueFields(args: IssuePatchArgs): Record<string, unknown> {
   return patch;
 }
 
+async function resolveIssueAssignee(
+  principal: Principal,
+  ref: string | null,
+  context: AgentIssueWriteContext | undefined,
+): Promise<{ assigneeId?: string | null; assigneeAgentId?: string | null }> {
+  if (ref === null) return { assigneeId: null, assigneeAgentId: null };
+  if (ref === 'agent') {
+    if (context === undefined)
+      throw validationFailed('The agent Assignee requires an Agent connection.');
+    return { assigneeAgentId: context.identityId };
+  }
+  if (ref.startsWith('agent:')) {
+    const id = ref.slice('agent:'.length);
+    if (id.length === 0) throw validationFailed('An Agent ID is required.');
+    return { assigneeAgentId: id };
+  }
+  return { assigneeId: await resolveUserId(principal, ref) };
+}
+
 async function buildIssuePatch(
   principal: Principal,
   teamId: string,
   args: IssuePatchArgs,
   currentProjectId: string | null = null,
+  writeContext?: AgentIssueWriteContext,
 ): Promise<Record<string, unknown>> {
   const patch = literalIssueFields(args);
   if (args.state !== undefined)
@@ -562,8 +634,7 @@ async function buildIssuePatch(
   if (args.labels !== undefined)
     patch['labelIds'] = await resolveLabelIds(principal, args.labels, teamId);
   if (args.assignee !== undefined) {
-    patch['assigneeId'] =
-      args.assignee === null ? null : await resolveUserId(principal, args.assignee);
+    Object.assign(patch, await resolveIssueAssignee(principal, args.assignee, writeContext));
   }
   if (args.reviewers !== undefined) {
     patch['reviewerIds'] = await Promise.all(
@@ -589,7 +660,12 @@ async function buildIssuePatch(
   return patch;
 }
 
-function registerGetIssue(server: McpServer, principal: Principal, appUrl: string): void {
+function registerGetIssue(
+  server: McpServer,
+  principal: Principal,
+  appUrl: string,
+  identity: McpIdentity,
+): void {
   defineTool(
     server,
     {
@@ -602,6 +678,8 @@ function registerGetIssue(server: McpServer, principal: Principal, appUrl: strin
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
+      const instructions =
+        identity.kind === 'agent' ? await resolveIssueInstructions(principal, issue) : undefined;
       return {
         issue: {
           ...(await describeIssue(principal, appUrl, issue)),
@@ -609,7 +687,9 @@ function registerGetIssue(server: McpServer, principal: Principal, appUrl: strin
           labels: await issueLabelNames(principal, issue.id),
           relations: await issueRelationViews(principal, appUrl, issue.id),
           attachments: (await listIssueAttachments(principal, issue.id)).map(describeAttachment),
+          ...(instructions === undefined ? {} : { instructions }),
         },
+        ...(instructions === undefined ? {} : { instructions }),
       };
     },
   );
@@ -765,6 +845,7 @@ function registerMoveIssue(server: McpServer, principal: Principal, appUrl: stri
       description:
         'Move an issue to another workflow state or team, and optionally place it between two issues in the column. This is the tool to use to change status.',
       readOnly: false,
+      agentWrite: true,
       inputSchema: {
         issue: issueRef,
         state: z.string().min(1).optional().describe('Target workflow state name or id.'),
@@ -777,18 +858,23 @@ function registerMoveIssue(server: McpServer, principal: Principal, appUrl: stri
       const issue = await getIssue(principal, args.issue);
       const teamId =
         args.team === undefined ? issue.teamId : (await resolveTeam(principal, args.team)).id;
-      const moved = await moveIssue(principal, issue.id, {
-        ...(args.team === undefined ? {} : { teamId }),
-        ...(args.state === undefined
-          ? {}
-          : { stateId: await resolveStateId(principal, teamId, args.state) }),
-        ...(args.beforeIssue === undefined
-          ? {}
-          : { beforeId: (await getIssue(principal, args.beforeIssue)).id }),
-        ...(args.afterIssue === undefined
-          ? {}
-          : { afterId: (await getIssue(principal, args.afterIssue)).id }),
-      });
+      const moved = await moveIssue(
+        principal,
+        issue.id,
+        {
+          ...(args.team === undefined ? {} : { teamId }),
+          ...(args.state === undefined
+            ? {}
+            : { stateId: await resolveStateId(principal, teamId, args.state) }),
+          ...(args.beforeIssue === undefined
+            ? {}
+            : { beforeId: (await getIssue(principal, args.beforeIssue)).id }),
+          ...(args.afterIssue === undefined
+            ? {}
+            : { afterId: (await getIssue(principal, args.afterIssue)).id }),
+        },
+        issueWriteContextFor(server),
+      );
       await publish(moved.actions);
       return {
         issue: await describeIssue(principal, appUrl, moved.issue),
@@ -894,6 +980,7 @@ function registerSetRelation(server: McpServer, principal: Principal, appUrl: st
       description:
         'Link two issues. The inverse link is written on the other issue automatically, so "blocks" also records "blocked by".',
       readOnly: false,
+      agentWrite: true,
       inputSchema: {
         issue: issueRef,
         relatedIssue: issueRef.describe('The issue on the other end of the link.'),
@@ -903,10 +990,15 @@ function registerSetRelation(server: McpServer, principal: Principal, appUrl: st
     async (args) => {
       const issue = await getIssue(principal, args.issue);
       const related = await getIssue(principal, args.relatedIssue);
-      const result = await setRelation(principal, issue.id, {
-        relatedIssueId: related.id,
-        type: args.type,
-      });
+      const result = await setRelation(
+        principal,
+        issue.id,
+        {
+          relatedIssueId: related.id,
+          type: args.type,
+        },
+        issueWriteContextFor(server),
+      );
       await publish(result.actions);
       return {
         issue: issue.identifier,
@@ -929,6 +1021,7 @@ function registerRemoveRelation(server: McpServer, principal: Principal, appUrl:
       description:
         'Remove a link between two issues. The inverse link on the other issue goes with it, so removing "blocks" also removes "blocked by".',
       readOnly: false,
+      agentWrite: true,
       destructive: true,
       inputSchema: {
         issue: issueRef,
@@ -939,10 +1032,15 @@ function registerRemoveRelation(server: McpServer, principal: Principal, appUrl:
     async (args) => {
       const issue = await getIssue(principal, args.issue);
       const related = await getIssue(principal, args.relatedIssue);
-      const actions = await removeRelation(principal, issue.id, {
-        relatedIssueId: related.id,
-        type: args.type,
-      });
+      const actions = await removeRelation(
+        principal,
+        issue.id,
+        {
+          relatedIssueId: related.id,
+          type: args.type,
+        },
+        issueWriteContextFor(server),
+      );
       await publish(actions);
       return {
         issue: issue.identifier,
@@ -963,6 +1061,7 @@ function registerMarkIssueDuplicate(server: McpServer, principal: Principal, app
       description:
         'Mark an issue as a duplicate of another issue. Moves the duplicate issue to the team canceled state, records the duplicate_of relation, and transfers subscribers to the survivor issue.',
       readOnly: false,
+      agentWrite: true,
       destructive: true,
       idempotent: true,
       inputSchema: {
@@ -973,9 +1072,14 @@ function registerMarkIssueDuplicate(server: McpServer, principal: Principal, app
     async (args) => {
       const issue = await getIssue(principal, args.issue);
       const survivor = await getIssue(principal, args.survivorIssue);
-      const result = await markAsDuplicate(principal, issue.id, {
-        survivorIssueId: survivor.id,
-      });
+      const result = await markAsDuplicate(
+        principal,
+        issue.id,
+        {
+          survivorIssueId: survivor.id,
+        },
+        issueWriteContextFor(server),
+      );
       await publish(result.actions);
       return {
         issue: issue.identifier,
@@ -1178,12 +1282,17 @@ function registerCopyBranchName(server: McpServer, principal: Principal, appUrl:
   );
 }
 
-export function registerIssueTools(server: McpServer, principal: Principal, appUrl: string): void {
+export function registerIssueTools(
+  server: McpServer,
+  principal: Principal,
+  appUrl: string,
+  identity: McpIdentity,
+): void {
   registerCreateIssue(server, principal, appUrl);
   registerCreateSubIssues(server, principal, appUrl);
   registerUpdateIssue(server, principal, appUrl);
   registerBulkUpdateIssues(server, principal, appUrl);
-  registerGetIssue(server, principal, appUrl);
+  registerGetIssue(server, principal, appUrl, identity);
   registerSearchIssues(server, principal, appUrl);
   registerListMyIssues(server, principal, appUrl);
   registerMoveIssue(server, principal, appUrl);

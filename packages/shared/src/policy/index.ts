@@ -1,6 +1,18 @@
 import { isRestricted, ORG_ROLE_RANK, ORG_ROLES, type OrgRole } from '../constants/index.ts';
 import { forbidden, notFound } from '../errors/index.ts';
 
+export { assertAgentIssueWrite, assertPersonalAgentAssignment } from './agent-issue.ts';
+
+export {
+  assertAgentIdentityOwner,
+  assertMcpGrantOwner,
+  assertMcpToolAccess,
+  canUseMcpTool,
+  type McpIdentity,
+  type McpToolAccess,
+  type McpToolOperation,
+} from './mcp.ts';
+
 export const PERMISSIONS = [
   'analytics:read',
   'issue:read',
@@ -27,6 +39,7 @@ export const PERMISSIONS = [
   'member:invite',
   'member:manage',
   'integration:manage',
+  'ai:manage',
   'org:manage',
   'org:delete',
 ] as const;
@@ -71,6 +84,7 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   'team:manage',
   'member:manage',
   'integration:manage',
+  'ai:manage',
   'org:manage',
   'org:delete',
 ];

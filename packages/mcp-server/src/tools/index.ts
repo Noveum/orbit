@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { Principal } from '@orbit/shared/policy';
+import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { registerAdminTools } from './admin.ts';
 import { registerAnalyticsTools } from './analytics.ts';
 import { registerDocTools } from './docs.ts';
@@ -13,11 +13,16 @@ import { registerScrumTools } from './scrum.ts';
 import { registerTaxonomyTools } from './taxonomy.ts';
 import { registerWorkspaceTools } from './workspace.ts';
 
-export function registerTools(server: McpServer, principal: Principal, appUrl: string): void {
+export function registerTools(
+  server: McpServer,
+  principal: Principal,
+  identity: McpIdentity,
+  appUrl: string,
+): void {
   registerAnalyticsTools(server, principal);
-  registerIdentityTools(server, principal);
+  registerIdentityTools(server, principal, identity);
   registerInboxTools(server, principal, appUrl);
-  registerIssueTools(server, principal, appUrl);
+  registerIssueTools(server, principal, appUrl, identity);
   registerPlanningTools(server, principal, appUrl);
   registerScrumTools(server, principal);
   registerAdminTools(server, principal);

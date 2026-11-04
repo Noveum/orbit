@@ -186,6 +186,18 @@ describe('workspace agent instructions', () => {
   });
 });
 
+describe('team and project instructions', () => {
+  it('accepts up to 4000 characters and rejects longer instructions on team', () => {
+    expect(teamUpdateSchema.safeParse({ instructions: 'x'.repeat(4000) }).success).toBe(true);
+    expect(teamUpdateSchema.safeParse({ instructions: 'x'.repeat(4001) }).success).toBe(false);
+  });
+
+  it('accepts up to 4000 characters and rejects longer instructions on project', () => {
+    expect(projectUpdateSchema.safeParse({ instructions: 'x'.repeat(4000) }).success).toBe(true);
+    expect(projectUpdateSchema.safeParse({ instructions: 'x'.repeat(4001) }).success).toBe(false);
+  });
+});
+
 describe('calendar dates', () => {
   const dayOf = (value: unknown): string | null => {
     const parsed = issueUpdateSchema.safeParse({ dueDate: value });
