@@ -24,7 +24,10 @@ mock.module('next/navigation', () => ({
 test('hydrates a sprint without replacing its server markup when the client cache is warm', async () => {
   const client = createQueryClient();
   const fetchBefore = globalThis.fetch;
-  globalThis.fetch = mock(() => new Promise<Response>(() => undefined)) as typeof fetch;
+  globalThis.fetch = Object.assign(
+    mock(() => new Promise<Response>(() => undefined)),
+    fetchBefore,
+  );
   const container = document.createElement('div');
   document.body.append(container);
   function Providers({ children }: { readonly children: ReactNode }) {
