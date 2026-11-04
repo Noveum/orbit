@@ -21,5 +21,6 @@ export {
   sql,
 } from 'drizzle-orm';
 export * from './client.ts';
+export * from './history-retention.ts';
 export * from './prune.ts';
 export * as schema from './schema/index.ts';
