@@ -108,7 +108,7 @@ export function FilterBar({
 
   return (
     <fieldset
-      className="flex flex-wrap items-center gap-1.5 border-border border-b px-3 py-1.5"
+      className="flex min-w-0 flex-wrap items-center gap-1.5 border-border border-b px-3 py-1.5"
       data-testid="filter-bar"
       aria-label="Issue filters"
       aria-busy={!hydrated}
