@@ -4,6 +4,7 @@ import {
   addMember,
   connect,
   createWorkspace,
+  MCP_TEST_PUBLIC_URL,
   mintToken,
   resetDatabase,
   type TestClient,
@@ -44,6 +45,10 @@ describe('create_sub_issues', () => {
     expect(result['count']).toBe(3);
     const identifiers = result['identifiers'] as string[];
     expect(identifiers).toHaveLength(3);
+    expect(result['parentUrl']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${parent.identifier}`);
+    expect(result['urls']).toEqual(
+      identifiers.map((identifier) => `${MCP_TEST_PUBLIC_URL}/issue/${identifier}`),
+    );
 
     const rows = await db
       .select({

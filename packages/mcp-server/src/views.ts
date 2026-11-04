@@ -10,6 +10,7 @@ import { db } from '@orbit/db';
 import { PRIORITY_LABELS } from '@orbit/shared/constants';
 import type { SyncAction } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
+import { issueUrl } from '@orbit/shared/utils';
 import type { IssueActor } from '@orbit/shared/validators';
 
 const PRIORITY_NAMES: Record<number, string> = PRIORITY_LABELS;
@@ -18,6 +19,7 @@ export interface IssueView {
   readonly id: string;
   readonly identifier: string;
   readonly title: string;
+  readonly url: string;
   readonly teamId: string;
   readonly state: string | null;
   readonly stateId: string;
@@ -54,6 +56,7 @@ export function deltaViews(actions: readonly SyncAction[]): DeltaView[] {
 }
 
 function toView(
+  appUrl: string,
   row: IssueActorRead<IssueListRow>,
   stateNames: ReadonlyMap<string, string>,
   userNames: ReadonlyMap<string, string>,
@@ -63,6 +66,7 @@ function toView(
     id: row.id,
     identifier: row.identifier,
     title: row.title,
+    url: `${appUrl}${issueUrl(row.identifier)}`,
     teamId: row.teamId,
     state: stateNames.get(row.stateId) ?? null,
     stateId: row.stateId,
@@ -87,6 +91,7 @@ function toView(
 
 export async function describeIssues(
   principal: Principal,
+  appUrl: string,
   rows: readonly IssueListRow[],
 ): Promise<IssueView[]> {
   if (rows.length === 0) return [];
@@ -109,11 +114,17 @@ export async function describeIssues(
   const userNames = new Map<string, string>();
   for (const member of members) userNames.set(member.user.id, member.user.name);
 
-  return actors.map((row) => toView(row, stateNames, userNames, reviewers.get(row.id) ?? []));
+  return actors.map((row) =>
+    toView(appUrl, row, stateNames, userNames, reviewers.get(row.id) ?? []),
+  );
 }
 
-export async function describeIssue(principal: Principal, row: IssueListRow): Promise<IssueView> {
-  const [view] = await describeIssues(principal, [row]);
+export async function describeIssue(
+  principal: Principal,
+  appUrl: string,
+  row: IssueListRow,
+): Promise<IssueView> {
+  const [view] = await describeIssues(principal, appUrl, [row]);
   if (view === undefined) throw new Error('The issue could not be described.');
   return view;
 }

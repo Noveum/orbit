@@ -122,7 +122,7 @@ function registerProjectTools(server: McpServer, principal: Principal): void {
   );
 }
 
-function registerCycleTools(server: McpServer, principal: Principal): void {
+function registerCycleTools(server: McpServer, principal: Principal, appUrl: string): void {
   defineTool(
     server,
     {
@@ -205,14 +205,18 @@ function registerCycleTools(server: McpServer, principal: Principal): void {
       );
       await publish(updated.actions);
       return {
-        issue: await describeIssue(principal, updated.issue),
+        issue: await describeIssue(principal, appUrl, updated.issue),
         deltas: deltaViews(updated.actions),
       };
     },
   );
 }
 
-export function registerPlanningTools(server: McpServer, principal: Principal): void {
+export function registerPlanningTools(
+  server: McpServer,
+  principal: Principal,
+  appUrl: string,
+): void {
   registerProjectTools(server, principal);
-  registerCycleTools(server, principal);
+  registerCycleTools(server, principal, appUrl);
 }
