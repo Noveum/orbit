@@ -2,10 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import {
   bindAgentMcpCredential,
   createProject,
+  createTeam,
+  getIssue,
   prepareAgentMcpGrant,
   updateOrganization,
+  updateProject,
 } from '@orbit/core';
-import { db, eq, schema } from '@orbit/db';
+import { db, eq, schema, sql } from '@orbit/db';
 import type { IssueActor } from '@orbit/shared/validators';
 import {
   addMember,
@@ -78,6 +81,55 @@ async function newIssue(title: string, extra: Record<string, unknown> = {}): Pro
     ...extra,
   });
   return issueOf(payload);
+}
+
+async function withReadOnlyAgent(
+  userId: string,
+  work: (client: TestClient) => Promise<void>,
+): Promise<void> {
+  const previousGate = process.env['ORBIT_AGENT_MCP'];
+  process.env['ORBIT_AGENT_MCP'] = 'true';
+  try {
+    const clientId = crypto.randomUUID();
+    const accessToken = crypto.randomUUID();
+    await db.insert(schema.oauthApplication).values({
+      id: crypto.randomUUID(),
+      clientId,
+      name: 'Scoped guidance client',
+      redirectUrls: 'https://example.test/callback',
+      type: 'public',
+    });
+    const grantId = await db.transaction((tx) =>
+      prepareAgentMcpGrant(
+        tx,
+        { userId, organizationId: workspace.organizationId, clientId, scopes: 'orbit.read' },
+        { name: 'Scoped guidance reader' },
+        new Date(),
+      ),
+    );
+    await db.insert(schema.oauthAccessToken).values({
+      id: crypto.randomUUID(),
+      accessToken,
+      refreshToken: crypto.randomUUID(),
+      clientId,
+      userId,
+      scopes: 'orbit.read',
+      mcpGrantId: grantId,
+      accessTokenExpiresAt: new Date(Date.now() + 60_000),
+      refreshTokenExpiresAt: new Date(Date.now() + 120_000),
+    });
+    const secret = process.env['BETTER_AUTH_SECRET'];
+    if (secret === undefined) throw new Error('Missing test credential secret.');
+    const client = await connect(bindAgentMcpCredential(accessToken, grantId, secret));
+    try {
+      await work(client);
+    } finally {
+      await client.close();
+    }
+  } finally {
+    if (previousGate === undefined) delete process.env['ORBIT_AGENT_MCP'];
+    else process.env['ORBIT_AGENT_MCP'] = previousGate;
+  }
 }
 
 beforeAll(async () => {
@@ -256,6 +308,81 @@ describe('permissions', () => {
 });
 
 describe('issues', () => {
+  it('keeps an Agent Issue readable after its project becomes hidden from the owner', async () => {
+    const workspaceGuidance = 'Readable workspace guidance.';
+    const teamGuidance = 'Readable Team A guidance.';
+    const hiddenGuidance = 'Private Team B project guidance.';
+    await updateOrganization(workspace.admin, { agentInstructions: workspaceGuidance });
+    await db
+      .update(schema.team)
+      .set({ instructions: teamGuidance })
+      .where(eq(schema.team.id, workspace.teamId));
+    const member = await addMember(workspace, 'member', 'Scoped guidance owner');
+    const otherTeam = await createTeam(workspace.admin, { name: 'Guidance Team B', key: 'GTB' });
+    const { project } = await createProject(workspace.admin, {
+      name: 'Restricted guidance project',
+      teamIds: [workspace.teamId],
+      instructions: hiddenGuidance,
+    });
+    const created = await newIssue('Readable Issue with a hidden project', { project: project.id });
+    const human = await connect(await mintToken(workspace.organizationId, member.user.id));
+    try {
+      await withReadOnlyAgent(member.user.id, async (agent) => {
+        const visible = await agent.result('get_issue', { issue: created.identifier });
+        expect(visible['instructions']).toContain(hiddenGuidance);
+        await updateProject(workspace.admin, project.id, { teamIds: [otherTeam.team.id] });
+        expect((await getIssue(member.principal, created.identifier)).projectId).toBe(project.id);
+        expect(issueOf(await human.result('get_issue', { issue: created.identifier })).id).toBe(
+          created.id,
+        );
+        const explicit = await agent.call('get_workspace_instructions', { project: project.id });
+        expect(explicit.isError).toBe(true);
+        expect(errorPayload(explicit).code).toBe('not_found');
+        const read = await agent.call('get_issue', { issue: created.identifier });
+        expect(read.isError).not.toBe(true);
+        const fetched = await agent.result('get_issue', { issue: created.identifier });
+        const expected = `## Workspace\n\n${workspaceGuidance}\n\n## Team\n\n${teamGuidance}`;
+        expect(fetched['instructions']).toBe(expected);
+        expect((fetched['issue'] as Record<string, unknown>)['instructions']).toBe(expected);
+        expect(JSON.stringify(fetched)).not.toContain(hiddenGuidance);
+      });
+    } finally {
+      await human.close();
+    }
+  });
+
+  it('propagates genuine database failures while loading optional project guidance', async () => {
+    const member = await addMember(workspace, 'member', 'Database guidance owner');
+    const { project } = await createProject(workspace.admin, {
+      name: 'Database guidance project',
+      teamIds: [workspace.teamId],
+      instructions: 'Visible project guidance.',
+    });
+    const created = await newIssue('Project guidance database failure', { project: project.id });
+    const human = await connect(await mintToken(workspace.organizationId, member.user.id));
+    try {
+      await withReadOnlyAgent(member.user.id, async (agent) => {
+        await db.execute(
+          sql`ALTER TABLE "project" RENAME COLUMN "instructions" TO "unavailable_test_instructions"`,
+        );
+        try {
+          expect(issueOf(await human.result('get_issue', { issue: created.identifier })).id).toBe(
+            created.id,
+          );
+          const read = await agent.call('get_issue', { issue: created.identifier });
+          expect(read.isError).toBe(true);
+          expect(errorPayload(read).code).toBe('internal');
+        } finally {
+          await db.execute(
+            sql`ALTER TABLE "project" RENAME COLUMN "unavailable_test_instructions" TO "instructions"`,
+          );
+        }
+      });
+    } finally {
+      await human.close();
+    }
+  });
+
   it('reads Agent names, avatars and tombstones without inferring a Human Owner', async () => {
     const created = await newIssue('Agent reader fixture', { assignee: 'me' });
     const id = crypto.randomUUID();

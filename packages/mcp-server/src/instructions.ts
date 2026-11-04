@@ -1,4 +1,5 @@
 import { getOrganization, getProject, getTeam } from '@orbit/core';
+import { isDomainError } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
 
 export function layerInstructions(layers: {
@@ -22,19 +23,32 @@ export function layerInstructions(layers: {
   return sections.join('\n\n');
 }
 
+async function optionalProjectInstructions(
+  principal: Principal,
+  projectId: string | null,
+): Promise<string | undefined> {
+  if (projectId === null) return undefined;
+  try {
+    return (await getProject(principal, projectId)).instructions;
+  } catch (error) {
+    if (isDomainError(error) && error.code === 'not_found') return undefined;
+    throw error;
+  }
+}
+
 export async function resolveIssueInstructions(
   principal: Principal,
   issue: { readonly teamId: string; readonly projectId: string | null },
 ): Promise<string> {
-  const [organization, team, project] = await Promise.all([
+  const [organization, team, projectInstructions] = await Promise.all([
     getOrganization(principal.organizationId),
     getTeam(principal, issue.teamId),
-    issue.projectId === null ? Promise.resolve(null) : getProject(principal, issue.projectId),
+    optionalProjectInstructions(principal, issue.projectId),
   ]);
 
   return layerInstructions({
     workspace: organization.agentInstructions,
     team: team.instructions,
-    project: project?.instructions,
+    project: projectInstructions,
   });
 }
