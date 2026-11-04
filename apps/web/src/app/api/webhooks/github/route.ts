@@ -1,3 +1,4 @@
+import { attachIssueActionActors } from '@orbit/core';
 import { and, db, eq, inArray, lt, or, schema } from '@orbit/db';
 import {
   applyGithubEvent,
@@ -10,7 +11,6 @@ import {
   verifyGithubSignature,
 } from '@orbit/services';
 import { notifyMany } from '@orbit/services/notifications';
-import type { SyncAction } from '@orbit/shared/events';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { publish } from '@/lib/api/handler.ts';
@@ -170,7 +170,7 @@ export async function POST(request: Request): Promise<Response> {
         slackEnabled,
         sourceDeliveryId: deliveryId,
       });
-      const actions: SyncAction[] = [...applied.actions, ...notified.actions];
+      const actions = await attachIssueActionActors(tx, [...applied.actions, ...notified.actions]);
       requireDeliveryOwnership(
         await finalizeDelivery(claim, outcomeFinalization(applied.ignoredReason), tx),
       );

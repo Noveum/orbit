@@ -1,16 +1,20 @@
+import { attachIssueActors, type IssueActorColumns, type IssueActors } from '@orbit/core';
 import { db, inArray, schema } from '@orbit/db';
 
-export type DecoratedIssue<T> = T & {
-  readonly labelIds: string[];
-  readonly reviewerIds: string[];
-};
+export type DecoratedIssue<T> = T &
+  IssueActors & {
+    readonly organizationId: string;
+    readonly labelIds: string[];
+    readonly reviewerIds: string[];
+  };
 
-export async function attachIssueDecorations<T extends { id: string }>(
+export async function attachIssueDecorations<T extends { id: string } & IssueActorColumns>(
   issues: readonly T[],
+  organizationId: string,
 ): Promise<DecoratedIssue<T>[]> {
   if (issues.length === 0) return [];
   const issueIds = issues.map((issue) => issue.id);
-  const [links, reviewerLinks] = await Promise.all([
+  const [links, reviewerLinks, actors] = await Promise.all([
     db
       .select({ issueId: schema.issueLabel.issueId, labelId: schema.issueLabel.labelId })
       .from(schema.issueLabel)
@@ -19,6 +23,7 @@ export async function attachIssueDecorations<T extends { id: string }>(
       .select({ issueId: schema.issueReviewer.issueId, userId: schema.issueReviewer.userId })
       .from(schema.issueReviewer)
       .where(inArray(schema.issueReviewer.issueId, issueIds)),
+    attachIssueActors(db, organizationId, issues),
   ]);
 
   const byIssue = new Map<string, string[]>();
@@ -36,8 +41,9 @@ export async function attachIssueDecorations<T extends { id: string }>(
   }
   for (const bucket of reviewersByIssue.values()) bucket.sort();
 
-  return issues.map((issue) => ({
+  return actors.map((issue) => ({
     ...issue,
+    organizationId,
     labelIds: byIssue.get(issue.id) ?? [],
     reviewerIds: reviewersByIssue.get(issue.id) ?? [],
   }));

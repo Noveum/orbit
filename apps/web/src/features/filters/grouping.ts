@@ -1,6 +1,7 @@
 import { PRIORITIES, PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
 import type { GroupByField, IssueOrdering } from '@orbit/shared/filters';
 import { sprintLabel } from '@orbit/shared/utils';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
 import { sortIssues } from '@/lib/query/sync.ts';
 
@@ -122,9 +123,8 @@ export function groupKeysOf(issue: Issue, groupBy: GroupByField): readonly strin
     case 'state':
       return [issue.stateId];
     case 'assignee':
-      return [issue.assigneeId ?? UNGROUPED_ID];
     case 'creator':
-      return [issue.creatorId];
+      return [issueActorGroupKey(issue, groupBy)];
     case 'priority':
       return [String(issue.priority)];
     case 'estimate':
@@ -140,6 +140,12 @@ export function groupKeysOf(issue: Issue, groupBy: GroupByField): readonly strin
     case 'none':
       return ['all'];
   }
+}
+
+export function issueActorGroupKey(issue: Issue, role: 'creator' | 'assignee'): string {
+  const actor = resolveIssueActor(issue, role);
+  if (actor === null) return UNGROUPED_ID;
+  return actor.type === 'agent' ? `agent:${actor.id}` : actor.id;
 }
 
 export interface GroupOptions {
@@ -214,13 +220,31 @@ function definitionsWithExtras(
   groupBy: GroupByField,
   context: GroupContext,
   keys: Iterable<string>,
+  issues: readonly Issue[],
 ): GroupDefinition[] {
   const definitions = groupDefinitions(groupBy, context);
+  const actors = new Map<string, GroupDefinition>();
+  if (groupBy === 'assignee' || groupBy === 'creator') {
+    for (const issue of issues) {
+      const actor = resolveIssueActor(issue, groupBy);
+      if (actor === null) continue;
+      const key = issueActorGroupKey(issue, groupBy);
+      const member = context.members.find((entry) => entry.id === actor.id);
+      const resolved = resolveIssueActor(issue, groupBy, member);
+      if (resolved === null) continue;
+      actors.set(key, {
+        id: key,
+        title: `${resolved.name}${resolved.type === 'agent' ? ' (Agent)' : ''}${resolved.deleted ? ' (Deleted)' : ''}`,
+        color: null,
+        category: null,
+      });
+    }
+  }
   const known = new Set(definitions.map((definition) => definition.id));
   const extras = [...keys]
     .filter((key) => !known.has(key))
-    .map((key) => ({ id: key, title: 'Other', color: null, category: null }));
-  return [...definitions, ...extras];
+    .map((key) => actors.get(key) ?? { id: key, title: 'Other', color: null, category: null });
+  return [...definitions.map((definition) => actors.get(definition.id) ?? definition), ...extras];
 }
 
 function ordered(issues: readonly Issue[], ordering: IssueOrdering): readonly Issue[] {
@@ -236,7 +260,7 @@ export function groupIssues(
   const buckets = bucket(issues, groupBy, options.remap);
   const subGroupBy = options.subGroupBy ?? 'none';
 
-  return definitionsWithExtras(groupBy, context, buckets.keys()).flatMap((definition) => {
+  return definitionsWithExtras(groupBy, context, buckets.keys(), issues).flatMap((definition) => {
     const rows = buckets.get(definition.id) ?? [];
     const total = options.totals?.[definition.id] ?? rows.length;
     if (total === 0 && rows.length === 0 && !options.showEmptyGroups) return [];
@@ -256,11 +280,13 @@ function subGroupsOf(
   options: GroupOptions,
 ): IssueSubGroup[] {
   const buckets = bucket(issues, subGroupBy, options.remap);
-  return definitionsWithExtras(subGroupBy, context, buckets.keys()).flatMap((definition) => {
-    const rows = buckets.get(definition.id) ?? [];
-    if (rows.length === 0) return [];
-    return [{ ...definition, issues: ordered(rows, options.ordering) }];
-  });
+  return definitionsWithExtras(subGroupBy, context, buckets.keys(), issues).flatMap(
+    (definition) => {
+      const rows = buckets.get(definition.id) ?? [];
+      if (rows.length === 0) return [];
+      return [{ ...definition, issues: ordered(rows, options.ordering) }];
+    },
+  );
 }
 
 export function priorityLabel(priority: number): string {

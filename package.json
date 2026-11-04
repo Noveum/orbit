@@ -96,6 +96,6 @@
     "prosemirror-model": "^1.25.12",
     "prosemirror-transform": "^1.12.2",
     "prosemirror-view": "^1.42.6",
-    "happy-dom": "20.11.1"
+    "happy-dom": "21.0.4"
   }
 }
