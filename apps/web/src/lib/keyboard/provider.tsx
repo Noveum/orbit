@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import { createContext, useContext, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import {
   activatesFocusedControl,
   type BufferedStep,
@@ -39,7 +39,7 @@ function shouldIgnoreKeyDown(event: KeyboardEvent): boolean {
 export function HotkeyProvider({ children }: { children: ReactNode }) {
   const [registry] = useState(() => new HotkeyRegistry());
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let buffer: BufferedStep[] = [];
 
     const onKeyDown = (event: KeyboardEvent) => {

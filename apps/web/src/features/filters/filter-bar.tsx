@@ -9,6 +9,7 @@ import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
 import type { IssueFacets, View } from '@/lib/query/schemas.ts';
 import { useUpdateView } from '@/lib/query/use-views.ts';
+import { useHydrated } from '@/lib/use-hydrated.ts';
 import { DisplayMenu } from './display-menu.tsx';
 import type { FilterFieldDefinition } from './filter-fields.tsx';
 import { buildFilterFields, operatorLabel, valueLabel } from './filter-fields.tsx';
@@ -51,6 +52,7 @@ export function FilterBar({
   displayOptions,
   displayModified = false,
 }: FilterBarProps) {
+  const hydrated = useHydrated();
   const workspace = useWorkspace();
   const savedScope: ViewScope = scope ?? { teamId, projectId: null };
   const updateView = useUpdateView();
@@ -105,9 +107,12 @@ export function FilterBar({
   });
 
   return (
-    <div
+    <fieldset
       className="flex flex-wrap items-center gap-1.5 border-border border-b px-3 py-1.5"
       data-testid="filter-bar"
+      aria-label="Issue filters"
+      aria-busy={!hydrated}
+      disabled={!hydrated}
     >
       {conditions.map((condition) => (
         <FilterChip
@@ -211,7 +216,7 @@ export function FilterBar({
           suggestedName={suggestName(teamName, conditions, fields)}
         />
       ) : null}
-    </div>
+    </fieldset>
   );
 }
 

@@ -26,6 +26,7 @@ import { useIssueViewModel } from '@/features/issues/use-issue-view-model.ts';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { columnParamFor } from '@/lib/query/issue-search.ts';
 import { useCycleIssues } from '@/lib/query/use-issues.ts';
+import { useHydrated } from '@/lib/use-hydrated.ts';
 
 export interface SprintIssuesProps {
   readonly cycleId: string;
@@ -34,6 +35,7 @@ export interface SprintIssuesProps {
 }
 
 export function SprintIssues({ cycleId, sprintName, layout }: SprintIssuesProps) {
+  const hydrated = useHydrated();
   const { config, setConfig } = useViewConfig(null, layout, 'cycle');
   const controls = useProvideViewControls('cycle', layout, config);
 
@@ -91,7 +93,7 @@ export function SprintIssues({ cycleId, sprintName, layout }: SprintIssuesProps)
         resolveState={resolveState}
         columnSource={columnSource}
         canDrag={canDrag}
-        loading={issues.isPending}
+        loading={!hydrated || issues.isPending}
         failed={issues.isLoadingError}
         onRetry={() => {
           issues.refetch().catch(() => undefined);
