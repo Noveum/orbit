@@ -658,13 +658,40 @@ function refreshCounts(client: QueryClient): void {
   staleBoardPages(client);
 }
 
+interface IssueListMutations {
+  pending: number;
+  readonly firstLoads: Map<string, QueryKey>;
+}
+
+const issueListMutations = new WeakMap<QueryClient, IssueListMutations>();
+
+async function beginIssueListMutation(client: QueryClient): Promise<void> {
+  const mutations = issueListMutations.get(client) ?? { pending: 0, firstLoads: new Map() };
+  mutations.pending += 1;
+  issueListMutations.set(client, mutations);
+  await cancelIssueListFetches(client);
+}
+
 async function cancelIssueListFetches(client: QueryClient): Promise<void> {
   const firstLoads = client
     .getQueryCache()
     .findAll({ queryKey: [ISSUES_ROOT], fetchStatus: 'fetching' })
-    .flatMap((query) => (query.state.data === undefined ? [query.queryKey] : []));
+    .filter((query) => query.state.data === undefined);
+  const mutations = issueListMutations.get(client);
+  for (const query of firstLoads) {
+    mutations?.firstLoads.set(query.queryHash, query.queryKey);
+  }
   await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
-  for (const key of firstLoads) {
+}
+
+async function finishIssueListMutation(client: QueryClient): Promise<void> {
+  await cancelIssueListFetches(client);
+  const mutations = issueListMutations.get(client);
+  if (mutations === undefined) return;
+  mutations.pending -= 1;
+  if (mutations.pending > 0) return;
+  issueListMutations.delete(client);
+  for (const key of mutations.firstLoads.values()) {
     client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
   }
 }
@@ -977,7 +1004,7 @@ export function useUpdateIssue() {
 
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
-        cancelIssueListFetches(client),
+        beginIssueListMutation(client),
         client.cancelQueries({ queryKey: detailKey, exact: true }),
       ]);
       const previousDetail = client.getQueryData<IssueDetail>(detailKey);
@@ -1065,7 +1092,7 @@ export function useUpdateIssue() {
           : { ...current, issue },
       );
     },
-    onSettled: (_issue, _error, input, context) => {
+    onSettled: async (_issue, _error, input, context) => {
       const tracker = mutationTrackers.get(input.issue.id);
 
       if (tracker !== undefined && context !== undefined) {
@@ -1080,6 +1107,7 @@ export function useUpdateIssue() {
         }
       }
 
+      await finishIssueListMutation(client);
       if (input.patch.parentId === undefined) return;
 
       client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
@@ -1250,7 +1278,7 @@ export function useMoveIssue() {
     },
     onMutate: async (input) => {
       moveDeletionGenerations.set(input, issueDeletionGeneration(client, input.issue.id));
-      await cancelIssueListFetches(client);
+      await beginIssueListMutation(client);
       const before = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
       const optimistic: Issue = {
         ...input.issue,
@@ -1293,7 +1321,8 @@ export function useMoveIssue() {
         dropFromIssueLists(client, new Set([input.issue.id]));
       }
     },
-    onSettled: (_moved, _error, input) => {
+    onSettled: async (_moved, _error, input) => {
+      await finishIssueListMutation(client);
       resortTeamIssueLists(client, input.issue.teamId);
       refreshCounts(client);
     },
@@ -1525,7 +1554,7 @@ export function useDeleteIssues() {
   return useMutation({
     mutationFn: deleteEach,
     onMutate: async (issues) => {
-      await cancelIssueListFetches(client);
+      await beginIssueListMutation(client);
       const before = client.getQueriesData<IssuePages>({
         queryKey: [ISSUES_ROOT],
       });
@@ -1577,7 +1606,8 @@ export function useDeleteIssues() {
       dropFromIssueLists(client, removed);
       await dropFromIssueDetails(client, removed);
     },
-    onSettled: () => {
+    onSettled: async () => {
+      await finishIssueListMutation(client);
       refreshCounts(client);
       client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(() => undefined);
     },

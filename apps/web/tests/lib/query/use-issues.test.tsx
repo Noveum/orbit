@@ -2707,3 +2707,134 @@ describe('a mutation during a list first load', () => {
     expect(lists.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('delayed first-load responses', () => {
+  it('waits for overlapping writes before restarting the first load', async () => {
+    const first = deferred<Response>();
+    const updateResponse = deferred<Response>();
+    const moveResponse = deferred<Response>();
+    const confirmed = issue({ title: 'Committed title', stateId: 'state_doing', syncId: 3 });
+    let getCount = 0;
+    let writeCount = 0;
+    globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'PATCH' || init?.method === 'POST') {
+        writeCount += 1;
+        return init.method === 'PATCH' ? updateResponse.promise : moveResponse.promise;
+      }
+      getCount += 1;
+      return getCount === 1
+        ? first.promise
+        : Promise.resolve(Response.json({ issues: [confirmed], nextCursor: null }));
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const list = renderHook(() => useIssues(TEAM, [issue()]), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+    const mutation = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+      wrapper: wrapper(client),
+    });
+    let updating: Promise<unknown> = Promise.resolve();
+    let moving: Promise<unknown> = Promise.resolve();
+    act(() => {
+      updating = mutation.result.current.update.mutateAsync({
+        issue: issue(),
+        patch: { title: 'Committed title' },
+      });
+      moving = mutation.result.current.move.mutateAsync({
+        issue: issue(),
+        stateId: 'state_doing',
+        beforeId: null,
+        afterId: null,
+        beforeOrder: null,
+        afterOrder: null,
+      });
+    });
+    await waitFor(() => expect(writeCount).toBe(2));
+    expect(getCount).toBe(1);
+    await act(async () => {
+      updateResponse.resolve(
+        Response.json({ issue: issue({ title: 'Committed title', syncId: 2 }) }),
+      );
+      await updating;
+    });
+    expect(getCount).toBe(1);
+    await act(async () => {
+      moveResponse.resolve(Response.json({ issue: confirmed, rebalanced: [] }));
+      await moving;
+      first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
+      await first.promise;
+    });
+    await waitFor(() => expect(list.result.current.data?.[0]?.syncId).toBe(3));
+    expect(list.result.current.data?.[0]?.title).toBe('Committed title');
+    expect(list.result.current.data?.[0]?.stateId).toBe('state_doing');
+    expect(getCount).toBe(2);
+  });
+
+  for (const kind of ['update', 'move'] as const) {
+    for (const succeeds of [true, false]) {
+      it(`recovers the first load after a ${succeeds ? 'successful' : 'failed'} ${kind}`, async () => {
+        const first = deferred<Response>();
+        const write = deferred<Response>();
+        const confirmed = issue({ title: 'Committed title', stateId: 'state_doing', syncId: 2 });
+        let getCount = 0;
+        let writeStarted = false;
+        globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+          if (init?.method === 'PATCH' || init?.method === 'POST') {
+            writeStarted = true;
+            return write.promise;
+          }
+          getCount += 1;
+          return getCount === 1
+            ? first.promise
+            : Promise.resolve(
+                Response.json({ issues: [succeeds ? confirmed : issue()], nextCursor: null }),
+              );
+        }) as unknown as typeof fetch;
+        const client = newClient();
+        const list = renderHook(() => useIssues(TEAM, [issue()]), { wrapper: wrapper(client) });
+        await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+        const mutation = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+          wrapper: wrapper(client),
+        });
+        let settled: Promise<unknown> = Promise.resolve();
+        act(() => {
+          settled = (
+            kind === 'update'
+              ? mutation.result.current.update.mutateAsync({
+                  issue: issue(),
+                  patch: { title: 'Committed title' },
+                })
+              : mutation.result.current.move.mutateAsync({
+                  issue: issue(),
+                  stateId: 'state_doing',
+                  beforeId: null,
+                  afterId: null,
+                  beforeOrder: null,
+                  afterOrder: null,
+                })
+          ).catch(() => undefined);
+        });
+        await waitFor(() => expect(writeStarted).toBe(true));
+        expect(getCount).toBe(1);
+        await act(async () => {
+          write.resolve(
+            succeeds
+              ? Response.json({ issue: confirmed, rebalanced: [] })
+              : Response.json({ error: 'Rejected' }, { status: 409 }),
+          );
+          await settled;
+          first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
+          await first.promise;
+        });
+        await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+        expect(list.result.current.data?.[0]?.syncId).toBe(succeeds ? 2 : 1);
+        expect(list.result.current.data?.[0]?.title).toBe(
+          succeeds ? 'Committed title' : 'Ship the board',
+        );
+        expect(list.result.current.data?.[0]?.stateId).toBe(
+          succeeds ? 'state_doing' : 'state_todo',
+        );
+        expect(getCount).toBeGreaterThanOrEqual(2);
+      });
+    }
+  }
+});
