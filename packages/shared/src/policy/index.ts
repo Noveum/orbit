@@ -2,6 +2,7 @@ import { isRestricted, ORG_ROLE_RANK, ORG_ROLES, type OrgRole } from '../constan
 import { forbidden, notFound } from '../errors/index.ts';
 
 export {
+  assertAgentIdentityOwner,
   assertMcpGrantOwner,
   assertMcpToolAccess,
   canUseMcpTool,

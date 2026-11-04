@@ -2,9 +2,14 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, db, desc, eq, gt, isNull, or, schema, sql, type Transaction } from '@orbit/db';
 import { forbidden, notFound, unauthorized, validationFailed } from '@orbit/shared/errors';
 import { assertMcpGrantOwner, type McpIdentity, type Principal } from '@orbit/shared/policy';
-import { mcpConsentValueSchema } from '@orbit/shared/validators';
+import {
+  type AgentConsentSelection,
+  mcpAuthorizationCodeSchema,
+  mcpConsentValueSchema,
+} from '@orbit/shared/validators';
 import { type Executor, newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
+import { prepareAgentMcpGrant, readOnlyAgentScopes } from './agent-identity-service.ts';
 
 const MCP_CREDENTIAL_PREFIX = 'orbit-mcp-v1';
 const AGENT_CREDENTIAL_PREFIX = 'orbit-mcp-agent-v2';
@@ -357,6 +362,7 @@ export async function recordMcpGrant(
 }
 
 export interface McpGrantView {
+  readonly agentName: string | null;
   readonly id: string;
   readonly clientId: string;
   readonly clientName: string;
@@ -371,6 +377,7 @@ export function listMcpGrants(userId: string): Promise<McpGrantView[]> {
   return db
     .select({
       id: schema.mcpGrant.id,
+      agentName: schema.agentIdentity.name,
       clientId: schema.mcpGrant.clientId,
       clientName: schema.oauthApplication.name,
       organizationId: schema.mcpGrant.organizationId,
@@ -380,6 +387,7 @@ export function listMcpGrants(userId: string): Promise<McpGrantView[]> {
       lastUsedAt: schema.mcpGrant.lastUsedAt,
     })
     .from(schema.mcpGrant)
+    .leftJoin(schema.agentIdentity, eq(schema.agentIdentity.id, schema.mcpGrant.agentIdentityId))
     .innerJoin(
       schema.oauthApplication,
       eq(schema.oauthApplication.clientId, schema.mcpGrant.clientId),
@@ -473,7 +481,25 @@ export type FinalizeMcpConsentInput =
       readonly consentCode: string;
       readonly accept: true;
       readonly organizationId: string;
+      readonly agent?: AgentConsentSelection;
     };
+
+function consentScopes(
+  value: Awaited<ReturnType<typeof getMcpConsentRequest>>,
+  agent: AgentConsentSelection | undefined,
+): string {
+  if (agent === undefined) return value.scope.join(' ');
+  if (
+    !mcpAuthorizationCodeSchema.safeParse({
+      ...value,
+      requireConsent: false,
+      mcpGrantId: 'pending',
+    }).success
+  ) {
+    throw validationFailed('This identity connection requires a valid PKCE request.');
+  }
+  return readOnlyAgentScopes(value.scope);
+}
 
 export async function finalizeMcpConsent(
   input: FinalizeMcpConsentInput,
@@ -503,22 +529,28 @@ export async function finalizeMcpConsent(
       throw validationFailed('Choose a workspace before approving this connection.');
     }
 
+    const scope = consentScopes(value, input.agent);
+    const grantInput = {
+      clientId: value.clientId,
+      userId: input.userId,
+      organizationId: input.organizationId,
+      scopes: scope,
+    };
     const code = authorizationCode();
-    const mcpGrantId = await writeMcpGrant(
-      tx,
-      {
-        clientId: value.clientId,
-        userId: input.userId,
-        organizationId: input.organizationId,
-        scopes: value.scope.join(' '),
-      },
-      now,
-    );
+    const mcpGrantId =
+      input.agent === undefined
+        ? await writeMcpGrant(tx, grantInput, now)
+        : await prepareAgentMcpGrant(tx, grantInput, input.agent, now);
     const [updated] = await tx
       .update(schema.verification)
       .set({
         identifier: code,
-        value: JSON.stringify({ ...value, requireConsent: false, mcpGrantId }),
+        value: JSON.stringify({
+          ...value,
+          scope: scope.split(' '),
+          requireConsent: false,
+          mcpGrantId,
+        }),
         expiresAt: new Date(now.getTime() + CONSENT_CODE_TTL_MS),
       })
       .where(eq(schema.verification.identifier, input.consentCode))
@@ -528,7 +560,7 @@ export async function finalizeMcpConsent(
       id: newId(),
       clientId: value.clientId,
       userId: input.userId,
-      scopes: value.scope.join(' '),
+      scopes: scope,
       consentGiven: true,
     });
 
@@ -537,7 +569,7 @@ export async function finalizeMcpConsent(
     return {
       redirectUri: redirect.toString(),
       clientId: value.clientId,
-      scope: value.scope.join(' '),
+      scope,
     };
   });
 }

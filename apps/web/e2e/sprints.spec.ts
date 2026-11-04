@@ -35,6 +35,7 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
   await expect(entry).toBeVisible();
   await expect(entry).toContainText(label);
 
+  await expect(page.getByTestId('sprint-issues').getByTestId('list-skeleton')).toBeHidden();
   await entry.click();
   await expect(page).toHaveURL(`${BASE}/sprints?sprint=${sprint.number}`);
   await expect(page.getByTestId('sprint-outcome').first()).toBeVisible();

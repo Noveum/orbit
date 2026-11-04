@@ -14,6 +14,7 @@ import {
 } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
+import { type AgentConsentSelection, mcpTokenResponseSchema } from '@orbit/shared/validators';
 import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
 import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
 import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
@@ -200,6 +201,45 @@ async function finalizedAuthorizationCode(
   });
   const code = new URL(approved.redirectUri).searchParams.get('code');
   if (code === null) throw new Error('the consent redirect did not carry a code');
+  return { code, verifier };
+}
+
+async function providerAuthorizationCode(
+  workspace: Workspace,
+  cookie: string,
+  agent?: AgentConsentSelection,
+) {
+  const verifier = 'mcp-provider-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
+  const search = authorizeSearch('consent');
+  search.set(
+    'scope',
+    `openid offline_access orbit.read${agent === undefined ? '' : ' orbit.write'}`,
+  );
+  search.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
+  search.set('code_challenge_method', 'S256');
+  const authorized = await GET(authorizeRequest(search, cookie));
+  expect(authorized.status).toBe(302);
+  const consentCode = new URL(
+    authorized.headers.get('location') ?? '',
+    APP_ORIGIN,
+  ).searchParams.get('consent_code');
+  if (consentCode === null) throw new Error('The provider did not request consent.');
+  const approved = await finalizeMcpConsent({
+    userId: workspace.adminUser.id,
+    consentCode,
+    accept: true,
+    organizationId: workspace.organizationId,
+    ...(agent === undefined ? {} : { agent }),
+  });
+  const code = new URL(approved.redirectUri).searchParams.get('code');
+  if (code === null) throw new Error('The consent did not return an authorization code.');
+  const [record] = await db
+    .select()
+    .from(schema.verification)
+    .where(eq(schema.verification.identifier, code));
+  if (record === undefined) throw new Error('The consent code was not stored.');
+  const value = JSON.parse(record.value) as Record<string, unknown>;
+  expect(value['codeChallengeMethod']).toBe('s256');
   return { code, verifier };
 }
 
@@ -523,33 +563,7 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('exchanges an authorization code created by the real provider after legacy consent', async () => {
     await withNativeFetchGlobals(async () => {
-      const verifier = 'mcp-provider-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
-      const search = authorizeSearch('consent');
-      search.set('scope', 'openid offline_access orbit.read');
-      search.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
-      search.set('code_challenge_method', 'S256');
-      const authorized = await GET(authorizeRequest(search, cookie));
-      expect(authorized.status).toBe(302);
-      const consentCode = new URL(
-        authorized.headers.get('location') ?? '',
-        APP_ORIGIN,
-      ).searchParams.get('consent_code');
-      if (consentCode === null) throw new Error('The provider did not request consent.');
-      const approved = await finalizeMcpConsent({
-        userId: workspace.adminUser.id,
-        consentCode,
-        accept: true,
-        organizationId: workspace.organizationId,
-      });
-      const code = new URL(approved.redirectUri).searchParams.get('code');
-      if (code === null) throw new Error('The consent did not return an authorization code.');
-      const [record] = await db
-        .select()
-        .from(schema.verification)
-        .where(eq(schema.verification.identifier, code));
-      if (record === undefined) throw new Error('The consent code was not stored.');
-      const value = JSON.parse(record.value) as Record<string, unknown>;
-      expect(value['codeChallengeMethod']).toBe('s256');
+      const { code, verifier } = await providerAuthorizationCode(workspace, cookie);
       const response = await authPost(codeRequest(code, verifier));
       expect(response.status).toBe(200);
       const body = (await response.json()) as Record<string, unknown>;
@@ -560,6 +574,51 @@ describe('MCP authorize PKCE boundary', () => {
         workspace.organizationId,
       );
     });
+  });
+
+  it('issues and refreshes read-only v2 credentials after real provider Agent consent', async () => {
+    const previous = process.env['ORBIT_AGENT_MCP'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    try {
+      await withNativeFetchGlobals(async () => {
+        const { code, verifier } = await providerAuthorizationCode(workspace, cookie, {
+          name: 'Review reader',
+        });
+        const issued = await authPost(codeRequest(code, verifier));
+        expect(issued.status).toBe(200);
+        const token = mcpTokenResponseSchema.parse(await issued.json());
+        expect(token.scope).toBe('openid offline_access orbit.read');
+        if (token.refresh_token === undefined) throw new Error('No Agent refresh credential.');
+        const { secret } = await auth.$context;
+        const accessBinding = unbindAgentMcpCredential(token.access_token, secret);
+        const refreshBinding = unbindAgentMcpCredential(token.refresh_token, secret);
+        expect(unbindMcpCredential(token.access_token, secret)).toBeNull();
+        expect(unbindMcpCredential(token.refresh_token, secret)).toBeNull();
+        if (accessBinding === null || refreshBinding === null)
+          throw new Error('Agent credentials were not bound.');
+        expect(refreshBinding.grantId).toBe(accessBinding.grantId);
+        const context = await verifyMcpAccessToken(token.access_token);
+        expect(context.identity).toMatchObject({ kind: 'agent', name: 'Review reader' });
+        expect(context.organizationId).toBe(workspace.organizationId);
+        expect(context.scopes).not.toContain('orbit.write');
+        const refreshed = await authPost(refreshRequest(token.refresh_token));
+        expect(refreshed.status).toBe(200);
+        const replacement = mcpTokenResponseSchema.parse(await refreshed.json());
+        expect(replacement.scope).toBe(token.scope);
+        expect(unbindMcpCredential(replacement.access_token, secret)).toBeNull();
+        expect(unbindAgentMcpCredential(replacement.access_token, secret)?.grantId).toBe(
+          accessBinding.grantId,
+        );
+        const refreshedContext = await verifyMcpAccessToken(replacement.access_token);
+        expect(refreshedContext.identity).toEqual(context.identity);
+        expect(refreshedContext.scopes).not.toContain('orbit.write');
+        const [stored] = await db.select().from(schema.oauthAccessToken);
+        expect(stored?.mcpGrantId).toBe(accessBinding.grantId);
+      });
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previous;
+    }
   });
 
   it('rejects authorization code verifiers outside RFC 7636 syntax before consuming the code', async () => {
