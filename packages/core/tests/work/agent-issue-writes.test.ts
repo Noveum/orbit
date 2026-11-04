@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { and, db, eq, schema, sql, type Transaction } from '@orbit/db';
+import type { SyncAction } from '@orbit/shared/events';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import {
@@ -166,6 +167,114 @@ async function cycle(target = workspace) {
   if (created === undefined) throw new Error('Missing cycle.');
   return created;
 }
+
+describe('Issue deletion lifecycle', () => {
+  it.each(['default', 'unassigned'] as const)(
+    'rejects a stale Human %s create explicitly after workspace deletion starts',
+    async (assignment) => {
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(schema.organization.id, workspace.organizationId));
+      const actions: SyncAction[] = [];
+      const creating = createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'After deletion',
+        ...(assignment === 'unassigned' ? { assigneeId: null } : {}),
+      }).then((result) => actions.push(...result.actions));
+      await expect(creating).rejects.toMatchObject({
+        code: 'conflict',
+        status: 409,
+        message: 'Workspace deletion is in progress.',
+      });
+      expect(await db.select().from(schema.issue)).toHaveLength(0);
+      expect(await db.select().from(schema.issueActivity)).toHaveLength(0);
+      expect(actions).toEqual([]);
+    },
+  );
+
+  for (const identity of ['Human', 'Agent'] as const) {
+    it.each(['update', 'move'] as const)(
+      `rejects a stale ${identity} %s without changing Issue state or activity`,
+      async (operation) => {
+        const agent = identity === 'Agent' ? await connection() : undefined;
+        const principal = agent?.principal ?? workspace.admin;
+        const issue = await humanIssue();
+        const before = await db.select().from(schema.issue);
+        const activities = await db.select().from(schema.issueActivity);
+        await db
+          .update(schema.organization)
+          .set({ deletionRequestedAt: new Date() })
+          .where(eq(schema.organization.id, workspace.organizationId));
+        const actions: SyncAction[] = [];
+        const changing =
+          operation === 'update'
+            ? updateIssue(
+                principal,
+                issue.id,
+                { title: 'Changed after deletion' },
+                db,
+                agent?.context,
+              )
+            : moveIssue(
+                principal,
+                issue.id,
+                { stateId: stateNamed(workspace, 'Done').id },
+                agent?.context,
+              );
+        await expect(
+          changing.then((result) => actions.push(...result.actions)),
+        ).rejects.toMatchObject({
+          code: 'conflict',
+          status: 409,
+          message: 'Workspace deletion is in progress.',
+        });
+        expect(await db.select().from(schema.issue)).toEqual(before);
+        expect(await db.select().from(schema.issueActivity)).toEqual(activities);
+        expect(actions).toEqual([]);
+      },
+    );
+
+    it(`waits for a concurrent deletion mark before admitting a ${identity} Issue update`, async () => {
+      const agent = identity === 'Agent' ? await connection() : undefined;
+      const principal = agent?.principal ?? workspace.admin;
+      const issue = await humanIssue();
+      const before = await db.select().from(schema.issue);
+      const activities = await db.select().from(schema.issueActivity);
+      const writer = parallelDatabase();
+      let writing: Promise<unknown> | undefined;
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.organization)
+          .set({ deletionRequestedAt: new Date() })
+          .where(eq(schema.organization.id, workspace.organizationId));
+        writing = updateIssue(
+          principal,
+          issue.id,
+          { title: 'Raced deletion' },
+          writer,
+          agent?.context,
+        ).then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+        expect(await waitForBlockedTransaction(tx)).toBe(true);
+      });
+      if (writing === undefined) throw new Error('The competing writer did not start.');
+      const result = await writing;
+      expect(result).toMatchObject({
+        error: {
+          code: 'conflict',
+          status: 409,
+          message: 'Workspace deletion is in progress.',
+        },
+      });
+      expect(result).not.toHaveProperty('result');
+      expect(await db.select().from(schema.issue)).toEqual(before);
+      expect(await db.select().from(schema.issueActivity)).toEqual(activities);
+    });
+  }
+});
 
 describe('Agent Issue write boundary', () => {
   it('keeps Human defaults and Agent reads while the independent write gate is off', async () => {
