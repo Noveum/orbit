@@ -663,7 +663,7 @@ async function settleIssueOccurrences(client: QueryClient, issue: Issue): Promis
     .getQueryCache()
     .findAll()
     .flatMap((query) => {
-      if (query.state.fetchStatus !== 'fetching') return [];
+      if (query.state.fetchStatus === 'idle') return [];
       if (query.queryKey[0] === ISSUE_ROOT) {
         const detail = query.state.data as IssueDetail | undefined;
         const related =
@@ -750,7 +750,8 @@ async function beginIssueListMutation(client: QueryClient): Promise<void> {
 async function cancelIssueListFetches(client: QueryClient): Promise<void> {
   const fetching = client
     .getQueryCache()
-    .findAll({ queryKey: [ISSUES_ROOT], fetchStatus: 'fetching' });
+    .findAll({ queryKey: [ISSUES_ROOT] })
+    .filter((query) => query.state.fetchStatus !== 'idle');
   const mutations = issueListMutations.get(client);
   for (const query of fetching) {
     mutations?.canceledFetches.set(query.queryHash, query.queryKey);
@@ -762,7 +763,10 @@ async function cancelIssueQueries(
   client: QueryClient,
   filters: { readonly queryKey: QueryKey; readonly exact?: boolean },
 ): Promise<void> {
-  const fetching = client.getQueryCache().findAll({ ...filters, fetchStatus: 'fetching' });
+  const fetching = client
+    .getQueryCache()
+    .findAll(filters)
+    .filter((query) => query.state.fetchStatus !== 'idle');
   const invalidated = fetching.filter((query) => query.state.isInvalidated);
   for (const query of fetching) {
     if (query.state.data === undefined || query.state.status !== 'success') continue;
@@ -1621,7 +1625,7 @@ async function dropFromIssueDetails(
   const fetchingKeys = client
     .getQueryCache()
     .findAll({ queryKey: [ISSUE_ROOT] })
-    .flatMap((query) => (query.state.fetchStatus === 'fetching' ? [query.queryKey] : []));
+    .flatMap((query) => (query.state.fetchStatus === 'idle' ? [] : [query.queryKey]));
   await Promise.allSettled(
     fetchingKeys.map((key) => cancelIssueQueries(client, { queryKey: key, exact: true })),
   );

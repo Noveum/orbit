@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { inCondition } from '@orbit/shared/filters';
-import { dehydrate, hydrate, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  dehydrate,
+  hydrate,
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
@@ -3266,6 +3272,64 @@ describe('a mutation during a list first load', () => {
 });
 
 describe('delayed first-load responses', () => {
+  it.each(['list', 'detail'] as const)(
+    'preserves late hydration of a paused offline %s during an update',
+    async (kind) => {
+      const wasOnline = onlineManager.isOnline();
+      onlineManager.setOnline(false);
+      const before = issue();
+      const confirmed = issue({ title: 'Committed after reconnect', syncId: 2 });
+      const client = newClient();
+      const key =
+        kind === 'list' ? issuesQueryOptions(TEAM).queryKey : queryKeys.issue(before.identifier);
+      const readResult =
+        kind === 'list' ? { issues: [confirmed], nextCursor: null } : previewDetail(confirmed);
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) =>
+        Promise.resolve(
+          Response.json(init?.method === 'PATCH' ? { issue: confirmed } : readResult),
+        ),
+      ) as unknown as typeof fetch;
+      const query =
+        kind === 'list'
+          ? renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) })
+          : renderHook(() => useIssueDetail(before.identifier), { wrapper: wrapper(client) });
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      let settling: Promise<unknown> = Promise.resolve();
+      try {
+        await waitFor(() => expect(client.getQueryState(key)?.fetchStatus).toBe('paused'));
+        const restored = newClient();
+        restored.setQueryData(key, kind === 'list' ? issuePages([before]) : previewDetail(before));
+        act(() => hydrate(client, dehydrate(restored)));
+        restored.clear();
+        expect(client.getQueryState(key)?.fetchStatus).toBe('paused');
+        act(() => {
+          settling = update.result.current
+            .mutateAsync({ issue: before, patch: { title: confirmed.title } })
+            .catch(() => undefined);
+        });
+        await waitFor(() => expect(update.result.current.isPaused).toBe(true));
+        const optimistic =
+          kind === 'list'
+            ? issueFromPagesForTest(client.getQueryData<IssuePages>(key), before.id)
+            : client.getQueryData<ReturnType<typeof previewDetail>>(key)?.issue;
+        expect(optimistic?.title).toBe(confirmed.title);
+        expect(client.getQueryState(key)?.fetchStatus).toBe('idle');
+        await act(async () => {
+          onlineManager.setOnline(true);
+          await settling;
+        });
+        await waitFor(() => expect(update.result.current.isSuccess).toBe(true));
+      } finally {
+        onlineManager.setOnline(true);
+        await settling;
+        query.unmount();
+        update.unmount();
+        client.clear();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
   it.each(['move', 'delete'] as const)(
     'keeps a late-hydrated parent detail while a child %s settles',
     async (kind) => {
