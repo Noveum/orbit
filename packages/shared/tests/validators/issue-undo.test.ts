@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'bun:test';
-import { issueExpectedPropertiesSchema, issueUpdateSchema } from '../../src/validators/index.ts';
+import {
+  issueExpectedPropertiesSchema,
+  issueMoveSchema,
+  issueUpdateSchema,
+} from '../../src/validators/index.ts';
 
 describe('issue property undo preconditions', () => {
+  it.each([null, 'agent_1'])('preserves the expected Agent identity %s for moves', (agentId) => {
+    const parsed = issueMoveSchema.parse({
+      assigneeId: 'user_1',
+      expected: { assigneeId: null, assigneeAgentId: agentId },
+    });
+    expect(parsed.expected).toEqual({ assigneeId: null, assigneeAgentId: agentId });
+  });
+
   it('accepts valid expected preconditions on issue updates', () => {
     const parsed = issueUpdateSchema.safeParse({
       stateId: 'state_done',

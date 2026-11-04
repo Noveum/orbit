@@ -114,6 +114,32 @@ describe('groupRelations', () => {
 });
 
 describe('IssueRelations', () => {
+  it('shows a linked agent assignee from the issue response without a workspace member', async () => {
+    served = [
+      relation({
+        issue: issue({
+          id: 'issue_2',
+          identifier: 'ENG-2',
+          assignee: {
+            type: 'agent',
+            id: 'agent_1',
+            name: 'Linked bot',
+            avatar: '/linked.png',
+            deleted: true,
+          },
+        }),
+      }),
+    ];
+    stubFetch();
+
+    render(<IssueRelations issue={issue()} />);
+
+    expect(await screen.findByTitle('Linked bot (Agent) (Deleted)')).toHaveAttribute(
+      'data-actor-type',
+      'agent',
+    );
+  });
+
   it('reads the links from the server and shows them under their type', async () => {
     served = [relation()];
     stubFetch();

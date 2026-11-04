@@ -94,6 +94,48 @@ const groupContext: GroupContext = {
 };
 
 describe('IssueRow', () => {
+  it('uses server actors before workspace members for creator and assignee', () => {
+    render(
+      <IssueRow
+        issue={issue({
+          creatorId: null,
+          creatorUserId: null,
+          creatorAgentId: 'agent_creator',
+          creator: {
+            type: 'agent',
+            id: 'agent_creator',
+            name: 'Release bot',
+            avatar: '/release.png',
+            deleted: true,
+          },
+          assignee: {
+            type: 'user',
+            id: 'outside_team',
+            name: 'Outside team',
+            avatar: '/outside.png',
+            deleted: false,
+          },
+          assigneeId: 'outside_team',
+        })}
+        state={todo}
+        labels={[]}
+        assignee={reviewers[0]}
+        creator={reviewers[0]}
+        properties={['creator', 'assignee']}
+        active={false}
+        selected={false}
+        onOpen={mock()}
+        onToggleSelected={mock()}
+        onFocus={mock()}
+      />,
+    );
+
+    expect(screen.getByTitle('Release bot (Agent) (Deleted)')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Outside team' })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Ada Reviewer' })).toBeNull();
+    expect(screen.getByTitle('Outside team')).not.toHaveAttribute('data-actor-deleted');
+  });
+
   it('opens on click and toggles selection from the checkbox', async () => {
     const user = userEvent.setup();
     const onOpen = mock();

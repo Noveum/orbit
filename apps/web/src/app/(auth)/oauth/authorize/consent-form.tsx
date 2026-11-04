@@ -17,6 +17,12 @@ export interface ConsentOrganization {
   readonly name: string;
 }
 
+export interface ConsentAgentIdentity {
+  readonly id: string;
+  readonly name: string;
+  readonly organizationId: string;
+}
+
 export interface ConsentFormProps {
   readonly consentCode: string;
   readonly clientId: string;
@@ -26,6 +32,9 @@ export interface ConsentFormProps {
   readonly organizations: readonly ConsentOrganization[];
   readonly requirePasskey: boolean;
   readonly userEmail: string;
+  readonly agentMcpEnabled?: boolean;
+  readonly agentIssueWriteEnabled?: boolean;
+  readonly agentIdentities?: readonly ConsentAgentIdentity[];
 }
 
 type Pending = 'allow' | 'deny' | null;
@@ -41,6 +50,77 @@ function messageOf(error: unknown): string {
   return 'Try again.';
 }
 
+function connectionAccessText(agentMode: boolean, writeSelected: boolean): string {
+  if (!agentMode) return 'wants to act in Orbit as';
+  return writeSelected
+    ? 'wants Issue write access to Orbit authorized by'
+    : 'wants read-only access to Orbit authorized by';
+}
+
+function agentAccessDescription(writeSelected: boolean): string {
+  return writeSelected
+    ? 'This Agent can create, edit, archive, delete and relate issues within your current permissions. get_me and me still refer to you.'
+    : 'This Agent connection is read-only. It cannot create or update issues, comments, projects, or other workspace data. get_me and me still refer to you.';
+}
+
+function ConsentPermissions({
+  scopes,
+  agentMode,
+  writeSelected,
+}: {
+  readonly scopes: readonly string[];
+  readonly agentMode: boolean;
+  readonly writeSelected: boolean;
+}) {
+  const permissions = scopes.filter(
+    (entry) =>
+      SCOPE_LABELS[entry] !== undefined &&
+      !(agentMode && entry === 'orbit.write' && !writeSelected),
+  );
+  if (permissions.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-2xs text-faint">It will be able to</span>
+      <ul className="flex flex-col gap-1.5">
+        {permissions.map((entry) => (
+          <li key={entry} className="flex items-start gap-2 text-dense text-text">
+            <Check className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden="true" />
+            {agentMode && entry === 'orbit.write'
+              ? 'Create, edit, archive, delete and relate issues'
+              : SCOPE_LABELS[entry]}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AgentWriteConsent({
+  enabled,
+  checked,
+  disabled,
+  onChange,
+}: {
+  readonly enabled: boolean;
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  if (!enabled) return null;
+  return (
+    <label className="flex items-start gap-2 text-dense text-text">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+        className="mt-1 accent-accent"
+      />
+      Allow this Agent to create, edit, archive and delete issues
+    </label>
+  );
+}
+
 export function ConsentForm({
   consentCode,
   clientId,
@@ -50,19 +130,50 @@ export function ConsentForm({
   organizations,
   requirePasskey,
   userEmail,
+  agentMcpEnabled = false,
+  agentIssueWriteEnabled = false,
+  agentIdentities = [],
 }: ConsentFormProps) {
   const { toast } = useToast();
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? '');
   const [pending, setPending] = useState<Pending>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
+  const [connectionKind, setConnectionKind] = useState('legacy');
+  const [identityId, setIdentityId] = useState('');
+  const [agentName, setAgentName] = useState('');
+  const [agentWrite, setAgentWrite] = useState(false);
 
-  const permissions = scopes.filter((entry) => SCOPE_LABELS[entry] !== undefined);
+  const agentAvailable = agentMcpEnabled && scopes.includes('orbit.read');
+  const agentMode = agentAvailable && connectionKind === 'agent';
+  const writeAvailable = agentIssueWriteEnabled && scopes.includes('orbit.write');
+  const writeSelected = agentMode && writeAvailable && agentWrite;
+  const identities = agentIdentities.filter(
+    (identity) => identity.organizationId === organizationId,
+  );
+  const identitySelected =
+    identityId === ''
+      ? agentName.trim().length > 0
+      : identities.some((identity) => identity.id === identityId);
 
   async function post(decision: 'allow' | 'deny'): Promise<DecisionResponse> {
     const response = await fetch('/oauth/authorize/decision', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, consentCode, clientId, scope, organizationId }),
+      body: JSON.stringify({
+        decision,
+        consentCode,
+        clientId,
+        scope,
+        organizationId,
+        ...(decision === 'allow' && agentMode
+          ? {
+              agent: {
+                ...(identityId === '' ? { name: agentName.trim() } : { identityId }),
+                write: writeSelected,
+              },
+            }
+          : {}),
+      }),
     });
     const data = (await response.json().catch(() => ({}))) as DecisionResponse;
     if (response.status === 200) return data;
@@ -115,7 +226,8 @@ export function ConsentForm({
   return (
     <div className="flex flex-col gap-5">
       <p className="text-center text-muted text-sm">
-        <span className="font-medium text-text">{clientName}</span> wants to act in Orbit as{' '}
+        <span className="font-medium text-text">{clientName}</span>{' '}
+        {connectionAccessText(agentMode, writeSelected)}{' '}
         <span className="font-medium text-text">{userEmail}</span>.
       </p>
 
@@ -123,7 +235,12 @@ export function ConsentForm({
         Workspace
         <select
           value={organizationId}
-          onChange={(event) => setOrganizationId(event.target.value)}
+          onChange={(event) => {
+            setOrganizationId(event.target.value);
+            setIdentityId('');
+            setAgentName('');
+            setAgentWrite(false);
+          }}
           disabled={pending !== null}
           className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
         >
@@ -135,19 +252,68 @@ export function ConsentForm({
         </select>
       </label>
 
-      {permissions.length > 0 ? (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-2xs text-faint">It will be able to</span>
-          <ul className="flex flex-col gap-1.5">
-            {permissions.map((entry) => (
-              <li key={entry} className="flex items-start gap-2 text-dense text-text">
-                <Check className="mt-0.5 size-3.5 shrink-0 text-success" aria-hidden="true" />
-                {SCOPE_LABELS[entry]}
-              </li>
-            ))}
-          </ul>
+      {agentAvailable ? (
+        <label className="flex flex-col gap-1.5 text-2xs text-faint">
+          Connection identity
+          <select
+            value={connectionKind}
+            onChange={(event) => {
+              setConnectionKind(event.target.value);
+              setAgentWrite(false);
+            }}
+            disabled={pending !== null}
+            className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+          >
+            <option value="legacy">Human Principal ({userEmail})</option>
+            <option value="agent">Agent Identity</option>
+          </select>
+        </label>
+      ) : null}
+
+      {agentMode ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-muted text-sm">{agentAccessDescription(writeSelected)}</p>
+          <AgentWriteConsent
+            enabled={writeAvailable}
+            checked={writeSelected}
+            disabled={pending !== null}
+            onChange={setAgentWrite}
+          />
+          <label className="flex flex-col gap-1.5 text-2xs text-faint">
+            Agent Identity
+            <select
+              value={identityId}
+              onChange={(event) => {
+                setIdentityId(event.target.value);
+                setAgentWrite(false);
+              }}
+              disabled={pending !== null}
+              className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+            >
+              <option value="">Create a new Identity</option>
+              {identities.map((identity) => (
+                <option key={identity.id} value={identity.id}>
+                  {identity.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {identityId === '' ? (
+            <label className="flex flex-col gap-1.5 text-2xs text-faint">
+              Agent name
+              <input
+                value={agentName}
+                onChange={(event) => setAgentName(event.target.value)}
+                maxLength={100}
+                disabled={pending !== null}
+                className="h-9 rounded-md border border-border bg-surface px-2.5 text-dense text-text"
+              />
+            </label>
+          ) : null}
         </div>
       ) : null}
+
+      <ConsentPermissions scopes={scopes} agentMode={agentMode} writeSelected={writeSelected} />
 
       <div className="flex gap-2">
         <Button
@@ -163,7 +329,7 @@ export function ConsentForm({
           type="button"
           variant="primary"
           block
-          disabled={pending !== null || organizationId === ''}
+          disabled={pending !== null || organizationId === '' || (agentMode && !identitySelected)}
           onClick={() => run('allow')}
         >
           {pending === 'allow' ? (
