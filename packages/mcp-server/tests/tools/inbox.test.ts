@@ -4,6 +4,7 @@ import {
   addMember,
   connect,
   createWorkspace,
+  MCP_TEST_PUBLIC_URL,
   mintToken,
   resetDatabase,
 } from '../../src/test-helpers.ts';
@@ -43,21 +44,25 @@ describe('list_notifications', () => {
     const grouped = await agent.result('list_inbox_conversations', { tab: 'mentions' });
     const conversations = grouped['conversations'] as {
       id: string;
+      url: string;
       eventCount: number;
       hasMention: boolean;
     }[];
     const conversation = conversations.find((row) => row.hasMention);
     expect(conversation).toBeDefined();
+    expect(conversation?.url.startsWith(`${MCP_TEST_PUBLIC_URL}/`)).toBe(true);
     const id = conversation?.id ?? '';
     const history = await agent.result('list_inbox_conversation_events', { conversationId: id });
-    const events = history['events'] as { id: string }[];
+    const events = history['events'] as { id: string; url: string }[];
     expect(events.length).toBeGreaterThan(0);
     expect(events[0]?.id).not.toBe(id);
+    expect(events[0]?.url.startsWith(`${MCP_TEST_PUBLIC_URL}/`)).toBe(true);
     const unread = await agent.result('mark_inbox_conversations_read', {
       conversationIds: [id],
       read: false,
     });
     expect(unread['counterVersion']).toBeNumber();
+    expect((unread['conversations'] as { url: string }[])[0]?.url).toBe(conversation?.url ?? '');
     expect(
       (unread['conversations'] as { unreadMentionCount: number }[])[0]?.unreadMentionCount,
     ).toBe(0);
@@ -67,7 +72,8 @@ describe('list_notifications', () => {
     const rows = result['notifications'] as {
       type: string;
       read: boolean;
-      issue: { identifier: string; title: string; teamKey: string } | null;
+      url: string;
+      issue: { identifier: string; title: string; teamKey: string; url: string } | null;
     }[];
 
     const mention = rows.find((row) => row.type === 'mention');
@@ -76,6 +82,8 @@ describe('list_notifications', () => {
     expect(mention?.issue?.identifier).toBe(issueIdentifier);
     expect(mention?.issue?.title).toBe('Billing webhook drops retries');
     expect(mention?.issue?.teamKey).toBe(workspace.teamKey);
+    expect(mention?.issue?.url).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${issueIdentifier}`);
+    expect(mention?.url.startsWith(`${MCP_TEST_PUBLIC_URL}/issue/${issueIdentifier}`)).toBe(true);
   });
 
   it('never returns a notification the caller authored', async () => {
