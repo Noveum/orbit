@@ -2,7 +2,7 @@
 
 import { decodeFilter, hasCurrentSprintFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
-import type { IssueExpectedProperties } from '@orbit/shared/validators';
+import type { IssueExpectedProperties, IssueMoveExpected } from '@orbit/shared/validators';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import {
   keepPreviousData,
@@ -1080,6 +1080,7 @@ export interface IssueRegrouping {
   readonly stateId?: string;
   readonly cycleId?: string | null;
   readonly projectId?: string | null;
+  readonly milestoneId?: string | null;
   readonly assigneeId?: string | null;
   readonly priority?: number;
 }
@@ -1090,6 +1091,7 @@ export type MoveInput = IssueRegrouping & {
   readonly afterId: string | null;
   readonly beforeOrder: number | null;
   readonly afterOrder: number | null;
+  readonly expected?: IssueMoveExpected;
 };
 
 const moveDeletionGenerations = new WeakMap<MoveInput, number>();
@@ -1118,6 +1120,7 @@ function regroupingOf(input: MoveInput): IssueRegrouping {
     ...(input.stateId === undefined ? {} : { stateId: input.stateId }),
     ...(input.cycleId === undefined ? {} : { cycleId: input.cycleId }),
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    ...(input.milestoneId === undefined ? {} : { milestoneId: input.milestoneId }),
     ...(input.assigneeId === undefined ? {} : { assigneeId: input.assigneeId }),
     ...(input.priority === undefined ? {} : { priority: input.priority }),
   };
@@ -1220,7 +1223,12 @@ export function useMoveIssue() {
         moveDeletionGenerations.get(input) ?? issueDeletionGeneration(client, input.issue.id);
       const result = await apiFetch(`/api/issues/${input.issue.id}/move`, issueMoveResultSchema, {
         method: 'POST',
-        body: { ...regroupingOf(input), beforeId: input.beforeId, afterId: input.afterId },
+        body: {
+          ...regroupingOf(input),
+          beforeId: input.beforeId,
+          afterId: input.afterId,
+          ...(input.expected === undefined ? {} : { expected: input.expected }),
+        },
       });
       return {
         issues: [result.issue, ...result.rebalanced],

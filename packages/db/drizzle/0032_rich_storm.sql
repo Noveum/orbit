@@ -1,0 +1,3 @@
+CREATE INDEX IF NOT EXISTS "github_check_activity_delivery_idx" ON "github_check_activity" USING btree ("organization_id","webhook_delivery_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "github_check_activity_retention_idx" ON "github_check_activity" USING btree ("organization_id","repository_sync_id","created_at","id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "github_pull_request_activity_check_idx" ON "github_pull_request_activity" USING btree ("organization_id","check_activity_id");

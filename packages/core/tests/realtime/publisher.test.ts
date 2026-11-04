@@ -19,7 +19,7 @@ class FakeRedis {
 }
 
 const previousRedisUrl = process.env['REDIS_URL'];
-const redisModule = await import('ioredis');
+const redisModule = { ...(await import('ioredis')) };
 process.env['REDIS_URL'] = 'redis://fake:6379';
 mock.module('ioredis', () => ({ Redis: FakeRedis }));
 

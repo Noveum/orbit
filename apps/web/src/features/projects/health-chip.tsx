@@ -34,11 +34,26 @@ export function healthLabel(health: ProjectHealth): string {
   return HEALTH_LABELS[health];
 }
 
-export function HealthChip({ health }: { readonly health: ProjectHealth }) {
+export function HealthChip({
+  health,
+  staleDays,
+}: {
+  readonly health: ProjectHealth;
+  readonly staleDays?: number | null | undefined;
+}) {
   return (
-    <Badge tone={HEALTH_TONES[health]}>
-      <span className={`size-1.5 rounded-full ${HEALTH_DOTS[health]}`} aria-hidden="true" />
-      {HEALTH_LABELS[health]}
-    </Badge>
+    <span className="inline-flex items-center gap-1.5">
+      <Badge tone={HEALTH_TONES[health]}>
+        <span className={`size-1.5 rounded-full ${HEALTH_DOTS[health]}`} aria-hidden="true" />
+        {HEALTH_LABELS[health]}
+      </Badge>
+      {staleDays === undefined ? null : (
+        <span className="text-2xs text-faint">
+          {staleDays === null
+            ? 'No updates yet'
+            : `${staleDays} ${staleDays === 1 ? 'day' : 'days'} ago`}
+        </span>
+      )}
+    </span>
   );
 }

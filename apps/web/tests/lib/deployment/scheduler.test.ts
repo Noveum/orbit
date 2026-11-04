@@ -16,7 +16,7 @@ describe('self-hosted maintenance scheduler', () => {
     ]);
   });
 
-  it('runs snapshots every six hours and pruning at 04:00 UTC', async () => {
+  it('runs snapshots every six hours and pruning every UTC hour', async () => {
     const run = mock(async (_path: string) => undefined);
     const scheduler = createMaintenanceScheduler(run, Date.parse('2026-09-23T03:59:00Z'));
     await scheduler.tick(Date.parse('2026-09-23T04:00:00Z'));
@@ -25,7 +25,7 @@ describe('self-hosted maintenance scheduler', () => {
     run.mockClear();
     await scheduler.tick(Date.parse('2026-09-23T06:00:00Z'));
     expect(run.mock.calls.map(([path]) => path)).toContain('/api/cron/analytics-snapshots');
-    expect(run.mock.calls.map(([path]) => path)).not.toContain('/api/cron/prune');
+    expect(run.mock.calls.map(([path]) => path)).toContain('/api/cron/prune');
   });
 
   it('does not overlap jobs and resumes after a request settles', async () => {
