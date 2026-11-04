@@ -676,7 +676,11 @@ async function settleIssueOccurrences(client: QueryClient, issue: Issue): Promis
       return relations?.some((relation) => relation.issue.id === issue.id) ? [query.queryKey] : [];
     });
   await Promise.allSettled(
-    fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
+    fetchingKeys.map((key) =>
+      key[0] === ISSUE_ROOT
+        ? cancelIssueQueries(client, { queryKey: key, exact: true })
+        : client.cancelQueries({ queryKey: key, exact: true }),
+    ),
   );
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
     if (detail === undefined) continue;
@@ -731,28 +735,44 @@ function refreshCounts(client: QueryClient): void {
 
 interface IssueListMutations {
   pending: number;
-  readonly firstLoads: Map<string, QueryKey>;
+  readonly canceledFetches: Map<string, QueryKey>;
 }
 
 const issueListMutations = new WeakMap<QueryClient, IssueListMutations>();
 
 async function beginIssueListMutation(client: QueryClient): Promise<void> {
-  const mutations = issueListMutations.get(client) ?? { pending: 0, firstLoads: new Map() };
+  const mutations = issueListMutations.get(client) ?? { pending: 0, canceledFetches: new Map() };
   mutations.pending += 1;
   issueListMutations.set(client, mutations);
   await cancelIssueListFetches(client);
 }
 
 async function cancelIssueListFetches(client: QueryClient): Promise<void> {
-  const firstLoads = client
+  const fetching = client
     .getQueryCache()
-    .findAll({ queryKey: [ISSUES_ROOT], fetchStatus: 'fetching' })
-    .filter((query) => query.state.data === undefined);
+    .findAll({ queryKey: [ISSUES_ROOT], fetchStatus: 'fetching' });
   const mutations = issueListMutations.get(client);
-  for (const query of firstLoads) {
-    mutations?.firstLoads.set(query.queryHash, query.queryKey);
+  for (const query of fetching) {
+    mutations?.canceledFetches.set(query.queryHash, query.queryKey);
   }
-  await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+  await cancelIssueQueries(client, { queryKey: [ISSUES_ROOT] });
+}
+
+async function cancelIssueQueries(
+  client: QueryClient,
+  filters: { readonly queryKey: QueryKey; readonly exact?: boolean },
+): Promise<void> {
+  const fetching = client.getQueryCache().findAll({ ...filters, fetchStatus: 'fetching' });
+  const invalidated = fetching.filter((query) => query.state.isInvalidated);
+  for (const query of fetching) {
+    if (query.state.data === undefined || query.state.status !== 'success') continue;
+    const { data, dataUpdatedAt, isInvalidated } = query.state;
+    client.setQueryData(query.queryKey, data, { updatedAt: dataUpdatedAt });
+    if (isInvalidated) query.invalidate();
+  }
+  const cancellation = client.cancelQueries(filters);
+  for (const query of invalidated) query.invalidate();
+  await Promise.allSettled([cancellation]);
 }
 
 async function finishIssueListMutation(client: QueryClient): Promise<void> {
@@ -762,7 +782,7 @@ async function finishIssueListMutation(client: QueryClient): Promise<void> {
   mutations.pending -= 1;
   if (mutations.pending > 0) return;
   issueListMutations.delete(client);
-  for (const key of mutations.firstLoads.values()) {
+  for (const key of mutations.canceledFetches.values()) {
     client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
   }
 }
@@ -1173,7 +1193,7 @@ export function useUpdateIssue() {
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
         beginIssueListMutation(client),
-        client.cancelQueries({ queryKey: detailKey, exact: true }),
+        cancelIssueQueries(client, { queryKey: detailKey, exact: true }),
       ]);
       const previousDetail = client.getQueryData<IssueDetail>(detailKey);
 
@@ -1603,7 +1623,7 @@ async function dropFromIssueDetails(
     .findAll({ queryKey: [ISSUE_ROOT] })
     .flatMap((query) => (query.state.fetchStatus === 'fetching' ? [query.queryKey] : []));
   await Promise.allSettled(
-    fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
+    fetchingKeys.map((key) => cancelIssueQueries(client, { queryKey: key, exact: true })),
   );
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
     if (detail === undefined) continue;

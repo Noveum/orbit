@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { inCondition } from '@orbit/shared/filters';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { dehydrate, hydrate, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
@@ -8,6 +8,8 @@ import {
   recordMemberActorUpdate,
 } from '@/lib/query/issue-actor-cache.ts';
 import {
+  issueListRevisionGeneration,
+  issueRevisionGeneration,
   recordIssueCacheReset,
   recordIssueDeletions,
   recordIssueListRevisions,
@@ -28,10 +30,13 @@ const {
   authoritativeCachedIssue,
   captureIssueHistory,
   DEFAULT_ISSUE_QUERY,
+  issuesQueryOptions,
+  previewDetail,
   useAssignedIssues,
   useColumnIssues,
   useDeleteIssues,
   useIssues,
+  useIssueDetail,
   useMoveIssue,
   useUpdateIssue,
 } = await import('@/lib/query/use-issues.ts');
@@ -1279,57 +1284,82 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     expect(listRequests).toBe(2);
   });
 
-  it('bounds filtered settlement retries during continuous issue revisions', async () => {
-    let client: QueryClient | undefined;
-    let listRequests = 0;
-    let revisions = 0;
-    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
-      if (init?.method === 'POST') {
-        return Promise.resolve(
-          Response.json({
-            issue: issue({ syncId: 2 }),
-            rebalanced: [],
+  it.each(['success', 'failure'] as const)(
+    'bounds filtered retries and settles before the final recovery ends in %s',
+    async (outcome) => {
+      let client: QueryClient | undefined;
+      let listRequests = 0;
+      let revisions = 0;
+      const recovery = deferred<Response>();
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          return Promise.resolve(
+            Response.json({
+              issue: issue({ syncId: 2 }),
+              rebalanced: [],
+            }),
+          );
+        }
+        listRequests += 1;
+        if (listRequests === 6) return recovery.promise;
+        if (listRequests > 1 && revisions < 5) {
+          if (client === undefined) throw new Error('missing query client');
+          recordIssueRevisions(client, ['issue_1']);
+          revisions += 1;
+        }
+        return Promise.resolve(Response.json({ issues: [issue({ syncId: 2 })], nextCursor: null }));
+      }) as unknown as typeof fetch;
+      client = newClient();
+      const list = renderHook(
+        () =>
+          useIssues(TEAM, undefined, {
+            filter: {
+              kind: 'group',
+              combinator: 'and',
+              children: [inCondition('state', ['state_todo'])],
+            },
+            orderBy: 'manual',
           }),
-        );
-      }
-      listRequests += 1;
-      if (listRequests > 1 && revisions < 5) {
-        if (client === undefined) throw new Error('missing query client');
-        recordIssueRevisions(client, ['issue_1']);
-        revisions += 1;
-      }
-      return Promise.resolve(Response.json({ issues: [issue({ syncId: 2 })], nextCursor: null }));
-    }) as unknown as typeof fetch;
-    client = newClient();
-    const list = renderHook(
-      () =>
-        useIssues(TEAM, undefined, {
-          filter: {
-            kind: 'group',
-            combinator: 'and',
-            children: [inCondition('state', ['state_todo'])],
-          },
-          orderBy: 'manual',
-        }),
-      { wrapper: wrapper(client) },
-    );
-    await waitFor(() => expect(list.result.current.data).toHaveLength(1));
-    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+        { wrapper: wrapper(client) },
+      );
+      await waitFor(() => expect(list.result.current.data).toHaveLength(1));
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
 
-    await act(async () => {
-      await move.result.current.mutateAsync({
-        issue: issue(),
-        stateId: 'state_todo',
-        beforeId: null,
-        afterId: null,
-        beforeOrder: null,
-        afterOrder: null,
+      await act(async () => {
+        await move.result.current.mutateAsync({
+          issue: issue(),
+          stateId: 'state_todo',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        });
       });
-    });
 
-    await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
-    expect(listRequests).toBeLessThanOrEqual(5);
-  });
+      await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
+      expect(listRequests).toBe(6);
+      expect(revisions).toBe(4);
+      const pendingQuery = client.getQueryCache().find({ queryKey: [ISSUES_ROOT], exact: false });
+      if (pendingQuery === undefined) throw new Error('The recovery query was not created.');
+      expect(pendingQuery.state.fetchStatus).toBe('fetching');
+      expect(list.result.current.data?.[0]?.syncId).toBe(2);
+      await act(async () => {
+        recovery.resolve(
+          outcome === 'success'
+            ? Response.json({ issues: [issue({ syncId: 2 })], nextCursor: null })
+            : Response.json({ error: 'Recovery failed' }, { status: 503 }),
+        );
+        await recovery.promise;
+      });
+      await waitFor(() => expect(pendingQuery.state.fetchStatus).toBe('idle'));
+      expect(list.result.current.data?.[0]?.syncId).toBe(2);
+      expect(pendingQuery.state.status).toBe(outcome === 'failure' ? 'error' : 'success');
+      expect(listRequests).toBe(6);
+      list.unmount();
+      move.unmount();
+      client.clear();
+    },
+  );
 
   it('does not roll back a move after its committed echo arrives', async () => {
     const pending = deferred<Response>();
@@ -3236,65 +3266,380 @@ describe('a mutation during a list first load', () => {
 });
 
 describe('delayed first-load responses', () => {
-  it('waits for overlapping writes before restarting the first load', async () => {
-    const first = deferred<Response>();
-    const updateResponse = deferred<Response>();
-    const moveResponse = deferred<Response>();
-    const confirmed = issue({ title: 'Committed title', stateId: 'state_doing', syncId: 3 });
-    let getCount = 0;
-    let writeCount = 0;
-    globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
-      if (init?.method === 'PATCH' || init?.method === 'POST') {
-        writeCount += 1;
-        return init.method === 'PATCH' ? updateResponse.promise : moveResponse.promise;
+  it.each(['move', 'delete'] as const)(
+    'keeps a late-hydrated parent detail while a child %s settles',
+    async (kind) => {
+      const first = deferred<Response>();
+      const refresh = deferred<Response>();
+      const child = issue();
+      const parent = issue({
+        id: 'parent_1',
+        identifier: 'ENG-2',
+        number: 2,
+        title: 'Parent detail',
+      });
+      const parentDetail = { ...previewDetail(parent), subIssues: [child] };
+      let gets = 0;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST')
+          return Promise.resolve(
+            Response.json({
+              issue: { ...child, stateId: 'state_doing', syncId: 2 },
+              rebalanced: [],
+            }),
+          );
+        if (init?.method === 'DELETE')
+          return Promise.resolve(
+            Response.json({ deleted: { id: child.id, identifier: child.identifier } }),
+          );
+        gets += 1;
+        return gets === 1 ? first.promise : refresh.promise;
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const detail = renderHook(() => useIssueDetail(parent.identifier), {
+        wrapper: wrapper(client),
+      });
+      await waitFor(() => expect(gets).toBe(1));
+      const key = queryKeys.issue(parent.identifier);
+      const restored = newClient();
+      restored.setQueryData(key, parentDetail);
+      act(() => hydrate(client, dehydrate(restored)));
+      restored.clear();
+      await waitFor(() => expect(detail.result.current.data?.issue.id).toBe(parent.id));
+      const mutations = renderHook(() => ({ move: useMoveIssue(), remove: useDeleteIssues() }), {
+        wrapper: wrapper(client),
+      });
+      try {
+        await act(async () => {
+          if (kind === 'move')
+            await mutations.result.current.move.mutateAsync({
+              issue: child,
+              stateId: 'state_doing',
+              beforeId: null,
+              afterId: null,
+              beforeOrder: null,
+              afterOrder: null,
+            });
+          else await mutations.result.current.remove.mutateAsync([child]);
+        });
+        const held = client.getQueryData<ReturnType<typeof previewDetail>>(key);
+        expect(held?.issue.id).toBe(parent.id);
+        expect(held?.subIssues.map((row) => row.id)).toEqual(kind === 'delete' ? [] : [child.id]);
+        if (kind === 'move') expect(held?.subIssues[0]?.stateId).toBe('state_doing');
+      } finally {
+        detail.unmount();
+        mutations.unmount();
+        client.clear();
+        first.resolve(Response.json(parentDetail));
+        refresh.resolve(Response.json(parentDetail));
       }
-      getCount += 1;
-      return getCount === 1
-        ? first.promise
-        : Promise.resolve(Response.json({ issues: [confirmed], nextCursor: null }));
-    }) as unknown as typeof fetch;
+    },
+  );
+
+  it.each([true, false])(
+    'keeps a late-hydrated detail optimistic until update succeeds: %s',
+    async (succeeds) => {
+      const first = deferred<Response>();
+      const write = deferred<Response>();
+      const before = issue();
+      const confirmed = issue({ title: 'Updated persisted detail', syncId: 2 });
+      let fetching = false;
+      let writing = false;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          writing = true;
+          return write.promise;
+        }
+        fetching = true;
+        return first.promise;
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const detail = renderHook(() => useIssueDetail(before.identifier), {
+        wrapper: wrapper(client),
+      });
+      await waitFor(() => expect(fetching).toBe(true));
+      const key = queryKeys.issue(before.identifier);
+      const restored = newClient();
+      restored.setQueryData(key, previewDetail(before));
+      act(() => hydrate(client, dehydrate(restored)));
+      restored.clear();
+      await waitFor(() => expect(detail.result.current.data?.issue.title).toBe(before.title));
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      let settling: Promise<unknown> = Promise.resolve();
+      act(() => {
+        settling = update.result.current
+          .mutateAsync({ issue: before, patch: { title: confirmed.title } })
+          .catch(() => undefined);
+      });
+      try {
+        await waitFor(() => expect(writing).toBe(true));
+        expect(client.getQueryData<ReturnType<typeof previewDetail>>(key)?.issue.title).toBe(
+          confirmed.title,
+        );
+        await act(async () => {
+          write.resolve(
+            succeeds
+              ? Response.json({ issue: confirmed })
+              : Response.json({ error: 'Rejected' }, { status: 409 }),
+          );
+          await settling;
+          first.resolve(Response.json(previewDetail(before)));
+        });
+        expect(client.getQueryData<ReturnType<typeof previewDetail>>(key)?.issue.title).toBe(
+          succeeds ? confirmed.title : before.title,
+        );
+      } finally {
+        detail.unmount();
+        update.unmount();
+        client.clear();
+        write.resolve(Response.json({ issue: confirmed }));
+        first.resolve(Response.json(previewDetail(before)));
+      }
+    },
+  );
+
+  it('retains a background error when canceling its refetch before an optimistic move', async () => {
     const client = newClient();
-    const list = renderHook(() => useIssues(TEAM, [issue()]), { wrapper: wrapper(client) });
-    await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
-    const mutation = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
-      wrapper: wrapper(client),
-    });
-    let updating: Promise<unknown> = Promise.resolve();
-    let moving: Promise<unknown> = Promise.resolve();
+    const key = issuesQueryOptions(TEAM).queryKey;
+    const updatedAt = 1_700_000_000_000;
+    client.setQueryData(key, issuePages([issue()]), { updatedAt });
+    const query = client.getQueryCache().find({ queryKey: key });
+    if (query === undefined) throw new Error('The cached list query was not created.');
+    const error = new Error('Earlier background refresh failed.');
+    query.setState({ status: 'error', error, isInvalidated: true });
+    const first = deferred<Response>();
+    const write = deferred<Response>();
+    let writeStarted = false;
+    let fetching = false;
+    globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        writeStarted = true;
+        return write.promise;
+      }
+      fetching = true;
+      return first.promise;
+    }) as unknown as typeof fetch;
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(fetching).toBe(true));
+    const states: { status: string; error: unknown; updatedAt: number; invalidated: boolean }[] =
+      [];
+    const cancel = client.cancelQueries.bind(client);
+    client.cancelQueries = async (...args: Parameters<typeof cancel>) => {
+      await cancel(...args);
+      states.push({
+        status: query.state.status,
+        error: query.state.error,
+        updatedAt: query.state.dataUpdatedAt,
+        invalidated: query.state.isInvalidated,
+      });
+    };
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+    let settling: Promise<unknown> = Promise.resolve();
     act(() => {
-      updating = mutation.result.current.update.mutateAsync({
-        issue: issue(),
-        patch: { title: 'Committed title' },
-      });
-      moving = mutation.result.current.move.mutateAsync({
-        issue: issue(),
-        stateId: 'state_doing',
-        beforeId: null,
-        afterId: null,
-        beforeOrder: null,
-        afterOrder: null,
-      });
+      settling = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .catch(() => undefined);
     });
-    await waitFor(() => expect(writeCount).toBe(2));
-    expect(getCount).toBe(1);
+    await waitFor(() => expect(writeStarted).toBe(true));
+    expect(states[0]).toEqual({ status: 'error', error, updatedAt, invalidated: true });
     await act(async () => {
-      updateResponse.resolve(
-        Response.json({ issue: issue({ title: 'Committed title', syncId: 2 }) }),
-      );
-      await updating;
-    });
-    expect(getCount).toBe(1);
-    await act(async () => {
-      moveResponse.resolve(Response.json({ issue: confirmed, rebalanced: [] }));
-      await moving;
+      write.resolve(Response.json({ error: 'Rejected' }, { status: 409 }));
+      await settling;
       first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
-      await first.promise;
     });
-    await waitFor(() => expect(list.result.current.data?.[0]?.syncId).toBe(3));
-    expect(list.result.current.data?.[0]?.title).toBe('Committed title');
-    expect(list.result.current.data?.[0]?.stateId).toBe('state_doing');
-    expect(getCount).toBe(2);
+    list.unmount();
+    move.unmount();
+    client.clear();
   });
+
+  it.each([true, false])(
+    'preserves late hydration metadata when a move succeeds: %s',
+    async (succeeds) => {
+      const first = deferred<Response>();
+      const write = deferred<Response>();
+      const before = issue();
+      const confirmed = issue({ stateId: 'state_doing', syncId: 2 });
+      let getCount = 0;
+      let writeStarted = false;
+      let firstSignal: AbortSignal | null | undefined;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          writeStarted = true;
+          return write.promise;
+        }
+        getCount += 1;
+        if (getCount === 1) {
+          firstSignal = init?.signal;
+          return first.promise;
+        }
+        return Promise.resolve(
+          Response.json({ issues: [succeeds ? confirmed : before], nextCursor: null }),
+        );
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+      await waitFor(() => expect(getCount).toBe(1));
+      const query = client.getQueryCache().find({ queryKey: [ISSUES_ROOT], exact: false });
+      if (query === undefined) throw new Error('The first list query was not created.');
+      const key = query.queryKey;
+      const restored = newClient();
+      const updatedAt = 1_700_000_000_000;
+      restored.setQueryData(key, issuePages([before]), { updatedAt });
+      act(() => hydrate(client, dehydrate(restored)));
+      restored.clear();
+      query.invalidate();
+      recordIssueRevisions(client, [before.id]);
+      recordIssueListRevisions(client, [key]);
+      const held = query.state.data;
+      const revision = issueRevisionGeneration(client, before.id);
+      const listRevision = issueListRevisionGeneration(client, key);
+      const cancellations: {
+        data: unknown;
+        updatedAt: number;
+        invalidated: boolean;
+        status: string;
+        fetching: string;
+        revision: number;
+        listRevision: number;
+      }[] = [];
+      const cancel = client.cancelQueries.bind(client);
+      client.cancelQueries = async (...args: Parameters<typeof cancel>) => {
+        await cancel(...args);
+        cancellations.push({
+          data: query.state.data,
+          updatedAt: query.state.dataUpdatedAt,
+          invalidated: query.state.isInvalidated,
+          status: query.state.status,
+          fetching: query.state.fetchStatus,
+          revision: issueRevisionGeneration(client, before.id),
+          listRevision: issueListRevisionGeneration(client, key),
+        });
+      };
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+      let settling: Promise<unknown> = Promise.resolve();
+      act(() => {
+        settling = move.result.current
+          .mutateAsync({
+            issue: before,
+            stateId: 'state_doing',
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          })
+          .catch(() => undefined);
+      });
+      await waitFor(() => expect(writeStarted).toBe(true));
+      expect(firstSignal?.aborted).toBe(true);
+      expect(cancellations[0]).toEqual({
+        data: held,
+        updatedAt,
+        invalidated: true,
+        status: 'success',
+        fetching: 'idle',
+        revision,
+        listRevision,
+      });
+      expect(cancellations[0]?.data).toBe(held);
+      expect(getCount).toBe(1);
+      await act(async () => {
+        write.resolve(
+          succeeds
+            ? Response.json({ issue: confirmed, rebalanced: [] })
+            : Response.json({ error: 'Rejected' }, { status: 409 }),
+        );
+        await settling;
+        first.resolve(Response.json({ issues: [before], nextCursor: null }));
+      });
+      await waitFor(() => expect(getCount).toBe(2));
+      expect(list.result.current.data?.[0]?.stateId).toBe(succeeds ? 'state_doing' : 'state_todo');
+      expect(list.result.current.data?.[0]?.syncId).toBe(succeeds ? 2 : 1);
+      list.unmount();
+      move.unmount();
+      client.clear();
+    },
+  );
+
+  it.each(['placeholder', 'hydrated'] as const)(
+    'waits for overlapping writes before restarting the %s list',
+    async (source) => {
+      const first = deferred<Response>();
+      const updateResponse = deferred<Response>();
+      const moveResponse = deferred<Response>();
+      const confirmed = issue({ title: 'Committed title', stateId: 'state_doing', syncId: 3 });
+      let getCount = 0;
+      let writeCount = 0;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'PATCH' || init?.method === 'POST') {
+          writeCount += 1;
+          return init.method === 'PATCH' ? updateResponse.promise : moveResponse.promise;
+        }
+        getCount += 1;
+        return getCount === 1
+          ? first.promise
+          : Promise.resolve(Response.json({ issues: [confirmed], nextCursor: null }));
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const list = renderHook(
+        () => useIssues(TEAM, source === 'placeholder' ? [issue()] : undefined),
+        { wrapper: wrapper(client) },
+      );
+      await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+      if (source === 'hydrated') {
+        const restored = newClient();
+        const [key] = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })[0] ?? [];
+        if (key === undefined) throw new Error('The first list query was not created.');
+        restored.setQueryData(key, issuePages([issue()]));
+        act(() => hydrate(client, dehydrate(restored)));
+        restored.clear();
+      }
+      const mutation = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+        wrapper: wrapper(client),
+      });
+      let updating: Promise<unknown> = Promise.resolve();
+      let moving: Promise<unknown> = Promise.resolve();
+      act(() => {
+        updating = mutation.result.current.update.mutateAsync({
+          issue: issue(),
+          patch: { title: 'Committed title' },
+        });
+        moving = mutation.result.current.move.mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        });
+      });
+      await waitFor(() => expect(writeCount).toBe(2));
+      expect(getCount).toBe(1);
+      await act(async () => {
+        updateResponse.resolve(
+          Response.json({ issue: issue({ title: 'Committed title', syncId: 2 }) }),
+        );
+        await updating;
+      });
+      expect(getCount).toBe(1);
+      await act(async () => {
+        moveResponse.resolve(Response.json({ issue: confirmed, rebalanced: [] }));
+        await moving;
+        first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
+        await first.promise;
+      });
+      await waitFor(() => expect(list.result.current.data?.[0]?.syncId).toBe(3));
+      expect(list.result.current.data?.[0]?.title).toBe('Committed title');
+      expect(list.result.current.data?.[0]?.stateId).toBe('state_doing');
+      expect(getCount).toBe(2);
+    },
+  );
 
   for (const kind of ['update', 'move'] as const) {
     for (const succeeds of [true, false]) {
