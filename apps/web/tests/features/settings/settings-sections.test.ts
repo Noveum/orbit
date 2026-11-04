@@ -8,9 +8,11 @@ import {
 describe('settings sections', () => {
   it('only includes deployment setup for workspace administrators', () => {
     expect(
-      settingsSectionsFlat(false, false).some((section) => section.href === '/settings/deployment'),
+      settingsSectionsFlat(false, { canManageDeployment: false }).some(
+        (section) => section.href === '/settings/deployment',
+      ),
     ).toBe(false);
-    expect(settingsSectionsFlat(false, true)).toContainEqual({
+    expect(settingsSectionsFlat(false, { canManageDeployment: true })).toContainEqual({
       href: '/settings/deployment',
       label: 'Deployment setup',
     });
@@ -38,8 +40,14 @@ describe('settings sections', () => {
     );
   });
 
+  it('omits AI provider section when canManageAi is false', () => {
+    const workspace = settingsGroupsFor(false, false).find((group) => group.id === 'workspace');
+
+    expect(workspace?.sections.some((section) => section.href === '/settings/ai')).toBe(false);
+  });
+
   it('lists every section in sidebar order for keyboard navigation', () => {
-    expect(settingsSectionsFlat(false).map((section) => section.label)).toEqual([
+    expect(settingsSectionsFlat(false, true).map((section) => section.label)).toEqual([
       'Profile',
       'Connected accounts',
       'Passkeys',
@@ -51,16 +59,35 @@ describe('settings sections', () => {
       'Workflow',
       'Notifications',
       'Integrations',
+      'AI provider',
       'MCP server',
     ]);
   });
 
   it('inserts password in sidebar order when password auth is enabled', () => {
-    expect(settingsSectionsFlat(true).map((section) => section.label)).toEqual([
+    expect(settingsSectionsFlat(true, true).map((section) => section.label)).toEqual([
       'Profile',
       'Connected accounts',
       'Passkeys',
       'Password',
+      'Sessions',
+      'General',
+      'Members',
+      'Teams',
+      'Labels',
+      'Workflow',
+      'Notifications',
+      'Integrations',
+      'AI provider',
+      'MCP server',
+    ]);
+  });
+
+  it('omits AI provider from flat sections when canManageAi is false', () => {
+    expect(settingsSectionsFlat(false, false).map((section) => section.label)).toEqual([
+      'Profile',
+      'Connected accounts',
+      'Passkeys',
       'Sessions',
       'General',
       'Members',

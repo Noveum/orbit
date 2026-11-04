@@ -39,6 +39,7 @@ export const PERMISSIONS = [
   'member:invite',
   'member:manage',
   'integration:manage',
+  'ai:manage',
   'org:manage',
   'org:delete',
 ] as const;
@@ -83,6 +84,7 @@ const ADMIN_PERMISSIONS: readonly Permission[] = [
   'team:manage',
   'member:manage',
   'integration:manage',
+  'ai:manage',
   'org:manage',
   'org:delete',
 ];

@@ -31,6 +31,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { href: '/settings/workflow', label: 'Workflow' },
       { href: '/settings/notifications', label: 'Notifications' },
       { href: '/settings/integrations', label: 'Integrations' },
+      { href: '/settings/ai', label: 'AI provider' },
       { href: '/settings/mcp', label: 'MCP server' },
     ],
   },
@@ -41,34 +42,68 @@ const PASSWORD_SECTION: SettingsSection = {
   label: 'Password',
 };
 
+export interface SettingsSectionsOptions {
+  readonly canManageAi?: boolean;
+  readonly canManageDeployment?: boolean;
+}
+
 export function settingsGroupsFor(
   passwordEnabled: boolean,
+  permissionsOrAi: boolean | SettingsSectionsOptions = false,
   canManageDeployment = false,
 ): readonly SettingsGroup[] {
-  return SETTINGS_GROUPS.map((group) => {
-    if (group.id === 'workspace' && canManageDeployment) {
+  const canManageAi =
+    typeof permissionsOrAi === 'object' ? (permissionsOrAi.canManageAi ?? false) : permissionsOrAi;
+  const deploymentAllowed =
+    typeof permissionsOrAi === 'object'
+      ? (permissionsOrAi.canManageDeployment ?? false)
+      : canManageDeployment;
+
+  let groups = SETTINGS_GROUPS;
+  if (passwordEnabled) {
+    groups = groups.map((group) => {
+      if (group.id !== 'account') return group;
+      const at = group.sections.findIndex(
+        (section) => section.href === '/settings/account/passkeys',
+      );
+      const insertAt = at === -1 ? group.sections.length : at + 1;
+      return {
+        ...group,
+        sections: [
+          ...group.sections.slice(0, insertAt),
+          PASSWORD_SECTION,
+          ...group.sections.slice(insertAt),
+        ],
+      };
+    });
+  }
+  if (!canManageAi) {
+    groups = groups.map((group) => {
+      if (group.id !== 'workspace') return group;
+      return {
+        ...group,
+        sections: group.sections.filter((section) => section.href !== '/settings/ai'),
+      };
+    });
+  }
+  if (deploymentAllowed) {
+    groups = groups.map((group) => {
+      if (group.id !== 'workspace') return group;
       return {
         ...group,
         sections: [...group.sections, { href: '/settings/deployment', label: 'Deployment setup' }],
       };
-    }
-    if (group.id !== 'account' || !passwordEnabled) return group;
-    const at = group.sections.findIndex((section) => section.href === '/settings/account/passkeys');
-    const insertAt = at === -1 ? group.sections.length : at + 1;
-    return {
-      ...group,
-      sections: [
-        ...group.sections.slice(0, insertAt),
-        PASSWORD_SECTION,
-        ...group.sections.slice(insertAt),
-      ],
-    };
-  });
+    });
+  }
+  return groups;
 }
 
 export function settingsSectionsFlat(
   passwordEnabled: boolean,
+  permissionsOrAi: boolean | SettingsSectionsOptions = false,
   canManageDeployment = false,
 ): readonly SettingsSection[] {
-  return settingsGroupsFor(passwordEnabled, canManageDeployment).flatMap((group) => group.sections);
+  return settingsGroupsFor(passwordEnabled, permissionsOrAi, canManageDeployment).flatMap(
+    (group) => group.sections,
+  );
 }
