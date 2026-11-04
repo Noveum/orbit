@@ -1,11 +1,13 @@
 'use client';
 
+import { renderMarkdown } from '@orbit/services/markdown';
 import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { ProgressBar } from '@/features/charts/donut.tsx';
+import { DocBody } from '@/features/docs/doc-body.tsx';
 import { formatDay } from '@/features/projects/dates.ts';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
@@ -142,9 +144,14 @@ function MilestoneRow({
   readonly onMove: (direction: -1 | 1) => void;
   readonly busy: boolean;
 }) {
+  const descriptionHtml = useMemo(
+    () => renderMarkdown(milestone.description),
+    [milestone.description],
+  );
+
   return (
     <li
-      className={cn('flex flex-col gap-2 rounded-lg border border-border p-3', cardHover)}
+      className={cn('flex min-w-0 flex-col gap-2 rounded-lg border border-border p-3', cardHover)}
       data-testid={`milestone-${milestone.id}`}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -154,7 +161,7 @@ function MilestoneRow({
         </span>
       </div>
       {milestone.description.length === 0 ? null : (
-        <p className="text-muted text-xs">{milestone.description}</p>
+        <DocBody html={descriptionHtml} className="min-w-0 text-muted text-xs" />
       )}
       <ProgressBar
         completed={milestone.completed}

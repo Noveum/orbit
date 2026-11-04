@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { ToastProvider } from '@/components/ui/toast.tsx';
@@ -52,14 +52,15 @@ function stubFetch(): void {
       return Promise.resolve(Response.json({ deleted: true }));
     }
     if (method === 'PATCH') {
-      const patch = body as { name: string };
-      served = served.map((entry) =>
-        url.endsWith(entry.id) ? { ...entry, name: patch.name } : entry,
-      );
+      const patch = body as { name: string; description: string; targetDate: string | null };
+      served = served.map((entry) => (url.endsWith(entry.id) ? { ...entry, ...patch } : entry));
       return Promise.resolve(Response.json({ milestone: served[0] }));
     }
-    const draft = body as { name: string };
-    const created = milestone(`milestone_${served.length + 1}`, draft.name, served.length + 1);
+    const draft = body as { name: string; description: string; targetDate: string | null };
+    const created = {
+      ...milestone(`milestone_${served.length + 1}`, draft.name, served.length + 1),
+      ...draft,
+    };
     served = [...served, created];
     return Promise.resolve(Response.json({ milestone: created }));
   }) as unknown as typeof fetch;
@@ -116,6 +117,115 @@ afterEach(() => {
 });
 
 describe('MilestoneBoard', () => {
+  it('renders headings, lists, emphasis and links in milestone descriptions', () => {
+    served = [
+      {
+        ...milestone('milestone_1', 'Release', 1),
+        description:
+          '## Release notes\n\n- Ship **search**\n- Review [changes](https://example.com/changes)\n\nRun `smoke` before release.',
+      },
+    ];
+    mountBoard(false);
+
+    const row = screen.getByTestId('milestone-milestone_1');
+    expect(within(row).getByRole('heading', { level: 2, name: 'Release notes' })).toBeVisible();
+    expect(within(row).getAllByRole('listitem')).toHaveLength(2);
+    expect(row.querySelector('strong')).toHaveTextContent('search');
+    expect(row.querySelector('code')).toHaveTextContent('smoke');
+    const link = within(row).getByRole('link', { name: 'changes' });
+    expect(link).toHaveAttribute('href', 'https://example.com/changes');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(writes()).toEqual([]);
+  });
+
+  it('keeps plain text and paragraph breaks readable', () => {
+    served = [
+      { ...milestone('milestone_1', 'Release', 1), description: 'First paragraph.\n\n验收通过。' },
+    ];
+    mountBoard();
+
+    const row = screen.getByTestId('milestone-milestone_1');
+    expect(row.querySelectorAll('p')).toHaveLength(2);
+    expect(within(row).getByText('First paragraph.')).toBeVisible();
+    expect(within(row).getByText('验收通过。')).toBeVisible();
+  });
+
+  it('uses the shared overflow containers for tables and fenced code', () => {
+    served = [
+      {
+        ...milestone('milestone_1', 'Release', 1),
+        description: '| Check | Result |\n| --- | --- |\n| Search | Passed |\n\n```sh\nsmoke\n```',
+      },
+    ];
+    mountBoard();
+
+    const body = screen.getByTestId('doc-body');
+    expect(body).toHaveClass('[overflow-wrap:anywhere]', 'min-w-0');
+    expect(screen.getByTestId('milestone-milestone_1')).toHaveClass('min-w-0');
+    expect(within(body).getByRole('table').parentElement).toHaveAttribute('data-table-scroll');
+    expect(body.querySelector('pre code')).toHaveTextContent('smoke');
+    expect(within(body).getByRole('button', { name: 'Copy the code' })).toBeVisible();
+  });
+
+  it('sanitizes milestone markdown before inserting it into the page', () => {
+    served = [
+      {
+        ...milestone('milestone_1', 'Release', 1),
+        description:
+          '## Safe heading\n\n<script>alert(1)</script>\n\n[unsafe](javascript:alert(1))\n\n<img src="https://example.com/image.png" onerror="alert(1)">',
+      },
+    ];
+    mountBoard();
+
+    const row = screen.getByTestId('milestone-milestone_1');
+    expect(within(row).getByRole('heading', { name: 'Safe heading' })).toBeVisible();
+    expect(row.querySelector('script')).toBeNull();
+    expect(row.querySelector('[onerror]')).toBeNull();
+    expect(row.querySelector('[href^="javascript:"]')).toBeNull();
+    expect(row).not.toHaveTextContent('alert(1)');
+  });
+
+  it('does not render a description body for an empty description', () => {
+    mountBoard();
+
+    expect(screen.queryByTestId('doc-body')).toBeNull();
+  });
+
+  it('preserves markdown source when editing and renders the saved description', async () => {
+    const source = '## Release notes\n\n- Ship **search**\n- Review [changes](https://example.com)';
+    served = [{ ...milestone('milestone_1', 'Release', 1), description: source }];
+    mountBoard();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId('milestone-edit-milestone_1'));
+    expect(screen.getByTestId('milestone-edit-description')).toHaveValue(source);
+    await user.click(screen.getByTestId('milestone-edit-submit'));
+
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(firstWrite()).toMatchObject({
+      method: 'PATCH',
+      url: '/api/milestones/milestone_1',
+      body: { description: source },
+    });
+    expect(await screen.findByRole('heading', { name: 'Release notes' })).toBeVisible();
+  });
+
+  it('renders markdown after creating a milestone without sending rendered HTML', async () => {
+    mountBoard();
+    const user = userEvent.setup();
+    const source = '## Acceptance\n\n- Ship **search**';
+
+    await user.click(screen.getByTestId('milestone-add'));
+    await user.type(screen.getByTestId('milestone-new-name'), 'Release');
+    await user.type(screen.getByTestId('milestone-new-description'), source);
+    await user.click(screen.getByTestId('milestone-new-submit'));
+
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(firstWrite()).toMatchObject({ method: 'POST', body: { description: source } });
+    expect(await screen.findByRole('heading', { name: 'Acceptance' })).toBeVisible();
+  });
+
   it('adds a milestone against the project it was mounted on', async () => {
     mountBoard();
     const user = userEvent.setup();
