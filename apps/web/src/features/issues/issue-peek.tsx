@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { cn } from '@/lib/cn.ts';
+import { HOTKEY_PRIORITY } from '@/lib/keyboard/index.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { IssueDetailView } from './issue-detail.tsx';
 import { IssueLink } from './issue-link.tsx';
@@ -43,16 +44,25 @@ export interface IssuePeekProps {
   readonly issueId: string | null;
   readonly issue: Issue | undefined;
   readonly onClose: () => void;
+  readonly preview?: Pick<Issue, 'id' | 'identifier' | 'title'> | null;
+  readonly retainOnIssueInteraction?: boolean;
 }
 
-export function IssuePeek({ issueId, issue, onClose }: IssuePeekProps) {
+export function IssuePeek({
+  issueId,
+  issue,
+  onClose,
+  preview = null,
+  retainOnIssueInteraction = true,
+}: IssuePeekProps) {
   const [width, setWidth] = useState(readStoredWidth);
   const held = useRef<Issue | null>(null);
 
   if (issue !== undefined && issue.id === issueId) held.current = issue;
   const shown =
     issueId === null ? null : (issue ?? (held.current?.id === issueId ? held.current : null));
-  if (shown === null) return null;
+  const summary = shown ?? (preview?.id === issueId ? preview : null);
+  if (summary === null) return null;
 
   const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -93,11 +103,14 @@ export function IssuePeek({ issueId, issue, onClose }: IssuePeekProps) {
       <DialogPrimitive.Portal>
         <DialogPrimitive.Content
           data-testid="issue-peek"
-          aria-label={`Peek ${shown.identifier}`}
+          aria-label={`Peek ${summary.identifier}`}
           style={{ width }}
           onInteractOutside={(event) => {
             const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest('[data-testid^="issue-row-"], [data-testid^="issue-card-"]')) {
+            if (
+              retainOnIssueInteraction &&
+              target?.closest('[data-testid^="issue-row-"], [data-testid^="issue-card-"]')
+            ) {
               event.preventDefault();
             }
           }}
@@ -109,11 +122,11 @@ export function IssuePeek({ issueId, issue, onClose }: IssuePeekProps) {
         >
           <div className="flex items-center justify-between border-border border-b px-3 py-2">
             <span data-numeric className="text-2xs text-faint">
-              {shown.identifier}
+              {summary.identifier}
             </span>
             <div className="flex items-center gap-1">
               <IssueLink
-                identifier={shown.identifier}
+                identifier={summary.identifier}
                 label="Open full page"
                 className="flex items-center gap-1 rounded-sm px-2 py-1 text-2xs text-faint transition-colors duration-[var(--duration-fast)] hover:bg-surface-2 hover:text-text"
               >
@@ -128,9 +141,15 @@ export function IssuePeek({ issueId, issue, onClose }: IssuePeekProps) {
               </DialogPrimitive.Close>
             </div>
           </div>
-          <DialogPrimitive.Title className="sr-only">{shown.title}</DialogPrimitive.Title>
+          <DialogPrimitive.Title className="sr-only">{summary.title}</DialogPrimitive.Title>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <IssueDetailView identifier={shown.identifier} known={shown} onDeleted={onClose} />
+            <IssueDetailView
+              key={summary.identifier}
+              identifier={summary.identifier}
+              {...(shown === null ? {} : { known: shown })}
+              onDeleted={onClose}
+              hotkeyPriority={HOTKEY_PRIORITY.layer}
+            />
           </div>
           <button
             type="button"

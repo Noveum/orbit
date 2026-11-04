@@ -218,6 +218,27 @@
       "when": 1791120831827,
       "tag": "0030_actor_schema_expand",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791997887851,
+      "tag": "0031_broad_lifeguard",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793340399305,
+      "tag": "0032_rich_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793342168851,
+      "tag": "0033_polite_lord_tyger",
+      "breakpoints": true
     }
   ]
 }
