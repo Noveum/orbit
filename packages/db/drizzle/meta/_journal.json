@@ -260,6 +260,13 @@
       "when": 1793347022678,
       "tag": "0036_issue_actor_write_compatibility",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793775345435,
+      "tag": "0037_ai_provider_usage",
+      "breakpoints": true
     }
   ]
 }
