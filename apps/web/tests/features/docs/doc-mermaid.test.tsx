@@ -101,6 +101,37 @@ describe('a mermaid diagram in a doc', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('draws diagrams in separate descriptions when their renderer loads overlap', async () => {
+    const first = blockFrom(DIAGRAM);
+    const second = blockFrom('```mermaid\ngraph TD\n  C[Review] --> D[Release]\n```');
+    const firstRenderer = fakeMermaid('<svg><g data-testid="first-diagram"></g></svg>');
+    const secondRenderer = fakeMermaid('<svg><g data-testid="second-diagram"></g></svg>');
+
+    await Promise.all([
+      drawDiagrams(first, 'light', () => Promise.resolve(firstRenderer.renderer)),
+      drawDiagrams(second, 'light', () => Promise.resolve(secondRenderer.renderer)),
+    ]);
+
+    expect(first.querySelector('[data-mermaid-canvas]')?.innerHTML).toContain('first-diagram');
+    expect(second.querySelector('[data-mermaid-canvas]')?.innerHTML).toContain('second-diagram');
+    expect(firstRenderer.calls).toHaveLength(1);
+    expect(secondRenderer.calls).toHaveLength(1);
+  });
+
+  it('reports a failed renderer load without a sibling description canceling it', async () => {
+    const first = blockFrom(DIAGRAM);
+    const second = blockFrom(DIAGRAM);
+    const { renderer } = fakeMermaid(SVG);
+
+    await Promise.all([
+      drawDiagrams(first, 'light', () => Promise.reject(new Error('chunk gone'))),
+      drawDiagrams(second, 'light', () => Promise.resolve(renderer)),
+    ]);
+
+    expect(first.querySelector('[data-mermaid]')?.textContent).toContain(DIAGRAM_UNAVAILABLE);
+    expect(second.querySelector('[data-mermaid-canvas]')?.innerHTML).toContain('graphics-hint');
+  });
+
   it('offers a toggle between the diagram and the source it came from', async () => {
     const user = userEvent.setup();
     const host = blockFrom(DIAGRAM);

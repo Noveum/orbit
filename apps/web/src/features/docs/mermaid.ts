@@ -406,7 +406,7 @@ export async function renderDiagram(
   return drawOne(mermaid, text, document);
 }
 
-let pass = 0;
+const passes = new WeakMap<HTMLElement, number>();
 
 export async function drawDiagrams(
   root: HTMLElement,
@@ -419,24 +419,24 @@ export async function drawDiagrams(
   if (blocks.length === 0) return;
   for (const block of blocks) block.setAttribute('data-mermaid-drawn', theme);
 
-  pass += 1;
-  const mine = pass;
+  const mine = (passes.get(root) ?? 0) + 1;
+  passes.set(root, mine);
   const document = root.ownerDocument;
 
   let mermaid: MermaidRenderer;
   try {
     mermaid = await renderer();
   } catch {
-    if (mine === pass) for (const block of blocks) failInto(block, DIAGRAM_UNAVAILABLE);
+    if (mine === passes.get(root)) for (const block of blocks) failInto(block, DIAGRAM_UNAVAILABLE);
     return;
   }
-  if (mine !== pass) return;
+  if (mine !== passes.get(root)) return;
   configure(mermaid, theme, document);
 
   for (const block of blocks) {
     const source = sourceOf(block).trim();
     const svg = source.length === 0 ? null : await drawOne(mermaid, source, document);
-    if (mine !== pass) return;
+    if (mine !== passes.get(root)) return;
     if (svg === null) {
       failInto(block);
       continue;
