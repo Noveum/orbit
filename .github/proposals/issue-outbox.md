@@ -4,7 +4,7 @@ Status: design proposal only. No implementation, migration, feature gate or depl
 
 ## Delivery contract
 
-Persist covered Issue actions in the same PostgreSQL transaction as their business changes. Return the original successful business result when only post-commit publishing fails. Authorization, validation and transaction failures still fail. Slack and email retain the existing Provider Outbox. Realtime retries never repeat business writes or notification planning.
+Persist covered Issue actions in the same PostgreSQL transaction as their business changes once the producer gate is enabled. With that gate off, retain existing delivery behavior. With it on, return the original successful business result when only post-commit publishing fails. Authorization, validation and transaction failures still fail. Slack and email retain the existing Provider Outbox. Realtime retries never repeat business writes or notification planning.
 
 Initial coverage is create, update, sub-Issues, bulk update, move, cycle assignment, archive, unarchive, deletion, relations and duplicate marking through their shared Core transactions. Include complete Issue, relation, subscription, source-departure, destination and notification conversation/counter actions. Comments, attachments, import, GitHub, sprint and independent subscription producers remain later work. Preserve Actor, Owner, originClientId and Sync ID exactly.
 
