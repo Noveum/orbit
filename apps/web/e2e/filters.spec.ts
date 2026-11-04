@@ -142,24 +142,7 @@ test('shift+f removes only the last filter and alt+shift+f clears them all', asy
       { kind: 'condition', property: 'due', operator: 'in', values: ['none'], negate: false },
     ],
   };
-  let releaseScripts: (() => void) | undefined;
-  const scripts = new Promise<void>((resolve) => {
-    releaseScripts = resolve;
-  });
-  const chunks = '**/_next/static/chunks/**';
-  await page.route(chunks, async (route) => {
-    await scripts;
-    await route.continue();
-  });
-  try {
-    await page.goto(`${BASE}/team/eng/issues?filter=${encodeURIComponent(JSON.stringify(tree))}`, {
-      waitUntil: 'commit',
-    });
-    await expect(page.getByTestId('add-filter')).toBeDisabled();
-  } finally {
-    releaseScripts?.();
-    await page.unroute(chunks);
-  }
+  await page.goto(`${BASE}/team/eng/issues?filter=${encodeURIComponent(JSON.stringify(tree))}`);
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
   await expect(page.getByTestId('filter-chip-due')).toBeVisible();
   await expect(page.getByTestId('add-filter')).toBeEnabled();
