@@ -1,6 +1,6 @@
 # Issue transaction events and reliable realtime publishing
 
-Status: design proposal only. No implementation, migration, feature gate or deployment is included. This working proposal belongs outside public product documentation. It follows the Actor readers, compatibility runtime, bound Agent consent and controlled Issue writes in #523, #524 and #525. It does not block those stages. Request idempotency remains separate under #407.
+Status: design proposal only. No implementation, migration, feature gate or deployment is included. This working proposal belongs outside public product documentation. It follows the Actor readers, compatibility runtime, bound Agent consent and controlled Issue writes in #564, #562, #565 and #566, retaining the earlier #523, #524 and #525 history. It does not block those stages. Request idempotency remains separate under #407.
 
 ## Delivery contract
 
@@ -19,7 +19,7 @@ Use separate pull requests and sequential main releases. Each release must indep
 3. Producer integration: integrate covered transactions behind ORBIT_ISSUE_OUTBOX, default false. This independent gate covers Human REST writes and Human MCP writes as well as Agent Issue writes. ORBIT_AGENT_MCP and ORBIT_AGENT_ISSUE_WRITE never substitute for the Human producer gate. With the producer gate off, existing direct publishing remains unchanged. With it on, each covered action uses exactly one transactional staging path and never also publishes directly.
 4. Activation: record exact deployed builds, migration ledger/drift checks, scheduler health, old-hub inventory and removal, rollback floor and smoke evidence. Enable producers only after every prerequisite is proven. Retain an immediate producer kill switch.
 
-Rollback disables new producers first, keeps the expanded schema and compatible consumers, and continues draining already committed rows. Do not downgrade below the storage/drain preparation runtime while backlog exists. Agent credential and business-row rollback floors from #524/#525 still apply. Unknown event versions become blocked rather than being reinterpreted.
+Rollback disables new producers first, keeps the expanded schema and compatible consumers, and continues draining already committed rows. Do not downgrade below the storage/drain preparation runtime while backlog exists. Agent credential and business-row rollback floors from #565/#566 still apply. Unknown event versions become blocked rather than being reinterpreted.
 
 ## Wire protocol and v1 compatibility
 
