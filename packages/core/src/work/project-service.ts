@@ -11,6 +11,7 @@ import {
   or,
   schema,
   sql,
+  type Transaction,
 } from '@orbit/db';
 import { reconcileWatchedRepositories } from '@orbit/services/github';
 import { conflict, notFound } from '@orbit/shared/errors';
@@ -18,9 +19,10 @@ import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
 import { assertCan } from '@orbit/shared/policy';
-import { slugify } from '@orbit/shared/utils';
+import { shiftCalendarDate, slugify } from '@orbit/shared/utils';
 import {
   projectCreateSchema,
+  projectDuplicateSchema,
   projectUpdatePostSchema,
   projectUpdateSchema,
 } from '@orbit/shared/validators';
@@ -29,6 +31,10 @@ import { principalActor } from '../activity/activity-service.ts';
 import { type Executor, newId, requireRow, toDateString } from '../internal.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { createIssue, type IssueRow } from './issue-service.ts';
+import { labelIdsByIssue } from './label-service.ts';
+import { createMilestone } from './milestone-service.ts';
+import { reviewerIdsByIssue } from './reviewer-service.ts';
 
 export type ProjectRow = typeof schema.project.$inferSelect;
 export type ProjectUpdateRow = typeof schema.projectUpdate.$inferSelect;
@@ -184,11 +190,12 @@ async function replaceProjectTeams(
 export async function createProject(
   principal: Principal,
   input: unknown,
+  executor?: Transaction,
 ): Promise<{ project: ProjectRow; actions: SyncAction[] }> {
   assertCan(principal, 'project:manage');
   const parsed = projectCreateSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
+  const perform = async (tx: Transaction) => {
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
     const slug = await allocateProjectSlug(tx, principal.organizationId, parsed.name);
@@ -230,7 +237,12 @@ export async function createProject(
         }),
       ],
     };
-  });
+  };
+
+  if (executor !== undefined) {
+    return await perform(executor);
+  }
+  return await db.transaction(perform);
 }
 
 function projectUpdateValues(
@@ -785,4 +797,248 @@ export async function projectTeamLinks(
     .select({ projectId: schema.projectTeam.projectId, teamId: schema.projectTeam.teamId })
     .from(schema.projectTeam)
     .where(inArray(schema.projectTeam.teamId, [...teamIds]));
+}
+
+const COPY_PROJECT_SUFFIX = ' (copy)';
+const PROJECT_NAME_MAX = 120;
+
+function copyProjectName(name: string): string {
+  const room = PROJECT_NAME_MAX - COPY_PROJECT_SUFFIX.length;
+  return `${name.length > room ? name.slice(0, room).trimEnd() : name}${COPY_PROJECT_SUFFIX}`;
+}
+
+function orderIssuesForDuplication(issues: readonly IssueRow[]): IssueRow[] {
+  const result: IssueRow[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const byId = new Map(issues.map((issue) => [issue.id, issue]));
+
+  function visit(item: IssueRow): void {
+    if (visited.has(item.id) || visiting.has(item.id)) return;
+    visiting.add(item.id);
+    if (item.parentId !== null) {
+      const parent = byId.get(item.parentId);
+      if (parent !== undefined) visit(parent);
+    }
+    visiting.delete(item.id);
+    visited.add(item.id);
+    result.push(item);
+  }
+
+  for (const item of issues) {
+    visit(item);
+  }
+  return result;
+}
+
+async function duplicateProjectMilestones(
+  tx: Transaction,
+  principal: Principal,
+  sourceProjectId: string,
+  targetProjectId: string,
+  shiftDays: number,
+): Promise<{ milestoneIdMap: Map<string, string>; actions: SyncAction[] }> {
+  const sourceMilestones = await tx
+    .select()
+    .from(schema.milestone)
+    .where(
+      and(
+        eq(schema.milestone.organizationId, principal.organizationId),
+        eq(schema.milestone.projectId, sourceProjectId),
+      ),
+    )
+    .orderBy(asc(schema.milestone.sortOrder), asc(schema.milestone.createdAt));
+
+  const actions: SyncAction[] = [];
+  const milestoneIdMap = new Map<string, string>();
+  for (const sourceMilestone of sourceMilestones) {
+    const milestoneTargetDate = shiftCalendarDate(sourceMilestone.targetDate, shiftDays);
+    const createdMilestone = await createMilestone(
+      principal,
+      {
+        projectId: targetProjectId,
+        name: sourceMilestone.name,
+        description: sourceMilestone.description,
+        targetDate: milestoneTargetDate,
+      },
+      tx,
+    );
+    milestoneIdMap.set(sourceMilestone.id, createdMilestone.milestone.id);
+    actions.push(...createdMilestone.actions);
+  }
+  return { milestoneIdMap, actions };
+}
+
+function duplicateIssueValues(
+  sourceIssue: IssueRow,
+  targetProjectId: string,
+  targetTeamIds: readonly string[],
+  milestoneIdMap: Map<string, string>,
+  issueIdMap: Map<string, string>,
+  labelMap: Map<string, string[]>,
+  reviewerMap: Map<string, string[]>,
+  shiftDays: number,
+) {
+  const shiftedDueDate = shiftCalendarDate(sourceIssue.dueDate, shiftDays);
+  const milestoneId =
+    sourceIssue.milestoneId === null ? null : (milestoneIdMap.get(sourceIssue.milestoneId) ?? null);
+  const parentId =
+    sourceIssue.parentId === null ? null : (issueIdMap.get(sourceIssue.parentId) ?? null);
+  const teamId = targetTeamIds.includes(sourceIssue.teamId)
+    ? sourceIssue.teamId
+    : (targetTeamIds[0] ?? sourceIssue.teamId);
+  const isSameTeam = teamId === sourceIssue.teamId;
+  const stateId = isSameTeam ? sourceIssue.stateId : undefined;
+  const reviewerIds = isSameTeam ? (reviewerMap.get(sourceIssue.id) ?? []) : [];
+  const labelIds = isSameTeam ? (labelMap.get(sourceIssue.id) ?? []) : [];
+
+  return {
+    teamId,
+    title: sourceIssue.title,
+    description: sourceIssue.description,
+    stateId,
+    priority: sourceIssue.priority,
+    assigneeId: sourceIssue.assigneeId,
+    reviewerIds,
+    projectId: targetProjectId,
+    milestoneId,
+    parentId,
+    estimate: sourceIssue.estimate,
+    dueDate: shiftedDueDate,
+    labelIds,
+  };
+}
+
+async function duplicateProjectIssues(
+  tx: Transaction,
+  principal: Principal,
+  sourceProjectId: string,
+  targetProjectId: string,
+  targetTeamIds: readonly string[],
+  milestoneIdMap: Map<string, string>,
+  shiftDays: number,
+): Promise<SyncAction[]> {
+  const sourceIssues = await tx
+    .select()
+    .from(schema.issue)
+    .where(
+      and(
+        eq(schema.issue.organizationId, principal.organizationId),
+        eq(schema.issue.projectId, sourceProjectId),
+        isNull(schema.issue.archivedAt),
+      ),
+    )
+    .orderBy(asc(schema.issue.sortOrder), asc(schema.issue.createdAt));
+
+  if (sourceIssues.length === 0) return [];
+
+  const issueIds = sourceIssues.map((issue) => issue.id);
+  const [labelMap, reviewerMap] = await Promise.all([
+    labelIdsByIssue(tx, issueIds),
+    reviewerIdsByIssue(tx, issueIds),
+  ]);
+
+  const orderedIssues = orderIssuesForDuplication(sourceIssues);
+  const issueIdMap = new Map<string, string>();
+  const actions: SyncAction[] = [];
+
+  for (const sourceIssue of orderedIssues) {
+    const input = duplicateIssueValues(
+      sourceIssue,
+      targetProjectId,
+      targetTeamIds,
+      milestoneIdMap,
+      issueIdMap,
+      labelMap,
+      reviewerMap,
+      shiftDays,
+    );
+    const createdIssue = await createIssue(principal, input, tx);
+    issueIdMap.set(sourceIssue.id, createdIssue.issue.id);
+    actions.push(...createdIssue.actions);
+  }
+  return actions;
+}
+
+export async function duplicateProject(
+  principal: Principal,
+  projectId: string,
+  input: unknown = {},
+  executor?: Transaction,
+): Promise<{ project: ProjectRow; actions: SyncAction[] }> {
+  assertCan(principal, 'project:manage');
+  const parsed = projectDuplicateSchema.parse(input);
+
+  const perform = async (tx: Transaction) => {
+    await assertProjectVisible(tx, principal, projectId);
+
+    const [source] = await tx
+      .select()
+      .from(schema.project)
+      .where(
+        and(
+          eq(schema.project.id, projectId),
+          eq(schema.project.organizationId, principal.organizationId),
+          isNull(schema.project.archivedAt),
+        ),
+      )
+      .limit(1);
+    const sourceProject = requireRow(source, 'That project does not exist.');
+
+    const sourceTeamIds = await projectTeamIds(tx, sourceProject.id);
+    const targetTeamIds = parsed.teamIds ?? sourceTeamIds;
+    await assertTeamsInOrganization(tx, principal.organizationId, targetTeamIds);
+
+    const name = parsed.name ?? copyProjectName(sourceProject.name);
+    const startDate = shiftCalendarDate(sourceProject.startDate, parsed.shiftDays);
+    const targetDate = shiftCalendarDate(sourceProject.targetDate, parsed.shiftDays);
+
+    const { project, actions } = await createProject(
+      principal,
+      {
+        name,
+        summary: sourceProject.summary,
+        description: sourceProject.description,
+        status: sourceProject.status,
+        health: 'no_update',
+        leadId: sourceProject.leadId,
+        startDate,
+        targetDate,
+        teamIds: targetTeamIds,
+        icon: sourceProject.icon,
+        color: sourceProject.color,
+      },
+      tx,
+    );
+
+    const { milestoneIdMap, actions: milestoneActions } = await duplicateProjectMilestones(
+      tx,
+      principal,
+      sourceProject.id,
+      project.id,
+      parsed.shiftDays,
+    );
+    actions.push(...milestoneActions);
+
+    if (parsed.includeIssues) {
+      assertCan(principal, 'issue:create');
+      const issueActions = await duplicateProjectIssues(
+        tx,
+        principal,
+        sourceProject.id,
+        project.id,
+        targetTeamIds,
+        milestoneIdMap,
+        parsed.shiftDays,
+      );
+      actions.push(...issueActions);
+    }
+
+    return { project, actions };
+  };
+
+  if (executor !== undefined) {
+    return await perform(executor);
+  }
+  return await db.transaction(perform);
 }
