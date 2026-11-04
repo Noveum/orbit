@@ -30,7 +30,7 @@
     "@react-email/render": "2.2.0",
     "drizzle-orm": "0.45.4",
     "ioredis": "^6.0.0",
-    "linkedom": "^0.18.14",
+    "linkedom": "0.18.13",
     "lowlight": "^3",
     "marked": "18.1.2",
     "postgres": "^3.4.9",
