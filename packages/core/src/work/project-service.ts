@@ -945,6 +945,8 @@ async function duplicateProjectIssues(
 
   const orderedIssues = orderIssuesForDuplication(sourceIssues);
   const issueIdMap = new Map<string, string>();
+  const copiedIssues = new Map<string, IssueRow>();
+  const ranksByColumn = new Map<string, number[]>();
   const actions: SyncAction[] = [];
 
   for (const sourceIssue of orderedIssues) {
@@ -959,20 +961,30 @@ async function duplicateProjectIssues(
       shiftDays,
     );
     const createdIssue = await createIssue(principal, input, tx);
-    await tx
-      .update(schema.issue)
-      .set({ sortOrder: sourceIssue.sortOrder })
-      .where(eq(schema.issue.id, createdIssue.issue.id));
     issueIdMap.set(sourceIssue.id, createdIssue.issue.id);
-    actions.push(
-      ...createdIssue.actions.map((action) =>
-        action.model === 'issue' && action.modelId === createdIssue.issue.id
-          ? { ...action, data: { ...action.data, sortOrder: sourceIssue.sortOrder } }
-          : action,
-      ),
-    );
+    copiedIssues.set(sourceIssue.id, createdIssue.issue);
+    const column = JSON.stringify([createdIssue.issue.teamId, createdIssue.issue.stateId]);
+    const ranks = ranksByColumn.get(column) ?? [];
+    ranks.push(createdIssue.issue.sortOrder);
+    ranksByColumn.set(column, ranks);
+    actions.push(...createdIssue.actions);
   }
-  return actions;
+  for (const ranks of ranksByColumn.values()) ranks.sort((left, right) => right - left);
+  const finalRanks = new Map<string, number>();
+  for (const sourceIssue of sourceIssues) {
+    const copied = requireRow(copiedIssues.get(sourceIssue.id), 'The copied issue does not exist.');
+    const column = JSON.stringify([copied.teamId, copied.stateId]);
+    const sortOrder = requireRow(
+      ranksByColumn.get(column)?.pop(),
+      'The copied issue rank is missing.',
+    );
+    await tx.update(schema.issue).set({ sortOrder }).where(eq(schema.issue.id, copied.id));
+    finalRanks.set(copied.id, sortOrder);
+  }
+  return actions.map((action) => {
+    const sortOrder = action.model === 'issue' ? finalRanks.get(action.modelId) : undefined;
+    return sortOrder === undefined ? action : { ...action, data: { ...action.data, sortOrder } };
+  });
 }
 
 export async function duplicateProject(

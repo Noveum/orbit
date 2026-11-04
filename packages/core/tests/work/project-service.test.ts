@@ -817,49 +817,80 @@ describe('duplicateProject', () => {
     expect(issues).toHaveLength(0);
   });
 
-  it('preserves manual sibling and hierarchy order in stored rows and sync actions', async () => {
-    const source = await newProject();
-    const { issue: parent } = await createIssue(workspace.admin, {
-      teamId: workspace.teamId,
-      title: 'Parent',
-      projectId: source.id,
+  for (const destination of ['same team', 'another team'] as const) {
+    it(`preserves manual sibling and hierarchy order with new ranks in ${destination}`, async () => {
+      const source = await newProject();
+      const { issue: parent } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Parent',
+        projectId: source.id,
+      });
+      const { issue: child } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Child',
+        projectId: source.id,
+        parentId: parent.id,
+      });
+      const { issue: sibling } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Sibling',
+        projectId: source.id,
+      });
+      for (const [row, sortOrder] of [
+        [parent, 300],
+        [child, 100],
+        [sibling, 200],
+      ] as const) {
+        await db.update(schema.issue).set({ sortOrder }).where(eq(schema.issue.id, row.id));
+      }
+      const targetTeamId =
+        destination === 'same team'
+          ? workspace.teamId
+          : (await createTeam(workspace.admin, { name: 'Target', key: 'TGT' })).team.id;
+      const { issue: existingTarget } = await createIssue(workspace.admin, {
+        teamId: targetTeamId,
+        title: 'Existing target issue',
+      });
+      if (destination === 'another team') {
+        await db
+          .update(schema.issue)
+          .set({ sortOrder: 100 })
+          .where(eq(schema.issue.id, existingTarget.id));
+      }
+      const existing = await db
+        .select()
+        .from(schema.issue)
+        .where(eq(schema.issue.teamId, targetTeamId));
+      const { project: copy, actions } = await duplicateProject(workspace.admin, source.id, {
+        teamIds: [targetTeamId],
+      });
+      const copied = await db
+        .select()
+        .from(schema.issue)
+        .where(eq(schema.issue.projectId, copy.id))
+        .orderBy(asc(schema.issue.sortOrder));
+      expect(copied.map((row) => row.title)).toEqual(['Child', 'Sibling', 'Parent']);
+      expect(copied.find((row) => row.title === 'Child')?.parentId).toBe(
+        copied.find((row) => row.title === 'Parent')?.id,
+      );
+      for (const row of copied) {
+        expect(
+          existing.some(
+            (entry) => entry.stateId === row.stateId && entry.sortOrder === row.sortOrder,
+          ),
+        ).toBe(false);
+        expect(
+          actions.find((action) => action.model === 'issue' && action.modelId === row.id)?.data[
+            'sortOrder'
+          ],
+        ).toBe(row.sortOrder);
+      }
+      for (const row of existing) {
+        const [unchanged] = await db.select().from(schema.issue).where(eq(schema.issue.id, row.id));
+        expect(unchanged?.sortOrder).toBe(row.sortOrder);
+      }
     });
-    const { issue: child } = await createIssue(workspace.admin, {
-      teamId: workspace.teamId,
-      title: 'Child',
-      projectId: source.id,
-      parentId: parent.id,
-    });
-    const { issue: sibling } = await createIssue(workspace.admin, {
-      teamId: workspace.teamId,
-      title: 'Sibling',
-      projectId: source.id,
-    });
-    for (const [row, sortOrder] of [
-      [parent, 300],
-      [child, 100],
-      [sibling, 200],
-    ] as const) {
-      await db.update(schema.issue).set({ sortOrder }).where(eq(schema.issue.id, row.id));
-    }
-    const { project: copy, actions } = await duplicateProject(workspace.admin, source.id);
-    const copied = await db
-      .select()
-      .from(schema.issue)
-      .where(eq(schema.issue.projectId, copy.id))
-      .orderBy(asc(schema.issue.sortOrder));
-    expect(copied.map((row) => row.title)).toEqual(['Child', 'Sibling', 'Parent']);
-    expect(copied.find((row) => row.title === 'Child')?.parentId).toBe(
-      copied.find((row) => row.title === 'Parent')?.id,
-    );
-    for (const row of copied) {
-      expect(
-        actions.find((action) => action.model === 'issue' && action.modelId === row.id)?.data[
-          'sortOrder'
-        ],
-      ).toBe(row.sortOrder);
-    }
-  });
+  }
 
   it('duplicates a project with shifted dates, milestones, and issues', async () => {
     const { project: source } = await createProject(workspace.admin, {
