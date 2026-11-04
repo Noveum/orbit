@@ -20,7 +20,7 @@ import {
 import { and, db, eq, schema } from '@orbit/db';
 import { agentIssueWriteContext } from '../../core/src/work/agent-issue-context.ts';
 import { createOrbitMcpServer } from '../src/server.ts';
-import { connect, type TestClient } from '../src/test-helpers.ts';
+import { connect, MCP_TEST_PUBLIC_URL, type TestClient } from '../src/test-helpers.ts';
 
 const SECRET = 'mcp-agent-issue-writing-test-secret';
 const original = {
@@ -100,6 +100,7 @@ async function http(token: string) {
 async function memory(agent: Awaited<ReturnType<typeof connection>>, trusted = true) {
   const server = createOrbitMcpServer(
     owner.principal,
+    MCP_TEST_PUBLIC_URL,
     agent.access.scopes,
     '',
     agent.access.identity,
