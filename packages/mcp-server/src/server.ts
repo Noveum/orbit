@@ -19,6 +19,7 @@ const INSTRUCTIONS = [
   'Call get_me first to learn the caller role and teams, then list_teams, list_states and list_labels before writing.',
   'The Human Principal is the user who authorized the OAuth connection. get_me, me and my issues refer to that Human Principal.',
   'Every tool uses the current workspace permissions of that user and the connection scopes.',
+  'Issues, comments and documents come back with a url field: an absolute link to open them in Orbit, so share that link with the user.',
 ].join(' ');
 
 const AGENT_INSTRUCTIONS = [
@@ -26,10 +27,17 @@ const AGENT_INSTRUCTIONS = [
   'This connection has an explicit Agent Identity and is read-only. Write tools and reads with write side effects are unavailable.',
   'Call get_agent_identity for the Agent Identity. get_me, me and my issues still refer to the Human Principal who authorized this connection.',
   'Available read tools use the current workspace permissions of that Human Principal and the orbit.read scope.',
+  'Issues, comments and documents come back with a url field: an absolute link to open them in Orbit, so share that link with the user.',
 ].join(' ');
 
+function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end -= 1;
+  return url.slice(0, end);
+}
+
 export function wwwAuthenticate(publicUrl: string): string {
-  const base = publicUrl.replace(/\/+$/, '');
+  const base = withoutTrailingSlashes(publicUrl);
   return `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`;
 }
 
@@ -51,6 +59,7 @@ export function grantsWrites(scopes: string): boolean {
 
 export function createOrbitMcpServer(
   principal: Principal,
+  publicUrl: string,
   scopes = EVERY_ORBIT_SCOPE,
   workspaceInstructions = '',
   identity: McpIdentity = { kind: 'legacy' },
@@ -66,7 +75,7 @@ export function createOrbitMcpServer(
     { capabilities: { tools: {} }, instructions },
   );
   allowTools(server, { reads: grantsReads(scopes), writes: grantsWrites(scopes), identity });
-  registerTools(server, principal, identity);
+  registerTools(server, principal, identity, withoutTrailingSlashes(publicUrl));
   return server;
 }
 
@@ -109,6 +118,7 @@ export interface McpRequestOptions {
 
 async function dispatch(
   request: Request,
+  publicUrl: string,
   instructionsLoader: WorkspaceInstructionsLoader,
 ): Promise<Response> {
   const identity = await verifyMcpAccessToken(bearerToken(request));
@@ -121,6 +131,7 @@ async function dispatch(
       : '';
   const server = createOrbitMcpServer(
     identity.principal,
+    publicUrl,
     identity.scopes,
     workspaceInstructions,
     identity.identity,
@@ -156,7 +167,11 @@ export async function handleMcpRequest(
 
   try {
     return await (options.dispatch === undefined
-      ? dispatch(request, options.loadWorkspaceInstructions ?? loadWorkspaceInstructions)
+      ? dispatch(
+          request,
+          options.publicUrl,
+          options.loadWorkspaceInstructions ?? loadWorkspaceInstructions,
+        )
       : options.dispatch(request));
   } catch (error: unknown) {
     const domain = toDomainError(error);

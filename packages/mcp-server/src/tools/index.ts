@@ -17,17 +17,18 @@ export function registerTools(
   server: McpServer,
   principal: Principal,
   identity: McpIdentity,
+  appUrl: string,
 ): void {
   registerAnalyticsTools(server, principal);
   registerIdentityTools(server, principal, identity);
-  registerInboxTools(server, principal);
-  registerIssueTools(server, principal);
-  registerPlanningTools(server, principal);
+  registerInboxTools(server, principal, appUrl);
+  registerIssueTools(server, principal, appUrl);
+  registerPlanningTools(server, principal, appUrl);
   registerScrumTools(server, principal);
   registerAdminTools(server, principal);
-  registerDocTools(server, principal);
-  registerGithubTools(server, principal);
-  registerWorkspaceTools(server, principal);
+  registerDocTools(server, principal, appUrl);
+  registerGithubTools(server, principal, appUrl);
+  registerWorkspaceTools(server, principal, appUrl);
   registerTaxonomyTools(server, principal);
   registerOrgTools(server, principal);
 }
