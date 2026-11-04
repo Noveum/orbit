@@ -46,10 +46,30 @@ updates:
         patterns:
           - "better-auth"
           - "@better-auth/*"
+      radix:
+        patterns:
+          - "@radix-ui/*"
       patch-and-minor:
         update-types:
           - "minor"
           - "patch"
+        exclude-patterns:
+          - "@biomejs/*"
+          - "lefthook"
+          - "typescript"
+          - "@types/*"
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@codemirror/*"
+          - "codemirror"
+          - "@tiptap/*"
+          - "@aws-sdk/*"
+          - "drizzle-orm"
+          - "drizzle-kit"
+          - "better-auth"
+          - "@better-auth/*"
+          - "@radix-ui/*"
     ignore:
       - dependency-name: "next"
         update-types: ["version-update:semver-major"]
@@ -57,6 +77,12 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "react-dom"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "better-auth"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@better-auth/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

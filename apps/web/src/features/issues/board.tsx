@@ -25,6 +25,7 @@ import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
+import type { IssueMoveExpected } from '@orbit/shared/validators';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -32,11 +33,21 @@ import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog.tsx';
 import { applyDisplayFilters, displayFiltersHideRows } from '@/features/filters/display-filter.ts';
 import type { IssueGroup } from '@/features/filters/grouping.ts';
-import { mergedStateKey, UNGROUPED_ID } from '@/features/filters/grouping.ts';
+import { issueActorGroupKey, mergedStateKey, UNGROUPED_ID } from '@/features/filters/grouping.ts';
 import type { ViewConfig } from '@/features/filters/view-config.ts';
 import { cn } from '@/lib/cn.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import { issueDeletionGeneration } from '@/lib/query/issue-cache-generation.ts';
-import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
+import { summarySearch } from '@/lib/query/issue-search.ts';
+import type {
+  BoardPage,
+  Cycle,
+  Issue,
+  Label,
+  Member,
+  Project,
+  WorkflowState,
+} from '@/lib/query/schemas.ts';
 import type {
   AuthoritativeCachedIssue,
   IssueMoveSettlement,
@@ -48,14 +59,21 @@ import {
   authoritativeCachedIssue,
   useBoardPage,
   useColumnIssues,
+  useIssueSummary,
   useMoveIssue,
 } from '@/lib/query/use-issues.ts';
 import { createBoardSensorController } from './board-sensors.ts';
 import { GroupGlyph } from './group-glyph.tsx';
+import { issueActorLabel } from './issue-actor.tsx';
 import { IssueCard } from './issue-card.tsx';
 import { IssuePeek } from './issue-peek.tsx';
 import { projectSupportsTeam } from './project-scope.ts';
 import { useBoardAutoScroll } from './use-board-autoscroll.ts';
+import {
+  type MoveUndoEntry,
+  nextActionSequence,
+  recordTabMove,
+} from './use-issue-property-undo.ts';
 import { useWorkspace } from './workspace-provider.tsx';
 
 export interface BoardColumnSource {
@@ -249,7 +267,7 @@ export function moveResultWasSuperseded(
     current.stateId !== settled.stateId ||
     current.cycleId !== settled.cycleId ||
     current.projectId !== settled.projectId ||
-    current.assigneeId !== settled.assigneeId ||
+    issueActorGroupKey(current, 'assignee') !== issueActorGroupKey(settled, 'assignee') ||
     current.priority !== settled.priority ||
     current.sortOrder !== settled.sortOrder
   );
@@ -390,7 +408,7 @@ export function regroupPatch(groupBy: GroupByField, groupId: string): IssueRegro
     case 'project':
       return { projectId: id };
     case 'assignee':
-      return { assigneeId: id };
+      return groupId.startsWith('agent:') ? null : { assigneeId: id };
     case 'priority': {
       const priority = Number(groupId);
       return Number.isInteger(priority) && priority >= 0 && priority <= 4 ? { priority } : null;
@@ -454,6 +472,84 @@ function currentSourceFor(groups: readonly IssueGroup[], issueId: string): Board
   return position === null ? null : { ...position, groupId: group.id };
 }
 
+function sourcePlacementFor(
+  groups: readonly IssueGroup[],
+  issue: Issue,
+  groupBy: GroupByField,
+  resolveState: StateResolver | undefined,
+): MoveInput | null {
+  const group = groups.find((entry) => entry.issues.some((item) => item.id === issue.id));
+  if (group === undefined) return null;
+
+  const groupId =
+    groupBy === 'state' && resolveState !== undefined ? resolveState(group.id, issue) : group.id;
+
+  if (groupId === null) return null;
+
+  const assignee = resolveIssueActor(issue, 'assignee');
+  const regrouping =
+    groupBy === 'assignee' && assignee?.type === 'agent' ? {} : regroupPatch(groupBy, groupId);
+  if (regrouping === null) return null;
+
+  const issueIndex = group.issues.findIndex((item) => item.id === issue.id);
+  if (issueIndex === -1) return null;
+
+  const before = group.issues[issueIndex - 1] ?? null;
+  const after = group.issues[issueIndex + 1] ?? null;
+
+  return {
+    issue,
+    ...regrouping,
+    ...(groupBy === 'project' ? { milestoneId: issue.milestoneId } : {}),
+    beforeId: before?.id ?? null,
+    afterId: after?.id ?? null,
+    beforeOrder: before?.sortOrder ?? null,
+    afterOrder: after?.sortOrder ?? null,
+  };
+}
+
+function moveExpectedFor(issue: Issue, groupBy: GroupByField): IssueMoveExpected {
+  const assignee = resolveIssueActor(issue, 'assignee');
+  switch (groupBy) {
+    case 'state':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+      };
+    case 'cycle':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        cycleId: issue.cycleId,
+      };
+    case 'project':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        projectId: issue.projectId,
+        milestoneId: issue.milestoneId,
+      };
+    case 'assignee':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        assigneeId: assignee?.type === 'user' ? assignee.id : null,
+        assigneeAgentId: assignee?.type === 'agent' ? assignee.id : null,
+      };
+    case 'priority':
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+        priority: issue.priority as 0 | 1 | 2 | 3 | 4,
+      };
+    default:
+      return {
+        stateId: issue.stateId,
+        sortOrder: issue.sortOrder,
+      };
+  }
+}
+
 function newestIssueFor(groups: readonly IssueGroup[], issueId: string): Issue | undefined {
   let newest: Issue | undefined;
   for (const group of groups) {
@@ -478,7 +574,7 @@ function issueBoardFingerprint(issue: Issue): string {
       issue.teamId,
       issue.stateId,
       issue.priority,
-      issue.assigneeId,
+      issueActorGroupKey(issue, 'assignee'),
       issue.projectId,
       issue.cycleId,
       issue.sortOrder,
@@ -539,6 +635,7 @@ function groupMatchesIssue(
   groupBy: GroupByField,
   resolveState: StateResolver | undefined,
 ): boolean {
+  if (groupBy === 'assignee') return issueActorGroupKey(issue, 'assignee') === group.id;
   const groupId =
     groupBy === 'state' && resolveState !== undefined ? resolveState(group.id, issue) : group.id;
   if (groupId === null) return false;
@@ -650,7 +747,13 @@ export function planDrop(
       : targetGroup.id;
   if (groupId === null) return null;
 
-  const regrouping = regroupPatch(groupBy, groupId);
+  const keepsAgentAssignment =
+    groupBy === 'assignee' &&
+    groupId.startsWith('agent:') &&
+    issueActorGroupKey(dragged, 'assignee') === groupId;
+  const regrouping: IssueRegrouping | null = keepsAgentAssignment
+    ? {}
+    : regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
 
   if (!reorderable) {
@@ -747,6 +850,9 @@ export function dragTargetSnapshotFor(
 }
 
 export function regroupingLeavesIssue(regrouping: IssueRegrouping, issue: Issue): boolean {
+  if ('assigneeId' in regrouping && resolveIssueActor(issue, 'assignee')?.type === 'agent') {
+    return false;
+  }
   const entries = Object.entries(regrouping) as [keyof IssueRegrouping, unknown][];
   return entries.every(([field, value]) => issue[field as keyof Issue] === value);
 }
@@ -779,7 +885,7 @@ function IssueCardView({
         return reviewer === undefined ? [] : [reviewer];
       })}
       state={lookups.stateById.get(issue.stateId)}
-      creator={lookups.memberById.get(issue.creatorId)}
+      creator={issue.creatorId === null ? undefined : lookups.memberById.get(issue.creatorId)}
       project={issue.projectId === null ? undefined : lookups.projectById.get(issue.projectId)}
       cycle={issue.cycleId === null ? undefined : lookups.cycleById.get(issue.cycleId)}
       subIssueCount={lookups.childCounts.get(issue.id) ?? 0}
@@ -853,8 +959,10 @@ function SortableCard({
 
 interface ActiveDragSession {
   readonly session: number;
+  readonly sequence: number;
   readonly issueId: string;
   readonly source: BoardSource;
+  readonly sourcePlacement: MoveInput;
   readonly keyboard: boolean;
   readonly departedSource: boolean;
   readonly endVisibilityActivity: () => void;
@@ -1023,8 +1131,60 @@ function dragEndTargetFor(
     : { kind: 'invalid' };
 }
 
+function actorColumnTitle(
+  issues: readonly Issue[],
+  groupBy: string | undefined,
+  groupId: string,
+): string | undefined {
+  if (groupBy !== 'assignee' && groupBy !== 'creator') return undefined;
+  const row = issues.find(
+    (issue) => issue[groupBy] !== undefined && issueActorGroupKey(issue, groupBy) === groupId,
+  );
+  const actor = row?.[groupBy];
+  return actor === undefined || actor === null ? undefined : issueActorLabel(actor);
+}
+
+export function actorBoardGroups(
+  groups: readonly IssueGroup[],
+  page: BoardPage | undefined,
+  groupBy: GroupByField,
+  totals?: Readonly<Record<string, number>>,
+  columnTitles?: ReadonlyMap<string, string>,
+): readonly IssueGroup[] {
+  if (groupBy !== 'assignee' && groupBy !== 'creator') return groups;
+  const titles = new Map<string, string>();
+  for (const group of page?.groups ?? []) {
+    const title = actorColumnTitle(group.issues, groupBy, group.id);
+    if (title !== undefined) titles.set(group.id, title);
+  }
+  for (const [id, title] of columnTitles ?? []) titles.set(id, title);
+  const refreshed = groups.map((group) => {
+    const title = titles.get(group.id);
+    return title === undefined || title === group.title ? group : { ...group, title };
+  });
+  const known = new Set(groups.map((group) => group.id));
+  const counts =
+    totals ?? Object.fromEntries((page?.groups ?? []).map((group) => [group.id, group.total]));
+  const additions = Object.entries(counts).flatMap(([id, total]) => {
+    if (known.has(id) || id === UNGROUPED_ID || total === 0) return [];
+    return [
+      {
+        id,
+        title:
+          titles.get(id) ?? (id.startsWith('agent:') ? 'Unknown agent (Agent)' : 'Unknown user'),
+        color: null,
+        category: null,
+        issues: [],
+        subGroups: [],
+        total,
+      },
+    ];
+  });
+  return [...refreshed, ...additions];
+}
+
 export function Board({
-  groups,
+  groups: providedGroups,
   draggable = true,
   reorderable = true,
   properties = DEFAULT_DISPLAY_PROPERTIES,
@@ -1048,6 +1208,25 @@ export function Board({
   const move = useMoveIssue();
   const positionsIncomplete = boardPositionsAreIncomplete(filtered, columnSource?.display);
   const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
+  const column = columnSource ?? EMPTY_COLUMN;
+  const actorSummary = useIssueSummary(
+    summarySearch(null, column.query, groupBy, column.scope),
+    columnSource !== undefined && (groupBy === 'assignee' || groupBy === 'creator'),
+  );
+  const [columnActorTitles, setColumnActorTitles] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
+  const groups = useMemo(
+    () =>
+      actorBoardGroups(
+        providedGroups,
+        boardPage.data,
+        groupBy,
+        actorSummary.data?.groupTotals,
+        columnActorTitles,
+      ),
+    [providedGroups, boardPage.data, groupBy, actorSummary.data?.groupTotals, columnActorTitles],
+  );
   const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragStatus, setDragStatus] = useState('');
@@ -1326,8 +1505,13 @@ export function Board({
   );
 
   const publishRows = useCallback(
-    (groupId: string, rows: readonly Issue[]) => {
+    (groupId: string, rows: readonly Issue[], title?: string) => {
       if (columnSource === undefined) return;
+      if (title !== undefined) {
+        setColumnActorTitles((current) =>
+          current.get(groupId) === title ? current : new Map(current).set(groupId, title),
+        );
+      }
       if (columnRows.current.get(groupId) === rows) return;
       columnRows.current.set(groupId, rows);
       setLoadedRowMap(new Map(columnRows.current));
@@ -1441,8 +1625,10 @@ export function Board({
     }
     activeSession.current = {
       session: session.session,
+      sequence: session.sequence,
       issueId: session.issueId,
       source: sourceState.source,
+      sourcePlacement: session.sourcePlacement,
       keyboard: session.keyboard,
       departedSource: session.departedSource,
       endVisibilityActivity: session.endVisibilityActivity,
@@ -1462,26 +1648,38 @@ export function Board({
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
     if (pendingIssueIds.current.has(id)) return;
+
     const issue = issuesInPlay().find((entry) => entry.id === id);
-    const source = currentSourceFor(loadedGroups(), id);
+    const currentGroups = loadedGroups();
+    const source = currentSourceFor(currentGroups, id);
+    const sourcePlacement =
+      issue === undefined ? null : sourcePlacementFor(currentGroups, issue, groupBy, resolveState);
+
     latestSession.current += 1;
     latestFocusRequest.current += 1;
     boardFocusOwnership.current = undefined;
     dragDelta.current = { x: 0, y: 0 };
     suppressedOverDelta.current = undefined;
+
+    const sequence = nextActionSequence();
+
     activeSession.current =
-      issue === undefined || source === null
+      issue === undefined || source === null || sourcePlacement === null
         ? undefined
         : {
             session: latestSession.current,
+            sequence,
             issueId: issue.id,
             source,
+            sourcePlacement,
             keyboard: event.activatorEvent.type === 'keydown',
             departedSource: false,
             endVisibilityActivity: onVisibilityActivityStart?.() ?? (() => undefined),
           };
+
     dragged.current = issue;
     setActiveId(id);
+
     if (issue !== undefined && source !== null) {
       setDragStatus(
         `Picked up ${issue.identifier}: ${issue.title} in ${boardPositionLabel(source)}.`,
@@ -1505,8 +1703,10 @@ export function Board({
     if (event.over === null) {
       activeSession.current = {
         session: session.session,
+        sequence: session.sequence,
         issueId: session.issueId,
         source: session.source,
+        sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
         departedSource: true,
         endVisibilityActivity: session.endVisibilityActivity,
@@ -1518,8 +1718,10 @@ export function Board({
     if (overId === session.issueId) {
       activeSession.current = {
         session: session.session,
+        sequence: session.sequence,
         issueId: session.issueId,
         source: session.source,
+        sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
         departedSource: session.departedSource,
         endVisibilityActivity: session.endVisibilityActivity,
@@ -1542,8 +1744,10 @@ export function Board({
     if (targetState.kind !== 'found') {
       activeSession.current = {
         session: session.session,
+        sequence: session.sequence,
         issueId: session.issueId,
         source: session.source,
+        sourcePlacement: session.sourcePlacement,
         keyboard: session.keyboard,
         departedSource: true,
         endVisibilityActivity: session.endVisibilityActivity,
@@ -1767,18 +1971,47 @@ export function Board({
     );
     const pendingMove = move.mutateAsync(placement);
     restoreCompletedKeyboardFocus(destination.groupId, session.source.groupId);
+
     pendingMove
       .then(
         (settlement) => {
+          const settledIssue = settlement.issues.find((issue) => issue.id === dragId);
+
+          if (settledIssue !== undefined) {
+            const sourceAssignee = resolveIssueActor(session.sourcePlacement.issue, 'assignee');
+            const moveEntry: MoveUndoEntry = {
+              sequence: session.sequence,
+              issue: settledIssue,
+              propertyLabel: 'Move',
+
+              forward: {
+                ...placement,
+                issue: settledIssue,
+              },
+
+              inverse: {
+                ...session.sourcePlacement,
+                ...(groupBy === 'assignee' &&
+                placement.assigneeId !== undefined &&
+                sourceAssignee?.type === 'agent'
+                  ? { assigneeAgentId: sourceAssignee.id }
+                  : {}),
+                issue: settledIssue,
+              },
+
+              expectedForUndo: moveExpectedFor(settledIssue, groupBy),
+              expectedForRedo: moveExpectedFor(session.sourcePlacement.issue, groupBy),
+            };
+
+            recordTabMove(moveEntry);
+          }
+
           if (!lifecycle.current.mounted || lifecycle.current.generation !== lifecycleGeneration) {
             releasePendingSettlement(completed.session, true);
             return;
           }
-          publishResult(
-            'success',
-            settlement.issues.find((issue) => issue.id === dragId),
-            settlement,
-          );
+
+          publishResult('success', settledIssue, settlement);
           setIssuePending(dragId, false);
         },
         () => {
@@ -1786,6 +2019,7 @@ export function Board({
             releasePendingSettlement(completed.session, true);
             return;
           }
+
           publishResult('error', placement.issue);
           setIssuePending(dragId, false);
         },
@@ -1990,7 +2224,7 @@ interface BoardColumnProps {
   ) => void;
   readonly onColumnNode: (id: string, node: HTMLUListElement | null) => void;
   readonly onOpen: (id: string) => void;
-  readonly onRows: (groupId: string, issues: readonly Issue[]) => void;
+  readonly onRows: (groupId: string, issues: readonly Issue[], title?: string) => void;
 }
 
 function BoardColumn({
@@ -2025,10 +2259,11 @@ function BoardColumn({
         : group.issues,
     [ownsData, columnSource, fetched, group.issues, stateById],
   );
+  const actorTitle = actorColumnTitle(fetched, columnSource?.groupBy, group.id);
 
   useLayoutEffect(() => {
-    onRows(group.id, issues);
-  }, [onRows, group.id, issues]);
+    onRows(group.id, issues, actorTitle);
+  }, [onRows, group.id, issues, actorTitle]);
   const columnHasMore = ownsData ? owned.hasNextPage : hasMore;
   const columnLoadingMore = ownsData ? owned.isFetchingNextPage : loadingMore;
   const loadMore = ownsData

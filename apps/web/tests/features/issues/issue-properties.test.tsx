@@ -9,7 +9,7 @@ import { ToastProvider } from '@/components/ui/toast.tsx';
 import { estimateLabel } from '@/features/issues/estimate-glyph.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
-import { HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, HotkeyProvider, useHotkeyList } from '@/lib/keyboard/index.ts';
 import { createQueryClient } from '@/lib/query/provider.tsx';
 import type { Issue, Member, Milestone } from '@/lib/query/schemas.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
@@ -20,11 +20,14 @@ await restoreModulesAfterThisFile([
 ]);
 
 const patches: Record<string, unknown>[] = [];
+const patchedIssueIds: string[] = [];
 
 mock.module('@/lib/query/use-issues.ts', () => ({
+  useCreateIssue: () => ({ isPending: false, mutate: mock() }),
   useUpdateIssue: () => ({
     mutate: (input: { issue: Issue; patch: Record<string, unknown> }) => {
       patches.push(input.patch);
+      patchedIssueIds.push(input.issue.id);
     },
   }),
 }));
@@ -120,6 +123,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
 }));
 
 const { IssueProperties } = await import('@/features/issues/issue-properties.tsx');
+const { SubIssues } = await import('@/features/issues/sub-issues.tsx');
 const { IssueDeletionProvider } = await import('@/features/issues/issue-deletion.tsx');
 
 const milestones: readonly Milestone[] = [
@@ -220,8 +224,135 @@ function mountProperties(row: Issue) {
   );
 }
 
+describe('Issue actor properties', () => {
+  it('shows a child agent assignee using its server actor', () => {
+    render(
+      <Providers>
+        <SubIssues
+          issue={issue()}
+          subIssues={[
+            issue({
+              id: 'child_1',
+              identifier: 'ENG-2',
+              parentId: 'issue_1',
+              assignee: {
+                type: 'agent',
+                id: 'agent_1',
+                name: 'Child bot',
+                avatar: null,
+                deleted: true,
+              },
+            }),
+          ]}
+        />
+      </Providers>,
+    );
+
+    expect(screen.getByTitle('Child bot (Agent) (Deleted)')).toBeInTheDocument();
+    expect(screen.getByRole('link')).toHaveAttribute('href', '/issue/ENG-2');
+  });
+
+  it('shows real agent names and deleted state with a separate read-only human owner', () => {
+    mountProperties(
+      issue({
+        creator: {
+          type: 'agent',
+          id: 'agent_creator',
+          name: 'Planning bot',
+          avatar: '/planning.png',
+          deleted: true,
+        },
+        assignee: {
+          type: 'agent',
+          id: 'agent_assignee',
+          name: 'Build bot',
+          avatar: '/build.png',
+          deleted: false,
+        },
+        owner: {
+          type: 'user',
+          id: 'owner_outside',
+          name: 'Responsible person',
+          avatar: '/owner.png',
+          deleted: false,
+        },
+        ownerUserId: 'owner_outside',
+      }),
+    );
+
+    expect(screen.getByTestId('property-creator')).toHaveTextContent('Planning bot');
+    expect(screen.getByTestId('property-creator')).toHaveTextContent('Deleted');
+    expect(screen.getByTestId('property-assignee')).toHaveTextContent('Build bot');
+    expect(screen.getByTestId('property-assignee')).toHaveTextContent('Agent');
+    const owner = screen.getByTestId('property-owner');
+    expect(owner).toHaveTextContent('Responsible person');
+    expect(owner.tagName).toBe('DIV');
+    expect(within(owner).queryByRole('button')).toBeNull();
+    expect(owner.querySelector('[data-actor-deleted]')).toBeNull();
+  });
+
+  it('preserves NULL owner rather than inferring it from the current assignee', () => {
+    mountProperties(issue({ assigneeId: firstReviewer.id, owner: null, ownerUserId: null }));
+
+    expect(screen.getByTestId('property-assignee')).toHaveTextContent(firstReviewer.name);
+    expect(screen.getByTestId('property-owner')).toHaveTextContent('No owner');
+  });
+
+  it('does not assume a legacy user missing from workspace members is deleted', () => {
+    mountProperties(issue({ assigneeId: 'outside_team' }));
+
+    expect(screen.getByTestId('property-assignee')).toHaveTextContent('Unknown user');
+    expect(screen.getByTestId('property-assignee')).not.toHaveTextContent('Deleted');
+  });
+
+  it('clears an agent assignee while preserving the human assignee menu', async () => {
+    const user = userEvent.setup();
+    mountProperties(
+      issue({
+        assignee: { type: 'agent', id: 'agent_1', name: 'Build bot', avatar: null, deleted: false },
+      }),
+    );
+
+    await user.click(screen.getByTestId('property-assignee'));
+    const clear = screen.getByRole('menuitemradio', { name: 'No assignee' });
+    expect(clear).not.toHaveAttribute('data-disabled');
+    expect(clear).toHaveAttribute('aria-checked', 'false');
+    await user.click(clear);
+    expect(patches).toEqual([{ assigneeId: null }]);
+    await user.click(screen.getByTestId('property-assignee'));
+    await user.click(screen.getByRole('menuitemradio', { name: firstReviewer.name }));
+    expect(patches).toEqual([{ assigneeId: null }, { assigneeId: firstReviewer.id }]);
+  });
+
+  it('shows the parent agent assignee without turning it into an unassigned user', () => {
+    render(
+      <Providers>
+        <IssueProperties
+          issue={issue({ parentId: 'parent_1' })}
+          parent={issue({
+            id: 'parent_1',
+            identifier: 'ENG-2',
+            assignee: {
+              type: 'agent',
+              id: 'agent_1',
+              name: 'Parent bot',
+              avatar: null,
+              deleted: false,
+            },
+          })}
+        />
+      </Providers>,
+    );
+
+    expect(
+      within(screen.getByTestId('property-parent')).getByTitle('Parent bot (Agent)'),
+    ).toBeInTheDocument();
+  });
+});
+
 beforeEach(() => {
   patches.length = 0;
+  patchedIssueIds.length = 0;
   requested.length = 0;
   Object.assign(workspace, {
     role: 'admin',
@@ -233,6 +364,86 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe('issue property shortcuts with a preview open', () => {
+  for (const [binding, property] of [
+    ['s', 'status'],
+    ['p', 'priority'],
+    ['a', 'assignee'],
+    ['r', 'reviewers'],
+    ['i', 'project'],
+    ['l', 'labels'],
+    ['m', 'milestone'],
+    ['{Shift>}e{/Shift}', 'estimate'],
+    ['{Shift>}d{/Shift}', 'due-date'],
+  ] as const) {
+    it(`opens ${property} on the preview instead of the background issue`, async () => {
+      render(
+        <Providers>
+          <div data-testid="background-properties">
+            <IssueProperties issue={issue()} />
+          </div>
+          <div data-testid="preview-properties">
+            <IssueProperties
+              issue={issue({ id: 'issue_2', identifier: 'ENG-2' })}
+              hotkeyPriority={HOTKEY_PRIORITY.layer}
+            />
+          </div>
+        </Providers>,
+      );
+      await userEvent.setup().keyboard(binding);
+      await waitFor(() =>
+        expect(
+          within(screen.getByTestId('preview-properties')).getByTestId(`property-${property}`),
+        ).toHaveAttribute('aria-expanded', 'true'),
+      );
+      expect(
+        within(screen.getByTestId('background-properties')).getByTestId(`property-${property}`),
+      ).toHaveAttribute('aria-expanded', 'false');
+    });
+  }
+
+  it('keeps an unavailable milestone shortcut from reaching the background issue', async () => {
+    render(
+      <Providers>
+        <IssueProperties issue={issue()} />
+        <IssueProperties
+          issue={issue({ id: 'issue_2', identifier: 'ENG-2', projectId: null })}
+          hotkeyPriority={HOTKEY_PRIORITY.layer}
+        />
+      </Providers>,
+    );
+    await userEvent.setup().keyboard('m');
+    expect(screen.getByTestId('property-milestone')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('menu-milestone')).toBeNull();
+  });
+
+  it('edits the preview and restores background shortcuts after it closes', async () => {
+    function Panels({ previewOpen }: { readonly previewOpen: boolean }) {
+      return (
+        <>
+          <IssueProperties issue={issue()} />
+          {previewOpen ? (
+            <IssueProperties
+              issue={issue({ id: 'issue_2', identifier: 'ENG-2' })}
+              hotkeyPriority={HOTKEY_PRIORITY.layer}
+            />
+          ) : null}
+        </>
+      );
+    }
+    const view = render(<Panels previewOpen />, { wrapper: Providers });
+    const user = userEvent.setup();
+    await user.keyboard('p');
+    await user.click(await screen.findByRole('menuitemradio', { name: 'High' }));
+    expect(patchedIssueIds).toEqual(['issue_2']);
+    view.rerender(<Panels previewOpen={false} />);
+    document.body.focus();
+    await user.keyboard('p');
+    await user.click(await screen.findByRole('menuitemradio', { name: 'High' }));
+    expect(patchedIssueIds).toEqual(['issue_2', 'issue_1']);
+  });
 });
 
 describe('the milestone row on the issue properties panel', () => {

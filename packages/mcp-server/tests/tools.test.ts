@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { createProject, updateOrganization } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
+import type { IssueActor } from '@orbit/shared/validators';
 import {
   addMember,
   connect,
   createWorkspace,
   errorPayload,
+  MCP_TEST_PUBLIC_URL,
   mintToken,
   resetDatabase,
   type TestClient,
@@ -19,10 +21,13 @@ let guest: TestClient;
 interface IssueShape {
   readonly id: string;
   readonly identifier: string;
+  readonly url: string;
   readonly title: string;
   readonly state: string | null;
   readonly priority: string;
-  readonly assignee: string | null;
+  readonly creator: IssueActor;
+  readonly assignee: IssueActor | null;
+  readonly owner: IssueActor | null;
   readonly reviewers: readonly string[];
   readonly reviewerIds: readonly string[];
   readonly cycleId: string | null;
@@ -35,6 +40,7 @@ interface RelationShape {
   readonly type: string;
   readonly identifier: string;
   readonly title: string;
+  readonly url: string;
 }
 
 interface DeltaShape {
@@ -245,6 +251,51 @@ describe('permissions', () => {
 });
 
 describe('issues', () => {
+  it('reads Agent names, avatars and tombstones without inferring a Human Owner', async () => {
+    const created = await newIssue('Agent reader fixture', { assignee: 'me' });
+    const id = crypto.randomUUID();
+    await db.insert(schema.agentIdentity).values({
+      id,
+      organizationId: workspace.organizationId,
+      ownerUserId: workspace.adminUser.id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deletedAt: new Date(),
+      ownerNameSnapshot: workspace.adminUser.name,
+      clientNameSnapshot: 'Fixture',
+    });
+    await db
+      .update(schema.issue)
+      .set({
+        creatorId: null,
+        creatorUserId: null,
+        creatorAgentId: id,
+        assigneeId: null,
+        assigneeUserId: null,
+        assigneeAgentId: id,
+      })
+      .where(eq(schema.issue.id, created.id));
+    await db.update(schema.issue).set({ ownerUserId: null }).where(eq(schema.issue.id, created.id));
+    const fetched = issueOf(await admin.result('get_issue', { issue: created.identifier }));
+    const expected = {
+      type: 'agent',
+      id,
+      name: 'Build helper',
+      avatar: 'https://orbit.test/helper.png',
+      deleted: true,
+    } as const;
+    expect(fetched.url).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${created.identifier}`);
+    expect(fetched.creator).toEqual(expected);
+    expect(fetched.assignee).toEqual(expected);
+    expect(fetched.owner).toBeNull();
+    const searched = issuesOf(
+      await admin.result('search_issues', { query: 'Agent reader fixture' }),
+    );
+    const searchResult = searched.find((issue) => issue.id === created.id);
+    expect(searchResult?.assignee).toEqual(expected);
+    expect(searchResult?.url).toBe(fetched.url);
+  });
+
   it('round trips a created issue by human identifier', async () => {
     const created = await newIssue('Ship the MCP server', {
       description: 'Serve tools over streamable HTTP.',
@@ -253,7 +304,13 @@ describe('issues', () => {
     });
     expect(created.identifier).toMatch(new RegExp(`^${workspace.teamKey}-\\d+$`));
     expect(created.priority).toBe('High');
-    expect(created.assignee).toBe(workspace.adminUser.name);
+    expect(created.assignee).toEqual({
+      type: 'user',
+      id: workspace.adminUser.id,
+      name: workspace.adminUser.name,
+      avatar: null,
+      deleted: false,
+    });
 
     const fetched = await admin.result('get_issue', { issue: created.identifier });
     const issue = issueOf(fetched) as IssueShape & { description: string; labels: string[] };
@@ -384,6 +441,57 @@ describe('issues', () => {
     expect(deltasOf(payload)[0]).toMatchObject({ model: 'comment', action: 'insert' });
   });
 
+  it('returns absolute links for issues, comments and documents', async () => {
+    const created = await admin.result('create_issue', {
+      team: workspace.teamKey,
+      title: 'Needs a link',
+    });
+    const issue = created['issue'] as { identifier: string; url: string };
+    expect(issue.url).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${issue.identifier}`);
+
+    const commented = await admin.result('add_comment', {
+      issue: issue.identifier,
+      body: 'Linked.',
+    });
+    const comment = commented['comment'] as { id: string; url: string };
+    const commentUrl = `${issue.url}#comment-${comment.id}`;
+    expect(comment.url).toBe(commentUrl);
+
+    const edited = await admin.result('edit_comment', { commentId: comment.id, body: 'Edited.' });
+    expect(edited['url']).toBe(commentUrl);
+
+    const listed = await admin.result('list_issue_comments', { issue: issue.identifier });
+    expect((listed['comments'] as { url: string }[])[0]?.url).toBe(commentUrl);
+
+    const doc = (await admin.result('create_doc', { title: 'Linked doc' }))['doc'] as {
+      id: string;
+      url: string;
+    };
+    expect(doc.url).toBe(`${MCP_TEST_PUBLIC_URL}/docs/${doc.id}`);
+
+    const docComment = (await admin.result('comment_on_doc', { doc: doc.id, body: 'Noted.' }))[
+      'comment'
+    ] as { id: string; url: string };
+    expect(docComment.url).toBe(`${doc.url}#doc-comment-${docComment.id}`);
+
+    const editedDocComment = (
+      await admin.result('edit_doc_comment', { commentId: docComment.id, body: 'Edited note.' })
+    )['comment'] as { url: string };
+    expect(editedDocComment.url).toBe(docComment.url);
+
+    const docComments = await admin.result('list_doc_comments', { doc: doc.id });
+    expect((docComments['comments'] as { url: string }[])[0]?.url).toBe(docComment.url);
+
+    const archived = (await admin.result('archive_issue', { issue: issue.identifier }))[
+      'archived'
+    ] as { url: string };
+    expect(archived.url).toBe(issue.url);
+    const restored = (await admin.result('unarchive_issue', { issue: issue.identifier }))[
+      'restored'
+    ] as { url: string };
+    expect(restored.url).toBe(issue.url);
+  });
+
   it('resolves a label to update whose reference carries stray whitespace', async () => {
     await admin.result('create_label', { name: 'Trimmed label' });
 
@@ -449,6 +557,7 @@ describe('issues', () => {
       type: 'blocked_by',
       identifier: first.identifier,
       title: 'Blocks the other',
+      url: `${MCP_TEST_PUBLIC_URL}/issue/${first.identifier}`,
     });
   });
 
@@ -462,6 +571,8 @@ describe('issues', () => {
     });
     expect(res['issue']).toBe(duplicate.identifier);
     expect(res['relatedIssue']).toBe(survivor.identifier);
+    expect(res['url']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${duplicate.identifier}`);
+    expect(res['relatedIssueUrl']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${survivor.identifier}`);
     expect(res['type']).toBe('duplicate_of');
   });
 
@@ -481,6 +592,7 @@ describe('issues', () => {
     });
 
     expect(removed['relations']).toEqual([]);
+    expect(removed['url']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${second.identifier}`);
     expect(relationsOf(await admin.result('get_issue', { issue: first.identifier }))).toEqual([]);
   });
 
@@ -528,12 +640,15 @@ describe('issues', () => {
 
     expect(result['issue']).toBe(duplicate.identifier);
     expect(result['survivorIssue']).toBe(survivor.identifier);
+    expect(result['url']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${duplicate.identifier}`);
+    expect(result['survivorIssueUrl']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${survivor.identifier}`);
 
     const survivorDetails = await admin.result('get_issue', { issue: survivor.identifier });
     expect(relationsOf(survivorDetails)).toContainEqual({
       type: 'duplicated_by',
       identifier: duplicate.identifier,
       title: 'Duplicate issue',
+      url: `${MCP_TEST_PUBLIC_URL}/issue/${duplicate.identifier}`,
     });
   });
 
@@ -611,6 +726,7 @@ describe('issues', () => {
   it('builds a git branch name from an issue', async () => {
     const created = await newIssue('Fix the flaky login redirect');
     const payload = await admin.result('copy_branch_name', { issue: created.identifier });
+    expect(payload['url']).toBe(`${MCP_TEST_PUBLIC_URL}/issue/${created.identifier}`);
     expect(payload['branch']).toBe(
       `${workspace.adminUser.handle}/${created.identifier.toLowerCase()}-fix-the-flaky-login-redirect`,
     );
@@ -1005,7 +1121,7 @@ describe('what a token is allowed to do', () => {
       expect(names).not.toContain('invite_member');
 
       for (const tool of tools) {
-        expect(tool.annotations?.readOnlyHint).toBe(true);
+        expect(tool.annotations?.readOnlyHint).toBe(tool.name !== 'list_inbox_conversations');
       }
     } finally {
       await readOnly.close();

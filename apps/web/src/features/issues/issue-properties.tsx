@@ -13,13 +13,15 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { Kbd } from '@/components/ui/kbd.tsx';
 import { cn } from '@/lib/cn.ts';
 import { dangerMenuAction, rowHover } from '@/lib/interaction.ts';
-import { useHotkey } from '@/lib/keyboard/index.ts';
+import { HOTKEY_PRIORITY, useHotkey } from '@/lib/keyboard/index.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Cycle, Issue, Milestone, Project } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useMilestones } from '@/lib/query/use-milestones.ts';
 import { sprintOptions } from '@/lib/sprint-options.ts';
 import { DueDateField } from './due-date-field.tsx';
 import { EstimateGlyph, estimateLabel } from './estimate-glyph.tsx';
+import { IssueActorDisplay } from './issue-actor.tsx';
 import { useIssueDeletion } from './issue-deletion.tsx';
 import { IssuePicker } from './issue-picker.tsx';
 import { PriorityGlyph, priorityLabel } from './priority-glyph.tsx';
@@ -51,17 +53,32 @@ export interface IssuePropertiesProps {
   readonly issue: Issue;
   readonly parent?: Issue | null;
   readonly onDeleted?: (() => void) | undefined;
+  readonly hotkeyPriority?: number;
 }
 
-export function IssueProperties({ issue, parent = null, onDeleted }: IssuePropertiesProps) {
+export function IssueProperties({
+  issue,
+  parent = null,
+  onDeleted,
+  hotkeyPriority = HOTKEY_PRIORITY.surface,
+}: IssuePropertiesProps) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
   const states = statesForTeam(workspace.states, issue.teamId);
   const state = workspace.stateById.get(issue.stateId);
-  const assignee =
-    issue.assigneeId === null ? undefined : workspace.memberById.get(issue.assigneeId);
+  const actorFor = (row: Issue, role: 'creator' | 'assignee' | 'owner') => {
+    const actor = resolveIssueActor(row, role);
+    return resolveIssueActor(
+      row,
+      role,
+      actor?.type === 'user' ? workspace.memberById.get(actor.id) : undefined,
+    );
+  };
+  const assignee = actorFor(issue, 'assignee');
+  const creator = actorFor(issue, 'creator');
+  const owner = actorFor(issue, 'owner');
   const reviewerIds = issue.reviewerIds ?? [];
   const reviewers = reviewerIds.flatMap((id) => {
     const reviewer = workspace.memberById.get(id);
@@ -87,56 +104,71 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
   const toggle = (key: MenuKey) => (open: boolean) => setOpenMenu(open ? key : null);
 
   useHotkey('s', () => setOpenMenu('status'), {
+    priority: hotkeyPriority,
     label: 'Change status',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('p', () => setOpenMenu('priority'), {
+    priority: hotkeyPriority,
     label: 'Change priority',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('a', () => setOpenMenu('assignee'), {
+    priority: hotkeyPriority,
     label: 'Assign issue',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('r', () => setOpenMenu('reviewers'), {
+    priority: hotkeyPriority,
     label: 'Change reviewers',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('i', () => setOpenMenu('project'), {
+    priority: hotkeyPriority,
     label: 'Change project',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('l', () => setOpenMenu('labels'), {
+    priority: hotkeyPriority,
     label: 'Change labels',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('shift+e', () => setOpenMenu('estimate'), {
+    priority: hotkeyPriority,
     label: 'Change estimate',
     section: 'Issues',
     scope: 'issues',
   });
   useHotkey('shift+d', () => setOpenMenu('dueDate'), {
+    priority: hotkeyPriority,
     label: 'Change due date',
     section: 'Issues',
     scope: 'issues',
   });
-  useHotkey('m', () => setOpenMenu('milestone'), {
-    label: 'Change milestone',
-    section: 'Issues',
-    scope: 'issues',
-    enabled: issue.projectId !== null,
-  });
+  useHotkey(
+    'm',
+    () => {
+      if (issue.projectId !== null) setOpenMenu('milestone');
+    },
+    {
+      priority: hotkeyPriority,
+      label: 'Change milestone',
+      section: 'Issues',
+      scope: 'issues',
+      advertised: issue.projectId !== null,
+    },
+  );
 
   return (
     <aside
       data-testid="issue-properties"
-      className="flex w-full shrink-0 flex-col gap-0.5 border-border border-t p-3 lg:w-64 lg:border-t-0 lg:border-l"
+      className="flex w-full shrink-0 flex-col gap-0.5 border-border border-t p-3 lg:min-h-0 lg:w-64 lg:overflow-y-auto lg:border-t-0 lg:border-l"
     >
       <PropertyRow label="Status" shortcut="s">
         <PropertyMenu
@@ -198,20 +230,42 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
               icon: <Avatar name={member.name} src={member.image} size="xs" />,
             })),
           ]}
-          selected={issue.assigneeId === null ? ['none'] : [issue.assigneeId]}
-          onSelect={(value) => patch({ assigneeId: value === 'none' ? null : value }, 'Assignee')}
+          selected={assignee?.type === 'agent' ? [] : [assignee?.id ?? 'none']}
+          onSelect={(value) => {
+            patch({ assigneeId: value === 'none' ? null : value }, 'Assignee');
+          }}
         >
           <button type="button" className={rowClassName} data-testid="property-assignee">
-            <span aria-hidden="true" className="flex items-center">
-              {assignee === undefined ? (
-                <span className="size-4.5 rounded-full border border-border border-dashed" />
-              ) : (
-                <Avatar name={assignee.name} src={assignee.image} size="xs" />
-              )}
-            </span>
-            {assignee?.name ?? 'Unassigned'}
+            {assignee === null ? (
+              <>
+                <span aria-hidden="true">
+                  <IssueActorDisplay actor={null} />
+                </span>
+                Unassigned
+              </>
+            ) : (
+              <IssueActorDisplay actor={assignee} showName />
+            )}
           </button>
         </PropertyMenu>
+      </PropertyRow>
+
+      <PropertyRow label="Owner">
+        <div
+          className="flex items-center gap-2 px-2 py-1.5 text-dense text-text"
+          data-testid="property-owner"
+        >
+          {owner === null ? 'No owner' : <IssueActorDisplay actor={owner} showName />}
+        </div>
+      </PropertyRow>
+
+      <PropertyRow label="Creator">
+        <div
+          className="flex items-center gap-2 px-2 py-1.5 text-dense text-text"
+          data-testid="property-creator"
+        >
+          {creator === null ? 'Unknown creator' : <IssueActorDisplay actor={creator} showName />}
+        </div>
       </PropertyRow>
 
       <PropertyRow label="Reviewers" shortcut="r">
@@ -361,6 +415,7 @@ export function IssueProperties({ issue, parent = null, onDeleted }: IssueProper
           >
             <button type="button" className={rowClassName} data-testid="property-parent">
               {parentLabel}
+              {parent === null ? null : <IssueActorDisplay actor={actorFor(parent, 'assignee')} />}
             </button>
           </IssuePicker>
           {issue.parentId === null ? null : (

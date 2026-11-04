@@ -4,6 +4,7 @@ import { PRIORITIES } from '@orbit/shared/constants';
 import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
 import { dangerAction } from '@/lib/interaction.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue, WorkflowState } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
 import { useIssueDeletion } from './issue-deletion.tsx';
@@ -22,6 +23,9 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
   const update = useUpdateIssue();
   const deletion = useIssueDeletion();
   const { members } = useWorkspace();
+  const hasAgentAssignee = issues.some(
+    (issue) => resolveIssueActor(issue, 'assignee')?.type === 'agent',
+  );
 
   const applyToAll = (patch: Parameters<typeof update.mutate>[0]['patch']) => {
     for (const issue of issues) update.mutate({ issue, patch });
@@ -76,8 +80,14 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
           { id: 'none', label: 'No assignee' },
           ...members.map((member) => ({ id: member.id, label: member.name })),
         ]}
-        selected={sharedValue((issue) => issue.assigneeId)}
-        onSelect={(value) => applyToAll({ assigneeId: value === 'none' ? null : value })}
+        selected={
+          hasAgentAssignee
+            ? []
+            : sharedValue((issue) => resolveIssueActor(issue, 'assignee')?.id ?? null)
+        }
+        onSelect={(value) => {
+          applyToAll({ assigneeId: value === 'none' ? null : value });
+        }}
       >
         <Button size="sm" variant="secondary">
           Assignee

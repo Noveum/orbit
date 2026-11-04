@@ -4,8 +4,10 @@ import { PRIORITIES, PRIORITY_LABELS } from '@orbit/shared/constants';
 import { useMemo } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { useUpdateIssue } from '@/lib/query/use-issues.ts';
+import { IssueActorDisplay } from './issue-actor.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
 import { PropertyMenu, type PropertyOption } from './property-menu.tsx';
 import { StateGlyph } from './state-glyph.tsx';
@@ -127,6 +129,7 @@ export function AssigneeControl({
 }) {
   const workspace = useWorkspace();
   const update = useUpdateIssue();
+  const actor = resolveIssueActor(issue, 'assignee', assignee);
 
   const options = useMemo<PropertyOption[]>(
     () => [
@@ -145,11 +148,13 @@ export function AssigneeControl({
       title="Assign to"
       align="end"
       options={options}
-      selected={[issue.assigneeId ?? '']}
+      selected={[actor?.type === 'agent' ? `agent:${actor.id}` : (actor?.id ?? '')]}
       testId="card-assignee-menu"
       onSelect={(value) => {
         const assigneeId = value === '' ? null : value;
-        if (assigneeId !== issue.assigneeId) update.mutate({ issue, patch: { assigneeId } });
+        if (actor?.type === 'agent' || assigneeId !== issue.assigneeId) {
+          update.mutate({ issue, patch: { assigneeId } });
+        }
       }}
     >
       <button
@@ -159,15 +164,8 @@ export function AssigneeControl({
         onClick={(event) => event.stopPropagation()}
         className={cn(TRIGGER, 'ml-auto')}
       >
-        <AssigneeAvatar assignee={assignee} />
+        <IssueActorDisplay actor={actor} size="sm" />
       </button>
     </PropertyMenu>
   );
-}
-
-function AssigneeAvatar({ assignee }: { readonly assignee: Member | undefined }) {
-  if (assignee === undefined) {
-    return <span className="block size-5.5 rounded-full border border-border border-dashed" />;
-  }
-  return <Avatar name={assignee.name} src={assignee.image} size="sm" />;
 }

@@ -37,6 +37,7 @@ export const issueCreateSchema = z.object({
   stateId: idSchema.optional(),
   priority: prioritySchema.default(0),
   assigneeId: idSchema.nullable().optional(),
+  assigneeAgentId: idSchema.nullable().optional(),
   reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).default([]),
   projectId: idSchema.nullable().default(null),
   milestoneId: idSchema.nullable().default(null),
@@ -51,6 +52,7 @@ export const issueExpectedPropertiesSchema = z
   .object({
     stateId: idSchema.optional(),
     assigneeId: idSchema.nullable().optional(),
+    assigneeAgentId: idSchema.nullable().optional(),
     priority: prioritySchema.optional(),
     estimate: z.number().int().min(0).max(100).nullable().optional(),
     projectId: idSchema.nullable().optional(),
@@ -63,12 +65,28 @@ export const issueExpectedPropertiesSchema = z
   })
   .strict();
 
+export const issueMoveExpectedSchema = issueExpectedPropertiesSchema
+  .pick({
+    stateId: true,
+    assigneeId: true,
+    assigneeAgentId: true,
+    priority: true,
+    projectId: true,
+    milestoneId: true,
+    cycleId: true,
+  })
+  .extend({
+    sortOrder: z.number().optional(),
+  })
+  .strict();
+
 export const issueUpdateSchema = z
   .object({
     title: titleSchema.optional(),
     description: issueDescriptionSchema.optional(),
     stateId: idSchema.optional(),
     assigneeId: idSchema.nullable().optional(),
+    assigneeAgentId: idSchema.nullable().optional(),
     priority: prioritySchema.optional(),
     estimate: z.number().int().min(0).max(100).nullable().optional(),
     projectId: idSchema.nullable().optional(),
@@ -88,10 +106,13 @@ export const issueMoveSchema = z.object({
   teamId: idSchema.optional(),
   cycleId: idSchema.nullable().optional(),
   projectId: idSchema.nullable().optional(),
+  milestoneId: idSchema.nullable().optional(),
   assigneeId: idSchema.nullable().optional(),
+  assigneeAgentId: idSchema.nullable().optional(),
   priority: prioritySchema.optional(),
   beforeId: idSchema.nullable().default(null),
   afterId: idSchema.nullable().default(null),
+  expected: issueMoveExpectedSchema.optional(),
 });
 
 export const issueBulkUpdateSchema = z.object({
@@ -105,6 +126,7 @@ export const subIssueItemSchema = z.object({
   stateId: idSchema.optional(),
   priority: prioritySchema.default(0),
   assigneeId: idSchema.nullable().optional(),
+  assigneeAgentId: idSchema.nullable().optional(),
   reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).default([]),
   projectId: idSchema.nullable().optional(),
   milestoneId: idSchema.nullable().optional(),
@@ -197,3 +219,4 @@ export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
 export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
 export type IssueExpectedProperties = z.infer<typeof issueExpectedPropertiesSchema>;
 export type IssueMarkDuplicateInput = z.infer<typeof issueMarkDuplicateSchema>;
+export type IssueMoveExpected = z.infer<typeof issueMoveExpectedSchema>;

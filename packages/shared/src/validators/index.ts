@@ -1,3 +1,4 @@
+export * from './agent-identity.ts';
 export * from './analytics.ts';
 export * from './auth.ts';
 export * from './avatar.ts';
@@ -14,6 +15,7 @@ export * from './integration.ts';
 export * from './issue.ts';
 export * from './issue-response.ts';
 export * from './label.ts';
+export * from './mcp.ts';
 export * from './milestone.ts';
 export * from './notification.ts';
 export * from './notification-provider.ts';
