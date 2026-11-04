@@ -1,4 +1,6 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Workspace } from '@orbit/core/test-support';
 
 process.env['BETTER_AUTH_SECRET'] ??= 'ai-test-route-test-secret';
@@ -24,9 +26,24 @@ function signIn(user: Workspace['adminUser']): void {
   session = { user, session: { activeOrganizationId: workspace.organizationId } };
 }
 
-const originalFetch = globalThis.fetch;
+const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+let baseUrl = '';
+let capturedAuth = '';
+let requests = 0;
+let providerStatus = 200;
+let providerBody = JSON.stringify({ choices: [{ message: { content: 'pong' } }] });
+const provider = http.createServer((request, response) => {
+  requests += 1;
+  capturedAuth = String(request.headers.authorization);
+  request.resume();
+  response.writeHead(providerStatus, { 'content-type': 'application/json' });
+  response.end(providerBody);
+});
 
 beforeAll(async () => {
+  process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = 'true';
+  await new Promise<void>((resolve) => provider.listen(0, '127.0.0.1', resolve));
+  baseUrl = `http://127.0.0.1:${(provider.address() as AddressInfo).port}/v1`;
   await resetDatabase();
   workspace = await createWorkspace('AiTestRoute');
   const added = await addMember(workspace, 'member');
@@ -35,10 +52,18 @@ beforeAll(async () => {
 
 beforeEach(() => {
   signIn(workspace.adminUser);
+  capturedAuth = '';
+  requests = 0;
+  providerStatus = 200;
+  providerBody = JSON.stringify({ choices: [{ message: { content: 'pong' } }] });
 });
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
+afterAll(async () => {
+  await new Promise<void>((resolve, reject) => {
+    provider.close((error) => (error ? reject(error) : resolve()));
+  });
+  if (originalAllowPrivate === undefined) delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+  else process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = originalAllowPrivate;
 });
 
 describe('AI test connection API', () => {
@@ -51,7 +76,7 @@ describe('AI test connection API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           kind: 'openai-compatible',
-          baseUrl: 'https://api.openai.com/v1',
+          baseUrl,
           model: 'gpt-4o-mini',
           apiKey: 'sk-test',
         }),
@@ -61,27 +86,13 @@ describe('AI test connection API', () => {
   });
 
   it('tests connection successfully and returns model ping response with explicit key', async () => {
-    let capturedAuth = '';
-
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-      capturedAuth = String((init?.headers as Record<string, string>)?.['authorization']);
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: 'pong' } }],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-      );
-    }) as unknown as typeof fetch;
-
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai/test', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           kind: 'openai-compatible',
-          baseUrl: 'https://api.openai.com/v1',
+          baseUrl,
           model: 'gpt-4o-mini',
           apiKey: 'sk-test-valid',
         }),
@@ -96,27 +107,13 @@ describe('AI test connection API', () => {
   });
 
   it('tests connection using stored credentials when no key is supplied', async () => {
-    let capturedAuth = '';
-
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-      capturedAuth = String((init?.headers as Record<string, string>)?.['authorization']);
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: 'pong' } }],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-      );
-    }) as unknown as typeof fetch;
-
     await SAVE_POST(
       new Request('https://orbit.local/api/settings/ai', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           kind: 'openai-compatible',
-          baseUrl: 'https://api.openai.com/v1',
+          baseUrl,
           model: 'gpt-4o-mini',
           apiKey: 'sk-saved-stored-key',
           enabled: true,
@@ -130,7 +127,7 @@ describe('AI test connection API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           kind: 'openai-compatible',
-          baseUrl: 'https://api.openai.com/v1',
+          baseUrl,
           model: 'gpt-4o-mini',
         }),
       }),
@@ -144,13 +141,8 @@ describe('AI test connection API', () => {
   });
 
   it('handles connection failure without leaking the API key and asserts ok is false', async () => {
-    let fetchOptions: RequestInit | undefined;
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-      fetchOptions = init;
-      return Promise.resolve(
-        new Response('Unauthorized: bad credentials sk-secret-must-not-leak', { status: 401 }),
-      );
-    }) as unknown as typeof fetch;
+    providerStatus = 401;
+    providerBody = 'Unauthorized: bad credentials sk-secret-must-not-leak';
 
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai/test', {
@@ -158,7 +150,7 @@ describe('AI test connection API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           kind: 'openai-compatible',
-          baseUrl: 'https://api.openai.com/v1',
+          baseUrl,
           model: 'gpt-4o-mini',
           apiKey: 'sk-secret-must-not-leak',
         }),
@@ -171,17 +163,11 @@ describe('AI test connection API', () => {
     expect(body.error).toBe('Failed to connect to the AI provider endpoint.');
     expect(JSON.stringify(body)).not.toContain('sk-secret-must-not-leak');
 
-    expect(fetchOptions?.redirect).toBe('manual');
-    expect(fetchOptions?.signal).toBeInstanceOf(AbortSignal);
+    expect(requests).toBe(1);
+    expect(capturedAuth).toBe('Bearer sk-secret-must-not-leak');
   });
 
   it('refuses test without a key when base URL or kind has changed and makes no outbound fetch call', async () => {
-    let fetchCalled = false;
-    globalThis.fetch = (() => {
-      fetchCalled = true;
-      return Promise.resolve(new Response('{}', { status: 200 }));
-    }) as unknown as typeof fetch;
-
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai/test', {
         method: 'POST',
@@ -195,6 +181,6 @@ describe('AI test connection API', () => {
     );
 
     expect(response.status).toBe(422);
-    expect(fetchCalled).toBe(false);
+    expect(requests).toBe(0);
   });
 });

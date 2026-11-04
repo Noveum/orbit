@@ -15,8 +15,6 @@ import type {
   AiTokenUsage,
 } from './types.ts';
 
-const defaultFetch = globalThis.fetch;
-
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 60_000;
 const MIN_TIMEOUT_MS = 1_000;
@@ -232,12 +230,6 @@ async function callOpenAiCompatible(
   if (options.maxTokens !== undefined) body['max_tokens'] = options.maxTokens;
   if (options.temperature !== undefined) body['temperature'] = options.temperature;
 
-  const transportFetch =
-    options.fetchFn ??
-    (globalThis.fetch !== defaultFetch && options.dnsLookup === undefined
-      ? globalThis.fetch
-      : undefined);
-
   let response: Response;
   try {
     response = await safeFetch(url, {
@@ -250,7 +242,7 @@ async function callOpenAiCompatible(
       signal,
       allowPrivate: options.allowPrivate,
       dnsLookup: options.dnsLookup,
-      fetchFn: transportFetch,
+      fetchFn: options.fetchFn,
     });
   } catch (error) {
     throw new AiClientError(
@@ -314,12 +306,6 @@ async function callAnthropic(
   };
   if (options.temperature !== undefined) body['temperature'] = options.temperature;
 
-  const transportFetch =
-    options.fetchFn ??
-    (globalThis.fetch !== defaultFetch && options.dnsLookup === undefined
-      ? globalThis.fetch
-      : undefined);
-
   let response: Response;
   try {
     response = await safeFetch(url, {
@@ -333,7 +319,7 @@ async function callAnthropic(
       signal,
       allowPrivate: options.allowPrivate,
       dnsLookup: options.dnsLookup,
-      fetchFn: transportFetch,
+      fetchFn: options.fetchFn,
     });
   } catch (error) {
     throw new AiClientError('Failed to connect to Anthropic endpoint.', error, target.apiKey);

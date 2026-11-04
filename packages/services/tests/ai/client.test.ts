@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import dns from 'node:dns';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import zlib from 'node:zlib';
@@ -16,6 +17,36 @@ describe('AI client complete()', () => {
       process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = originalAllowPrivate;
     }
   });
+
+  for (const kind of ['openai-compatible', 'anthropic'] as const) {
+    it(`keeps DNS destination checks when global fetch is patched for ${kind}`, async () => {
+      delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+      let fetchCalled = false;
+      globalThis.fetch = Object.assign(() => {
+        fetchCalled = true;
+        return Promise.resolve(Response.json({ choices: [], content: [] }));
+      }, originalFetch);
+      const lookup = spyOn(dns, 'lookup').mockImplementation(
+        Object.assign((...args: Parameters<typeof dns.lookup>) => {
+          const callback = args.at(-1);
+          if (typeof callback === 'function') callback(null, '127.0.0.1', 4);
+        }, dns.lookup),
+      );
+      try {
+        await expect(
+          complete('private destination probe', {
+            config: { kind, baseUrl: 'https://provider.example/v1', model: 'test', enabled: true },
+            apiKey: 'private-destination-test-key',
+            recordUsage: false,
+          }),
+        ).rejects.toThrow(AiClientError);
+        expect(fetchCalled).toBe(false);
+        expect(lookup).toHaveBeenCalled();
+      } finally {
+        lookup.mockRestore();
+      }
+    });
+  }
 
   it('completes prompt against OpenAI-compatible endpoint', async () => {
     let capturedUrl = '';
@@ -44,6 +75,7 @@ describe('AI client complete()', () => {
         model: 'gpt-4o-mini',
         enabled: true,
       },
+      fetchFn: globalThis.fetch,
       apiKey: 'sk-mock-openai-key',
       recordUsage: false,
     });
@@ -84,6 +116,7 @@ describe('AI client complete()', () => {
         model: 'claude-3-5-sonnet-20241022',
         enabled: true,
       },
+      fetchFn: globalThis.fetch,
       apiKey: 'sk-ant-mock-key',
       recordUsage: false,
     });
@@ -112,6 +145,7 @@ describe('AI client complete()', () => {
           model: 'gpt-4o',
           enabled: true,
         },
+        fetchFn: globalThis.fetch,
         apiKey: 'sk-ant-secret-must-not-leak',
         recordUsage: false,
       });
@@ -142,6 +176,7 @@ describe('AI client complete()', () => {
           model: 'gpt-4o',
           enabled: true,
         },
+        fetchFn: globalThis.fetch,
         apiKey: secretKey,
         recordUsage: false,
       });
@@ -175,6 +210,7 @@ describe('AI client complete()', () => {
           model: 'gpt-4o',
           enabled: false,
         },
+        fetchFn: globalThis.fetch,
         apiKey: 'sk-mock-key',
         recordUsage: false,
       }),
@@ -201,6 +237,7 @@ describe('AI client complete()', () => {
           model: 'gpt-4o',
           enabled: true,
         },
+        fetchFn: globalThis.fetch,
         apiKey: 'sk-mock-key',
         recordUsage: false,
       }),
@@ -225,6 +262,7 @@ describe('AI client complete()', () => {
           model: 'claude-3-5-sonnet-20241022',
           enabled: true,
         },
+        fetchFn: globalThis.fetch,
         apiKey: 'sk-mock-key',
         recordUsage: false,
       }),
@@ -260,6 +298,7 @@ describe('AI client complete()', () => {
           model: 'gpt-4o',
           enabled: true,
         },
+        fetchFn: globalThis.fetch,
         apiKey: 'sk-mock-key',
         recordUsage: false,
       }),
@@ -297,6 +336,7 @@ describe('AI client complete()', () => {
           model: 'claude-3-5-sonnet-20241022',
           enabled: true,
         },
+        fetchFn: globalThis.fetch,
         apiKey: 'sk-mock-key',
         recordUsage: false,
       }),
