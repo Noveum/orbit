@@ -1,15 +1,27 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { inCondition } from '@orbit/shared/filters';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  dehydrate,
+  hydrate,
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
+  observeIssueActorProfiles,
+  recordMemberActorUpdate,
+} from '@/lib/query/issue-actor-cache.ts';
+import {
+  issueListRevisionGeneration,
+  issueRevisionGeneration,
   recordIssueCacheReset,
   recordIssueDeletions,
   recordIssueListRevisions,
   recordIssueRevisions,
 } from '@/lib/query/issue-cache-generation.ts';
-import type { Issue } from '@/lib/query/schemas.ts';
+import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
 import type { IssuePages } from '@/lib/query/sync.ts';
 import { flattenIssuePages, mapIssuePages } from '@/lib/query/sync.ts';
 import type { IssueMoveSettlement } from '@/lib/query/use-issues.ts';
@@ -22,11 +34,15 @@ mock.module('@/components/ui/toast.tsx', () => ({
 
 const {
   authoritativeCachedIssue,
+  captureIssueHistory,
   DEFAULT_ISSUE_QUERY,
+  issuesQueryOptions,
+  previewDetail,
   useAssignedIssues,
   useColumnIssues,
   useDeleteIssues,
   useIssues,
+  useIssueDetail,
   useMoveIssue,
   useUpdateIssue,
 } = await import('@/lib/query/use-issues.ts');
@@ -179,6 +195,398 @@ describe('useIssues', () => {
 });
 
 describe('issue mutations patch the cache without a refetch drain', () => {
+  it.each(['update', 'move'] as const)(
+    'preserves unrelated inactive query state after a successful %s',
+    async (operation) => {
+      const original = issue();
+      const canonical = issue({ priority: 1, sortOrder: 2048, syncId: 2 });
+      stubFetch((url) =>
+        url.endsWith('/move') ? { issue: canonical, rebalanced: [] } : { issue: canonical },
+      );
+      const client = newClient();
+      const unrelated = issue({ id: 'unrelated', identifier: 'ENG-2' });
+      const detailKey = queryKeys.issue(unrelated.identifier);
+      const relationKey = queryKeys.issueRelations('other_issue');
+      const emptyRelationKey = queryKeys.issueRelations('no_relations');
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+      client.setQueryData(detailKey, detailFor(unrelated, []), { updatedAt: 12345 });
+      client.setQueryData(relationKey, [{ id: 'relation_1', type: 'related', issue: unrelated }], {
+        updatedAt: 12345,
+      });
+      client.setQueryData(emptyRelationKey, [], { updatedAt: 12345 });
+      const keys = [detailKey, relationKey, emptyRelationKey];
+      for (const key of keys) {
+        await client.invalidateQueries({ queryKey: key, exact: true, refetchType: 'none' });
+        expect(client.getQueryCache().find({ queryKey: key, exact: true })?.isActive()).toBe(false);
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+        expect(client.getQueryState(key)?.dataUpdatedAt).toBe(12345);
+      }
+      const previousStates = keys.map((key) => client.getQueryState(key));
+      const mutations = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+        wrapper: wrapper(client),
+      });
+      await act(async () => {
+        if (operation === 'update')
+          await mutations.result.current.update.mutateAsync({
+            issue: original,
+            patch: { priority: 1 },
+          });
+        else
+          await mutations.result.current.move.mutateAsync({
+            issue: original,
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          });
+      });
+      expect(keys.map((key) => client.getQueryState(key))).toEqual(previousStates);
+      for (const [index, key] of keys.entries())
+        expect(client.getQueryData<unknown>(key)).toBe(previousStates[index]?.data);
+      expect(cachedIssue(client)?.syncId).toBe(canonical.syncId);
+    },
+  );
+
+  it.each(['update', 'move'] as const)(
+    'restores the old assignment after a failed %s while retaining new Human profile information',
+    async (mode) => {
+      const pending = deferred<Response>();
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === (mode === 'update' ? 'PATCH' : 'POST')
+          ? pending.promise
+          : Promise.reject(new Error('offline')),
+      ) as unknown as typeof fetch;
+      const client = newClient();
+      const stop = observeIssueActorProfiles(client, 'org_1', [TEAM]);
+      const human = {
+        type: 'user' as const,
+        id: 'user_1',
+        name: 'Before',
+        avatar: '/before.png',
+        deleted: false,
+      };
+      const original = issue({
+        creator: human,
+        assigneeId: human.id,
+        assignee: human,
+        ownerUserId: human.id,
+        owner: human,
+      });
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+      client.setQueryData(queryKeys.issue(original.identifier), detailFor(original, []));
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+      let settlement: Promise<unknown> | undefined;
+      await act(async () => {
+        settlement = (
+          mode === 'update'
+            ? update.result.current.mutateAsync({
+                issue: original,
+                patch: { assigneeId: 'user_2' },
+              })
+            : move.result.current.mutateAsync({
+                issue: original,
+                assigneeId: 'user_2',
+                beforeId: null,
+                afterId: null,
+                beforeOrder: null,
+                afterOrder: null,
+              })
+        ).catch(() => undefined);
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(cachedIssue(client)?.assignee?.id).toBe('user_2'));
+      act(() =>
+        recordMemberActorUpdate(
+          client,
+          {
+            model: 'member',
+            modelId: 'membership_1',
+            action: 'update',
+            organizationId: 'org_1',
+            syncId: 20,
+            scopes: ['org:org_1'],
+            actor: { type: 'user', id: 'user_1' },
+            at: '',
+            data: { userId: human.id, name: 'After', image: null },
+          },
+          'org_1',
+        ),
+      );
+      const parent = issue({
+        id: 'parent_1',
+        identifier: 'ENG-2',
+        syncId: 30,
+        title: 'Fresh parent',
+        creatorId: 'other_user',
+      });
+      type DetailWithParent = Omit<ReturnType<typeof detailFor>, 'parent'> & {
+        parent: Issue | null;
+      };
+      if (mode === 'update') {
+        act(() =>
+          client.setQueryData<DetailWithParent>(queryKeys.issue(original.identifier), (detail) =>
+            detail === undefined ? detail : { ...detail, parent },
+          ),
+        );
+      }
+      await act(async () => {
+        pending.resolve(
+          Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
+        );
+        await settlement;
+      });
+      expect(cachedIssue(client)?.assignee).toEqual({ ...human, name: 'After', avatar: null });
+      expect(cachedIssue(client)?.creator?.name).toBe('After');
+      expect(cachedIssue(client)?.owner?.name).toBe('After');
+      if (mode === 'update') {
+        expect(
+          client.getQueryData<ReturnType<typeof detailFor>>(queryKeys.issue(original.identifier))
+            ?.issue.assignee,
+        ).toEqual({ ...human, name: 'After', avatar: null });
+        expect(
+          client.getQueryData<DetailWithParent>(queryKeys.issue(original.identifier))?.parent,
+        ).toEqual(parent);
+      }
+      stop();
+    },
+  );
+  it.each(['same-sync', 'newer-list', 'explicit-null'] as const)(
+    'uses complete cached Actors over an old detail and restores %s state after failure',
+    async (mode) => {
+      const pending = deferred<Response>();
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === 'PATCH' ? pending.promise : Promise.reject(new Error('offline')),
+      ) as unknown as typeof fetch;
+      const client = newClient();
+      const actor = {
+        type: 'agent' as const,
+        id: 'agent_1',
+        name: 'Helper',
+        avatar: '/helper.png',
+        deleted: true,
+      };
+      const canonical = issue({
+        syncId: 2,
+        creator: actor,
+        creatorAgentId: actor.id,
+        assignee: actor,
+        assigneeAgentId: actor.id,
+        owner: null,
+        ownerUserId: null,
+      });
+      const oldDetail = issue({
+        syncId: mode === 'newer-list' ? 1 : 2,
+        description: 'Saved body',
+        assignee: mode === 'explicit-null' ? null : undefined,
+      });
+      const detailKey = queryKeys.issue(oldDetail.identifier);
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([canonical]));
+      client.setQueryData(detailKey, detailFor(oldDetail, []));
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      let settlement: Promise<unknown> | undefined;
+      await act(async () => {
+        settlement = update.result.current
+          .mutateAsync({ issue: canonical, patch: { priority: 1 } })
+          .catch(() => undefined);
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(cachedIssue(client)?.priority).toBe(1));
+      const expectedAssignee = mode === 'explicit-null' ? null : actor;
+      expect(cachedIssue(client)?.creator).toEqual(actor);
+      expect(cachedIssue(client)?.assignee).toEqual(expectedAssignee);
+      expect(cachedIssue(client)?.owner).toBeNull();
+      await act(async () => {
+        pending.resolve(
+          Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
+        );
+        await settlement;
+      });
+      const restored = client.getQueryData<ReturnType<typeof detailFor>>(detailKey)?.issue;
+      expect(cachedIssue(client)?.priority).toBe(0);
+      expect(cachedIssue(client)?.creator).toEqual(actor);
+      expect(cachedIssue(client)?.assignee).toEqual(expectedAssignee);
+      expect(restored?.syncId).toBe(2);
+      expect(restored?.creator).toEqual(actor);
+      expect(restored?.assignee).toEqual(expectedAssignee);
+      expect(restored?.owner).toBeNull();
+      expect(restored?.description).toBe('Saved body');
+    },
+  );
+
+  it.each(['update', 'move'] as const)(
+    'settles nested and linked Actor caches after this tab %s',
+    async (operation) => {
+      const original = issue({
+        assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: false },
+      });
+      const canonical = issue({
+        assigneeId: 'user_2',
+        assigneeUserId: 'user_2',
+        assigneeAgentId: null,
+        assignee: {
+          type: 'user',
+          id: 'user_2',
+          name: 'Taylor',
+          avatar: '/taylor.png',
+          deleted: false,
+        },
+        syncId: 2,
+      });
+      stubFetch((url) =>
+        url.endsWith('/move') ? { issue: canonical, rebalanced: [] } : { issue: canonical },
+      );
+      const client = newClient();
+      const parentKey = queryKeys.issue('ENG-2');
+      const relationKey = queryKeys.issueRelations('other_issue');
+      client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+      client.setQueryData(
+        parentKey,
+        detailFor(issue({ id: 'parent', identifier: 'ENG-2' }), [original]),
+      );
+      client.setQueryData(relationKey, [{ id: 'relation_1', type: 'related', issue: original }]);
+      const mutations = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+        wrapper: wrapper(client),
+      });
+      await act(async () => {
+        if (operation === 'update')
+          await mutations.result.current.update.mutateAsync({
+            issue: original,
+            patch: { assigneeId: 'user_2' },
+          });
+        else
+          await mutations.result.current.move.mutateAsync({
+            issue: original,
+            assigneeId: 'user_2',
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          });
+      });
+      expect(
+        client.getQueryData<ReturnType<typeof detailFor>>(parentKey)?.subIssues[0]?.assignee,
+      ).toEqual(canonical.assignee);
+      expect(
+        client.getQueryData<readonly IssueRelation[]>(relationKey)?.[0]?.issue.assignee,
+      ).toEqual(canonical.assignee);
+    },
+  );
+
+  it('omits Agent assignment undo while preserving Human assignment and other property history', () => {
+    const agentIssue = issue({
+      assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: false },
+    });
+    expect(captureIssueHistory(agentIssue, { assigneeId: 'user_2' }, 1)).toBeUndefined();
+    const otherHistory = captureIssueHistory(agentIssue, { assigneeId: 'user_2', priority: 1 }, 2);
+    expect(otherHistory?.patch).toEqual({ priority: 1 });
+    expect(otherHistory?.inversePatch).toEqual({ priority: 0 });
+    expect(otherHistory?.propertyLabel).toBe('Priority');
+    const humanHistory = captureIssueHistory(
+      issue({ assigneeId: 'user_1' }),
+      { assigneeId: 'user_2' },
+      3,
+    );
+    expect(humanHistory?.inversePatch).toEqual({ assigneeId: 'user_1' });
+  });
+
+  it('shows a selected Human immediately and restores the full Agent state after failure', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PATCH' ? pending.promise : Promise.reject(new Error('offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const original = issue({
+      creator: { type: 'agent', id: 'creator_agent', name: 'Creator', avatar: null, deleted: true },
+      assigneeAgentId: 'agent_1',
+      assigneeUserId: null,
+      assignee: {
+        type: 'agent',
+        id: 'agent_1',
+        name: 'Helper',
+        avatar: '/helper.png',
+        deleted: false,
+      },
+      ownerUserId: 'user_owner',
+      owner: { type: 'user', id: 'user_owner', name: 'Owner', avatar: null, deleted: false },
+    });
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+    client.setQueryData(queryKeys.issue(original.identifier), detailFor(original, []));
+    client.setQueryData(queryKeys.bootstrap(null), {
+      organizationId: original.organizationId,
+      members: [{ id: 'user_2', name: 'Taylor', image: '/taylor.png' }],
+    });
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+    let settlement: Promise<unknown> | undefined;
+    await act(async () => {
+      settlement = update.result.current
+        .mutateAsync({ issue: original, patch: { assigneeId: 'user_2' } })
+        .catch(() => undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(cachedIssue(client)?.assignee?.name).toBe('Taylor'));
+    expect(cachedIssue(client)?.assignee).toEqual({
+      type: 'user',
+      id: 'user_2',
+      name: 'Taylor',
+      avatar: '/taylor.png',
+      deleted: false,
+    });
+    expect(cachedIssue(client)?.assigneeAgentId).toBeNull();
+    expect(cachedIssue(client)?.assigneeUserId).toBe('user_2');
+    expect(cachedIssue(client)?.owner).toEqual(original.owner);
+    await act(async () => {
+      pending.resolve(
+        Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
+      );
+      await settlement;
+    });
+    expect(cachedIssue(client)).toEqual(original);
+    expect(
+      client.getQueryData<ReturnType<typeof detailFor>>(queryKeys.issue(original.identifier))
+        ?.issue,
+    ).toEqual(original);
+  });
+
+  it('clears Actor display during a Human unassignment and restores it after a failed move', async () => {
+    const pending = deferred<Response>();
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'POST' ? pending.promise : Promise.reject(new Error('offline')),
+    ) as unknown as typeof fetch;
+    const client = newClient();
+    const original = issue({
+      assigneeAgentId: 'agent_1',
+      assignee: { type: 'agent', id: 'agent_1', name: 'Helper', avatar: null, deleted: true },
+      owner: null,
+    });
+    client.setQueryData(queryKeys.issues(TEAM), issuePages([original]));
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+    let settlement: Promise<unknown> | undefined;
+    await act(async () => {
+      settlement = move.result.current
+        .mutateAsync({
+          issue: original,
+          assigneeId: null,
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .catch(() => undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(cachedIssue(client)?.assignee).toBeNull());
+    expect(cachedIssue(client)?.assigneeAgentId).toBeNull();
+    expect(cachedIssue(client)?.owner).toBeNull();
+    await act(async () => {
+      pending.resolve(
+        Response.json({ error: { code: 'forbidden', message: 'Refused' } }, { status: 403 }),
+      );
+      await settlement;
+    });
+    expect(cachedIssue(client)).toEqual(original);
+  });
+
   it('does not roll back an update across an issue cache reset', async () => {
     const pending = deferred<Response>();
     globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) =>
@@ -882,57 +1290,82 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     expect(listRequests).toBe(2);
   });
 
-  it('bounds filtered settlement retries during continuous issue revisions', async () => {
-    let client: QueryClient | undefined;
-    let listRequests = 0;
-    let revisions = 0;
-    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
-      if (init?.method === 'POST') {
-        return Promise.resolve(
-          Response.json({
-            issue: issue({ syncId: 2 }),
-            rebalanced: [],
+  it.each(['success', 'failure'] as const)(
+    'bounds filtered retries and settles before the final recovery ends in %s',
+    async (outcome) => {
+      let client: QueryClient | undefined;
+      let listRequests = 0;
+      let revisions = 0;
+      const recovery = deferred<Response>();
+      globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          return Promise.resolve(
+            Response.json({
+              issue: issue({ syncId: 2 }),
+              rebalanced: [],
+            }),
+          );
+        }
+        listRequests += 1;
+        if (listRequests === 6) return recovery.promise;
+        if (listRequests > 1 && revisions < 5) {
+          if (client === undefined) throw new Error('missing query client');
+          recordIssueRevisions(client, ['issue_1']);
+          revisions += 1;
+        }
+        return Promise.resolve(Response.json({ issues: [issue({ syncId: 2 })], nextCursor: null }));
+      }) as unknown as typeof fetch;
+      client = newClient();
+      const list = renderHook(
+        () =>
+          useIssues(TEAM, undefined, {
+            filter: {
+              kind: 'group',
+              combinator: 'and',
+              children: [inCondition('state', ['state_todo'])],
+            },
+            orderBy: 'manual',
           }),
-        );
-      }
-      listRequests += 1;
-      if (listRequests > 1 && revisions < 5) {
-        if (client === undefined) throw new Error('missing query client');
-        recordIssueRevisions(client, ['issue_1']);
-        revisions += 1;
-      }
-      return Promise.resolve(Response.json({ issues: [issue({ syncId: 2 })], nextCursor: null }));
-    }) as unknown as typeof fetch;
-    client = newClient();
-    const list = renderHook(
-      () =>
-        useIssues(TEAM, undefined, {
-          filter: {
-            kind: 'group',
-            combinator: 'and',
-            children: [inCondition('state', ['state_todo'])],
-          },
-          orderBy: 'manual',
-        }),
-      { wrapper: wrapper(client) },
-    );
-    await waitFor(() => expect(list.result.current.data).toHaveLength(1));
-    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+        { wrapper: wrapper(client) },
+      );
+      await waitFor(() => expect(list.result.current.data).toHaveLength(1));
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
 
-    await act(async () => {
-      await move.result.current.mutateAsync({
-        issue: issue(),
-        stateId: 'state_todo',
-        beforeId: null,
-        afterId: null,
-        beforeOrder: null,
-        afterOrder: null,
+      await act(async () => {
+        await move.result.current.mutateAsync({
+          issue: issue(),
+          stateId: 'state_todo',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        });
       });
-    });
 
-    await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
-    expect(listRequests).toBeLessThanOrEqual(5);
-  });
+      await waitFor(() => expect(move.result.current.isSuccess).toBe(true));
+      expect(listRequests).toBe(6);
+      expect(revisions).toBe(4);
+      const pendingQuery = client.getQueryCache().find({ queryKey: [ISSUES_ROOT], exact: false });
+      if (pendingQuery === undefined) throw new Error('The recovery query was not created.');
+      expect(pendingQuery.state.fetchStatus).toBe('fetching');
+      expect(list.result.current.data?.[0]?.syncId).toBe(2);
+      await act(async () => {
+        recovery.resolve(
+          outcome === 'success'
+            ? Response.json({ issues: [issue({ syncId: 2 })], nextCursor: null })
+            : Response.json({ error: 'Recovery failed' }, { status: 503 }),
+        );
+        await recovery.promise;
+      });
+      await waitFor(() => expect(pendingQuery.state.fetchStatus).toBe('idle'));
+      expect(list.result.current.data?.[0]?.syncId).toBe(2);
+      expect(pendingQuery.state.status).toBe(outcome === 'failure' ? 'error' : 'success');
+      expect(listRequests).toBe(6);
+      list.unmount();
+      move.unmount();
+      client.clear();
+    },
+  );
 
   it('does not roll back a move after its committed echo arrives', async () => {
     const pending = deferred<Response>();
@@ -1395,6 +1828,110 @@ describe('issue mutations patch the cache without a refetch drain', () => {
     await waitFor(() => expect(move.result.current.isError).toBe(true));
     expect(listRequests).toBe(2);
     expect(source.result.current.data?.map((row) => row.id)).toEqual(['issue_1']);
+  });
+
+  it('restores an assignment removed from its source column after sibling profile changes and an offline move failure', async () => {
+    const human = {
+      type: 'user' as const,
+      id: 'user_1',
+      name: 'Before',
+      avatar: '/before.png',
+      deleted: false,
+    };
+    const original = issue({ assigneeId: human.id, assignee: human, owner: null });
+    const sibling = issue({
+      id: 'sibling_1',
+      identifier: 'ENG-2',
+      sortOrder: 2048,
+      assigneeId: human.id,
+      assignee: human,
+    });
+    const pendingMove = deferred<Response>();
+    let listRequests = 0;
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') return pendingMove.promise;
+      listRequests += 1;
+      return Promise.resolve(
+        listRequests === 1
+          ? Response.json({ issues: [original, sibling], nextCursor: null })
+          : Response.json(
+              { error: { code: 'offline', message: 'Canonical refresh unavailable.' } },
+              { status: 503 },
+            ),
+      );
+    }) as unknown as typeof fetch;
+    const client = newClient();
+    const stop = observeIssueActorProfiles(client, 'org_1', [TEAM]);
+    const source = renderHook(
+      () =>
+        useColumnIssues(
+          {
+            query: DEFAULT_ISSUE_QUERY,
+            groupBy: 'assignee',
+            scope: { teamId: TEAM },
+          },
+          human.id,
+          true,
+        ),
+      { wrapper: wrapper(client) },
+    );
+    await waitFor(() =>
+      expect(source.result.current.data?.map((row) => row.id)).toEqual([original.id, sibling.id]),
+    );
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+    let settlement: Promise<unknown> | undefined;
+    await act(async () => {
+      settlement = move.result.current
+        .mutateAsync({
+          issue: original,
+          assigneeId: 'user_2',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .catch(() => undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(source.result.current.data?.map((row) => row.id)).toEqual([sibling.id]),
+    );
+    act(() =>
+      recordMemberActorUpdate(
+        client,
+        {
+          model: 'member',
+          modelId: 'membership_1',
+          action: 'update',
+          organizationId: 'org_1',
+          syncId: 20,
+          scopes: ['org:org_1'],
+          actor: { type: 'user', id: human.id },
+          at: '',
+          data: { userId: human.id, name: 'After', image: null },
+        },
+        'org_1',
+      ),
+    );
+    await waitFor(() => expect(source.result.current.data?.[0]?.assignee?.name).toBe('After'));
+    await act(async () => {
+      pendingMove.resolve(
+        Response.json(
+          { error: { code: 'move_failed', message: 'The move failed.' } },
+          { status: 500 },
+        ),
+      );
+      await settlement;
+    });
+    await waitFor(() => expect(move.result.current.isError).toBe(true));
+    expect(listRequests).toBe(2);
+    expect(source.result.current.data?.map((row) => row.id)).toEqual([original.id, sibling.id]);
+    expect(source.result.current.data?.map((row) => row.assignee)).toEqual([
+      { ...human, name: 'After', avatar: null },
+      { ...human, name: 'After', avatar: null },
+    ]);
+    expect(source.result.current.data?.[0]?.owner).toBeNull();
+    stop();
   });
 
   for (const scenario of [
@@ -1879,6 +2416,32 @@ describe('issue mutations patch the cache without a refetch drain', () => {
       kind: 'found',
       issue: canonical,
     });
+  });
+
+  it('compares Actor values independently of property insertion order', () => {
+    const client = newClient();
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Helper',
+      avatar: null,
+      deleted: false,
+    };
+    const reordered = {
+      deleted: false,
+      avatar: null,
+      name: 'Helper',
+      id: 'agent_1',
+      type: 'agent' as const,
+    };
+    client.setQueryData(queryKeys.issues(TEAM, 'first'), issuePages([issue({ assignee })]));
+    client.setQueryData(
+      queryKeys.issues(TEAM, 'second'),
+      issuePages([issue({ assignee: reordered })]),
+    );
+    expect(authoritativeCachedIssue(client, 'issue_1').kind).toBe('found');
+    client.setQueryData(queryKeys.issues(TEAM, 'second'), issuePages([issue({ assignee: null })]));
+    expect(authoritativeCachedIssue(client, 'issue_1').kind).toBe('ambiguous');
   });
 
   it('treats full and list-shaped copies of one cache head as one issue', () => {
@@ -2617,4 +3180,597 @@ describe('deleting an issue', () => {
     const deletes = log.urls.filter((_url, index) => log.methods[index] === 'DELETE');
     expect(deletes).toEqual(['/api/issues/issue_parent', '/api/issues/issue_child']);
   });
+});
+
+describe('a mutation during a list first load', () => {
+  const seed = [issue({ title: 'Seeded row' })];
+
+  function stubFirstLoadThenServer(write: (init: RequestInit | undefined) => unknown) {
+    const firstLoad = deferred<Response>();
+    const lists: string[] = [];
+    globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (method !== 'GET') return Promise.resolve(Response.json(write(init)));
+      lists.push(String(input));
+      return lists.length === 1
+        ? firstLoad.promise
+        : Promise.resolve(
+            Response.json({
+              issues: [issue({ title: 'Server row' }), issue({ id: 'issue_2', number: 2 })],
+              nextCursor: null,
+            }),
+          );
+    }) as unknown as typeof fetch;
+    return lists;
+  }
+
+  async function mountFirstLoad(client: QueryClient) {
+    const list = renderHook(() => useIssues(TEAM, seed), { wrapper: wrapper(client) });
+    await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+    expect(list.result.current.isPlaceholderData).toBe(true);
+    return list;
+  }
+
+  it('still loads the list when a move cancels its first fetch', async () => {
+    const lists = stubFirstLoadThenServer(() => ({
+      issue: issue({ stateId: 'state_doing', syncId: 2 }),
+      rebalanced: [],
+    }));
+    const client = newClient();
+    const list = await mountFirstLoad(client);
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+
+    await act(async () => {
+      await move.result.current.mutateAsync({
+        issue: issue(),
+        stateId: 'state_doing',
+        beforeId: null,
+        afterId: null,
+        beforeOrder: null,
+        afterOrder: null,
+      });
+    });
+
+    await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+    expect(list.result.current.data?.map((row) => row.id)).toEqual(['issue_1', 'issue_2']);
+    expect(lists).toHaveLength(2);
+  });
+
+  it('still loads the list when an update cancels its first fetch', async () => {
+    const lists = stubFirstLoadThenServer(() => ({
+      issue: issue({ title: 'Renamed', syncId: 2 }),
+    }));
+    const client = newClient();
+    const list = await mountFirstLoad(client);
+    const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+
+    await act(async () => {
+      await update.result.current.mutateAsync({ issue: issue(), patch: { title: 'Renamed' } });
+    });
+
+    await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+    expect(list.result.current.data?.map((row) => row.id)).toEqual(['issue_1', 'issue_2']);
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('still loads the list when a delete cancels its first fetch', async () => {
+    const lists = stubFirstLoadThenServer(() => ({
+      deleted: { id: 'issue_3', identifier: 'ENG-3' },
+    }));
+    const client = newClient();
+    const list = await mountFirstLoad(client);
+    const remove = renderHook(() => useDeleteIssues(), { wrapper: wrapper(client) });
+
+    await act(async () => {
+      await remove.result.current.mutateAsync([issue({ id: 'issue_3', identifier: 'ENG-3' })]);
+    });
+
+    await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+    expect(list.result.current.data?.map((row) => row.id)).toEqual(['issue_1', 'issue_2']);
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('delayed first-load responses', () => {
+  it.each(['list', 'detail'] as const)(
+    'preserves late hydration of a paused offline %s during an update',
+    async (kind) => {
+      const wasOnline = onlineManager.isOnline();
+      onlineManager.setOnline(false);
+      const before = issue();
+      const confirmed = issue({ title: 'Committed after reconnect', syncId: 2 });
+      const client = newClient();
+      const key =
+        kind === 'list' ? issuesQueryOptions(TEAM).queryKey : queryKeys.issue(before.identifier);
+      const readResult =
+        kind === 'list' ? { issues: [confirmed], nextCursor: null } : previewDetail(confirmed);
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) =>
+        Promise.resolve(
+          Response.json(init?.method === 'PATCH' ? { issue: confirmed } : readResult),
+        ),
+      ) as unknown as typeof fetch;
+      const query =
+        kind === 'list'
+          ? renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) })
+          : renderHook(() => useIssueDetail(before.identifier), { wrapper: wrapper(client) });
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      let settling: Promise<unknown> = Promise.resolve();
+      try {
+        await waitFor(() => expect(client.getQueryState(key)?.fetchStatus).toBe('paused'));
+        const restored = newClient();
+        restored.setQueryData(key, kind === 'list' ? issuePages([before]) : previewDetail(before));
+        act(() => hydrate(client, dehydrate(restored)));
+        restored.clear();
+        expect(client.getQueryState(key)?.fetchStatus).toBe('paused');
+        act(() => {
+          settling = update.result.current
+            .mutateAsync({ issue: before, patch: { title: confirmed.title } })
+            .catch(() => undefined);
+        });
+        await waitFor(() => expect(update.result.current.isPaused).toBe(true));
+        const optimistic =
+          kind === 'list'
+            ? issueFromPagesForTest(client.getQueryData<IssuePages>(key), before.id)
+            : client.getQueryData<ReturnType<typeof previewDetail>>(key)?.issue;
+        expect(optimistic?.title).toBe(confirmed.title);
+        expect(client.getQueryState(key)?.fetchStatus).toBe('idle');
+        await act(async () => {
+          onlineManager.setOnline(true);
+          await settling;
+        });
+        await waitFor(() => expect(update.result.current.isSuccess).toBe(true));
+      } finally {
+        onlineManager.setOnline(true);
+        await settling;
+        query.unmount();
+        update.unmount();
+        client.clear();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it.each(['move', 'delete'] as const)(
+    'keeps a late-hydrated parent detail while a child %s settles',
+    async (kind) => {
+      const first = deferred<Response>();
+      const refresh = deferred<Response>();
+      const child = issue();
+      const parent = issue({
+        id: 'parent_1',
+        identifier: 'ENG-2',
+        number: 2,
+        title: 'Parent detail',
+      });
+      const parentDetail = { ...previewDetail(parent), subIssues: [child] };
+      let gets = 0;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST')
+          return Promise.resolve(
+            Response.json({
+              issue: { ...child, stateId: 'state_doing', syncId: 2 },
+              rebalanced: [],
+            }),
+          );
+        if (init?.method === 'DELETE')
+          return Promise.resolve(
+            Response.json({ deleted: { id: child.id, identifier: child.identifier } }),
+          );
+        gets += 1;
+        return gets === 1 ? first.promise : refresh.promise;
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const detail = renderHook(() => useIssueDetail(parent.identifier), {
+        wrapper: wrapper(client),
+      });
+      await waitFor(() => expect(gets).toBe(1));
+      const key = queryKeys.issue(parent.identifier);
+      const restored = newClient();
+      restored.setQueryData(key, parentDetail);
+      act(() => hydrate(client, dehydrate(restored)));
+      restored.clear();
+      await waitFor(() => expect(detail.result.current.data?.issue.id).toBe(parent.id));
+      const mutations = renderHook(() => ({ move: useMoveIssue(), remove: useDeleteIssues() }), {
+        wrapper: wrapper(client),
+      });
+      try {
+        await act(async () => {
+          if (kind === 'move')
+            await mutations.result.current.move.mutateAsync({
+              issue: child,
+              stateId: 'state_doing',
+              beforeId: null,
+              afterId: null,
+              beforeOrder: null,
+              afterOrder: null,
+            });
+          else await mutations.result.current.remove.mutateAsync([child]);
+        });
+        const held = client.getQueryData<ReturnType<typeof previewDetail>>(key);
+        expect(held?.issue.id).toBe(parent.id);
+        expect(held?.subIssues.map((row) => row.id)).toEqual(kind === 'delete' ? [] : [child.id]);
+        if (kind === 'move') expect(held?.subIssues[0]?.stateId).toBe('state_doing');
+      } finally {
+        detail.unmount();
+        mutations.unmount();
+        client.clear();
+        first.resolve(Response.json(parentDetail));
+        refresh.resolve(Response.json(parentDetail));
+      }
+    },
+  );
+
+  it.each([true, false])(
+    'keeps a late-hydrated detail optimistic until update succeeds: %s',
+    async (succeeds) => {
+      const first = deferred<Response>();
+      const write = deferred<Response>();
+      const before = issue();
+      const confirmed = issue({ title: 'Updated persisted detail', syncId: 2 });
+      let fetching = false;
+      let writing = false;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          writing = true;
+          return write.promise;
+        }
+        fetching = true;
+        return first.promise;
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const detail = renderHook(() => useIssueDetail(before.identifier), {
+        wrapper: wrapper(client),
+      });
+      await waitFor(() => expect(fetching).toBe(true));
+      const key = queryKeys.issue(before.identifier);
+      const restored = newClient();
+      restored.setQueryData(key, previewDetail(before));
+      act(() => hydrate(client, dehydrate(restored)));
+      restored.clear();
+      await waitFor(() => expect(detail.result.current.data?.issue.title).toBe(before.title));
+      const update = renderHook(() => useUpdateIssue(), { wrapper: wrapper(client) });
+      let settling: Promise<unknown> = Promise.resolve();
+      act(() => {
+        settling = update.result.current
+          .mutateAsync({ issue: before, patch: { title: confirmed.title } })
+          .catch(() => undefined);
+      });
+      try {
+        await waitFor(() => expect(writing).toBe(true));
+        expect(client.getQueryData<ReturnType<typeof previewDetail>>(key)?.issue.title).toBe(
+          confirmed.title,
+        );
+        await act(async () => {
+          write.resolve(
+            succeeds
+              ? Response.json({ issue: confirmed })
+              : Response.json({ error: 'Rejected' }, { status: 409 }),
+          );
+          await settling;
+          first.resolve(Response.json(previewDetail(before)));
+        });
+        expect(client.getQueryData<ReturnType<typeof previewDetail>>(key)?.issue.title).toBe(
+          succeeds ? confirmed.title : before.title,
+        );
+      } finally {
+        detail.unmount();
+        update.unmount();
+        client.clear();
+        write.resolve(Response.json({ issue: confirmed }));
+        first.resolve(Response.json(previewDetail(before)));
+      }
+    },
+  );
+
+  it('retains a background error when canceling its refetch before an optimistic move', async () => {
+    const client = newClient();
+    const key = issuesQueryOptions(TEAM).queryKey;
+    const updatedAt = 1_700_000_000_000;
+    client.setQueryData(key, issuePages([issue()]), { updatedAt });
+    const query = client.getQueryCache().find({ queryKey: key });
+    if (query === undefined) throw new Error('The cached list query was not created.');
+    const error = new Error('Earlier background refresh failed.');
+    query.setState({ status: 'error', error, isInvalidated: true });
+    const first = deferred<Response>();
+    const write = deferred<Response>();
+    let writeStarted = false;
+    let fetching = false;
+    globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        writeStarted = true;
+        return write.promise;
+      }
+      fetching = true;
+      return first.promise;
+    }) as unknown as typeof fetch;
+    const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+    await waitFor(() => expect(fetching).toBe(true));
+    const states: { status: string; error: unknown; updatedAt: number; invalidated: boolean }[] =
+      [];
+    const cancel = client.cancelQueries.bind(client);
+    client.cancelQueries = async (...args: Parameters<typeof cancel>) => {
+      await cancel(...args);
+      states.push({
+        status: query.state.status,
+        error: query.state.error,
+        updatedAt: query.state.dataUpdatedAt,
+        invalidated: query.state.isInvalidated,
+      });
+    };
+    const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+    let settling: Promise<unknown> = Promise.resolve();
+    act(() => {
+      settling = move.result.current
+        .mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        })
+        .catch(() => undefined);
+    });
+    await waitFor(() => expect(writeStarted).toBe(true));
+    expect(states[0]).toEqual({ status: 'error', error, updatedAt, invalidated: true });
+    await act(async () => {
+      write.resolve(Response.json({ error: 'Rejected' }, { status: 409 }));
+      await settling;
+      first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
+    });
+    list.unmount();
+    move.unmount();
+    client.clear();
+  });
+
+  it.each([true, false])(
+    'preserves late hydration metadata when a move succeeds: %s',
+    async (succeeds) => {
+      const first = deferred<Response>();
+      const write = deferred<Response>();
+      const before = issue();
+      const confirmed = issue({ stateId: 'state_doing', syncId: 2 });
+      let getCount = 0;
+      let writeStarted = false;
+      let firstSignal: AbortSignal | null | undefined;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          writeStarted = true;
+          return write.promise;
+        }
+        getCount += 1;
+        if (getCount === 1) {
+          firstSignal = init?.signal;
+          return first.promise;
+        }
+        return Promise.resolve(
+          Response.json({ issues: [succeeds ? confirmed : before], nextCursor: null }),
+        );
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const list = renderHook(() => useIssues(TEAM, undefined), { wrapper: wrapper(client) });
+      await waitFor(() => expect(getCount).toBe(1));
+      const query = client.getQueryCache().find({ queryKey: [ISSUES_ROOT], exact: false });
+      if (query === undefined) throw new Error('The first list query was not created.');
+      const key = query.queryKey;
+      const restored = newClient();
+      const updatedAt = 1_700_000_000_000;
+      restored.setQueryData(key, issuePages([before]), { updatedAt });
+      act(() => hydrate(client, dehydrate(restored)));
+      restored.clear();
+      query.invalidate();
+      recordIssueRevisions(client, [before.id]);
+      recordIssueListRevisions(client, [key]);
+      const held = query.state.data;
+      const revision = issueRevisionGeneration(client, before.id);
+      const listRevision = issueListRevisionGeneration(client, key);
+      const cancellations: {
+        data: unknown;
+        updatedAt: number;
+        invalidated: boolean;
+        status: string;
+        fetching: string;
+        revision: number;
+        listRevision: number;
+      }[] = [];
+      const cancel = client.cancelQueries.bind(client);
+      client.cancelQueries = async (...args: Parameters<typeof cancel>) => {
+        await cancel(...args);
+        cancellations.push({
+          data: query.state.data,
+          updatedAt: query.state.dataUpdatedAt,
+          invalidated: query.state.isInvalidated,
+          status: query.state.status,
+          fetching: query.state.fetchStatus,
+          revision: issueRevisionGeneration(client, before.id),
+          listRevision: issueListRevisionGeneration(client, key),
+        });
+      };
+      const move = renderHook(() => useMoveIssue(), { wrapper: wrapper(client) });
+      let settling: Promise<unknown> = Promise.resolve();
+      act(() => {
+        settling = move.result.current
+          .mutateAsync({
+            issue: before,
+            stateId: 'state_doing',
+            beforeId: null,
+            afterId: null,
+            beforeOrder: null,
+            afterOrder: null,
+          })
+          .catch(() => undefined);
+      });
+      await waitFor(() => expect(writeStarted).toBe(true));
+      expect(firstSignal?.aborted).toBe(true);
+      expect(cancellations[0]).toEqual({
+        data: held,
+        updatedAt,
+        invalidated: true,
+        status: 'success',
+        fetching: 'idle',
+        revision,
+        listRevision,
+      });
+      expect(cancellations[0]?.data).toBe(held);
+      expect(getCount).toBe(1);
+      await act(async () => {
+        write.resolve(
+          succeeds
+            ? Response.json({ issue: confirmed, rebalanced: [] })
+            : Response.json({ error: 'Rejected' }, { status: 409 }),
+        );
+        await settling;
+        first.resolve(Response.json({ issues: [before], nextCursor: null }));
+      });
+      await waitFor(() => expect(getCount).toBe(2));
+      expect(list.result.current.data?.[0]?.stateId).toBe(succeeds ? 'state_doing' : 'state_todo');
+      expect(list.result.current.data?.[0]?.syncId).toBe(succeeds ? 2 : 1);
+      list.unmount();
+      move.unmount();
+      client.clear();
+    },
+  );
+
+  it.each(['placeholder', 'hydrated'] as const)(
+    'waits for overlapping writes before restarting the %s list',
+    async (source) => {
+      const first = deferred<Response>();
+      const updateResponse = deferred<Response>();
+      const moveResponse = deferred<Response>();
+      const confirmed = issue({ title: 'Committed title', stateId: 'state_doing', syncId: 3 });
+      let getCount = 0;
+      let writeCount = 0;
+      globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'PATCH' || init?.method === 'POST') {
+          writeCount += 1;
+          return init.method === 'PATCH' ? updateResponse.promise : moveResponse.promise;
+        }
+        getCount += 1;
+        return getCount === 1
+          ? first.promise
+          : Promise.resolve(Response.json({ issues: [confirmed], nextCursor: null }));
+      }) as unknown as typeof fetch;
+      const client = newClient();
+      const list = renderHook(
+        () => useIssues(TEAM, source === 'placeholder' ? [issue()] : undefined),
+        { wrapper: wrapper(client) },
+      );
+      await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+      if (source === 'hydrated') {
+        const restored = newClient();
+        const [key] = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] })[0] ?? [];
+        if (key === undefined) throw new Error('The first list query was not created.');
+        restored.setQueryData(key, issuePages([issue()]));
+        act(() => hydrate(client, dehydrate(restored)));
+        restored.clear();
+      }
+      const mutation = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+        wrapper: wrapper(client),
+      });
+      let updating: Promise<unknown> = Promise.resolve();
+      let moving: Promise<unknown> = Promise.resolve();
+      act(() => {
+        updating = mutation.result.current.update.mutateAsync({
+          issue: issue(),
+          patch: { title: 'Committed title' },
+        });
+        moving = mutation.result.current.move.mutateAsync({
+          issue: issue(),
+          stateId: 'state_doing',
+          beforeId: null,
+          afterId: null,
+          beforeOrder: null,
+          afterOrder: null,
+        });
+      });
+      await waitFor(() => expect(writeCount).toBe(2));
+      expect(getCount).toBe(1);
+      await act(async () => {
+        updateResponse.resolve(
+          Response.json({ issue: issue({ title: 'Committed title', syncId: 2 }) }),
+        );
+        await updating;
+      });
+      expect(getCount).toBe(1);
+      await act(async () => {
+        moveResponse.resolve(Response.json({ issue: confirmed, rebalanced: [] }));
+        await moving;
+        first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
+        await first.promise;
+      });
+      await waitFor(() => expect(list.result.current.data?.[0]?.syncId).toBe(3));
+      expect(list.result.current.data?.[0]?.title).toBe('Committed title');
+      expect(list.result.current.data?.[0]?.stateId).toBe('state_doing');
+      expect(getCount).toBe(2);
+    },
+  );
+
+  for (const kind of ['update', 'move'] as const) {
+    for (const succeeds of [true, false]) {
+      it(`recovers the first load after a ${succeeds ? 'successful' : 'failed'} ${kind}`, async () => {
+        const first = deferred<Response>();
+        const write = deferred<Response>();
+        const confirmed = issue({ title: 'Committed title', stateId: 'state_doing', syncId: 2 });
+        let getCount = 0;
+        let writeStarted = false;
+        globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+          if (init?.method === 'PATCH' || init?.method === 'POST') {
+            writeStarted = true;
+            return write.promise;
+          }
+          getCount += 1;
+          return getCount === 1
+            ? first.promise
+            : Promise.resolve(
+                Response.json({ issues: [succeeds ? confirmed : issue()], nextCursor: null }),
+              );
+        }) as unknown as typeof fetch;
+        const client = newClient();
+        const list = renderHook(() => useIssues(TEAM, [issue()]), { wrapper: wrapper(client) });
+        await waitFor(() => expect(list.result.current.fetchStatus).toBe('fetching'));
+        const mutation = renderHook(() => ({ update: useUpdateIssue(), move: useMoveIssue() }), {
+          wrapper: wrapper(client),
+        });
+        let settled: Promise<unknown> = Promise.resolve();
+        act(() => {
+          settled = (
+            kind === 'update'
+              ? mutation.result.current.update.mutateAsync({
+                  issue: issue(),
+                  patch: { title: 'Committed title' },
+                })
+              : mutation.result.current.move.mutateAsync({
+                  issue: issue(),
+                  stateId: 'state_doing',
+                  beforeId: null,
+                  afterId: null,
+                  beforeOrder: null,
+                  afterOrder: null,
+                })
+          ).catch(() => undefined);
+        });
+        await waitFor(() => expect(writeStarted).toBe(true));
+        expect(getCount).toBe(1);
+        await act(async () => {
+          write.resolve(
+            succeeds
+              ? Response.json({ issue: confirmed, rebalanced: [] })
+              : Response.json({ error: 'Rejected' }, { status: 409 }),
+          );
+          await settled;
+          first.resolve(Response.json({ issues: [issue()], nextCursor: null }));
+          await first.promise;
+        });
+        await waitFor(() => expect(list.result.current.isPlaceholderData).toBe(false));
+        expect(list.result.current.data?.[0]?.syncId).toBe(succeeds ? 2 : 1);
+        expect(list.result.current.data?.[0]?.title).toBe(
+          succeeds ? 'Committed title' : 'Ship the board',
+        );
+        expect(list.result.current.data?.[0]?.stateId).toBe(
+          succeeds ? 'state_doing' : 'state_todo',
+        );
+        expect(getCount).toBeGreaterThanOrEqual(2);
+      });
+    }
+  }
 });

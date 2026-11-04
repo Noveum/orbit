@@ -17,7 +17,7 @@ import { useViewConfig } from '@/features/filters/use-view-config.ts';
 import type { ViewLayoutMode } from '@/features/filters/view-config.ts';
 import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import type { Issue } from '@/lib/query/schemas.ts';
-import { sortIssues } from '@/lib/query/sync.ts';
+import { participatesIn, sortIssues } from '@/lib/query/sync.ts';
 import { useAssignedIssues } from '@/lib/query/use-issues.ts';
 import type { StateResolver } from './board.tsx';
 import { Board, boardVisibilityConfig, canDragBoard, useBoardVisibilityHold } from './board.tsx';
@@ -34,9 +34,7 @@ export function assignedTo(
   ordering: IssueOrdering = 'manual',
 ): Issue[] {
   if (userId === null) return [];
-  const mine = issues.filter(
-    (issue) => issue.assigneeId === userId || (issue.reviewerIds ?? []).includes(userId),
-  );
+  const mine = issues.filter((issue) => participatesIn(issue, userId));
   return ordering === 'manual' ? sortIssues(mine) : mine;
 }
 
