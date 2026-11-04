@@ -6,7 +6,7 @@ stage 3a artifact before deploying the final stage 3b checkout.
 
 ## Stage 3a: compatibility preparation
 
-Start from published main commit `4f904217441616002e96dfcf76ed3b95b0b8a905`.
+Start from published main commit `b2a122a3d33e94a2810e68049e61e3a5ceed2297`.
 Keep its released migrations through `0033_polite_lord_tyger`, including
 `0030_actor_schema_expand` and `0031_broad_lifeguard`, their snapshots and
 journal entries unchanged. The actor expansion
@@ -59,7 +59,7 @@ prevents a removed and rejoined owner from reviving an old grant.
 ## Stage 3b: deployment prerequisites
 
 Deployable stage 3a artifact: commit
-`8cc84621a17919f0340aaec674ae271a9ff7f980`. This source artifact contains
+`028307cdf05b5bdf2234a5d18445c28da144d101`. This source artifact contains
 current main and compatibility migration `0034`, without `0035` or the
 stage 3b consent runtime. It is retained as an ancestor of the final branches.
 The earlier artifact `037e941376a42ba730e3d75d974ad1f6bbc415ca` remains
@@ -85,6 +85,33 @@ pending migration, including both `0034` and `0035`; it does not pause for stage
 `0034` and upgrade all related instances. Only then use the final checkout to
 apply `0035` and deploy stage 3b. Follow
 this sequence before merging schema-dependent code into a deployment branch.
+## Stage 3b writer quiescence and retired deployments
+
+Before dropping the global index, pause consent finalization, token exchange,
+refresh, grant reauthorization, disconnect and MCP endpoints at every reachable
+entry point. This pause includes cached authorization pages and direct requests
+to deployment URLs, not only the production domain. Keep both Agent gates off.
+Record the maximum request duration of every retired runtime, wait for that
+bound plus the platform termination margin, and verify no retired instance has
+an in-flight OAuth/grant writer or database transaction. The migration release
+lock alone does not exclude old application writers.
+
+Inventory the custom production domain, generated production/branch aliases,
+preview domains, immutable deployment URLs and any separate MCP host. Move every
+active alias to the verified compatibility build. Block or remove all older
+reachable deployments before unpausing writers. Authentication protection on an
+immutable URL is not evidence that an authorized user or a protection-bypass
+credential cannot still invoke an old writer. Verify deny-access behavior for
+old consent/token/refresh and MCP URLs and record the result. Retain a prebuilt
+compatibility rollback artifact instead of relying on a runnable older build.
+
+With old writers excluded and new writers quiescent, release only the stage 3b
+schema checkout, verify the global index is absent and the partial legacy index
+remains, then deploy the matching stage 3b runtime and smoke legacy consent,
+refresh, read/write scopes and exact disconnect. Resume OAuth endpoints only
+when all reachable writers meet the compatibility floor. If quiescence, routing
+or retired-runtime exclusion cannot be proven, stop before the stage 3b migration.
+
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
 `ORBIT_AGENT_MCP` disabled during migration and deployment. Never run the stage
