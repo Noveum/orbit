@@ -6,6 +6,7 @@ import { newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
 import {
   invalidateMcpGrant,
+  isAgentIssueWriteEnabled,
   isAgentMcpEnabled,
   lockMcpOwner,
   type RecordMcpGrantInput,
@@ -13,10 +14,17 @@ import {
 
 const AGENT_SCOPES = new Set(['openid', 'profile', 'email', 'offline_access', 'orbit.read']);
 
-export function readOnlyAgentScopes(requested: readonly string[]): string {
+export function agentConsentScopes(requested: readonly string[], write = false): string {
   if (!requested.includes('orbit.read'))
     throw validationFailed('This client must request orbit.read to connect an identity.');
-  return [...new Set(requested.filter((scope) => AGENT_SCOPES.has(scope)))].join(' ');
+  if (write && !isAgentIssueWriteEnabled()) throw forbidden('Agent issue writes are not enabled.');
+  if (write && !requested.includes('orbit.write'))
+    throw validationFailed('This client did not request Agent issue write access.');
+  return [
+    ...new Set(
+      requested.filter((scope) => AGENT_SCOPES.has(scope) || (write && scope === 'orbit.write')),
+    ),
+  ].join(' ');
 }
 
 export function listAgentIdentitiesForConsent(userId: string, clientId: string) {
@@ -44,6 +52,7 @@ export async function prepareAgentMcpGrant(
 ): Promise<string> {
   if (!isAgentMcpEnabled()) throw forbidden('Agent connections are not enabled.');
   const parsed = agentConsentSelectionSchema.parse(selection);
+  const scopes = agentConsentScopes(input.scopes.split(/\s+/).filter(Boolean), parsed.write);
   await lockMcpOwner(tx, input.userId);
   const principal = await resolvePrincipal(input.userId, input.organizationId, tx);
   const [member] = await tx
@@ -61,7 +70,8 @@ export async function prepareAgentMcpGrant(
     .select()
     .from(schema.oauthApplication)
     .where(eq(schema.oauthApplication.clientId, input.clientId))
-    .limit(1);
+    .limit(1)
+    .for('share');
   const [owner] = await tx
     .select()
     .from(schema.user)
@@ -75,7 +85,8 @@ export async function prepareAgentMcpGrant(
       .select()
       .from(schema.agentIdentity)
       .where(eq(schema.agentIdentity.id, parsed.identityId))
-      .limit(1);
+      .limit(1)
+      .for('share');
   } else {
     [identity] = await tx
       .insert(schema.agentIdentity)
@@ -106,7 +117,6 @@ export async function prepareAgentMcpGrant(
       ),
     );
   for (const grant of previous) await invalidateMcpGrant(tx, grant, now);
-  const scopes = readOnlyAgentScopes(input.scopes.split(/\s+/).filter(Boolean));
   const grantId = newId();
   await tx.insert(schema.mcpGrant).values({
     id: grantId,

@@ -21,7 +21,7 @@ type GithubNotificationDatabase = Database | Transaction;
 interface LinkedIssueAudience {
   readonly id: string;
   readonly teamId: string;
-  readonly creatorId: string;
+  readonly creatorId: string | null;
   readonly assigneeId: string | null;
 }
 
@@ -113,7 +113,7 @@ function linkedIssueCandidateIds(
   subscriptions: ReadonlyMap<string, readonly string[]>,
 ): string[] {
   return unique([
-    linkedIssue.creatorId,
+    ...(linkedIssue.creatorId === null ? [] : [linkedIssue.creatorId]),
     ...(linkedIssue.assigneeId === null ? [] : [linkedIssue.assigneeId]),
     ...(subscriptions.get(linkedIssue.id) ?? []),
   ]);

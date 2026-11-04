@@ -57,6 +57,17 @@ describe('resolveIssueActor', () => {
     ).toBe('agent');
   });
 
+  it('resolves a null legacy creator through the canonical Agent reference', () => {
+    const row = issue({ creatorId: null, creatorUserId: null, creatorAgentId: 'agent-1' });
+    expect(resolveIssueActor(row, 'creator')).toEqual({
+      type: 'agent',
+      id: 'agent-1',
+      name: 'Unknown agent',
+      avatar: null,
+      deleted: false,
+    });
+  });
+
   it('respects explicit null and never infers Owner from the current assignment', () => {
     const row = issue({ assignee: null, ownerUserId: null });
     expect(resolveIssueActor(row, 'assignee')).toBeNull();

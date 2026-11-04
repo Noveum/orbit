@@ -9,16 +9,19 @@ export interface McpToolAccess {
   readonly reads: boolean;
   readonly writes: boolean;
   readonly identity: McpIdentity;
+  readonly agentIssueWrites?: boolean;
 }
 
 export interface McpToolOperation {
   readonly readOnly: boolean;
   readonly agentSafe?: boolean;
+  readonly agentWrite?: boolean;
 }
 
 export function canUseMcpTool(access: McpToolAccess, operation: McpToolOperation): boolean {
-  if (access.identity.kind === 'agent' && (!operation.readOnly || operation.agentSafe === false)) {
-    return false;
+  if (access.identity.kind === 'agent') {
+    if (operation.readOnly) return access.reads && operation.agentSafe !== false;
+    return access.writes && access.agentIssueWrites === true && operation.agentWrite === true;
   }
   return operation.readOnly ? access.reads : access.writes;
 }
@@ -27,7 +30,7 @@ export function assertMcpToolAccess(access: McpToolAccess, operation: McpToolOpe
   if (!canUseMcpTool(access, operation)) {
     throw forbidden(
       access.identity.kind === 'agent'
-        ? 'Agent connections can only use tools without write side effects.'
+        ? 'This Agent connection cannot perform that operation.'
         : 'This connection does not hold the scope required by this tool.',
     );
   }

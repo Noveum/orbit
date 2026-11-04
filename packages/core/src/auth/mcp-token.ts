@@ -9,7 +9,7 @@ import {
 } from '@orbit/shared/validators';
 import { type Executor, newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
-import { prepareAgentMcpGrant, readOnlyAgentScopes } from './agent-identity-service.ts';
+import { agentConsentScopes, prepareAgentMcpGrant } from './agent-identity-service.ts';
 
 const MCP_CREDENTIAL_PREFIX = 'orbit-mcp-v1';
 const AGENT_CREDENTIAL_PREFIX = 'orbit-mcp-agent-v2';
@@ -103,7 +103,14 @@ export function isAgentMcpEnabled(): boolean {
   return process.env['ORBIT_AGENT_MCP'] === 'true';
 }
 
+export function isAgentIssueWriteEnabled(): boolean {
+  return process.env['ORBIT_AGENT_ISSUE_WRITE'] === 'true';
+}
+
 export interface McpAccessContext {
+  readonly grantId: string;
+  readonly ownerMemberId: string | null;
+  readonly tokenId?: string;
   readonly identity: McpIdentity;
   readonly principal: Principal;
   readonly userId: string;
@@ -147,12 +154,14 @@ export async function validateMcpGrant(
       .select()
       .from(schema.agentIdentity)
       .where(eq(schema.agentIdentity.id, grant.agentIdentityId))
-      .limit(1);
+      .limit(1)
+      .for('share');
     const [client] = await tx
       .select()
       .from(schema.oauthApplication)
       .where(eq(schema.oauthApplication.clientId, grant.clientId))
-      .limit(1);
+      .limit(1)
+      .for('share');
     if (
       agent === undefined ||
       agent.deletedAt !== null ||
@@ -161,7 +170,7 @@ export async function validateMcpGrant(
       agent.organizationId !== grant.organizationId ||
       client === undefined ||
       client.disabled ||
-      grant.scopes.split(/\s+/).includes('orbit.write')
+      !grant.scopes.split(/\s+/).includes('orbit.read')
     )
       throw invalid;
     identity = { kind: 'agent', id: agent.id, name: agent.name };
@@ -170,6 +179,8 @@ export async function validateMcpGrant(
   }
   const principal = await resolvePrincipal(grant.userId, grant.organizationId, tx);
   return {
+    grantId: grant.id,
+    ownerMemberId: grant.ownerMemberId,
     principal,
     identity,
     userId: grant.userId,
@@ -191,7 +202,8 @@ export async function verifyMcpTokenBinding(
     .select()
     .from(schema.mcpGrant)
     .where(eq(schema.mcpGrant.id, grantId))
-    .limit(1);
+    .limit(1)
+    .for('share');
   if (
     grant === undefined ||
     token.clientId !== grant.clientId ||
@@ -208,7 +220,7 @@ export async function verifyMcpTokenBinding(
   )
     throw invalid;
   const context = await validateMcpGrant(tx, grant, kind, now);
-  return { ...context, scopes: token.scopes };
+  return { ...context, tokenId: token.id, scopes: token.scopes };
 }
 
 export async function verifyMcpAccessToken(
@@ -498,7 +510,7 @@ function consentScopes(
   ) {
     throw validationFailed('This identity connection requires a valid PKCE request.');
   }
-  return readOnlyAgentScopes(value.scope);
+  return agentConsentScopes(value.scope, agent.write === true);
 }
 
 export async function finalizeMcpConsent(

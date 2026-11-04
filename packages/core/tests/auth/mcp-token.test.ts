@@ -8,6 +8,7 @@ import {
   finalizeMcpConsent,
   getMcpClient,
   getMcpConsentRequest,
+  isAgentIssueWriteEnabled,
   listMcpGrants,
   passkeyVerifiedWithin,
   recordMcpGrant,
@@ -31,6 +32,27 @@ const originalSecret = process.env['BETTER_AUTH_SECRET'];
 let workspace: Workspace;
 
 describe('MCP credential binding', () => {
+  it('enables agent issue writes only with the independent exact opt-in', () => {
+    const previous = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+    const previousOutbox = process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'];
+    try {
+      for (const value of [undefined, '', 'false', 'TRUE', '1']) {
+        if (value === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+        else process.env['ORBIT_AGENT_ISSUE_WRITE'] = value;
+        process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = 'true';
+        expect(isAgentIssueWriteEnabled()).toBe(false);
+      }
+      process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+      process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = 'false';
+      expect(isAgentIssueWriteEnabled()).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previous;
+      if (previousOutbox === undefined) delete process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'];
+      else process.env['ORBIT_ISSUE_OUTBOX_DISPATCH'] = previousOutbox;
+    }
+  });
+
   it('round trips an opaque credential and rejects a changed binding', () => {
     const bound = bindMcpCredential('opaque-token', 'grant-one', MCP_SECRET);
     expect(unbindMcpCredential(bound, MCP_SECRET)).toEqual({
@@ -237,6 +259,10 @@ describe('verifyMcpAccessToken with a grant', () => {
     );
 
     const context = await verifyMcpAccessToken(token);
+    const [grant] = await listMcpGrants(workspace.adminUser.id);
+    expect(context.grantId).toBe(grant?.id ?? 'missing-grant');
+    expect(context.ownerMemberId).toBeNull();
+    expect(context.tokenId).toBeString();
     expect(context.organizationId).toBe(workspace.organizationId);
     expect(context.principal.role).toBe('admin');
   });

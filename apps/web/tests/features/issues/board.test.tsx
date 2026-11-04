@@ -499,7 +499,7 @@ describe('Board actor columns outside the base page', () => {
 });
 
 describe('Board agent manual sorting', () => {
-  it('reassigns an Agent issue to a Human without recording unsupported Agent restoration', async () => {
+  it('reassigns an Agent issue to a Human and records canonical Agent restoration', async () => {
     clearTabHistory();
     const agent = {
       type: 'agent' as const,
@@ -580,7 +580,12 @@ describe('Board agent manual sorting', () => {
         expect(client.isMutating()).toBe(0);
       });
       expect(requests[0]).toMatchObject({ assigneeId: human.id });
-      expect(getTabUndoStackForTests()).toHaveLength(0);
+      await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
+      expect(getTabUndoStackForTests()[0]).toMatchObject({
+        inverse: { assigneeAgentId: agent.id },
+        expectedForUndo: { assigneeId: human.id, assigneeAgentId: null },
+        expectedForRedo: { assigneeId: null, assigneeAgentId: agent.id },
+      });
     } finally {
       fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
       rendered.unmount();
@@ -731,10 +736,22 @@ describe('Board agent manual sorting', () => {
         expect(requests[0]).not.toHaveProperty('assigneeAgentId');
         expect(requests[0]).not.toHaveProperty('assigneeUserId');
         await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
-        expect(getTabUndoStackForTests()[0]).toMatchObject({
+        const entry = getTabUndoStackForTests()[0];
+        if (entry === undefined || !('inverse' in entry)) throw new Error('Missing move history');
+        expect(entry).toMatchObject({
           inverse: { beforeId: null, afterId: secondAgent.id },
         });
-        expect(getTabUndoStackForTests()[0]).not.toHaveProperty('inverse.assigneeId');
+        expect(entry).not.toHaveProperty('inverse.assigneeId');
+        expect(entry.inverse).not.toHaveProperty('assigneeId');
+        expect(entry.inverse).not.toHaveProperty('assigneeAgentId');
+        expect(entry.expectedForUndo).toMatchObject({
+          assigneeId: null,
+          assigneeAgentId: assignee.id,
+        });
+        expect(entry.expectedForRedo).toMatchObject({
+          assigneeId: null,
+          assigneeAgentId: assignee.id,
+        });
       } finally {
         fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
         rendered.unmount();
@@ -746,6 +763,86 @@ describe('Board agent manual sorting', () => {
 });
 
 describe('Board visibility during drag settlement', () => {
+  it('clears an Agent by dragging to Unassigned and records its canonical inverse', async () => {
+    clearTabHistory();
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build bot',
+      avatar: null,
+      deleted: false,
+    };
+    const row = issue({ assignee, ownerUserId: 'user_owner' });
+    const groups = groupIssues(
+      [row],
+      'assignee',
+      { states: [], members: [], projects: [], cycles: [], labels: [] },
+      { showEmptyGroups: true, ordering: 'manual' },
+    );
+    HTMLElement.prototype.getBoundingClientRect = function actorBoardRect() {
+      const unassigned = this.closest('[data-testid="board-column-No assignee"]') !== null;
+      const card = this.matches('li');
+      return new DOMRect(unassigned ? 320 : 0, card ? 80 : 0, card ? 260 : 280, card ? 72 : 500);
+    };
+    const requests: unknown[] = [];
+    globalThis.fetch = mock((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST')
+        return Promise.resolve(Response.json({ issues: [], nextCursor: null }));
+      requests.push(JSON.parse(String(init.body)));
+      return Promise.resolve(
+        Response.json({
+          issue: {
+            ...row,
+            assignee: null,
+            assigneeId: null,
+            assigneeAgentId: null,
+            assigneeUserId: null,
+            syncId: 2,
+          },
+          rebalanced: [],
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const rendered = render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <ToastProvider>
+            <HotkeyProvider>
+              <Board groups={groups} draggable groupBy="assignee" />
+            </HotkeyProvider>
+          </ToastProvider>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    try {
+      const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+      card.focus();
+      fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+      await act(async () => {
+        await settleKeyboardSensor();
+        fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+        await settleKeyboardSensor();
+      });
+      await waitFor(() => expect(dndStatus()).toHaveTextContent('column No assignee'));
+      fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+      await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
+      expect(requests[0]).toMatchObject({ assigneeId: null });
+      const entry = getTabUndoStackForTests()[0];
+      if (entry === undefined || !('inverse' in entry)) throw new Error('Missing move history');
+      expect(entry.inverse).toMatchObject({ assigneeAgentId: assignee.id });
+      expect(entry.expectedForUndo).toMatchObject({ assigneeId: null, assigneeAgentId: null });
+      expect(entry.expectedForRedo).toMatchObject({
+        assigneeId: null,
+        assigneeAgentId: assignee.id,
+      });
+      expect(entry.issue.ownerUserId).toBe('user_owner');
+    } finally {
+      rendered.unmount();
+      await settleKeyboardSensor();
+    }
+  });
+
   it('does not remount a board for cosmetic card property changes', () => {
     const config = {
       filter: emptyFilterGroup(),

@@ -253,6 +253,13 @@
       "when": 1793347010047,
       "tag": "0035_mcp_agent_grant_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793347022678,
+      "tag": "0036_issue_actor_write_compatibility",
+      "breakpoints": true
     }
   ]
 }

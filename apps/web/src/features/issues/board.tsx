@@ -509,6 +509,7 @@ function sourcePlacementFor(
 }
 
 function moveExpectedFor(issue: Issue, groupBy: GroupByField): IssueMoveExpected {
+  const assignee = resolveIssueActor(issue, 'assignee');
   switch (groupBy) {
     case 'state':
       return {
@@ -532,7 +533,8 @@ function moveExpectedFor(issue: Issue, groupBy: GroupByField): IssueMoveExpected
       return {
         stateId: issue.stateId,
         sortOrder: issue.sortOrder,
-        assigneeId: issue.assigneeId,
+        assigneeId: assignee?.type === 'user' ? assignee.id : null,
+        assigneeAgentId: assignee?.type === 'agent' ? assignee.id : null,
       };
     case 'priority':
       return {
@@ -753,8 +755,6 @@ export function planDrop(
     ? {}
     : regroupPatch(groupBy, groupId);
   if (regrouping === null) return null;
-  if (regrouping.assigneeId === null && resolveIssueActor(dragged, 'assignee')?.type === 'agent')
-    return null;
 
   if (!reorderable) {
     if (regroupingLeavesIssue(regrouping, dragged)) return null;
@@ -885,7 +885,7 @@ function IssueCardView({
         return reviewer === undefined ? [] : [reviewer];
       })}
       state={lookups.stateById.get(issue.stateId)}
-      creator={lookups.memberById.get(issue.creatorId)}
+      creator={issue.creatorId === null ? undefined : lookups.memberById.get(issue.creatorId)}
       project={issue.projectId === null ? undefined : lookups.projectById.get(issue.projectId)}
       cycle={issue.cycleId === null ? undefined : lookups.cycleById.get(issue.cycleId)}
       subIssueCount={lookups.childCounts.get(issue.id) ?? 0}
@@ -1977,10 +1977,8 @@ export function Board({
         (settlement) => {
           const settledIssue = settlement.issues.find((issue) => issue.id === dragId);
 
-          const restoresAgentAssignment =
-            placement.assigneeId !== undefined &&
-            resolveIssueActor(session.sourcePlacement.issue, 'assignee')?.type === 'agent';
-          if (settledIssue !== undefined && !restoresAgentAssignment) {
+          if (settledIssue !== undefined) {
+            const sourceAssignee = resolveIssueActor(session.sourcePlacement.issue, 'assignee');
             const moveEntry: MoveUndoEntry = {
               sequence: session.sequence,
               issue: settledIssue,
@@ -1993,6 +1991,11 @@ export function Board({
 
               inverse: {
                 ...session.sourcePlacement,
+                ...(groupBy === 'assignee' &&
+                placement.assigneeId !== undefined &&
+                sourceAssignee?.type === 'agent'
+                  ? { assigneeAgentId: sourceAssignee.id }
+                  : {}),
                 issue: settledIssue,
               },
 

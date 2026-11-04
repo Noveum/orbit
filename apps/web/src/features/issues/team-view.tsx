@@ -24,6 +24,7 @@ import { useProvideViewControls } from '@/features/filters/view-controls.tsx';
 import { LoadFailed } from '@/features/issues/load-failed.tsx';
 import { cn } from '@/lib/cn.ts';
 import { useHotkey } from '@/lib/keyboard/index.ts';
+import { ApiError } from '@/lib/query/fetcher.ts';
 import { columnParamFor } from '@/lib/query/issue-search.ts';
 import type { View, WorkflowState } from '@/lib/query/schemas.ts';
 import { useIssues } from '@/lib/query/use-issues.ts';
@@ -60,6 +61,9 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
   const savedView = useSavedView(views.data ?? [], searchParams.get(VIEW_PARAM));
 
   const rows = useMemo(() => issues.data ?? [], [issues.data]);
+  const accessDenied =
+    issues.error instanceof ApiError &&
+    (issues.error.status === 401 || issues.error.status === 403);
   const model = useIssueViewModel({ teamId, config, issues: rows });
   const boardVisibility = useBoardVisibilityHold(
     JSON.stringify([teamId, layout, boardVisibilityConfig(config), workspace.role]),
@@ -138,7 +142,7 @@ export function TeamView({ teamKey, layout }: TeamViewProps) {
         filtered={model.filtered}
         empty={model.shownCount === 0}
         loading={issues.isPending}
-        failed={issues.isLoadingError}
+        failed={issues.isLoadingError || accessDenied}
         onRetry={() => {
           issues.refetch().catch(() => undefined);
         }}
@@ -218,10 +222,10 @@ function TeamContent({
   keepBoardMounted,
   onVisibilityActivityStart,
 }: TeamContentProps) {
-  if (loading) return <ListSkeleton layout={layout} />;
-
   if (failed)
     return <LoadFailed subject="these issues" onRetry={onRetry} testId="retry-team-issues" />;
+
+  if (loading && !(layout === 'board' && keepBoardMounted)) return <ListSkeleton layout={layout} />;
 
   const showEmptyState = empty && !(layout === 'board' && keepBoardMounted);
 

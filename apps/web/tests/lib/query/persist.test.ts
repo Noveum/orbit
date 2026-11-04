@@ -8,7 +8,7 @@ import {
   restorable,
   shouldPersistQuery,
 } from '@/lib/query/persist.ts';
-import { issueDetailSchema, issueListSchema } from '@/lib/query/schemas.ts';
+import { bootstrapSchema, issueDetailSchema, issueListSchema } from '@/lib/query/schemas.ts';
 
 const legacyIssue = {
   id: 'issue-1',
@@ -196,7 +196,21 @@ describe('restorable', () => {
     };
     const pages = [
       { issues: [legacyIssue], nextCursor: null },
-      { issues: [{ ...legacyIssue, assigneeId: null, assignee, owner: null }], nextCursor: null },
+      {
+        issues: [
+          {
+            ...legacyIssue,
+            creatorId: null,
+            creatorUserId: null,
+            creatorAgentId: assignee.id,
+            creator: assignee,
+            assigneeId: null,
+            assignee,
+            owner: null,
+          },
+        ],
+        nextCursor: null,
+      },
     ];
     const client = restorable(
       persisted([query(['issues', 'team-1', ''], { pages, pageParams: [null, null] })]),
@@ -210,12 +224,38 @@ describe('restorable', () => {
       false,
     );
     expect(current?.assignee).toEqual(assignee);
+    expect(current?.creatorId).toBeNull();
+    expect(current?.creator).toEqual(assignee);
     expect(current?.owner).toBeNull();
   });
 
   it('keeps a bootstrap entry that still matches the schema', () => {
     const client = restorable(persisted([query(['bootstrap', 'default'], bootstrap)]));
     expect(keysOf(client)).toEqual(['bootstrap']);
+  });
+
+  it('restores Agent-created issues in a bootstrap snapshot', () => {
+    const creator = {
+      type: 'agent' as const,
+      id: 'agent-1',
+      name: 'Helper',
+      avatar: null,
+      deleted: false,
+    };
+    const row = {
+      ...legacyIssue,
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: creator.id,
+      creator,
+    };
+    const client = restorable(
+      persisted([query(['bootstrap', 'default'], { ...bootstrap, issues: [row] })]),
+    );
+    expect(keysOf(client)).toEqual(['bootstrap']);
+    const restored = bootstrapSchema.parse(client.clientState.queries[0]?.state.data);
+    expect(restored.issues[0]?.creatorId).toBeNull();
+    expect(restored.issues[0]?.creator).toEqual(creator);
   });
 
   it('drops an entry whose shape has drifted since it was written', () => {

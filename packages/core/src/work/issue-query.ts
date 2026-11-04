@@ -90,6 +90,11 @@ function agentFilters(principal: Principal, filter: IssueFilterInput): SQL[] {
   if (!filter.aiOnly) return [];
   return [
     sql`(${schema.issue.creatorAgentId} is not null or ${schema.issue.assigneeAgentId} is not null or exists (
+    select 1 from ${schema.issueActivity}
+    where ${schema.issueActivity.organizationId} = ${principal.organizationId}
+      and ${schema.issueActivity.issueId} = ${schema.issue.id}
+      and ${schema.issueActivity.actorType} = 'agent'
+  ) or exists (
     select 1 from ${schema.member}
     where ${schema.member.organizationId} = ${principal.organizationId}
       and ${schema.member.isAgent} = true

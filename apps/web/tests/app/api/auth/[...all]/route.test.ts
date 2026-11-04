@@ -578,7 +578,9 @@ describe('MCP authorize PKCE boundary', () => {
 
   it('issues and refreshes read-only v2 credentials after real provider Agent consent', async () => {
     const previous = process.env['ORBIT_AGENT_MCP'];
+    const previousWrite = process.env['ORBIT_AGENT_ISSUE_WRITE'];
     process.env['ORBIT_AGENT_MCP'] = 'true';
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
     try {
       await withNativeFetchGlobals(async () => {
         const { code, verifier } = await providerAuthorizationCode(workspace, cookie, {
@@ -601,6 +603,7 @@ describe('MCP authorize PKCE boundary', () => {
         expect(context.identity).toMatchObject({ kind: 'agent', name: 'Review reader' });
         expect(context.organizationId).toBe(workspace.organizationId);
         expect(context.scopes).not.toContain('orbit.write');
+        process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
         const refreshed = await authPost(refreshRequest(token.refresh_token));
         expect(refreshed.status).toBe(200);
         const replacement = mcpTokenResponseSchema.parse(await refreshed.json());
@@ -618,6 +621,59 @@ describe('MCP authorize PKCE boundary', () => {
     } finally {
       if (previous === undefined) delete process.env['ORBIT_AGENT_MCP'];
       else process.env['ORBIT_AGENT_MCP'] = previous;
+      if (previousWrite === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previousWrite;
+    }
+  });
+
+  it('issues exact write-bound v2 credentials after explicit consent and preserves reads with writes disabled', async () => {
+    const previousAgent = process.env['ORBIT_AGENT_MCP'];
+    const previousWrite = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    try {
+      await withNativeFetchGlobals(async () => {
+        const { code, verifier } = await providerAuthorizationCode(workspace, cookie, {
+          name: 'Issue writer',
+          write: true,
+        });
+        const response = await authPost(codeRequest(code, verifier));
+        expect(response.status).toBe(200);
+        const token = mcpTokenResponseSchema.parse(await response.json());
+        expect(token.scope).toBe('openid offline_access orbit.read orbit.write');
+        if (token.refresh_token === undefined) throw new Error('No Agent refresh credential.');
+        const { secret } = await auth.$context;
+        const binding = unbindAgentMcpCredential(token.access_token, secret);
+        if (binding === null) throw new Error('No bound Agent credential.');
+        expect(unbindAgentMcpCredential(token.refresh_token, secret)?.grantId).toBe(
+          binding.grantId,
+        );
+        const [grant] = await db
+          .select()
+          .from(schema.mcpGrant)
+          .where(eq(schema.mcpGrant.id, binding.grantId));
+        expect(grant?.scopes).toBe(token.scope);
+        expect((await verifyMcpAccessToken(token.access_token)).grantId).toBe(binding.grantId);
+        process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
+        const refreshed = await authPost(refreshRequest(token.refresh_token));
+        expect(refreshed.status).toBe(200);
+        const replacement = mcpTokenResponseSchema.parse(await refreshed.json());
+        expect(replacement.scope).toBe(token.scope);
+        expect(unbindAgentMcpCredential(replacement.access_token, secret)?.grantId).toBe(
+          binding.grantId,
+        );
+        const context = await verifyMcpAccessToken(replacement.access_token);
+        expect(context.identity).toMatchObject({ kind: 'agent', name: 'Issue writer' });
+        expect(context.scopes).toBe(token.scope ?? 'missing-scopes');
+        const [stored] = await db.select().from(schema.oauthAccessToken);
+        expect(stored?.mcpGrantId).toBe(binding.grantId);
+        expect(stored?.scopes).toBe(token.scope);
+      });
+    } finally {
+      if (previousAgent === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previousAgent;
+      if (previousWrite === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previousWrite;
     }
   });
 

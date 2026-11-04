@@ -48,7 +48,7 @@ describe('MCP tool access', () => {
     ).toBe(true);
   });
 
-  it('requires an agent read scope and rejects writes even with a write scope', () => {
+  it('requires an Agent read scope and rejects writes without explicit capability', () => {
     expect(canUseMcpTool({ reads: true, writes: true, identity: agent }, { readOnly: true })).toBe(
       true,
     );
@@ -58,7 +58,17 @@ describe('MCP tool access', () => {
     for (const operation of [{ readOnly: false }, { readOnly: true, agentSafe: false }]) {
       expect(() =>
         assertMcpToolAccess({ reads: true, writes: true, identity: agent }, operation),
-      ).toThrow('write side effects');
+      ).toThrow('cannot perform that operation');
     }
+  });
+
+  it('requires write scope, trusted Issue capability and an allowed Issue operation together', () => {
+    const access = { reads: true, writes: true, identity: agent, agentIssueWrites: true };
+    const operation = { readOnly: false, agentWrite: true };
+    expect(canUseMcpTool(access, operation)).toBe(true);
+    expect(canUseMcpTool({ ...access, writes: false }, operation)).toBe(false);
+    expect(canUseMcpTool({ ...access, agentIssueWrites: false }, operation)).toBe(false);
+    expect(canUseMcpTool(access, { ...operation, agentWrite: false })).toBe(false);
+    expect(canUseMcpTool(access, { readOnly: true, agentSafe: false })).toBe(false);
   });
 });

@@ -19,7 +19,7 @@ import { issueCommentUrl, issueUrl } from '@orbit/shared/utils';
 import { issueRefSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { resolveCycle, resolveProject } from '../resolve.ts';
-import { defineTool, publish } from './support.ts';
+import { defineTool, issueWriteContextFor, publish } from './support.ts';
 
 const issueRef = issueRefSchema.describe('An issue identifier like "ENG-42", or an issue id.');
 const projectRef = z.string().min(1).describe('Project name, slug or id.');
@@ -37,12 +37,13 @@ export function registerWorkspaceTools(
       description:
         'Archive an issue so it leaves the board and the default lists. Use delete_issue to remove it for good.',
       readOnly: false,
+      agentWrite: true,
       destructive: true,
       inputSchema: { issue: issueRef },
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const saved = await archiveIssue(principal, issue.id);
+      const saved = await archiveIssue(principal, issue.id, issueWriteContextFor(server));
       await publish(saved.actions);
       return {
         archived: {
@@ -61,11 +62,12 @@ export function registerWorkspaceTools(
       title: 'Restore an archived issue',
       description: 'Bring an archived issue back onto the board.',
       readOnly: false,
+      agentWrite: true,
       inputSchema: { issue: issueRef },
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const saved = await unarchiveIssue(principal, issue.id);
+      const saved = await unarchiveIssue(principal, issue.id, issueWriteContextFor(server));
       await publish(saved.actions);
       return {
         restored: {
@@ -85,12 +87,18 @@ export function registerWorkspaceTools(
       description:
         'Permanently delete an issue and everything attached to it. This cannot be undone; prefer archive_issue.',
       readOnly: false,
+      agentWrite: true,
       destructive: true,
       inputSchema: { issue: issueRef },
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
-      const actions = await deleteIssue(principal, issue.id);
+      const actions = await deleteIssue(
+        principal,
+        issue.id,
+        undefined,
+        issueWriteContextFor(server),
+      );
       await publish(actions);
       return { deleted: issue.identifier };
     },

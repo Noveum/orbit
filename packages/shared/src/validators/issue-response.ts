@@ -24,7 +24,7 @@ export const issueSchema = z.object({
   description: z.string().default(''),
   stateId: z.string(),
   priority: z.number(),
-  creatorId: z.string(),
+  creatorId: z.string().nullable(),
   assigneeId: z.string().nullable(),
   creatorUserId: z.string().nullable().optional(),
   creatorAgentId: z.string().nullable().optional(),

@@ -24,6 +24,7 @@ export * from './org/team-service.ts';
 export * from './realtime/backfill.ts';
 export * from './realtime/publisher.ts';
 export * from './sync/sync-id.ts';
+export * from './work/agent-issue-context.ts';
 export * from './work/cycle-service.ts';
 export * from './work/issue-actor-view.ts';
 export * from './work/issue-service.ts';

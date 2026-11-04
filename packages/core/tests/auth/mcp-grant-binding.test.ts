@@ -197,7 +197,7 @@ describe('persistent MCP identity binding', () => {
     ).rejects.toMatchObject({ code: 'unauthorized' });
   });
 
-  it('rejects expanded token scopes and bound grants containing write permission', async () => {
+  it('rejects expanded token scopes and accepts exact write grant scopes for reading', async () => {
     const bound = await connection();
     await db
       .update(schema.oauthAccessToken)
@@ -208,7 +208,19 @@ describe('persistent MCP identity binding', () => {
       .update(schema.mcpGrant)
       .set({ scopes: 'orbit.read orbit.write' })
       .where(eq(schema.mcpGrant.id, bound.grantId));
-    await expect(verifyMcpAccessToken(bound.token)).rejects.toMatchObject({ code: 'unauthorized' });
+    const previous = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
+    try {
+      expect((await verifyMcpAccessToken(bound.token)).scopes).toBe('orbit.read orbit.write');
+      await db
+        .update(schema.oauthAccessToken)
+        .set({ scopes: 'orbit.read' })
+        .where(eq(schema.oauthAccessToken.id, bound.tokenId));
+      expect((await verifyMcpAccessToken(bound.token)).scopes).toBe('orbit.read');
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previous;
+    }
   });
 
   it('requires the original membership even after the same owner rejoins', async () => {

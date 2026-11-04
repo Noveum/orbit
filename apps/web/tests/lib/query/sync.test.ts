@@ -503,6 +503,25 @@ describe('issue identity changes without Actor payloads', () => {
 });
 
 describe('applyIssueDelta', () => {
+  it('accepts a real Agent-created insert with no legacy Human creator', () => {
+    const creator = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build helper',
+      avatar: null,
+      deleted: false,
+    };
+    const incoming = issue({
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: creator.id,
+      creator,
+    });
+    const rows = applyIssueDelta([], action({ action: 'insert', data: incoming }), TEAM);
+    expect(rows[0]?.creatorId).toBeNull();
+    expect(rows[0]?.creator).toEqual(creator);
+  });
+
   it('preserves complete actors and nonempty defaulted fields through partial updates', () => {
     const agent = {
       type: 'agent' as const,
@@ -511,10 +530,19 @@ describe('applyIssueDelta', () => {
       avatar: 'https://example.com/helper.png',
       deleted: true,
     };
-    const original = issue({ creator: agent, assignee: agent, owner: null, description: 'Notes' });
+    const original = issue({
+      creatorId: null,
+      creatorUserId: null,
+      creatorAgentId: agent.id,
+      creator: agent,
+      assignee: agent,
+      owner: null,
+      description: 'Notes',
+    });
     const delta = action({ data: { id: original.id, priority: 1, syncId: 12 } });
     const row = applyIssueDelta([original], delta, TEAM)[0];
     expect(row?.creator).toEqual(agent);
+    expect(row?.creatorId).toBeNull();
     expect(row?.assignee).toEqual(agent);
     expect(row?.owner).toBeNull();
     expect(row?.description).toBe('Notes');

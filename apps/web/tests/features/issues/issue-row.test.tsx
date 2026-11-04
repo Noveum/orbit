@@ -98,6 +98,9 @@ describe('IssueRow', () => {
     render(
       <IssueRow
         issue={issue({
+          creatorId: null,
+          creatorUserId: null,
+          creatorAgentId: 'agent_creator',
           creator: {
             type: 'agent',
             id: 'agent_creator',

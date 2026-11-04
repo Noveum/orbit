@@ -889,8 +889,31 @@ function optimisticAssignment(
   client: QueryClient,
   issue: Issue,
   assigneeId: string | null | undefined,
+  assigneeAgentId?: string | null,
 ): Partial<OptimisticAssignment> {
-  if (assigneeId === undefined) return {};
+  if (assigneeAgentId !== undefined && assigneeAgentId !== null) {
+    const current = resolveIssueActor(issue, 'assignee');
+    return {
+      assigneeId: null,
+      assigneeUserId: null,
+      assigneeAgentId,
+      assignee:
+        current?.type === 'agent' && current.id === assigneeAgentId
+          ? current
+          : {
+              type: 'agent',
+              id: assigneeAgentId,
+              name: 'Unknown agent',
+              avatar: null,
+              deleted: false,
+            },
+    };
+  }
+  if (assigneeId === undefined) {
+    return assigneeAgentId === null
+      ? { assigneeId: null, assigneeUserId: null, assigneeAgentId: null, assignee: null }
+      : {};
+  }
   let actor: IssueActor | null = null;
   if (assigneeId !== null) {
     const member = client
@@ -1020,6 +1043,10 @@ function buildUndoDeltas(issue: Issue, patch: IssuePatch) {
     expectedForUndo,
     expectedForRedo,
   );
+  if (patch.assigneeId !== undefined) {
+    expectedForUndo['assigneeAgentId'] = null;
+    expectedForRedo['assigneeAgentId'] = issue.assigneeAgentId ?? null;
+  }
   assignScalarDelta(
     'estimate',
     patch.estimate,
@@ -1323,6 +1350,7 @@ export interface IssueRegrouping {
   readonly projectId?: string | null;
   readonly milestoneId?: string | null;
   readonly assigneeId?: string | null;
+  readonly assigneeAgentId?: string | null;
   readonly priority?: number;
 }
 
@@ -1363,6 +1391,7 @@ function regroupingOf(input: MoveInput): IssueRegrouping {
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
     ...(input.milestoneId === undefined ? {} : { milestoneId: input.milestoneId }),
     ...(input.assigneeId === undefined ? {} : { assigneeId: input.assigneeId }),
+    ...(input.assigneeAgentId === undefined ? {} : { assigneeAgentId: input.assigneeAgentId }),
     ...(input.priority === undefined ? {} : { priority: input.priority }),
   };
 }
@@ -1497,7 +1526,7 @@ export function useMoveIssue() {
       const optimistic: Issue = {
         ...input.issue,
         ...regroupingOf(input),
-        ...optimisticAssignment(client, input.issue, input.assigneeId),
+        ...optimisticAssignment(client, input.issue, input.assigneeId, input.assigneeAgentId),
         sortOrder: sortOrderBetween(input.beforeOrder, input.afterOrder),
       };
       placeMovedIssue(client, optimistic);
