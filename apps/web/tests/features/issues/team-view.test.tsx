@@ -140,7 +140,7 @@ async function mountRestoredBoard() {
   );
   let listRequests = 0;
   let moves = 0;
-  let listDenied = false;
+  let deniedStatus: number | undefined;
   const moved = issue({ sortOrder: 3072, syncId: 2 });
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -158,12 +158,12 @@ async function mountRestoredBoard() {
       return listRequests === 1
         ? initialList.promise
         : Promise.resolve(
-            listDenied
-              ? Response.json(
+            deniedStatus === undefined
+              ? Response.json({ issues: [second, moved], nextCursor: null })
+              : Response.json(
                   { error: { code: 'FORBIDDEN', message: 'Access denied' } },
-                  { status: 403 },
-                )
-              : Response.json({ issues: [second, moved], nextCursor: null }),
+                  { status: deniedStatus },
+                ),
           );
     }
     return Promise.resolve(Response.json({ views: [] }));
@@ -203,8 +203,8 @@ async function mountRestoredBoard() {
     pendingMove,
     moved,
     moves: () => moves,
-    denyList: () => {
-      listDenied = true;
+    denyList: (status = 403) => {
+      deniedStatus = status;
     },
     rerender: (layout: 'board' | 'list' = 'board') => view.rerender(element(layout)),
   };
@@ -233,13 +233,15 @@ async function dropFirstCard() {
 }
 
 describe('TeamView pending board moves', () => {
-  it('keeps a restored board mounted when cancelling its initial list fetch removes cached data', async () => {
+  it('keeps a restored board mounted when cancelling its initial list fetch preserves cached data', async () => {
     const view = await mountRestoredBoard();
     const status = screen.getByTestId('board-drag-status');
     await dropFirstCard();
     await waitFor(() => expect(view.moves()).toBe(1));
-    expect(view.client.getQueryData(view.listKey)).toBeUndefined();
-    expect(view.client.getQueryState(view.listKey)?.status).toBe('pending');
+    const restoredRows = view.client.getQueryData<IssuePages>(view.listKey)?.pages[0]?.issues;
+    expect(restoredRows?.map((row) => row.identifier)).toEqual(['ENG-2', 'ENG-1']);
+    expect(view.client.getQueryState(view.listKey)?.status).toBe('success');
+    expect(view.client.getQueryState(view.listKey)?.fetchStatus).toBe('idle');
     expect(status.isConnected).toBe(true);
     expect(status).toHaveTextContent('Dropping ENG-1');
 
@@ -289,23 +291,51 @@ describe('TeamView pending board moves', () => {
     },
   );
 
-  it('unmounts a held board when the list reload is denied', async () => {
+  it.each([401, 403])(
+    'unmounts a held board when the list reload returns %i',
+    async (statusCode) => {
+      const view = await mountRestoredBoard();
+      const status = screen.getByTestId('board-drag-status');
+      await dropFirstCard();
+      await waitFor(() => expect(view.moves()).toBe(1));
+      view.denyList(statusCode);
+      await act(async () => {
+        await view.client.invalidateQueries({ queryKey: view.listKey, exact: true });
+      });
+      await waitFor(() => expect(screen.getByTestId('retry-team-issues')).toBeInTheDocument());
+      expect(status.isConnected).toBe(false);
+      expect(screen.queryByTestId('board-drag-status')).toBeNull();
+      await act(async () => {
+        view.pendingMove.resolve(Response.json({ issue: view.moved, rebalanced: [] }));
+        await view.pendingMove.promise;
+      });
+      expect(screen.getByTestId('retry-team-issues')).toBeInTheDocument();
+      expect(screen.queryByTestId('board-drag-status')).toBeNull();
+    },
+  );
+
+  it('retains cached rows and board feedback when a background reload returns 500', async () => {
     const view = await mountRestoredBoard();
     const status = screen.getByTestId('board-drag-status');
     await dropFirstCard();
     await waitFor(() => expect(view.moves()).toBe(1));
-    view.denyList();
+    view.denyList(500);
     await act(async () => {
       await view.client.invalidateQueries({ queryKey: view.listKey, exact: true });
     });
-    await waitFor(() => expect(screen.getByTestId('retry-team-issues')).toBeInTheDocument());
-    expect(status.isConnected).toBe(false);
-    expect(screen.queryByTestId('board-drag-status')).toBeNull();
+    expect(view.client.getQueryState(view.listKey)?.status).toBe('error');
+    expect(view.client.getQueryData(view.listKey)).toBeDefined();
+    expect(status.isConnected).toBe(true);
+    expect(status).toHaveTextContent('Dropping ENG-1');
+    expect(screen.queryByTestId('retry-team-issues')).toBeNull();
     await act(async () => {
       view.pendingMove.resolve(Response.json({ issue: view.moved, rebalanced: [] }));
       await view.pendingMove.promise;
     });
-    expect(screen.getByTestId('retry-team-issues')).toBeInTheDocument();
-    expect(screen.queryByTestId('board-drag-status')).toBeNull();
+    await waitFor(() => expect(view.client.isMutating()).toBe(0));
+    expect(view.client.getQueryData(view.listKey)).toBeDefined();
+    expect(status.isConnected).toBe(true);
+    expect(status).toHaveTextContent('Moved ENG-1');
+    expect(screen.queryByTestId('retry-team-issues')).toBeNull();
   });
 });

@@ -499,7 +499,7 @@ describe('Board actor columns outside the base page', () => {
 });
 
 describe('Board agent manual sorting', () => {
-  it('reassigns an Agent issue to a Human without recording unsupported Agent restoration', async () => {
+  it('reassigns an Agent issue to a Human and records canonical Agent restoration', async () => {
     clearTabHistory();
     const agent = {
       type: 'agent' as const,
@@ -580,7 +580,12 @@ describe('Board agent manual sorting', () => {
         expect(client.isMutating()).toBe(0);
       });
       expect(requests[0]).toMatchObject({ assigneeId: human.id });
-      expect(getTabUndoStackForTests()).toHaveLength(0);
+      await waitFor(() => expect(getTabUndoStackForTests()).toHaveLength(1));
+      expect(getTabUndoStackForTests()[0]).toMatchObject({
+        inverse: { assigneeAgentId: agent.id },
+        expectedForUndo: { assigneeId: human.id, assigneeAgentId: null },
+        expectedForRedo: { assigneeId: null, assigneeAgentId: agent.id },
+      });
     } finally {
       fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
       rendered.unmount();
