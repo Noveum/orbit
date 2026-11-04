@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -155,6 +156,92 @@ describe('database release', () => {
   afterAll(async () => {
     await run(urlFor('postgres'), (sql) => sql.unsafe(`drop database if exists "${SCRATCH}"`));
   }, 30_000);
+
+  it('upgrades the released staleness ledger without changing actor history or workspace settings', async () => {
+    await resetScratch();
+    const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+    const released = migrations.filter((migration) => migration.folderMillis <= 1791997887851);
+    expect(released).toHaveLength(32);
+    const before = await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of released) {
+        for (const statement of migration.sql) await sql.unsafe(statement);
+        await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+      }
+      await seedHumanActorIssues(sql);
+      await sql`update organization set project_staleness_days = 27 where id = 'release-actor-org'`;
+      return humanActorBusinessRows(sql);
+    });
+
+    expect(await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).toEqual({
+      mode: 'migrated',
+      applied: migrations.length - released.length,
+      total: migrations.length,
+    });
+    await run(urlFor(SCRATCH), async (sql) => {
+      expect(await humanActorBusinessRows(sql)).toEqual(before);
+      const [organization] = await sql`
+        select project_staleness_days from organization where id = 'release-actor-org'
+      `;
+      expect(organization?.['project_staleness_days']).toBe(27);
+      const [staleReason] = await sql`
+        select exists (
+          select 1 from pg_enum
+          where enumtypid = 'notification_reason'::regtype and enumlabel = 'stale'
+        ) as present
+      `;
+      expect(staleReason?.['present']).toBe(true);
+      const [creator] = await sql`
+        select is_nullable from information_schema.columns
+        where table_schema = 'public' and table_name = 'issue' and column_name = 'creator_id'
+      `;
+      expect(creator?.['is_nullable']).toBe('YES');
+      const ledger = await sql`select hash from drizzle.__drizzle_migrations order by created_at`;
+      expect(ledger.map((row) => row['hash'])).toEqual(
+        migrations.map((migration) => migration.hash),
+      );
+    });
+    expect(await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).toEqual({
+      mode: 'current',
+      applied: 0,
+      total: migrations.length,
+    });
+  }, 60_000);
+
+  for (const artifact of ['missing', 'disabled'] as const) {
+    it(`upgrades the previous ledger with a ${artifact} compatibility trigger`, async () => {
+      await resetScratch();
+      const migrations = readMigrationFiles({ migrationsFolder: MIGRATIONS });
+      const index = migrations.findIndex((migration) =>
+        migration.sql.some((statement) =>
+          statement.includes('ALTER COLUMN "creator_id" DROP NOT NULL'),
+        ),
+      );
+      expect(index).toBeGreaterThan(0);
+      const previous = migrations.slice(0, index);
+      const before = await run(urlFor(SCRATCH), async (sql) => {
+        await sql`create schema drizzle`;
+        await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+        for (const migration of previous) {
+          for (const statement of migration.sql) await sql.unsafe(statement);
+          await sql`insert into drizzle.__drizzle_migrations (hash, created_at) values (${migration.hash}, ${migration.folderMillis})`;
+        }
+        await seedHumanActorIssues(sql);
+        if (artifact === 'missing')
+          await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+        else await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+        return humanActorBusinessRows(sql);
+      });
+      expect((await releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).mode).toBe('migrated');
+      await run(urlFor(SCRATCH), async (sql) => {
+        expect(await humanActorBusinessRows(sql)).toEqual(before);
+        const [trigger] =
+          await sql`select tgenabled from pg_trigger where tgname = 'issue_human_actor_compat_trigger'`;
+        expect(trigger?.['tgenabled']).toBe('O');
+      });
+    }, 60_000);
+  }
 
   it('upgrades the released main ledger before applying notification migrations', async () => {
     await resetScratch();
@@ -343,7 +430,7 @@ describe('database release', () => {
       expect(issue).toEqual({
         creator_user_id: 'release-actor-creator',
         assignee_user_id: 'release-actor-assignee',
-        owner_user_id: null,
+        owner_user_id: 'release-actor-assignee',
       });
       await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
     });
@@ -360,9 +447,152 @@ describe('database release', () => {
       `;
       expect(issue).toEqual({
         assignee_user_id: 'release-actor-creator',
-        owner_user_id: null,
+        owner_user_id: 'release-actor-assignee',
       });
     });
+  }, 60_000);
+
+  for (const [ledgerState, artifactState] of [
+    ['missing', 'missing'],
+    ['prefix', 'disabled'],
+    ['current', 'legacy-function'],
+  ] as const) {
+    it(`retains Agent history while restoring current compatibility for ${ledgerState} ledger and ${artifactState} artifacts`, async () => {
+      await resetScratch();
+      await migrateScratch();
+      const before = await run(urlFor(SCRATCH), async (sql) => {
+        await seedHumanActorIssues(sql);
+        await sql`update issue set owner_user_id = null where id = 'release-actor-history'`;
+        await sql`
+          insert into agent_identity (
+            id, organization_id, owner_user_id, name, owner_name_snapshot, client_name_snapshot
+          ) values (
+            'release-agent', 'release-actor-org', 'release-actor-creator',
+            'Agent', 'Creator', 'Client'
+          )
+        `;
+        await sql`
+          insert into issue (
+            id, organization_id, team_id, number, identifier, title, state_id,
+            creator_agent_id, assignee_agent_id, owner_user_id, created_at, updated_at, sync_id
+          ) values (
+            'release-agent-history', 'release-actor-org', 'release-actor-team', 3, 'ACTOR-3',
+            'Agent history', 'release-actor-state', 'release-agent', 'release-agent',
+            'release-actor-owner', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 81
+          )
+        `;
+        await sql`update issue set owner_user_id = null where id = 'release-agent-history'`;
+        if (artifactState === 'missing') {
+          await sql`drop trigger issue_human_actor_compat_trigger on issue`;
+          await sql`drop function sync_issue_human_actors()`;
+        } else if (artifactState === 'disabled') {
+          await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+        } else {
+          const original = readMigrationFiles({ migrationsFolder: MIGRATIONS })
+            .find((migration) => migration.folderMillis === HUMAN_ACTOR_MIGRATION)
+            ?.sql.find((statement) =>
+              statement.trimStart().startsWith('CREATE FUNCTION sync_issue_human_actors()'),
+            );
+          if (original === undefined)
+            throw new Error('The original compatibility function is missing.');
+          await sql.unsafe(original.replace('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION '));
+        }
+        if (ledgerState === 'missing') await sql`drop schema drizzle cascade`;
+        if (ledgerState === 'prefix') {
+          await sql`delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`;
+        }
+        return [...(await sql`select to_jsonb(issue) as payload from issue order by id`)];
+      });
+
+      const first = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(first.mode).toBe(ledgerState === 'current' ? 'current' : 'baselined');
+      const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(second.mode).toBe('current');
+      await run(urlFor(SCRATCH), async (sql) => {
+        const after = await sql`select to_jsonb(issue) as payload from issue order by id`;
+        expect([...after]).toEqual(before);
+        await sql`
+          update issue set assignee_user_id = null, assignee_agent_id = null
+          where id = 'release-agent-history'
+        `;
+        const [issue] = await sql`
+          select creator_id, creator_user_id, creator_agent_id, assignee_id,
+            assignee_user_id, assignee_agent_id, owner_user_id
+          from issue where id = 'release-agent-history'
+        `;
+        expect(issue).toEqual({
+          creator_id: null,
+          creator_user_id: null,
+          creator_agent_id: 'release-agent',
+          assignee_id: null,
+          assignee_user_id: null,
+          assignee_agent_id: null,
+          owner_user_id: null,
+        });
+        await sql`
+          insert into issue (
+            id, organization_id, team_id, number, identifier, title, state_id, creator_agent_id
+          ) values (
+            'release-agent-after', 'release-actor-org', 'release-actor-team', 4, 'ACTOR-4',
+            'New Agent row', 'release-actor-state', 'release-agent'
+          )
+        `;
+        const [created] =
+          await sql`select creator_id, creator_agent_id from issue where id = 'release-agent-after'`;
+        expect(created).toEqual({ creator_id: null, creator_agent_id: 'release-agent' });
+      });
+    }, 60_000);
+  }
+
+  it('repairs each Human mirror independently on mixed Actor rows without changing history', async () => {
+    await resetScratch();
+    await migrateScratch();
+    const before = await run(urlFor(SCRATCH), async (sql) => {
+      await seedHumanActorIssues(sql);
+      await sql`
+        insert into agent_identity (
+          id, organization_id, owner_user_id, name, owner_name_snapshot, client_name_snapshot
+        ) values ('release-mixed-agent', 'release-actor-org', 'release-actor-owner', 'Agent', 'Owner', 'Client')
+      `;
+      await sql`
+        update issue set creator_user_id = null, creator_agent_id = 'release-mixed-agent'
+        where id = 'release-actor-history'
+      `;
+      await sql`update issue set owner_user_id = null where id = 'release-actor-history'`;
+      await sql`
+        update issue set assignee_user_id = null, assignee_agent_id = 'release-mixed-agent'
+        where id = 'release-actor-owned'
+      `;
+      await sql`alter table issue disable trigger issue_human_actor_compat_trigger`;
+      await sql`
+        update issue set assignee_id = 'release-actor-creator' where id = 'release-actor-history'
+      `;
+      await sql`
+        update issue set creator_id = 'release-actor-owner' where id = 'release-actor-owned'
+      `;
+      return await humanActorBusinessRows(sql);
+    });
+
+    await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+    expect(await run(urlFor(SCRATCH), humanActorBusinessRows)).toEqual(before);
+    expect(await run(urlFor(SCRATCH), humanActorRows)).toEqual([
+      {
+        id: 'release-actor-history',
+        creator_user_id: null,
+        creator_agent_id: 'release-mixed-agent',
+        assignee_user_id: 'release-actor-creator',
+        assignee_agent_id: null,
+        owner_user_id: null,
+      },
+      {
+        id: 'release-actor-owned',
+        creator_user_id: 'release-actor-owner',
+        creator_agent_id: null,
+        assignee_user_id: null,
+        assignee_agent_id: 'release-mixed-agent',
+        owner_user_id: 'release-actor-owner',
+      },
+    ]);
   }, 60_000);
 
   for (const [artifactState, pendingBaseline] of [
@@ -459,7 +689,7 @@ describe('database release', () => {
             creator_agent_id: null,
             assignee_user_id: 'release-actor-owner',
             assignee_agent_id: null,
-            owner_user_id: null,
+            owner_user_id: 'release-actor-owner',
           });
         });
       } finally {
@@ -891,6 +1121,57 @@ describe('database release', () => {
     );
   }, 60_000);
 
+  it('refuses a superseded unpublished PR1 migration without changing its ledger or Owner history', async () => {
+    await resetScratch();
+    const historical = readMigrationFiles({ migrationsFolder: MIGRATIONS }).filter(
+      (migration) => migration.folderMillis <= HUMAN_ACTOR_MIGRATION,
+    );
+    const superseded = await readFile(
+      new URL('./migrations/fixtures/0030_before_owner_review.sql', import.meta.url),
+      'utf8',
+    );
+    const supersededHash = createHash('sha256').update(superseded).digest('hex');
+    expect(supersededHash).toBe('be5f9ac8863434e90c9660ef83743e3a20bb1a0e14e463925de0cd2077f49f5e');
+    expect(supersededHash).not.toBe(historical.at(-1)?.hash);
+    const before = await run(urlFor(SCRATCH), async (sql) => {
+      await sql`create schema drizzle`;
+      await sql`create table drizzle.__drizzle_migrations (id serial primary key, hash text not null, created_at bigint)`;
+      for (const migration of historical) {
+        const supersededExpansion = migration.folderMillis === HUMAN_ACTOR_MIGRATION;
+        await sql.begin(async (tx) => {
+          for (const statement of supersededExpansion
+            ? superseded.split('--> statement-breakpoint')
+            : migration.sql) {
+            await tx.unsafe(statement);
+          }
+          await tx`
+            insert into drizzle.__drizzle_migrations (hash, created_at)
+            values (${supersededExpansion ? supersededHash : migration.hash}, ${migration.folderMillis})
+          `;
+        });
+      }
+      await seedHumanActorIssues(sql);
+      return {
+        ledger: [
+          ...(await sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`),
+        ],
+        issues: [...(await sql`select to_jsonb(issue) as payload from issue order by id`)],
+      };
+    });
+
+    await expect(releaseDatabase(urlFor(SCRATCH), MIGRATIONS)).rejects.toThrow(
+      'does not match the committed migration',
+    );
+    await run(urlFor(SCRATCH), async (sql) => {
+      expect([
+        ...(await sql`select id, hash, created_at::text from drizzle.__drizzle_migrations order by id`),
+      ]).toEqual(before.ledger);
+      expect([...(await sql`select to_jsonb(issue) as payload from issue order by id`)]).toEqual(
+        before.issues,
+      );
+    });
+  }, 60_000);
+
   it('fails promptly when another database release holds the advisory lock', async () => {
     await resetScratch();
     const lockKey = 4_611_358_438_132_153;
@@ -990,6 +1271,61 @@ describe('database release', () => {
 
     expect(result).toEqual({ mode: 'baselined', applied: 0, total: migrations.length });
     expect(ledger?.count).toBe(migrations.length);
+  }, 60_000);
+
+  it('removes only the retired grant index when baselining or repairing catalog-complete ledgers', async () => {
+    for (const ledger of ['missing', 'prefix', 'current'] as const) {
+      await resetScratch();
+      await migrateScratch();
+      const before = await run(urlFor(SCRATCH), async (sql) => {
+        await sql`create unique index mcp_grant_client_user_unique on mcp_grant (client_id, user_id)`;
+        await sql`create index release_grant_extra_idx on mcp_grant (organization_id)`;
+        await sql`insert into "user" (id, name, email, handle) values ('contract-owner', 'Owner', 'contract@example.com', 'contract-owner')`;
+        await sql`insert into organization (id, name, slug) values ('contract-org', 'Workspace', 'contract-org')`;
+        await sql`
+          insert into oauth_application (id, name, client_id, redirect_urls, type)
+          values ('contract-app', 'Client', 'contract-client', 'https://example.com/callback', 'public')
+        `;
+        await sql`
+          insert into mcp_grant (id, client_id, user_id, organization_id, scopes)
+          values ('contract-grant', 'contract-client', 'contract-owner', 'contract-org', 'orbit.read orbit.write')
+        `;
+        await sql`
+          insert into oauth_access_token (
+            id, access_token, refresh_token, access_token_expires_at, refresh_token_expires_at, client_id, user_id, scopes
+          ) values ('contract-token', 'old-access', 'old-refresh', now() + interval '1 day', now() + interval '30 days',
+            'contract-client', 'contract-owner', 'orbit.read orbit.write')
+        `;
+        if (ledger === 'missing') await sql`drop schema drizzle cascade`;
+        if (ledger === 'prefix') {
+          await sql`delete from drizzle.__drizzle_migrations where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`;
+        }
+        return [
+          ...(await sql`select to_jsonb(mcp_grant) as payload from mcp_grant union all select to_jsonb(oauth_access_token) from oauth_access_token`),
+        ];
+      });
+      const first = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(first.mode).toBe(ledger === 'current' ? 'current' : 'baselined');
+      const second = await releaseDatabase(urlFor(SCRATCH), MIGRATIONS);
+      expect(second.mode).toBe('current');
+      await run(urlFor(SCRATCH), async (sql) => {
+        const [indexes] = await sql`
+          select to_regclass('mcp_grant_client_user_unique') as retired,
+            to_regclass('mcp_grant_legacy_unique') as legacy,
+            to_regclass('mcp_grant_active_agent_unique') as bound,
+            to_regclass('release_grant_extra_idx') as unrelated
+        `;
+        expect(indexes).toMatchObject({
+          retired: null,
+          legacy: 'mcp_grant_legacy_unique',
+          bound: 'mcp_grant_active_agent_unique',
+          unrelated: 'release_grant_extra_idx',
+        });
+        const after =
+          await sql`select to_jsonb(mcp_grant) as payload from mcp_grant union all select to_jsonb(oauth_access_token) from oauth_access_token`;
+        expect([...after]).toEqual(before);
+      });
+    }
   }, 60_000);
 
   it('runs a pending table-drop migration instead of baselining it away', async () => {

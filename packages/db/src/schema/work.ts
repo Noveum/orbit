@@ -366,9 +366,7 @@ export const issue = pgTable(
       .notNull()
       .references(() => workflowState.id, { onDelete: 'restrict' }),
     priority: smallint('priority').notNull().default(0),
-    creatorId: text('creator_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    creatorId: text('creator_id').references(() => user.id, { onDelete: 'restrict' }),
     assigneeId: text('assignee_id').references(() => user.id, { onDelete: 'set null' }),
     creatorUserId: text('creator_user_id').references(() => user.id, { onDelete: 'set null' }),
     creatorAgentId: text('creator_agent_id').references(() => agentIdentity.id, {
