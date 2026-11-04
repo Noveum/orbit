@@ -6,7 +6,7 @@ stage 3a artifact before deploying the final stage 3b checkout.
 
 ## Stage 3a: compatibility preparation
 
-Start from published main commit `4f904217441616002e96dfcf76ed3b95b0b8a905`.
+Start from published main commit `348f08059ceda3bbc3d5cdb33cb71c113032abd4`.
 Keep its released migrations through `0033_polite_lord_tyger`, including
 `0030_actor_schema_expand` and `0031_broad_lifeguard`, their snapshots and
 journal entries unchanged. The actor expansion
@@ -59,14 +59,14 @@ prevents a removed and rejoined owner from reviving an old grant.
 ## Stage 3b: deployment prerequisites
 
 Deployable stage 3a artifact: commit
-`8cc84621a17919f0340aaec674ae271a9ff7f980`. This source artifact contains
+`e4c50b1779c34bf15674cd5588b7dd703e3ca4ca`. This source artifact contains
 current main and compatibility migration `0034`, without `0035` or the
 stage 3b consent runtime. It is retained as an ancestor of the final branches.
 The earlier artifact `037e941376a42ba730e3d75d974ad1f6bbc415ca` remains
 unchanged for historical reference; its old migration ledger cannot upgrade
 the current main baseline. Build and verify the new exact artifact for each
 target environment before proceeding.
-Use branch `feature/agent-consent-binding` for the final stage 3b artifact.
+Use branch `fix/agent-consent-binding-current` for the final stage 3b artifact.
 Record the exact verified commit from that branch before release and build,
 then deploy the runtime built from the same checkout.
 
@@ -85,6 +85,41 @@ pending migration, including both `0034` and `0035`; it does not pause for stage
 `0034` and upgrade all related instances. Only then use the final checkout to
 apply `0035` and deploy stage 3b. Follow
 this sequence before merging schema-dependent code into a deployment branch.
+## Stage 3b writer quiescence and retired deployments
+
+Before dropping the global index, exclude retired runtimes from consent
+finalization, token exchange, refresh, grant reauthorization, disconnect and MCP
+requests at every reachable entry point. Include cached authorization pages and
+direct deployment URLs, not only the production domain. Keep both Agent gates off.
+Verified canonical stage 3a or newer writers may continue serving traffic: their
+partial-index upsert and exact grant/token revocation remain safe before, during
+and after the transactional global-index drop. Database locks serialize the DDL
+with active compatible grant transactions. Concurrent runtime rehearsal must
+cover writes overlapping the actual migration and subsequent Agent grants.
+Record the maximum request duration of every retired runtime, wait for that
+bound plus the platform termination margin, and verify no retired instance has
+an in-flight OAuth/grant writer or database transaction. The migration release
+lock alone does not exclude old application writers.
+
+Inventory the custom production domain, generated production/branch aliases,
+preview domains, immutable deployment URLs and any separate MCP host. Move every
+active alias to the verified compatibility build. Block or remove all older
+reachable deployments before unpausing writers. Authentication protection on an
+immutable URL is not evidence that an authorized user or a protection-bypass
+credential cannot still invoke an old writer. Verify deny-access behavior for
+old consent/token/refresh and MCP URLs and record the result. Retain a prebuilt
+compatibility rollback artifact instead of relying on a runnable older build.
+
+With retired writers excluded and drained, release only the stage 3b schema
+checkout. Verify the global index is absent and the partial legacy index remains,
+then deploy the matching stage 3b runtime and smoke legacy consent, refresh,
+read/write scopes and exact disconnect. A global outage is not required when
+canonical traffic is proven to reach compatible writers. If routing cannot
+separate retired runtimes, briefly pause the affected OAuth/MCP entry points and
+drain all earlier requests before release; resume only compatible instances.
+If retired-runtime exclusion or request draining cannot be proven, stop before
+the stage 3b migration.
+
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
 `ORBIT_AGENT_MCP` disabled during migration and deployment. Never run the stage

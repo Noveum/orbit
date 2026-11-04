@@ -39,7 +39,7 @@ This checkout regenerates the Issue write schema delta as
 `0036_issue_actor_write_compatibility` against the stage 3b snapshot and
 retains its existing compatibility function and trigger. Each new journal
 timestamp follows its predecessor. The stage 3a source artifact is
-`8cc84621a17919f0340aaec674ae271a9ff7f980`. Release and deploy that artifact
+`e4c50b1779c34bf15674cd5588b7dd703e3ca4ca`. Release and deploy that artifact
 to every affected instance before releasing stage 3b, then release the Issue
 write migration with the write gate disabled. These source changes do not
 perform any rollout step or enable either Agent gate.
