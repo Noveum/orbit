@@ -13,6 +13,7 @@ import { useCallback, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover, rowHover } from '@/lib/interaction.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue, IssueRelation } from '@/lib/query/schemas.ts';
 import {
   useIssueRelations,
@@ -20,7 +21,9 @@ import {
   useRemoveRelation,
   useSetRelation,
 } from '@/lib/query/use-relations.ts';
+import { IssueActorDisplay } from './issue-actor.tsx';
 import { IssuePicker } from './issue-picker.tsx';
+import { useWorkspace } from './workspace-provider.tsx';
 
 export { RELATION_LABELS };
 
@@ -41,6 +44,7 @@ export interface IssueRelationsProps {
 }
 
 export function IssueRelations({ issue, canMarkDuplicate = true }: IssueRelationsProps) {
+  const workspace = useWorkspace();
   const relations = useIssueRelations(issue.id);
   const link = useSetRelation(issue.id);
   const unlink = useRemoveRelation(issue.id);
@@ -138,6 +142,17 @@ export function IssueRelations({ issue, canMarkDuplicate = true }: IssueRelation
                     {entry.issue.identifier}
                   </span>
                   <span className="truncate text-text">{entry.issue.title}</span>
+                  <span className="ml-auto">
+                    <IssueActorDisplay
+                      actor={resolveIssueActor(
+                        entry.issue,
+                        'assignee',
+                        workspace.memberById.get(
+                          entry.issue.assigneeUserId ?? entry.issue.assigneeId ?? '',
+                        ),
+                      )}
+                    />
+                  </span>
                 </Link>
                 <button
                   type="button"
