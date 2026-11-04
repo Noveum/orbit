@@ -15,6 +15,7 @@ import {
   type MermaidRenderer,
   mermaidConfig,
   naturalWidth,
+  renderDiagram,
   SHOW_DIAGRAM_LABEL,
   SHOW_SOURCE_LABEL,
   safeSvg,
@@ -47,6 +48,27 @@ function fakeMermaid(svg: string): { renderer: MermaidRenderer; calls: string[] 
         calls.push(source);
         if (source.includes('boom')) return Promise.reject(new Error('bad syntax'));
         return Promise.resolve({ svg });
+      },
+    },
+  };
+}
+
+function themedMermaid(): {
+  renderer: MermaidRenderer;
+  calls: { source: string; theme: string }[];
+} {
+  const calls: { source: string; theme: string }[] = [];
+  let theme = 'light';
+  return {
+    calls,
+    renderer: {
+      initialize: (config) => {
+        theme = config.darkMode === true ? 'dark' : 'light';
+      },
+      render: async (_id, source) => {
+        await Promise.resolve();
+        calls.push({ source, theme });
+        return { svg: `<svg><g data-render-theme="${theme}"></g></svg>` };
       },
     },
   };
@@ -130,6 +152,61 @@ describe('a mermaid diagram in a doc', () => {
 
     expect(first.querySelector('[data-mermaid]')?.textContent).toContain(DIAGRAM_UNAVAILABLE);
     expect(second.querySelector('[data-mermaid-canvas]')?.innerHTML).toContain('graphics-hint');
+  });
+
+  it('keeps each root and editor preview paired with its requested theme across blocks', async () => {
+    const firstSource = 'graph TD\n  A[Start] --> B[Ship]';
+    const secondSource = 'graph TD\n  C[Review] --> D[Ready]';
+    const darkSource = 'graph TD\n  E[Draft] --> F[Published]';
+    const previewSource = 'graph TD\n  G[Edit] --> H[Preview]';
+    const fence = (source: string) => `\`\`\`mermaid\n${source}\n\`\`\``;
+    const light = blockFrom(`${fence(firstSource)}\n\n${fence(secondSource)}`);
+    const dark = blockFrom(fence(darkSource));
+    const { renderer, calls } = themedMermaid();
+    const load = () => Promise.resolve(renderer);
+
+    const [, , preview] = await Promise.all([
+      drawDiagrams(light, 'light', load),
+      drawDiagrams(dark, 'dark', load),
+      renderDiagram(previewSource, 'dark', document, load),
+    ]);
+
+    expect(calls).toHaveLength(4);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { source: firstSource, theme: 'light' },
+        { source: secondSource, theme: 'light' },
+        { source: darkSource, theme: 'dark' },
+        { source: previewSource, theme: 'dark' },
+      ]),
+    );
+    expect(light.querySelectorAll('[data-render-theme="light"]')).toHaveLength(2);
+    expect(dark.querySelectorAll('[data-render-theme="dark"]')).toHaveLength(1);
+    expect(preview).toContain('data-render-theme="dark"');
+  });
+
+  it('continues rendering after a configuration error without hiding that error', async () => {
+    const { renderer } = fakeMermaid(SVG);
+    const broken: MermaidRenderer = {
+      ...renderer,
+      initialize: () => {
+        throw new Error('invalid configuration');
+      },
+    };
+
+    const results = await Promise.allSettled([
+      renderDiagram('graph TD\nA --> B', 'light', document, () => Promise.resolve(broken)),
+      renderDiagram('graph TD\nC --> D', 'dark', document, () => Promise.resolve(renderer)),
+    ]);
+
+    expect(results[0]).toMatchObject({
+      status: 'rejected',
+      reason: new Error('invalid configuration'),
+    });
+    expect(results[1]).toMatchObject({
+      status: 'fulfilled',
+      value: expect.stringContaining('graphics-hint'),
+    });
   });
 
   it('offers a toggle between the diagram and the source it came from', async () => {

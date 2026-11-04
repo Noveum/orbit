@@ -393,6 +393,25 @@ async function drawOne(
   }
 }
 
+let renderQueue: Promise<void> = Promise.resolve();
+
+function drawConfigured(
+  mermaid: MermaidRenderer,
+  source: string,
+  theme: string,
+  document: Document,
+): Promise<string | null> {
+  const rendered = renderQueue.then(() => {
+    configure(mermaid, theme, document);
+    return drawOne(mermaid, source, document);
+  });
+  renderQueue = rendered.then(
+    () => undefined,
+    () => undefined,
+  );
+  return rendered;
+}
+
 export async function renderDiagram(
   source: string,
   theme: string,
@@ -402,8 +421,7 @@ export async function renderDiagram(
   const text = source.trim();
   if (text.length === 0) return null;
   const mermaid = await renderer();
-  configure(mermaid, theme, document);
-  return drawOne(mermaid, text, document);
+  return drawConfigured(mermaid, text, theme, document);
 }
 
 const passes = new WeakMap<HTMLElement, number>();
@@ -431,11 +449,10 @@ export async function drawDiagrams(
     return;
   }
   if (mine !== passes.get(root)) return;
-  configure(mermaid, theme, document);
 
   for (const block of blocks) {
     const source = sourceOf(block).trim();
-    const svg = source.length === 0 ? null : await drawOne(mermaid, source, document);
+    const svg = source.length === 0 ? null : await drawConfigured(mermaid, source, theme, document);
     if (mine !== passes.get(root)) return;
     if (svg === null) {
       failInto(block);
