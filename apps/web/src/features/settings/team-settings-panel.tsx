@@ -31,6 +31,7 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
   const [name, setName] = useState(team.name);
   const [description, setDescription] = useState(team.description);
   const [instructions, setInstructions] = useState(team.instructions ?? '');
+  const [instructionsEdited, setInstructionsEdited] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingArchive, setConfirmingArchive] = useState(false);
@@ -39,7 +40,7 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
   const unchanged =
     name.trim() === team.name &&
     description.trim() === team.description &&
-    instructions.trim() === (team.instructions ?? '');
+    (!instructionsEdited || instructions.trim() === (team.instructions ?? ''));
 
   async function run(action: () => Promise<unknown>): Promise<void> {
     setBusy(true);
@@ -62,9 +63,9 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
         body: {
           name: name.trim(),
           description: description.trim(),
-          instructions: instructions.trim(),
+          ...(instructionsEdited ? { instructions: instructions.trim() } : {}),
         },
-      }),
+      }).then(() => setInstructionsEdited(false)),
     );
   }
 
@@ -114,7 +115,10 @@ export function TeamSettingsPanel({ team, members, canManage }: TeamSettingsPane
           <Textarea
             id="team-settings-instructions"
             value={instructions}
-            onChange={(event) => setInstructions(event.target.value)}
+            onChange={(event) => {
+              setInstructions(event.target.value);
+              setInstructionsEdited(true);
+            }}
             maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
             rows={5}
             placeholder="Conventions and guidance for connected agents working on this team's issues."

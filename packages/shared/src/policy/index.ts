@@ -102,7 +102,6 @@ export interface Principal {
   readonly organizationId: string;
   readonly role: OrgRole;
   readonly teamIds: readonly string[];
-  readonly isAgent?: boolean | undefined;
 }
 
 const NO_PERMISSIONS: readonly Permission[] = [];

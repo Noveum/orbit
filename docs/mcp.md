@@ -93,7 +93,10 @@ Teams and projects can also configure their own agent instructions. The
 parameter to return the resolved guidance layered in order (workspace, then
 team, then project) under markdown headings. When an agent calls `get_issue`, the
 response automatically includes the resolved layered instructions for that
-issue's team and project.
+issue's team and project. This uses the explicit OAuth Agent identity, while
+Human connections retain their compact Issue response. Saving another team or
+project setting leaves untouched instructions unchanged; editing or clearing
+the instruction field explicitly updates it.
 
 ## Connect a client
 

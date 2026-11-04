@@ -80,7 +80,6 @@ export async function addMember(
   workspace: TestWorkspace,
   role: OrgRole,
   name = `${role} person`,
-  isAgent = false,
 ): Promise<{ principal: Principal; user: typeof schema.user.$inferSelect }> {
   const user = await createUser(name);
   await db.insert(schema.member).values({
@@ -88,7 +87,6 @@ export async function addMember(
     organizationId: workspace.organizationId,
     userId: user.id,
     role,
-    isAgent,
   });
   await db
     .insert(schema.teamMember)

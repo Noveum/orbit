@@ -22,7 +22,7 @@ export function registerTools(
   registerAnalyticsTools(server, principal);
   registerIdentityTools(server, principal, identity);
   registerInboxTools(server, principal, appUrl);
-  registerIssueTools(server, principal, appUrl);
+  registerIssueTools(server, principal, appUrl, identity);
   registerPlanningTools(server, principal, appUrl);
   registerScrumTools(server, principal);
   registerAdminTools(server, principal);

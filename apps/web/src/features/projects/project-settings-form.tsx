@@ -69,6 +69,7 @@ export function ProjectSettingsForm({
     targetDate: dateValue(targetDate),
   });
   const [instructions, setInstructions] = useState(initialInstructions ?? '');
+  const [instructionsEdited, setInstructionsEdited] = useState(false);
   const [teamIds, setTeamIds] = useState<readonly string[]>(selectedTeamIds);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +90,7 @@ export function ProjectSettingsForm({
         body: {
           name: draft.name,
           summary: draft.summary,
-          instructions: instructions.trim(),
+          ...(instructionsEdited ? { instructions: instructions.trim() } : {}),
           status: draft.status,
           health: draft.health,
           startDate: draft.startDate.length === 0 ? null : draft.startDate,
@@ -97,6 +98,7 @@ export function ProjectSettingsForm({
           teamIds: [...teamIds],
         },
       });
+      setInstructionsEdited(false);
       invalidateBootstrap(client);
       toast({ title: 'Project updated', tone: 'success' });
       router.refresh();
@@ -160,12 +162,15 @@ export function ProjectSettingsForm({
         <Textarea
           id="project-instructions-field"
           value={instructions}
-          disabled={!canManage}
+          disabled={!canManage || pending}
           data-testid="project-instructions"
           maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
           rows={5}
           placeholder="Conventions and guidance for connected agents working on this project."
-          onChange={(event) => setInstructions(event.target.value)}
+          onChange={(event) => {
+            setInstructions(event.target.value);
+            setInstructionsEdited(true);
+          }}
         />
         <span className="text-faint text-xs">
           {instructions.length} / {AGENT_INSTRUCTIONS_MAX_LENGTH} characters

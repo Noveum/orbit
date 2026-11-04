@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { createProject, updateOrganization } from '@orbit/core';
+import {
+  bindAgentMcpCredential,
+  createProject,
+  prepareAgentMcpGrant,
+  updateOrganization,
+} from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import type { IssueActor } from '@orbit/shared/validators';
 import {
@@ -344,19 +349,58 @@ describe('issues', () => {
     expect(humanFetched['instructions']).toBeUndefined();
     expect((humanFetched['issue'] as Record<string, unknown>)['instructions']).toBeUndefined();
 
-    const agentMember = await addMember(workspace, 'member', 'Agent Bot', true);
-    const agentClient = await connect(
-      await mintToken(workspace.organizationId, agentMember.user.id, 'Agent client'),
-    );
+    const previousGate = process.env['ORBIT_AGENT_MCP'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
     try {
-      const agentFetched = await agentClient.result('get_issue', {
-        issue: issueCreated.identifier,
+      const clientId = crypto.randomUUID();
+      const accessToken = crypto.randomUUID();
+      await db.insert(schema.oauthApplication).values({
+        id: crypto.randomUUID(),
+        clientId,
+        name: 'Guidance client',
+        redirectUrls: 'https://example.test/callback',
+        type: 'public',
       });
-      const expected = `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}\n\n## Project\n\n${projectGuidance}`;
-      expect(agentFetched['instructions']).toBe(expected);
-      expect((agentFetched['issue'] as Record<string, unknown>)['instructions']).toBe(expected);
+      const grantId = await db.transaction((tx) =>
+        prepareAgentMcpGrant(
+          tx,
+          {
+            userId: workspace.admin.userId,
+            organizationId: workspace.organizationId,
+            clientId,
+            scopes: 'orbit.read',
+          },
+          { name: 'Guidance reader' },
+          new Date(),
+        ),
+      );
+      await db.insert(schema.oauthAccessToken).values({
+        id: crypto.randomUUID(),
+        accessToken,
+        refreshToken: crypto.randomUUID(),
+        clientId,
+        userId: workspace.admin.userId,
+        scopes: 'orbit.read',
+        mcpGrantId: grantId,
+        accessTokenExpiresAt: new Date(Date.now() + 60_000),
+        refreshTokenExpiresAt: new Date(Date.now() + 120_000),
+      });
+      const secret = process.env['BETTER_AUTH_SECRET'];
+      if (secret === undefined) throw new Error('Missing test credential secret.');
+      const agentClient = await connect(bindAgentMcpCredential(accessToken, grantId, secret));
+      try {
+        const agentFetched = await agentClient.result('get_issue', {
+          issue: issueCreated.identifier,
+        });
+        const expected = `## Workspace\n\n${wsGuidance}\n\n## Team\n\n${teamGuidance}\n\n## Project\n\n${projectGuidance}`;
+        expect(agentFetched['instructions']).toBe(expected);
+        expect((agentFetched['issue'] as Record<string, unknown>)['instructions']).toBe(expected);
+      } finally {
+        await agentClient.close();
+      }
     } finally {
-      await agentClient.close();
+      if (previousGate === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previousGate;
     }
   });
 
