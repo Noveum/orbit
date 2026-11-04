@@ -130,15 +130,15 @@ function stubFetch(): void {
   }) as unknown as typeof fetch;
 }
 
-const realWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
-const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+const realWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
 
 beforeAll(() => {
-  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
     configurable: true,
     get: () => 900,
   });
-  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
     configurable: true,
     get: () => 600,
   });
@@ -146,10 +146,10 @@ beforeAll(() => {
 
 afterAll(() => {
   if (realWidth !== undefined) {
-    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', realWidth);
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', realWidth);
   }
   if (realHeight !== undefined) {
-    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', realHeight);
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', realHeight);
   }
 });
 
