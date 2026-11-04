@@ -5,6 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
+import { renderToString } from 'react-dom/server';
 import { ToastProvider } from '@/components/ui/toast.tsx';
 import type { WorkspaceData } from '@/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '@/features/issues/workspace-provider.tsx';
@@ -139,6 +140,31 @@ beforeEach(() => {
 });
 
 describe('filter chips', () => {
+  it('keeps server-rendered filter controls disabled until shortcuts are ready', () => {
+    const html = renderToString(
+      <Providers>
+        <FilterBar
+          teamId="team-1"
+          teamName="Engineering"
+          layout="list"
+          config={defaultViewConfig('list')}
+          onChange={onChange}
+          controls={controls}
+        />
+      </Providers>,
+    );
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    expect(container.querySelector('[data-testid="filter-bar"]')?.hasAttribute('disabled')).toBe(
+      true,
+    );
+    expect(container.querySelector('[data-testid="filter-bar"]')?.getAttribute('aria-busy')).toBe(
+      'true',
+    );
+    renderBar();
+    expect(screen.getByTestId('add-filter')).toBeEnabled();
+  });
+
   it('describes each condition and names its controls', () => {
     renderBar([inCondition('assignee', ['user-2']), inCondition('priority', ['1', '2'], true)]);
 

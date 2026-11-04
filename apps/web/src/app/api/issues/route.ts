@@ -9,7 +9,10 @@ export async function GET(request: Request): Promise<Response> {
   return await handle(async (principal) => {
     const filter = listSchema.parse(searchParamsOf(request));
     const page = await listIssues(principal, filter);
-    return { issues: await attachIssueDecorations(page.issues), nextCursor: page.nextCursor };
+    return {
+      issues: await attachIssueDecorations(page.issues, principal.organizationId),
+      nextCursor: page.nextCursor,
+    };
   });
 }
 
@@ -18,7 +21,7 @@ export async function POST(request: Request): Promise<Response> {
   return await handle(async (principal) => {
     const created = await createIssue(principal, body);
     await publish(created.actions);
-    const [issue] = await attachIssueDecorations([created.issue]);
+    const [issue] = await attachIssueDecorations([created.issue], principal.organizationId);
     return { issue };
   });
 }
