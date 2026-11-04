@@ -87,10 +87,15 @@ apply `0035` and deploy stage 3b. Follow
 this sequence before merging schema-dependent code into a deployment branch.
 ## Stage 3b writer quiescence and retired deployments
 
-Before dropping the global index, pause consent finalization, token exchange,
-refresh, grant reauthorization, disconnect and MCP endpoints at every reachable
-entry point. This pause includes cached authorization pages and direct requests
-to deployment URLs, not only the production domain. Keep both Agent gates off.
+Before dropping the global index, exclude retired runtimes from consent
+finalization, token exchange, refresh, grant reauthorization, disconnect and MCP
+requests at every reachable entry point. Include cached authorization pages and
+direct deployment URLs, not only the production domain. Keep both Agent gates off.
+Verified canonical stage 3a or newer writers may continue serving traffic: their
+partial-index upsert and exact grant/token revocation remain safe before, during
+and after the transactional global-index drop. Database locks serialize the DDL
+with active compatible grant transactions. Concurrent runtime rehearsal must
+cover writes overlapping the actual migration and subsequent Agent grants.
 Record the maximum request duration of every retired runtime, wait for that
 bound plus the platform termination margin, and verify no retired instance has
 an in-flight OAuth/grant writer or database transaction. The migration release
@@ -105,12 +110,15 @@ credential cannot still invoke an old writer. Verify deny-access behavior for
 old consent/token/refresh and MCP URLs and record the result. Retain a prebuilt
 compatibility rollback artifact instead of relying on a runnable older build.
 
-With old writers excluded and new writers quiescent, release only the stage 3b
-schema checkout, verify the global index is absent and the partial legacy index
-remains, then deploy the matching stage 3b runtime and smoke legacy consent,
-refresh, read/write scopes and exact disconnect. Resume OAuth endpoints only
-when all reachable writers meet the compatibility floor. If quiescence, routing
-or retired-runtime exclusion cannot be proven, stop before the stage 3b migration.
+With retired writers excluded and drained, release only the stage 3b schema
+checkout. Verify the global index is absent and the partial legacy index remains,
+then deploy the matching stage 3b runtime and smoke legacy consent, refresh,
+read/write scopes and exact disconnect. A global outage is not required when
+canonical traffic is proven to reach compatible writers. If routing cannot
+separate retired runtimes, briefly pause the affected OAuth/MCP entry points and
+drain all earlier requests before release; resume only compatible instances.
+If retired-runtime exclusion or request draining cannot be proven, stop before
+the stage 3b migration.
 
 Before its migration, confirm all web and MCP instances run stage 3a or later,
 including instances which serve consent, token exchange and refresh. Keep
