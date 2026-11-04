@@ -8,6 +8,7 @@ import { releaseDatabase } from '@orbit/db/migration-release';
 import * as schema from '@orbit/db/schema';
 import { CURRENT_BACKUP_FORMAT_VERSION, validationFailed } from '@orbit/shared';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
+import postgres from 'postgres';
 import { verifyBackupCompatibility } from './compatibility.ts';
 import { createBackup } from './create.ts';
 import { restoreBackup } from './restore.ts';
@@ -29,10 +30,34 @@ export async function runScenarioFreshInstall(
 ): Promise<UpgradeScenarioResult> {
   const start = performance.now();
   const folder = defaultMigrationsFolder(migrationsFolder);
+  const maintenanceUrl = new URL(databaseUrl);
+  maintenanceUrl.pathname = '/postgres';
+  const admin = postgres(maintenanceUrl.toString(), { max: 1, prepare: false, connect_timeout: 5 });
+  const databaseName = `orbit_matrix_fresh_${randomBytes(12).toString('hex')}`;
+  const freshUrl = new URL(databaseUrl);
+  freshUrl.pathname = `/${databaseName}`;
+  let created = false;
 
   try {
-    await releaseDatabase(databaseUrl, folder);
-    const driftOk = await checkCatalogDriftSafe(databaseUrl);
+    await admin`create database ${admin(databaseName)} template template0`;
+    created = true;
+    const fresh = postgres(freshUrl.toString(), { max: 1, prepare: false });
+    let startedEmpty = false;
+    try {
+      const [row] = await fresh<{ count: number }[]>`
+        select count(*)::int as count from information_schema.tables
+        where table_schema not in ('pg_catalog', 'information_schema')
+      `;
+      startedEmpty = row?.count === 0;
+    } finally {
+      await fresh.end();
+    }
+    if (!startedEmpty) throw validationFailed('Fresh install database was not empty.');
+    const release = await releaseDatabase(freshUrl.toString(), folder);
+    if (release.mode !== 'migrated' || release.applied === 0 || release.applied !== release.total) {
+      throw validationFailed('Fresh install did not apply every committed migration.');
+    }
+    const driftOk = await checkCatalogDriftSafe(freshUrl.toString());
     if (!driftOk) {
       throw validationFailed(
         'Fresh install catalog drift check detected missing or incompatible schema.',
@@ -44,7 +69,12 @@ export async function runScenarioFreshInstall(
       name: 'Scenario 1: Fresh Installation',
       passed: true,
       durationMs: Math.round(performance.now() - start),
-      details: { driftOk },
+      details: {
+        driftOk,
+        startedEmpty,
+        appliedMigrations: release.applied,
+        totalMigrations: release.total,
+      },
     };
   } catch (error) {
     return {
@@ -54,6 +84,12 @@ export async function runScenarioFreshInstall(
       durationMs: Math.round(performance.now() - start),
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    try {
+      if (created) await admin`drop database ${admin(databaseName)} with (force)`;
+    } finally {
+      await admin.end();
+    }
   }
 }
 

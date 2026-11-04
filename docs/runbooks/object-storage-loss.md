@@ -34,11 +34,13 @@ disposable database to receive the dump portion while S3 uploads are reconciled 
 # Create temporary disposable database:
 createdb -h localhost -p 5432 -U orbit orbit_disposable_restore
 
-# Configure DIRECT_URL (or DATABASE_URL with DIRECT_URL unset) for the disposable target:
-export DIRECT_URL="postgres://orbit:secret@localhost:5432/orbit_disposable_restore"
+# Preserve the direct connection URL for the live database:
+export LIVE_DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}"
+export DISPOSABLE_DIRECT_URL="postgres://orbit:secret@localhost:5432/orbit_disposable_restore"
 
 # Restore objects into the clean bucket:
 bun run backup:restore /var/backups/orbit/latest \
+  --database-url="$DISPOSABLE_DIRECT_URL" \
   --confirm-destructive-restore-target="localhost:5432/db/orbit_disposable_restore#bucket:$S3_BUCKET" \
   --encryption-key-file=/etc/orbit/master.key \
   --json
@@ -52,22 +54,16 @@ backup manifest, and re-uploads it into the target bucket under its original sto
 
 ## Step 3: Validate storage referential integrity
 
-Run the Orbit validator to ensure that every attachment row in PostgreSQL corresponds
-to a readable object in S3 with the expected byte length:
+Run the Orbit validator against the live database to check its migration ledger and
+relational references. The restore operation has already checked each archived object's
+digest and uploaded bytes. Verify downloads in the next step, including attachments
+created after the selected backup, which require a newer backup or provider recovery:
 
 ```bash
-bun run backup:validate --json
+bun run backup:validate --database-url="$LIVE_DIRECT_URL" --json
 ```
 
-Verify that the output contains:
-```json
-"storageCheck": {
-  "checkedObjects": 142,
-  "missingObjects": 0,
-  "sizeMismatches": 0,
-  "errors": []
-}
-```
+Verify that `validation.valid` is `true` and `validation.errors` is empty.
 
 ## Step 4: Verify end-user downloads
 

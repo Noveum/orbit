@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 export interface ParsedDrillArgs {
   readonly databaseUrl?: string | undefined;
   readonly confirmDestructive?: string | undefined;
+  readonly confirmRedisTarget?: string | undefined;
   readonly destination?: string | undefined;
   readonly redisUrl?: string | undefined;
   readonly skipRedis: boolean;
@@ -67,6 +68,8 @@ export function parseDrillArgs(argv: readonly string[]): ParsedDrillArgs {
       flags.get('--confirm-destructive') ??
       flags.get('--confirm-destructive-restore-target') ??
       process.env['ORBIT_DRILL_CONFIRM_TARGET'],
+    confirmRedisTarget:
+      flags.get('--confirm-redis-target') ?? process.env['ORBIT_DRILL_CONFIRM_REDIS_TARGET'],
     destination: rawDest === undefined ? undefined : resolve(rawDest),
     redisUrl: flags.get('--redis-url') ?? process.env['ORBIT_DRILL_REDIS_URL'],
     skipRedis,
@@ -85,8 +88,10 @@ and verifies byte-for-byte attachment integrity and authorization boundaries.
 
 Options:
   --database-url=<url>       Target database connection URL (default: ORBIT_DRILL_DATABASE_URL)
+  --confirm-destructive=<identity> Confirm the exact database and bucket target to restore
   --destination=<path>       Backup destination directory (default: system temporary directory)
   --redis-url=<url>          Redis URL for empty start verification (default: ORBIT_DRILL_REDIS_URL)
+  --confirm-redis-target=<identity> Confirm the exact Redis protocol, host, port, and database to flush
   --skip-redis               Skip Redis empty start pub/sub verification
   --clean                    Clean destination directory after drill finishes
   --json                     Emit machine-readable JSON result
@@ -187,6 +192,7 @@ async function main(): Promise<void> {
     const result = await runRecoveryDrill({
       databaseUrl,
       confirmDestructiveTarget: confirmDestructive,
+      confirmRedisTarget: args.confirmRedisTarget,
       destinationDir: args.destination,
       encryptionKey: process.env['ORBIT_BACKUP_ENCRYPTION_KEY'],
       redisUrl: args.redisUrl,

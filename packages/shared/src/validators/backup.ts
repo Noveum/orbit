@@ -148,6 +148,22 @@ export const restoreTargetIdentitySchema = z.object({
 
 export type RestoreTargetIdentity = z.infer<typeof restoreTargetIdentitySchema>;
 
+export const redisDrillUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    const database = url.pathname.replace(/^\//, '');
+    return (
+      (url.protocol === 'redis:' || url.protocol === 'rediss:') &&
+      url.hostname.length > 0 &&
+      url.search.length === 0 &&
+      url.hash.length === 0 &&
+      /^\d*$/.test(database) &&
+      Number.isSafeInteger(Number(database))
+    );
+  }, 'A Redis drill URL must identify an explicit host, port, and database without query options.');
+
 export function computeRestoreTargetIdentity(
   databaseUrl: string,
   bucket?: string | undefined,

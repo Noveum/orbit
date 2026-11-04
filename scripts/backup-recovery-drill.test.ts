@@ -17,6 +17,7 @@ describe('recovery drill CLI args', () => {
       '--destination=/var/backups/drill',
       '--database-url=postgres://user:pass@localhost:5432/drill_db',
       '--redis-url=redis://localhost:6380',
+      '--confirm-redis-target=redis://localhost:6380/db/0',
       '--skip-redis',
       '--clean',
       '--json',
@@ -25,6 +26,7 @@ describe('recovery drill CLI args', () => {
     expect(args.destination).toContain('drill');
     expect(args.databaseUrl).toBe('postgres://user:pass@localhost:5432/drill_db');
     expect(args.redisUrl).toBe('redis://localhost:6380');
+    expect(args.confirmRedisTarget).toBe('redis://localhost:6380/db/0');
     expect(args.skipRedis).toBe(true);
     expect(args.cleanDestination).toBe(true);
     expect(args.json).toBe(true);

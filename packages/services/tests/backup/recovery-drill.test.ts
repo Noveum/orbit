@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
-import type postgres from 'postgres';
+import { computeRestoreTargetIdentity } from '@orbit/shared';
+import postgres from 'postgres';
 import {
+  computeDrillRedisTargetIdentity,
   runRecoveryDrill,
+  seedDrillRepresentativeData,
   verifyDrillRepresentativeData,
 } from '../../src/backup/recovery-drill.ts';
 import type { RecoveryDrillRepresentativeData } from '../../src/backup/types.ts';
@@ -64,6 +67,98 @@ function createMockDriver(files: Map<string, Uint8Array>): StorageDriver {
 }
 
 describe('recovery drill verification', () => {
+  for (const table of [
+    'account',
+    'session',
+    'team_member',
+    'expired session',
+    'revived session',
+    'changed account',
+    'unexpected team member',
+  ] as const) {
+    it(`rejects restored data with invalid ${table} records`, async () => {
+      const databaseUrl = process.env['DATABASE_URL'];
+      if (databaseUrl === undefined || !new URL(databaseUrl).pathname.includes('test')) {
+        throw new Error('An isolated test database is required.');
+      }
+      const sql = postgres(databaseUrl, { max: 1, prepare: false });
+      const rollback = new Error('Roll back representative fixture');
+      try {
+        await sql.begin(async (tx) => {
+          const driver = createMockDriver(new Map());
+          const connection = tx as unknown as postgres.Sql;
+          const data = await seedDrillRepresentativeData(connection, driver);
+          const before = await verifyDrillRepresentativeData(connection, driver, data);
+          expect(before).toEqual({ valid: true, errors: [] });
+          if (table === 'team_member') {
+            await tx`delete from public.team_member where team_id = ${data.teamId}`;
+          } else if (table === 'expired session') {
+            await tx`update public.session set expires_at = ${new Date(0)} where user_id = ${data.memberUserId}`;
+          } else if (table === 'revived session') {
+            await tx`update public.session set expires_at = ${new Date(Date.now() + 86400000)} where user_id = ${data.revokedUserId}`;
+          } else if (table === 'changed account') {
+            await tx`update public.account set account_id = 'different-account' where user_id = ${data.memberUserId}`;
+          } else if (table === 'unexpected team member') {
+            await tx`insert into public.team_member (id, team_id, user_id) values ('unexpected-membership', ${data.teamId}, ${data.revokedUserId})`;
+          } else {
+            await tx`delete from ${tx(table)} where user_id in (${data.adminUserId}, ${data.memberUserId}, ${data.revokedUserId})`;
+          }
+          const result = await verifyDrillRepresentativeData(connection, driver, data);
+          expect(result.valid).toBe(false);
+          let entity = 'team member';
+          if (table.includes('session')) entity = 'session';
+          if (table.includes('account')) entity = 'account';
+          expect(result.errors.some((error) => error.toLowerCase().includes(entity))).toBe(true);
+          throw rollback;
+        });
+      } catch (error) {
+        if (error !== rollback) throw error;
+      } finally {
+        await sql.end();
+      }
+    });
+  }
+
+  it('refuses an unconfirmed Redis endpoint before opening any destructive connection', async () => {
+    const databaseUrl = 'postgres://127.0.0.1:1/isolated_drill';
+    await expect(
+      runRecoveryDrill({
+        databaseUrl,
+        confirmDestructiveTarget: computeRestoreTargetIdentity(
+          databaseUrl,
+          process.env['S3_BUCKET'],
+        ).identity,
+        redisUrl: 'redis://unconfirmed.example.test:6379/4',
+      }),
+    ).rejects.toThrow('confirmRedisTarget');
+  });
+
+  it('refuses a changed Redis target even when the database confirmation matches', async () => {
+    const databaseUrl = 'postgres://127.0.0.1:1/isolated_drill';
+    await expect(
+      runRecoveryDrill({
+        databaseUrl,
+        confirmDestructiveTarget: computeRestoreTargetIdentity(
+          databaseUrl,
+          process.env['S3_BUCKET'],
+        ).identity,
+        redisUrl: 'rediss://different.example.test:6380/4',
+        confirmRedisTarget: 'rediss://confirmed.example.test:6380/db/4',
+      }),
+    ).rejects.toThrow('confirmRedisTarget');
+  });
+
+  it('normalizes the Redis confirmation without exposing credentials', () => {
+    expect(computeDrillRedisTargetIdentity('redis://user:secret@LOCALHOST/004')).toBe(
+      'redis://localhost:6379/db/4',
+    );
+    expect(computeDrillRedisTargetIdentity('rediss://localhost:6380')).toBe(
+      'rediss://localhost:6380/db/0',
+    );
+    expect(() => computeDrillRedisTargetIdentity('redis://localhost/0?db=4')).toThrow();
+    expect(() => computeDrillRedisTargetIdentity('https://localhost/0')).toThrow();
+  });
+
   it('passes verification when all entities, grants, and attachments match', async () => {
     const attachmentContent = Buffer.from('hello attachment test', 'utf8');
     const attachmentHash = createHash('sha256').update(attachmentContent).digest('hex');
@@ -102,6 +197,24 @@ describe('recovery drill verification', () => {
         (acc, str, i) => acc + str + (args[i] === undefined ? '' : String(args[i])),
         '',
       );
+      if (query.includes('from public.account')) {
+        return Promise.resolve([{ account_id: args[0], provider_id: 'credential' }]);
+      }
+      if (query.includes('from public.session')) {
+        const token = String(args[0]);
+        let user = 'usr_member';
+        if (token.includes('admin')) user = 'usr_admin';
+        if (token.includes('revoked')) user = 'usr_revoked';
+        return Promise.resolve([
+          {
+            user_id: user,
+            expires_at: new Date(Date.now() + (token.includes('revoked') ? -86400000 : 86400000)),
+          },
+        ]);
+      }
+      if (query.includes('from public.team_member')) {
+        return Promise.resolve(args[0] === 'usr_revoked' ? [] : [{ team_id: 'team_1' }]);
+      }
       if (query.includes('from public.organization')) {
         return Promise.resolve([{ id: 'org_1' }]);
       }

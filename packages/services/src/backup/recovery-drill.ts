@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { computeRestoreTargetIdentity, validationFailed } from '@orbit/shared';
+import { computeRestoreTargetIdentity, redisDrillUrlSchema, validationFailed } from '@orbit/shared';
+import { can, isInTeam, policyRole } from '@orbit/shared/policy';
 import Redis from 'ioredis';
 import postgres from 'postgres';
 import { storageDriver } from '../storage/index.ts';
@@ -18,6 +19,22 @@ import type {
 } from './types.ts';
 
 const REDIS_DELTA_CHANNEL = 'orbit:delta';
+
+export function computeDrillRedisTargetIdentity(redisUrl: string): string {
+  const url = new URL(redisDrillUrlSchema.parse(redisUrl));
+  const database = Number(url.pathname.replace(/^\//, ''));
+  return `${url.protocol}//${url.hostname.toLowerCase()}:${url.port || '6379'}/db/${database}`;
+}
+
+function assertRedisTargetConfirmed(options: RecoveryDrillOptions): void {
+  if (options.redisUrl === undefined || options.skipRedisCheck === true) return;
+  const redisTarget = computeDrillRedisTargetIdentity(options.redisUrl);
+  if (options.confirmRedisTarget !== redisTarget) {
+    throw validationFailed(
+      `Recovery drill refused: confirmRedisTarget must match "${redisTarget}". Pass --confirm-redis-target=${redisTarget}.`,
+    );
+  }
+}
 
 function sha256Buffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
@@ -311,6 +328,62 @@ async function verifyAttachmentRows(
   }
 }
 
+async function verifyAuthenticationRows(
+  sql: postgres.Sql,
+  expected: RecoveryDrillRepresentativeData,
+  errors: string[],
+): Promise<void> {
+  const suffix = expected.organizationId.replace(/^drill-org-/, '');
+  const users = [
+    { id: expected.adminUserId, token: `tok-admin-${suffix}`, active: true, role: 'admin' },
+    { id: expected.memberUserId, token: `tok-member-${suffix}`, active: true, role: 'member' },
+    { id: expected.revokedUserId, token: `tok-revoked-${suffix}`, active: false, role: null },
+  ];
+  for (const user of users) {
+    const [account] = await sql<{ account_id: string; provider_id: string }[]>`
+      select account_id, provider_id from public.account
+      where user_id = ${user.id} and provider_id = 'credential'
+    `;
+    if (account?.account_id !== user.id || account.provider_id !== 'credential') {
+      errors.push(`Account for ${user.id} was not restored correctly.`);
+    }
+    const [session] = await sql<{ user_id: string; expires_at: Date }[]>`
+      select user_id, expires_at from public.session where token = ${user.token}
+    `;
+    if (session?.user_id !== user.id || session.expires_at.getTime() > Date.now() !== user.active) {
+      errors.push(`Session for ${user.id} was not restored with its expected expiry and owner.`);
+    }
+    const memberships = await sql<{ team_id: string }[]>`
+      select team_id from public.team_member
+      where user_id = ${user.id} and team_id = ${expected.teamId}
+    `;
+    const [member] = await sql<{ role: string }[]>`
+      select role from public.member
+      where user_id = ${user.id} and organization_id = ${expected.organizationId}
+    `;
+    const principal = {
+      userId: user.id,
+      organizationId: expected.organizationId,
+      role: policyRole(member?.role ?? 'guest'),
+      teamIds: memberships.map((membership) => membership.team_id),
+    };
+    const permitted =
+      member !== undefined &&
+      can(principal, 'issue:read') &&
+      isInTeam(principal, {
+        id: expected.teamId,
+        organizationId: expected.organizationId,
+      });
+    if (
+      memberships.length !== (user.active ? 1 : 0) ||
+      permitted !== user.active ||
+      (member?.role ?? null) !== user.role
+    ) {
+      errors.push(`Team member access for ${user.id} was not restored correctly.`);
+    }
+  }
+}
+
 export async function verifyDrillRepresentativeData(
   sql: postgres.Sql,
   driver: StorageDriver,
@@ -318,6 +391,7 @@ export async function verifyDrillRepresentativeData(
 ): Promise<{ valid: boolean; errors: string[] }> {
   const errors: string[] = [];
   await verifyEntityRows(sql, expected, errors);
+  await verifyAuthenticationRows(sql, expected, errors);
   await verifyAttachmentRows(driver, expected.attachments, errors);
 
   return {
@@ -456,8 +530,7 @@ async function wipeDatabaseAndStorage(
   data: RecoveryDrillRepresentativeData,
   redisUrl: string | undefined,
   skipRedisCheck: boolean | undefined,
-  confirmDestructiveTarget: string | undefined,
-  targetIdentity: string,
+  confirmRedisTarget: string | undefined,
 ): Promise<void> {
   const deletes = [
     sql`delete from public.mcp_grant where id in (${data.activeGrantId}, ${data.revokedGrantId})`,
@@ -496,7 +569,7 @@ async function wipeDatabaseAndStorage(
   }
 
   if (redisUrl !== undefined && redisUrl.length > 0 && skipRedisCheck !== true) {
-    if (confirmDestructiveTarget !== targetIdentity) {
+    if (confirmRedisTarget !== computeDrillRedisTargetIdentity(redisUrl)) {
       throw validationFailed('Destructive Redis flush refused without confirmed target.');
     }
     const redis = new Redis(redisUrl, {
@@ -549,6 +622,8 @@ export async function runRecoveryDrill(
     );
   }
 
+  assertRedisTargetConfirmed(options);
+
   const driver = options.storageDriver ?? storageDriver();
   const sql = postgres(databaseUrl, {
     max: 2,
@@ -591,8 +666,7 @@ export async function runRecoveryDrill(
       representativeData,
       options.redisUrl,
       options.skipRedisCheck,
-      options.confirmDestructiveTarget,
-      target.identity,
+      options.confirmRedisTarget,
     );
 
     const restoreStart = performance.now();

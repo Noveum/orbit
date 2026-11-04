@@ -475,6 +475,7 @@ export ORBIT_DRILL_REDIS_URL="redis://disposable-host:6379"
 
 bun run backup:recovery-drill \
   --confirm-destructive="disposable-host:5432/db/orbit_drill#bucket:orbit-drill-uploads" \
+  --confirm-redis-target="redis://disposable-host:6379/db/0" \
   --json
 
 # Run upgrade matrix:
@@ -485,6 +486,12 @@ The recovery drill seeds representative application state (users, organizations,
 teams, issues, comments, docs, MCP grants, and uploaded attachments), captures an
 encrypted snapshot, wipes the target environment and Redis, restores the snapshot,
 and asserts byte-for-byte attachment integrity and authorization boundaries.
+
+Redis confirmation includes its protocol, host, port, and database independently of the
+database and bucket confirmation. Query options are refused for Redis drill URLs; specify
+the database in the URL path. The fresh-install matrix scenario creates and removes its
+own empty database on the supplied PostgreSQL server, so its role needs database creation
+permission. It checks that every committed migration actually ran before checking drift.
 
 ##### Format version policy and upgrade window
 

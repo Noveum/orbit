@@ -150,6 +150,7 @@ export interface RecoveryDrillMetrics {
 export interface RecoveryDrillOptions {
   readonly databaseUrl: string;
   readonly confirmDestructiveTarget?: string | undefined;
+  readonly confirmRedisTarget?: string | undefined;
   readonly destinationDir?: string | undefined;
   readonly encryptionKey?: string | undefined;
   readonly redisUrl?: string | undefined;

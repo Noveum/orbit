@@ -105,6 +105,7 @@ jobs:
           bun run backup:recovery-drill \
             --database-url="$DATABASE_URL" \
             --redis-url="$REDIS_URL" \
+            --confirm-redis-target="redis://localhost:6380/db/0" \
             --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
             --json | tee artifacts/recovery-drill-report.json
       - name: Execute automated upgrade matrix
