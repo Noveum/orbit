@@ -1,5 +1,5 @@
 import { and, type Database, db, eq, schema, type Transaction } from '@orbit/db';
-import { forbidden, unauthorized } from '@orbit/shared/errors';
+import { conflict, forbidden, unauthorized } from '@orbit/shared/errors';
 import type { Actor } from '@orbit/shared/events';
 import { assertAgentIssueWrite, type Permission, type Principal } from '@orbit/shared/policy';
 import { principalActor } from '../activity/activity-service.ts';
@@ -9,7 +9,7 @@ import {
   type McpAccessContext,
   verifyMcpTokenBinding,
 } from '../auth/mcp-token.ts';
-import type { Executor } from '../internal.ts';
+import { type Executor, requireRow } from '../internal.ts';
 import { lockNotificationPolicyRead } from '../notifications/access-sync.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
 
@@ -59,6 +59,15 @@ export async function issueWriteTransaction<T>(
 ): Promise<T> {
   return await database.transaction(async (tx) => {
     await lockNotificationPolicyRead(tx, principal.organizationId);
+    const [organization] = await tx
+      .select({ deletionRequestedAt: schema.organization.deletionRequestedAt })
+      .from(schema.organization)
+      .where(eq(schema.organization.id, principal.organizationId))
+      .limit(1)
+      .for('share');
+    if (requireRow(organization, 'That workspace does not exist.').deletionRequestedAt !== null) {
+      throw conflict('Workspace deletion is in progress.');
+    }
     if (context === undefined) return work(tx, principal);
     if (!(isAgentIssueWriteEnabled() && context.scopes.split(/\s+/).includes('orbit.write'))) {
       throw forbidden('Agent Issue writing is not authorized.');
