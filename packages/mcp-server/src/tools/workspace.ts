@@ -15,6 +15,7 @@ import {
   updateProject,
 } from '@orbit/core';
 import type { Principal } from '@orbit/shared/policy';
+import { issueCommentUrl, issueUrl } from '@orbit/shared/utils';
 import { issueRefSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import { resolveCycle, resolveProject } from '../resolve.ts';
@@ -23,7 +24,11 @@ import { defineTool, publish } from './support.ts';
 const issueRef = issueRefSchema.describe('An issue identifier like "ENG-42", or an issue id.');
 const projectRef = z.string().min(1).describe('Project name, slug or id.');
 
-export function registerWorkspaceTools(server: McpServer, principal: Principal): void {
+export function registerWorkspaceTools(
+  server: McpServer,
+  principal: Principal,
+  appUrl: string,
+): void {
   defineTool(
     server,
     {
@@ -39,7 +44,13 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       const issue = await getIssue(principal, args.issue);
       const saved = await archiveIssue(principal, issue.id);
       await publish(saved.actions);
-      return { archived: { id: saved.issue.id, identifier: saved.issue.identifier } };
+      return {
+        archived: {
+          id: saved.issue.id,
+          identifier: saved.issue.identifier,
+          url: `${appUrl}${issueUrl(saved.issue.identifier)}`,
+        },
+      };
     },
   );
 
@@ -56,7 +67,13 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
       const issue = await getIssue(principal, args.issue);
       const saved = await unarchiveIssue(principal, issue.id);
       await publish(saved.actions);
-      return { restored: { id: saved.issue.id, identifier: saved.issue.identifier } };
+      return {
+        restored: {
+          id: saved.issue.id,
+          identifier: saved.issue.identifier,
+          url: `${appUrl}${issueUrl(saved.issue.identifier)}`,
+        },
+      };
     },
   );
 
@@ -95,7 +112,11 @@ export function registerWorkspaceTools(server: McpServer, principal: Principal):
     async (args) => {
       const saved = await updateComment(principal, args.commentId, { body: args.body });
       await publish(saved.actions);
-      return { comment: args.commentId };
+      const issue = await getIssue(principal, saved.comment.issueId);
+      return {
+        comment: args.commentId,
+        url: `${appUrl}${issueCommentUrl(issue.identifier, args.commentId)}`,
+      };
     },
   );
 

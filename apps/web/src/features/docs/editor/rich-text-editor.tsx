@@ -1,6 +1,6 @@
 'use client';
 
-import type { Editor } from '@tiptap/core';
+import type { Editor, JSONContent } from '@tiptap/core';
 import { DOMParser as ProseMirrorDOMParser } from '@tiptap/pm/model';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough } from 'lucide-react';
@@ -42,6 +42,7 @@ export interface EditorSelectionRange {
 
 export interface RichTextEditorProps {
   readonly value: string;
+  readonly initialDocument?: JSONContent | null;
   readonly onChange: (markdown: string) => void;
   readonly members?: readonly Member[];
   readonly placeholder?: string;
@@ -108,6 +109,7 @@ function emittedMarkdown(instance: Editor): string {
 
 export function RichTextEditor({
   value,
+  initialDocument,
   onChange,
   members = [],
   placeholder = 'Write. Press / for blocks and @ to mention.',
@@ -172,7 +174,7 @@ export function RichTextEditor({
   const blurred = useRef(onBlur);
   blurred.current = onBlur;
 
-  const [openedWith] = useState(() => editorHtmlFrom(value));
+  const [openedWith] = useState(() => initialDocument ?? editorHtmlFrom(value));
   const extensions = useMemo(() => editorExtensions(menuKeyRef, placeholder), [placeholder]);
 
   const editor = useEditor({

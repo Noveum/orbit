@@ -140,7 +140,7 @@ export default async function ProjectsPage({ searchParams }: ProjectsPageProps) 
                     </Link>
                   </td>
                   <td data-label="Health" className="px-3 py-2">
-                    <HealthChip health={project.health} />
+                    <HealthChip health={project.health} staleDays={project.staleDays} />
                   </td>
                   <td data-label="Lead" className="px-3 py-2">
                     {project.lead === null ? (

@@ -1,18 +1,12 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { serverEnv } from '@/lib/env.ts';
+import { OG_IMAGE } from '@/lib/page-metadata.ts';
 import { Providers } from './providers.tsx';
 import './globals.css';
 
 const DESCRIPTION =
   'Orbit is a free, realtime, keyboard-first task manager for teams: issues, boards, sprints, projects, and docs that sync instantly for everyone. No pricing, no paid tiers, ever.';
-
-const OG_IMAGE = {
-  url: '/og.png',
-  width: 2400,
-  height: 1260,
-  alt: 'Orbit: issue tracking at the speed of typing.',
-};
 
 export const metadata: Metadata = {
   metadataBase: new URL(serverEnv().NEXT_PUBLIC_APP_URL),

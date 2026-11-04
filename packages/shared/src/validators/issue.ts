@@ -63,6 +63,20 @@ export const issueExpectedPropertiesSchema = z
   })
   .strict();
 
+export const issueMoveExpectedSchema = issueExpectedPropertiesSchema
+  .pick({
+    stateId: true,
+    assigneeId: true,
+    priority: true,
+    projectId: true,
+    milestoneId: true,
+    cycleId: true,
+  })
+  .extend({
+    sortOrder: z.number().optional(),
+  })
+  .strict();
+
 export const issueUpdateSchema = z
   .object({
     title: titleSchema.optional(),
@@ -88,15 +102,37 @@ export const issueMoveSchema = z.object({
   teamId: idSchema.optional(),
   cycleId: idSchema.nullable().optional(),
   projectId: idSchema.nullable().optional(),
+  milestoneId: idSchema.nullable().optional(),
   assigneeId: idSchema.nullable().optional(),
   priority: prioritySchema.optional(),
   beforeId: idSchema.nullable().default(null),
   afterId: idSchema.nullable().default(null),
+  expected: issueMoveExpectedSchema.optional(),
 });
 
 export const issueBulkUpdateSchema = z.object({
   issueIds: z.array(idSchema).min(1).max(200),
   patch: issueUpdateSchema,
+});
+
+export const subIssueItemSchema = z.object({
+  title: titleSchema,
+  description: issueDescriptionSchema.default(''),
+  stateId: idSchema.optional(),
+  priority: prioritySchema.default(0),
+  assigneeId: idSchema.nullable().optional(),
+  reviewerIds: z.array(idSchema).max(ISSUE_REVIEWER_MAX_COUNT).default([]),
+  projectId: idSchema.nullable().optional(),
+  milestoneId: idSchema.nullable().optional(),
+  cycleId: idSchema.nullable().optional(),
+  estimate: z.number().int().min(0).max(100).nullable().default(null),
+  dueDate: calendarDateSchema.nullable().default(null),
+  labelIds: z.array(idSchema).max(50).default([]),
+});
+
+export const createSubIssuesSchema = z.object({
+  parentId: idSchema,
+  issues: z.array(subIssueItemSchema).min(1).max(50),
 });
 
 export const issueFilterSchema = z.object({
@@ -177,3 +213,4 @@ export type IssueSummaryQuery = z.infer<typeof issueSummaryQuerySchema>;
 export type DuplicateIssueQueryInput = z.infer<typeof duplicateIssueQuerySchema>;
 export type IssueExpectedProperties = z.infer<typeof issueExpectedPropertiesSchema>;
 export type IssueMarkDuplicateInput = z.infer<typeof issueMarkDuplicateSchema>;
+export type IssueMoveExpected = z.infer<typeof issueMoveExpectedSchema>;

@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly Orbit Backup Timer
+Documentation=https://github.com/Noveum/orbit
+Requires=orbit-backup.service
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

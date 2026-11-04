@@ -12,6 +12,11 @@ export interface BackupCreateOptions {
   readonly customMetadata?: Record<string, string> | undefined;
   readonly env?: Record<string, string | undefined> | undefined;
   readonly storageDriver?: StorageDriver | undefined;
+  readonly encrypt?: boolean | undefined;
+  readonly encryptionKey?: string | undefined;
+  readonly encryptionKeyFile?: string | undefined;
+  readonly encryptionCommand?: string | undefined;
+  readonly encryptionKeyId?: string | undefined;
 }
 
 export interface BackupCreateResult {
@@ -40,6 +45,8 @@ export interface StorageCaptureResult {
     readonly sha256: string;
     readonly bytes: number;
     readonly contentType: string;
+    readonly plaintextSha256?: string | undefined;
+    readonly plaintextBytes?: number | undefined;
   }[];
 }
 
@@ -63,6 +70,9 @@ export interface BackupRestoreOptions {
   readonly skipRedisCheck?: boolean | undefined;
   readonly redisUrl?: string | undefined;
   readonly lockMaxLifetime?: number | null | undefined;
+  readonly encryptionKey?: string | undefined;
+  readonly encryptionKeyFile?: string | undefined;
+  readonly encryptionCommand?: string | undefined;
 }
 
 export interface BackupRestoreResult {
@@ -78,6 +88,8 @@ export interface RestoreStorageObjectEntry {
   readonly sha256: string;
   readonly bytes: number;
   readonly contentType?: string | undefined;
+  readonly plaintextSha256?: string | undefined;
+  readonly plaintextBytes?: number | undefined;
 }
 
 export interface RestoreStorageOptions {
@@ -85,6 +97,7 @@ export interface RestoreStorageOptions {
   readonly expectedObjects: readonly RestoreStorageObjectEntry[];
   readonly driver: StorageDriver;
   readonly signal?: AbortSignal | undefined;
+  readonly decrypt?: ((data: Buffer) => Buffer) | undefined;
 }
 
 export interface RestoreStorageResult {

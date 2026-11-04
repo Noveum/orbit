@@ -8,7 +8,7 @@ import {
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
 } from '@orbit/shared/constants';
-import { conflict, notFound, validationFailed } from '@orbit/shared/errors';
+import { conflict, DomainError, notFound, validationFailed } from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import { UNSET_FILTER_VALUE } from '@orbit/shared/filters';
@@ -22,9 +22,11 @@ import {
   truncate,
 } from '@orbit/shared/utils';
 import {
+  createSubIssuesSchema,
   duplicateIssueQuerySchema,
   type IssueExpectedProperties,
   type IssueFilterInput,
+  type IssueMoveExpected,
   issueBulkUpdateSchema,
   issueCreateSchema,
   issueFilterSchema,
@@ -34,6 +36,7 @@ import {
   issueSummaryQuerySchema,
   issueUpdateSchema,
   paginationSchema,
+  type subIssueItemSchema,
 } from '@orbit/shared/validators';
 import { getTableColumns, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
@@ -77,7 +80,7 @@ export {
 
 export type IssueRelationRow = typeof schema.issueRelation.$inferSelect;
 
-type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId';
+type GroupedMoveField = 'cycleId' | 'assigneeId' | 'priority' | 'projectId' | 'milestoneId';
 
 export { visibleTeamFilters } from './issue-query.ts';
 export { REBALANCE_THRESHOLD };
@@ -190,6 +193,22 @@ async function allocateIssueNumber(executor: Executor, team: TeamRow): Promise<n
     .returning({ issueCounter: schema.team.issueCounter });
   if (row === undefined) throw notFound('That team does not exist.');
   return row.issueCounter;
+}
+
+async function allocateIssueNumbers(
+  executor: Executor,
+  team: TeamRow,
+  count: number,
+): Promise<number[]> {
+  const [row] = await executor
+    .update(schema.team)
+    .set({ issueCounter: sql`${schema.team.issueCounter} + ${count}` })
+    .where(and(eq(schema.team.id, team.id), eq(schema.team.organizationId, team.organizationId)))
+    .returning({ issueCounter: schema.team.issueCounter });
+  if (row === undefined) throw notFound('That team does not exist.');
+  const end = row.issueCounter;
+  const start = end - count + 1;
+  return Array.from({ length: count }, (_, index) => start + index);
 }
 
 async function topOfColumn(executor: Executor, teamId: string, stateId: string): Promise<number> {
@@ -931,6 +950,169 @@ export async function createIssue(principal: Principal, input: unknown): Promise
   });
 }
 
+interface SubIssueContext {
+  readonly tx: Executor;
+  readonly principal: Principal;
+  readonly team: TeamRow;
+  readonly parent: IssueRow;
+  readonly defaultState: Awaited<ReturnType<typeof initialStateFor>>;
+  readonly syncId: number;
+  readonly actor: Actor;
+  readonly now: Date;
+}
+
+async function insertSubIssue(
+  context: SubIssueContext,
+  item: z.infer<typeof subIssueItemSchema>,
+  number: number,
+): Promise<{ issue: IssueRow; actions: SyncAction[] }> {
+  const { tx, principal, team, parent, defaultState, syncId, actor, now } = context;
+  const state = item.stateId === undefined ? defaultState : await stateOf(tx, item.stateId);
+  if (state.teamId !== team.id) {
+    throw validationFailed('That status belongs to another team.');
+  }
+  const assigneeId = item.assigneeId === undefined ? principal.userId : item.assigneeId;
+  const reviewerIds = [...new Set(item.reviewerIds)].sort();
+  if (assigneeId !== null) {
+    await assertMemberOfWorkspace(tx, principal.organizationId, assigneeId);
+  }
+  await assertReviewersCanAccessTeam(tx, principal.organizationId, team.id, reviewerIds);
+  await assertAssignableToTeam(tx, principal.organizationId, team.id, {
+    cycleId: item.cycleId ?? null,
+    projectId: item.projectId ?? null,
+    milestoneId: item.milestoneId ?? null,
+  });
+  await assertLabelsUsable(tx, principal.organizationId, team.id, item.labelIds);
+
+  const id = newId();
+  const [created] = await tx
+    .insert(schema.issue)
+    .values({
+      id,
+      organizationId: principal.organizationId,
+      teamId: team.id,
+      number,
+      identifier: issueIdentifier(team.key, number),
+      title: item.title,
+      description: item.description,
+      stateId: state.id,
+      priority: item.priority,
+      creatorId: principal.userId,
+      assigneeId,
+      projectId: item.projectId ?? null,
+      milestoneId: item.milestoneId ?? null,
+      cycleId: item.cycleId ?? null,
+      parentId: parent.id,
+      estimate: item.estimate,
+      dueDate: toDateString(item.dueDate) ?? null,
+      sortOrder: await topOfColumn(tx, team.id, state.id),
+      ...stateTimestamps(state.category, now),
+      syncId,
+    })
+    .returning();
+  const issue = requireRow(created, 'The issue could not be created.');
+
+  await captureCreatedCycleMembership(tx, { issue, occurredAt: now });
+  await replaceLabels(tx, issue.id, item.labelIds);
+  await replaceReviewersFor(tx, [issue.id], reviewerIds);
+  await subscribeUsers(
+    tx,
+    issue.id,
+    [principal.userId, ...(assigneeId ? [assigneeId] : []), ...reviewerIds],
+    syncId,
+  );
+  await appendActivities(tx, [
+    {
+      organizationId: principal.organizationId,
+      issueId: issue.id,
+      actor,
+      field: 'created',
+      from: null,
+      to: { id: state.id, name: state.name },
+      syncId,
+    },
+  ]);
+
+  const notifications = await issueNotifications(tx, principal, actor, [
+    {
+      issue,
+      mentionHandles: newMentions('', issue.description),
+      assigneeId: issue.assigneeId,
+      statusName: null,
+    },
+  ]);
+
+  return {
+    issue,
+    actions: [
+      issueAction(issue, syncId, actor, 'insert', {
+        labelIds: item.labelIds,
+        reviewerIds,
+      }),
+      ...notifications,
+    ],
+  };
+}
+
+export async function createSubIssues(
+  principal: Principal,
+  input: unknown,
+): Promise<{ issues: IssueRow[]; actions: SyncAction[] }> {
+  assertCan(principal, 'issue:create');
+  const parsed = createSubIssuesSchema.parse(input);
+
+  const parent = await loadIssue(db, principal, parsed.parentId);
+  const allocationTeam = await requireTeam(principal, parent.teamId);
+  const numbers = await allocateIssueNumbers(db, allocationTeam, parsed.issues.length);
+
+  return await db.transaction(async (tx) => {
+    const team = await requireTeam(principal, parent.teamId, tx);
+    await assertParentAllowed(tx, principal, newId(), parent.id);
+
+    const defaultState = await initialStateFor(tx, team.id);
+    const syncId = await nextSyncId(tx);
+    const actor = await principalActor(tx, principal);
+    const now = new Date();
+    const context: SubIssueContext = {
+      tx,
+      principal,
+      team,
+      parent,
+      defaultState,
+      syncId,
+      actor,
+      now,
+    };
+
+    const createdIssues: IssueRow[] = [];
+    const allActions: SyncAction[] = [];
+
+    let index = 0;
+    for (const item of parsed.issues) {
+      const issueNumber = numbers[index];
+      index += 1;
+      if (issueNumber === undefined) {
+        throw validationFailed('Could not allocate issue number.');
+      }
+      try {
+        const created = await insertSubIssue(context, item, issueNumber);
+        createdIssues.push(created.issue);
+        allActions.push(...created.actions);
+      } catch (error) {
+        if (error instanceof DomainError) {
+          throw new DomainError(error.code, `Failed on item ${index}: ${error.message}`, {
+            cause: error,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        }
+        throw error;
+      }
+    }
+
+    return { issues: createdIssues, actions: allActions };
+  });
+}
+
 export interface UpdatedIssue {
   readonly issue: IssueRow;
   readonly changes: FieldChange[];
@@ -1368,6 +1550,7 @@ interface RegroupingInput {
   readonly assigneeId?: string | null | undefined;
   readonly priority?: number | undefined;
   readonly projectId?: string | null | undefined;
+  readonly milestoneId?: string | null | undefined;
 }
 
 function applyRegrouping(
@@ -1389,8 +1572,11 @@ function applyRegrouping(
   regroup('priority', parsed.priority);
   if (parsed.projectId !== undefined && parsed.projectId !== current.projectId) {
     regroup('projectId', parsed.projectId);
-    values.milestoneId = null;
+    if (parsed.milestoneId === undefined) {
+      values.milestoneId = null;
+    }
   }
+  regroup('milestoneId', parsed.milestoneId);
   return regrouped;
 }
 
@@ -1535,6 +1721,36 @@ async function landingOrder(
   return { sortOrder: sortOrderBetween(before, after), rebalanced };
 }
 
+function assertExpectedMoveState(current: IssueRow, expected: IssueMoveExpected): void {
+  if (expected.stateId !== undefined && expected.stateId !== current.stateId) {
+    throw conflict('Cannot undo: state was changed by another update.');
+  }
+
+  if (expected.sortOrder !== undefined && expected.sortOrder !== current.sortOrder) {
+    throw conflict('Cannot undo: position was changed by another update.');
+  }
+
+  if (expected.assigneeId !== undefined && expected.assigneeId !== current.assigneeId) {
+    throw conflict('Cannot undo: assignee was changed by another update.');
+  }
+
+  if (expected.projectId !== undefined && expected.projectId !== current.projectId) {
+    throw conflict('Cannot undo: project was changed by another update.');
+  }
+
+  if (expected.cycleId !== undefined && expected.cycleId !== current.cycleId) {
+    throw conflict('Cannot undo: cycle was changed by another update.');
+  }
+
+  if (expected.priority !== undefined && expected.priority !== current.priority) {
+    throw conflict('Cannot undo: priority was changed by another update.');
+  }
+
+  if (expected.milestoneId !== undefined && expected.milestoneId !== current.milestoneId) {
+    throw conflict('Cannot undo: milestone was changed by another update.');
+  }
+}
+
 export async function moveIssue(
   principal: Principal,
   issueId: string,
@@ -1545,6 +1761,9 @@ export async function moveIssue(
 
   return await db.transaction(async (tx) => {
     const current = await loadIssueForUpdate(tx, principal, issueId);
+    if (parsed.expected !== undefined) {
+      assertExpectedMoveState(current, parsed.expected);
+    }
 
     const team = await requireTeam(principal, parsed.teamId ?? current.teamId, tx);
     const teamId = team.id;
@@ -1586,10 +1805,17 @@ export async function moveIssue(
     const values = await moveValues(tx, current, team, state, landing, now);
 
     await assertMemberOfWorkspace(tx, principal.organizationId, parsed.assigneeId);
-    await assertAssignableToTeam(tx, principal.organizationId, teamId, {
-      cycleId: parsed.cycleId,
-      projectId: parsed.projectId,
-    });
+    await assertAssignableToTeam(
+      tx,
+      principal.organizationId,
+      teamId,
+      {
+        cycleId: parsed.cycleId,
+        projectId: parsed.projectId,
+        milestoneId: parsed.milestoneId,
+      },
+      values.projectId === undefined ? current.projectId : values.projectId,
+    );
 
     const regrouped = applyRegrouping(parsed, current, values);
 

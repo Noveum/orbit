@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { fireEvent, render, screen, waitFor } from '@/test/render.tsx';
 
 const passkey = mock(async () => ({ error: { message: 'The passkey prompt was dismissed.' } }));
@@ -33,10 +33,10 @@ function answerWith(replies: readonly Record<string, unknown>[]): string[] {
 }
 
 const originalFetch = globalThis.fetch;
-const assign = mock((_url: string) => undefined);
-Object.defineProperty(window, 'location', {
-  value: { ...window.location, assign },
-  writable: true,
+const assign = spyOn(window.location, 'assign').mockImplementation((_url: string) => undefined);
+
+afterAll(() => {
+  assign.mockRestore();
 });
 
 afterEach(() => {
