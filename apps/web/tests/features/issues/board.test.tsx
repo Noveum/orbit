@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { defaultDisplayOptions, emptyFilterGroup } from '@orbit/shared/filters';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { dehydrate, hydrate, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
   fireEvent,
@@ -24,7 +24,7 @@ import { HotkeyProvider } from '@/lib/keyboard/index.ts';
 import { boardSearch, groupColumnSearch, summarySearch } from '@/lib/query/issue-search.ts';
 import { queryKeys } from '@/lib/query/keys.ts';
 import type { BoardPage, Issue, WorkflowState } from '@/lib/query/schemas.ts';
-import { columnScopeKey, seedBoardColumns } from '@/lib/query/use-issues.ts';
+import { columnScopeKey, issuesQueryOptions, seedBoardColumns } from '@/lib/query/use-issues.ts';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
@@ -184,6 +184,7 @@ mock.module('@/features/issues/workspace-provider.tsx', () => ({
 const { Board, actorBoardGroups, boardVisibilityConfig, useBoardVisibilityHold } = await import(
   '@/features/issues/board.tsx'
 );
+const { TeamView } = await import('@/features/issues/team-view.tsx');
 
 describe('Board actor columns outside the base page', () => {
   function renderActorBoard(showSubIssues = true, truncated = false, legacy = false) {
@@ -681,7 +682,7 @@ describe('Board agent manual sorting', () => {
         </QueryClientProvider>,
       );
       try {
-        const card = screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' });
+        const card = await screen.findByRole('listitem', { name: 'ENG-1: Domain auto join' });
         if (input === 'keyboard') {
           card.focus();
           fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
@@ -899,6 +900,139 @@ function renderBoard(
     },
   };
 }
+
+describe('Team board pending first page', () => {
+  it.each(['success', 'failure'] as const)(
+    'retains keyboard drop feedback while the first list is canceled and the move ends in %s',
+    async (outcome) => {
+      installBoardTestRects();
+      const previousWorkspace = workspace;
+      const source = issue();
+      const moved = issue({ stateId: doing.id, syncId: 2 });
+      workspace = { ...workspace, seedIssues: [] };
+      const initialList = deferredResponse();
+      const pendingMove = deferredResponse();
+      const listSignals: (AbortSignal | null | undefined)[] = [];
+      let moveRequests = 0;
+      globalThis.fetch = mock((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost');
+        if (init?.method === 'POST') {
+          moveRequests += 1;
+          return pendingMove.promise;
+        }
+        if (url.pathname === '/api/issues/board')
+          return Promise.resolve(Response.json(boardPage([source])));
+        if (url.pathname === '/api/issues/summary')
+          return Promise.resolve(
+            Response.json({ total: 1, byState: {}, groupTotals: { [todo.id]: 1 } }),
+          );
+        if (url.pathname === '/api/issues/facets')
+          return Promise.resolve(Response.json({ scopeTotal: 1, facets: {} }));
+        if (url.pathname === '/api/views') return Promise.resolve(Response.json({ views: [] }));
+        if (url.pathname === '/api/issues') {
+          if (url.searchParams.has('stateId'))
+            return Promise.resolve(
+              Response.json({
+                issues: url.searchParams.get('stateId') === source.stateId ? [source] : [],
+                nextCursor: null,
+              }),
+            );
+          listSignals.push(init?.signal);
+          return listSignals.length === 1
+            ? initialList.promise
+            : Promise.resolve(
+                Response.json({
+                  issues: [outcome === 'success' ? moved : source],
+                  nextCursor: null,
+                }),
+              );
+        }
+        return Promise.resolve(Response.json({}));
+      }) as unknown as typeof fetch;
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+      });
+      const rendered = render(
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <ToastProvider>
+              <HotkeyProvider>
+                <TeamView teamKey="ENG" layout="board" />
+              </HotkeyProvider>
+            </ToastProvider>
+          </TooltipProvider>
+        </QueryClientProvider>,
+      );
+      try {
+        await waitFor(() => expect(listSignals).toHaveLength(1));
+        const key = issuesQueryOptions('team_1').queryKey;
+        expect(client.getQueryState(key)?.data).toBeUndefined();
+        expect(client.getQueryState(key)?.fetchStatus).toBe('fetching');
+        const restored = new QueryClient();
+        restored.setQueryData(key, {
+          pages: [{ issues: [source], nextCursor: null }],
+          pageParams: [null],
+        });
+        act(() => hydrate(client, dehydrate(restored)));
+        restored.clear();
+        expect(client.getQueryState(key)?.data).toBeDefined();
+        expect(client.getQueryState(key)?.fetchStatus).toBe('fetching');
+        const card = await screen.findByRole('listitem', { name: 'ENG-1: Domain auto join' });
+        card.focus();
+        fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+        await waitFor(() => expect(screen.getAllByTestId('issue-card-ENG-1')).toHaveLength(2));
+        await act(async () => {
+          await settleKeyboardSensor();
+          fireEvent.keyDown(card, { key: 'ArrowRight', code: 'ArrowRight' });
+          await settleKeyboardSensor();
+        });
+        await waitFor(() => expect(dndStatus()).toHaveTextContent('column In Progress'));
+        fireEvent.keyDown(card, { key: 'Enter', code: 'Enter' });
+        await waitFor(() => expect(moveRequests).toBe(1));
+        expect(listSignals[0]?.aborted).toBe(true);
+        expect(listSignals).toHaveLength(1);
+        expect(dndStatus()).toHaveTextContent('Dropping ENG-1');
+        expect(screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' })).toHaveAttribute(
+          'aria-disabled',
+          'true',
+        );
+        await act(async () => {
+          pendingMove.resolve(
+            outcome === 'success'
+              ? Response.json({ issue: moved, rebalanced: [] })
+              : Response.json(
+                  { error: { code: 'TEST_FAILURE', message: 'Move failed.' } },
+                  { status: 500 },
+                ),
+          );
+          await pendingMove.promise;
+        });
+        await waitFor(() => expect(client.isMutating()).toBe(0));
+        await waitFor(() => expect(listSignals).toHaveLength(2));
+        await waitFor(() =>
+          expect(dndStatus()).toHaveTextContent(
+            outcome === 'success' ? 'Moved ENG-1 from column Todo' : 'Failed to move ENG-1',
+          ),
+        );
+        const destination = screen.getByTestId(
+          outcome === 'success' ? 'board-column-In Progress' : 'board-column-Todo',
+        );
+        expect(within(destination).getByTestId('issue-card-ENG-1')).toBeInTheDocument();
+        expect(
+          document.activeElement ===
+            screen.getByRole('listitem', { name: 'ENG-1: Domain auto join' }),
+        ).toBe(true);
+      } finally {
+        rendered.unmount();
+        client.clear();
+        workspace = previousWorkspace;
+        pendingMove.resolve(Response.json({ issue: moved, rebalanced: [] }));
+        initialList.resolve(Response.json({ issues: [source], nextCursor: null }));
+        await settleKeyboardSensor();
+      }
+    },
+  );
+});
 
 describe('Board card keyboard boundaries', () => {
   it.each(['team', 'project'] as const)('creates merged states within the %s scope', (scope) => {
