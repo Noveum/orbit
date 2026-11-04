@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, eq, schema } from '@orbit/db';
+import { asc, db, eq, schema } from '@orbit/db';
 import {
   bindGithubInstallation,
   linkGithubRepository,
@@ -16,7 +16,7 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createIssue, getIssue, updateIssue } from '../../src/work/issue-service.ts';
 import {
   createMilestone,
   listMilestones,
@@ -776,6 +776,91 @@ describe('listWorkspaceProjectUpdates', () => {
 });
 
 describe('duplicateProject', () => {
+  it('refuses to copy unreadable issues from a project shared with another team', async () => {
+    const { team: restricted } = await createTeam(workspace.admin, {
+      name: 'Restricted',
+      key: 'SEC',
+    });
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Shared project',
+      teamIds: [workspace.teamId, restricted.id],
+    });
+    const { issue: secret } = await createIssue(workspace.admin, {
+      teamId: restricted.id,
+      title: 'Confidential issue',
+      description: 'Restricted planning details',
+      projectId: source.id,
+    });
+    const { principal } = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    await expect(getIssue(principal, secret.identifier)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(
+      duplicateProject(principal, source.id, {
+        name: 'Forbidden copy',
+        teamIds: [workspace.teamId],
+      }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    const copies = await db
+      .select()
+      .from(schema.project)
+      .where(eq(schema.project.name, 'Forbidden copy'));
+    expect(copies).toHaveLength(0);
+    const { project: metadataOnly } = await duplicateProject(principal, source.id, {
+      teamIds: [workspace.teamId],
+      includeIssues: false,
+    });
+    const issues = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, metadataOnly.id));
+    expect(issues).toHaveLength(0);
+  });
+
+  it('preserves manual sibling and hierarchy order in stored rows and sync actions', async () => {
+    const source = await newProject();
+    const { issue: parent } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parent',
+      projectId: source.id,
+    });
+    const { issue: child } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Child',
+      projectId: source.id,
+      parentId: parent.id,
+    });
+    const { issue: sibling } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Sibling',
+      projectId: source.id,
+    });
+    for (const [row, sortOrder] of [
+      [parent, 300],
+      [child, 100],
+      [sibling, 200],
+    ] as const) {
+      await db.update(schema.issue).set({ sortOrder }).where(eq(schema.issue.id, row.id));
+    }
+    const { project: copy, actions } = await duplicateProject(workspace.admin, source.id);
+    const copied = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id))
+      .orderBy(asc(schema.issue.sortOrder));
+    expect(copied.map((row) => row.title)).toEqual(['Child', 'Sibling', 'Parent']);
+    expect(copied.find((row) => row.title === 'Child')?.parentId).toBe(
+      copied.find((row) => row.title === 'Parent')?.id,
+    );
+    for (const row of copied) {
+      expect(
+        actions.find((action) => action.model === 'issue' && action.modelId === row.id)?.data[
+          'sortOrder'
+        ],
+      ).toBe(row.sortOrder);
+    }
+  });
+
   it('duplicates a project with shifted dates, milestones, and issues', async () => {
     const { project: source } = await createProject(workspace.admin, {
       name: 'Q1 Launch',

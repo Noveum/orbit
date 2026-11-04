@@ -18,7 +18,7 @@ import { conflict, notFound } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
-import { assertCan } from '@orbit/shared/policy';
+import { assertCan, assertInTeam, teamScope } from '@orbit/shared/policy';
 import { shiftCalendarDate, slugify } from '@orbit/shared/utils';
 import {
   projectCreateSchema,
@@ -932,6 +932,11 @@ async function duplicateProjectIssues(
 
   if (sourceIssues.length === 0) return [];
 
+  assertCan(principal, 'issue:read');
+  for (const sourceIssue of sourceIssues) {
+    assertInTeam(principal, teamScope(sourceIssue));
+  }
+
   const issueIds = sourceIssues.map((issue) => issue.id);
   const [labelMap, reviewerMap] = await Promise.all([
     labelIdsByIssue(tx, issueIds),
@@ -954,8 +959,18 @@ async function duplicateProjectIssues(
       shiftDays,
     );
     const createdIssue = await createIssue(principal, input, tx);
+    await tx
+      .update(schema.issue)
+      .set({ sortOrder: sourceIssue.sortOrder })
+      .where(eq(schema.issue.id, createdIssue.issue.id));
     issueIdMap.set(sourceIssue.id, createdIssue.issue.id);
-    actions.push(...createdIssue.actions);
+    actions.push(
+      ...createdIssue.actions.map((action) =>
+        action.model === 'issue' && action.modelId === createdIssue.issue.id
+          ? { ...action, data: { ...action.data, sortOrder: sourceIssue.sortOrder } }
+          : action,
+      ),
+    );
   }
   return actions;
 }
