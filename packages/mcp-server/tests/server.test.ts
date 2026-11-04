@@ -7,7 +7,12 @@ import { createIssue } from '@orbit/core';
 import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { resolveUserId } from '../src/resolve.ts';
 import { createOrbitMcpServer } from '../src/server.ts';
-import { createWorkspace, resetDatabase, type TestWorkspace } from '../src/test-helpers.ts';
+import {
+  createWorkspace,
+  MCP_TEST_PUBLIC_URL,
+  resetDatabase,
+  type TestWorkspace,
+} from '../src/test-helpers.ts';
 import { allowTools, defineTool } from '../src/tools/support.ts';
 
 const agentIdentity: McpIdentity = {
@@ -34,7 +39,13 @@ async function connected(
   identity: McpIdentity = { kind: 'legacy' },
   scopes = 'orbit.read orbit.write',
 ) {
-  const server = createOrbitMcpServer(principal, scopes, 'Workspace advisory context.', identity);
+  const server = createOrbitMcpServer(
+    principal,
+    MCP_TEST_PUBLIC_URL,
+    scopes,
+    'Workspace advisory context.',
+    identity,
+  );
   const client = new Client({ name: 'identity-test', version: '1' });
   clients.push(client);
   servers.push(server);
@@ -101,7 +112,12 @@ describe('explicit agent connections', () => {
       (await client.callTool({ name: 'list_my_issues', arguments: {} })) as CallToolResult,
     );
     expect(mine['issues']).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: issue.id })]),
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: issue.id,
+          url: `${MCP_TEST_PUBLIC_URL}/issue/${issue.identifier}`,
+        }),
+      ]),
     );
     const identity = payload(
       (await client.callTool({ name: 'get_agent_identity', arguments: {} })) as CallToolResult,
