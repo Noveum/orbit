@@ -59,7 +59,7 @@ prevents a removed and rejoined owner from reviving an old grant.
 ## Stage 3b: deployment prerequisites
 
 Deployable stage 3a artifact: commit
-`028307cdf05b5bdf2234a5d18445c28da144d101`. This source artifact contains
+`d6216240a6038d5052d1681cf133d8785169c2d3`. This source artifact contains
 current main and compatibility migration `0034`, without `0035` or the
 stage 3b consent runtime. It is retained as an ancestor of the final branches.
 The earlier artifact `037e941376a42ba730e3d75d974ad1f6bbc415ca` remains
