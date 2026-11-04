@@ -168,6 +168,116 @@ async function cycle(target = workspace) {
   return created;
 }
 
+async function expectResponsibilityFailure(
+  operation: () => Promise<{ actions: SyncAction[] }>,
+  expected = {
+    code: 'validation_failed',
+    status: 422,
+    message: 'The responsible person cannot access issues on that team.',
+  },
+) {
+  const issues = await db.select().from(schema.issue);
+  const activities = await db.select().from(schema.issueActivity);
+  const notifications = await db.select().from(schema.notification);
+  const aliases = await db.select().from(schema.issueIdentifierAlias);
+  const actions: SyncAction[] = [];
+  await expect(operation().then((result) => actions.push(...result.actions))).rejects.toMatchObject(
+    expected,
+  );
+  expect(await db.select().from(schema.issue)).toEqual(issues);
+  expect(await db.select().from(schema.issueActivity)).toEqual(activities);
+  expect(await db.select().from(schema.notification)).toEqual(notifications);
+  expect(await db.select().from(schema.issueIdentifierAlias)).toEqual(aliases);
+  expect(actions).toEqual([]);
+}
+
+async function restrictedDestination() {
+  const destination = await createTeam(workspace.admin, { name: 'Restricted', key: 'RST' });
+  const state = destination.states[0];
+  if (state === undefined) throw new Error('Missing destination state.');
+  return { teamId: destination.team.id, stateId: state.id };
+}
+
+describe('Responsible person access errors', () => {
+  it.each(['create', 'update'] as const)(
+    'reports invalid responsibility for an authorized Human %s',
+    async (operation) => {
+      const inaccessible = await addMember(workspace, 'member', { teamIds: [] });
+      const row = operation === 'update' ? await humanIssue() : undefined;
+      await expectResponsibilityFailure(() =>
+        row === undefined
+          ? createIssue(workspace.admin, {
+              teamId: workspace.teamId,
+              title: 'Invalid assignment',
+              assigneeId: inaccessible.user.id,
+            })
+          : updateIssue(workspace.admin, row.id, { assigneeId: inaccessible.user.id }),
+      );
+    },
+  );
+
+  it.each(['assigned', 'historical Owner'] as const)(
+    'reports invalid responsibility when moving a Human %s to an unreadable Team',
+    async (assignment) => {
+      const destination = await restrictedDestination();
+      const row = await humanIssue();
+      await updateIssue(workspace.admin, row.id, { assigneeId: owner.user.id });
+      if (assignment === 'historical Owner') {
+        const cleared = await updateIssue(workspace.admin, row.id, { assigneeId: null });
+        expect(cleared.issue).toMatchObject({
+          assigneeId: null,
+          assigneeAgentId: null,
+          ownerUserId: owner.user.id,
+        });
+      }
+      await expectResponsibilityFailure(() => moveIssue(workspace.admin, row.id, destination));
+    },
+  );
+
+  it('reports invalid responsibility when a Personal Agent Owner lost Team access after resolving the caller', async () => {
+    const agent = await connection();
+    const row = await humanIssue();
+    await db
+      .delete(schema.teamMember)
+      .where(
+        and(
+          eq(schema.teamMember.teamId, workspace.teamId),
+          eq(schema.teamMember.userId, owner.user.id),
+        ),
+      );
+    await expectResponsibilityFailure(() =>
+      updateIssue(owner.principal, row.id, { assigneeAgentId: agent.context.identityId }),
+    );
+  });
+
+  it.each(['Human', 'Agent'] as const)(
+    'preserves forbidden for an unauthorized %s caller independently of responsibility',
+    async (identity) => {
+      const inaccessible = await addMember(workspace, 'member', { teamIds: [] });
+      const agent =
+        identity === 'Agent'
+          ? await connection('orbit.read orbit.write', inaccessible.principal)
+          : undefined;
+      const row = await humanIssue();
+      await expectResponsibilityFailure(
+        () =>
+          updateIssue(
+            inaccessible.principal,
+            row.id,
+            { assigneeId: owner.user.id },
+            db,
+            agent?.context,
+          ),
+        {
+          code: 'forbidden',
+          status: 403,
+          message: 'You are not a member of that team.',
+        },
+      );
+    },
+  );
+});
+
 describe('Issue deletion lifecycle', () => {
   it.each(['default', 'unassigned'] as const)(
     'rejects a stale Human %s create explicitly after workspace deletion starts',
@@ -820,15 +930,8 @@ describe('Issue Actor and Human responsibility', () => {
     const agent = await connection();
     const row = await humanIssue();
     await updateIssue(owner.principal, row.id, { assigneeAgentId: agent.context.identityId });
-    const teamId = randomUUID();
-    await db.insert(schema.team).values({
-      id: teamId,
-      organizationId: workspace.organizationId,
-      name: 'Restricted',
-      key: 'RST',
-    });
-    const result = moveIssue(workspace.admin, row.id, { teamId });
-    await expect(result).rejects.toThrow();
+    const destination = await restrictedDestination();
+    await expectResponsibilityFailure(() => moveIssue(workspace.admin, row.id, destination));
     expect((await getIssue(workspace.admin, row.id)).teamId).toBe(workspace.teamId);
   });
 
@@ -836,9 +939,9 @@ describe('Issue Actor and Human responsibility', () => {
     const inaccessible = await addMember(workspace, 'member', { teamIds: [] });
     const agent = await connection();
     const row = await humanIssue();
-    await expect(
+    await expectResponsibilityFailure(() =>
       updateIssue(owner.principal, row.id, { assigneeId: inaccessible.user.id }, db, agent.context),
-    ).rejects.toThrow();
+    );
     expect((await getIssue(workspace.admin, row.id)).assigneeId).toBeNull();
   });
 });
