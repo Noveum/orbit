@@ -15,6 +15,7 @@ import {
 } from '../notifications/access-sync.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { attachIssueActors } from '../work/issue-actor-view.ts';
 import { issueScopes } from '../work/issue-service.ts';
 import { labelIdsByIssue } from '../work/label-service.ts';
 import { reviewerIdsByIssue } from '../work/reviewer-service.ts';
@@ -354,9 +355,10 @@ export async function removeMember(
 
     const changedIssues = new Map([...reassigned, ...reviewed].map((row) => [row.id, row]));
     const changedIssueIds = [...changedIssues.keys()];
-    const [labels, reviewers] = await Promise.all([
+    const [labels, reviewers, actors] = await Promise.all([
       labelIdsByIssue(tx, changedIssueIds),
       reviewerIdsByIssue(tx, changedIssueIds),
+      attachIssueActors(tx, principal.organizationId, [...changedIssues.values()]),
     ]);
     const actions: SyncAction[] = [
       ...(await synchronizeNotificationAccess(
@@ -375,7 +377,7 @@ export async function removeMember(
         data: { id: memberId, userId: current.userId },
         actor,
       }),
-      ...[...changedIssues.values()].map((row) =>
+      ...actors.map((row) =>
         buildSyncAction({
           syncId,
           organizationId: principal.organizationId,
