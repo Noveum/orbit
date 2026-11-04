@@ -1,4 +1,4 @@
-import { deepStrictEqual, ok, strictEqual } from 'node:assert/strict';
+import { deepStrictEqual, ok, rejects, strictEqual } from 'node:assert/strict';
 
 const databaseUrl = process.env['DATABASE_URL'];
 if (databaseUrl === undefined) throw new Error('DATABASE_URL is required.');
@@ -25,14 +25,26 @@ async function runChecks(): Promise<void> {
       import('../../../core/src/auth/mcp-token.ts'),
     ]);
   if (process.argv.includes('--existing-credential')) {
-    const token = mcp.bindMcpCredential('existing-access-token', 'expand-grant', credentialSecret);
-    const verified = await mcp.verifyMcpAccessToken(token, new Date('2026-10-04T00:00:00Z'));
+    const legacy = await import('./legacy-mcp-reader.ts');
+    const token = legacy.bindLegacyMcpCredential(
+      'existing-access-token',
+      'expand-grant',
+      credentialSecret,
+    );
+    const verified = await legacy.verifyLegacyMcpAccessToken(
+      token,
+      new Date('2026-10-04T00:00:00Z'),
+    );
     strictEqual(verified.userId, 'expand-creator');
     strictEqual(verified.principal.userId, 'expand-creator');
     strictEqual(verified.organizationId, 'expand-org');
     strictEqual(verified.principal.organizationId, 'expand-org');
     strictEqual(verified.clientId, 'expand-client');
     strictEqual(verified.scopes, 'orbit.read orbit.write');
+    await rejects(
+      legacy.verifyLegacyMcpAccessToken(token, new Date('2030-01-01T00:00:00Z')),
+      /That access token has expired/,
+    );
     console.info('Existing MCP credential verified through the legacy reader.');
     return;
   }

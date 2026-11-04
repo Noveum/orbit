@@ -4,6 +4,7 @@ import { publishDeltas } from '@orbit/core';
 import type { DomainError } from '@orbit/shared/errors';
 import { toDomainError, validationFailed } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
+import { assertMcpToolAccess, canUseMcpTool, type McpToolAccess } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { errorFields, logger } from '../logger.ts';
 
@@ -48,18 +49,20 @@ export interface ToolConfig<Shape extends z.ZodRawShape> {
   readonly title: string;
   readonly description: string;
   readonly readOnly: boolean;
+  readonly agentSafe?: boolean;
   readonly destructive?: boolean;
   readonly idempotent?: boolean;
   readonly openWorld?: boolean;
   readonly inputSchema: Shape;
 }
 
-export interface ToolAccess {
-  readonly reads: boolean;
-  readonly writes: boolean;
-}
+export type ToolAccess = McpToolAccess;
 
-const DENY_EVERYTHING: ToolAccess = { reads: false, writes: false };
+const DENY_EVERYTHING: ToolAccess = {
+  reads: false,
+  writes: false,
+  identity: { kind: 'legacy' },
+};
 
 const GRANTED = new WeakMap<McpServer, ToolAccess>();
 
@@ -67,17 +70,12 @@ export function allowTools(server: McpServer, access: ToolAccess): void {
   GRANTED.set(server, access);
 }
 
-function mayRegister(server: McpServer, readOnly: boolean): boolean {
-  const access = GRANTED.get(server) ?? DENY_EVERYTHING;
-  return readOnly ? access.reads : access.writes;
-}
-
 export function defineTool<Shape extends z.ZodRawShape>(
   server: McpServer,
   config: ToolConfig<Shape>,
   run: (args: z.infer<z.ZodObject<Shape>>) => Promise<ToolPayload>,
 ): void {
-  if (!mayRegister(server, config.readOnly)) return;
+  if (!canUseMcpTool(GRANTED.get(server) ?? DENY_EVERYTHING, config)) return;
   const inputSchema = z.strictObject(config.inputSchema) as unknown as z.ZodObject<Shape>;
   server.registerTool<z.ZodRawShape, z.ZodObject<Shape>>(
     config.name,
@@ -87,14 +85,16 @@ export function defineTool<Shape extends z.ZodRawShape>(
       inputSchema,
       annotations: {
         title: config.title,
-        readOnlyHint: config.readOnly,
+        readOnlyHint: config.readOnly && config.agentSafe !== false,
         destructiveHint: config.destructive ?? false,
-        idempotentHint: config.readOnly || (config.idempotent ?? false),
+        idempotentHint:
+          (config.readOnly && config.agentSafe !== false) || (config.idempotent ?? false),
         openWorldHint: config.openWorld ?? false,
       },
     },
     async (args) => {
       try {
+        assertMcpToolAccess(GRANTED.get(server) ?? DENY_EVERYTHING, config);
         return ok(await run(args as z.infer<z.ZodObject<Shape>>));
       } catch (error) {
         return failed(config.name, error);

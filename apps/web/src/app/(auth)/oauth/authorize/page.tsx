@@ -1,4 +1,10 @@
-import { getMcpClient, listOrganizationsForUser, userHasPasskey } from '@orbit/core';
+import {
+  getMcpClient,
+  getMcpConsentRequest,
+  listOrganizationsForUser,
+  userHasPasskey,
+} from '@orbit/core';
+import { isDomainError } from '@orbit/shared/errors';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -36,10 +42,8 @@ export default async function AuthorizePage({
 }) {
   const params = await searchParams;
   const consentCode = first(params['consent_code']);
-  const clientId = first(params['client_id']);
-  const scope = first(params['scope']) ?? '';
 
-  if (consentCode === undefined || clientId === undefined) {
+  if (consentCode === undefined) {
     return (
       <ConsentShell>
         <p className="text-center text-muted text-sm">
@@ -54,11 +58,27 @@ export default async function AuthorizePage({
   if (session === null) {
     const next = new URLSearchParams({
       consent_code: consentCode,
-      client_id: clientId,
-      scope,
     });
     redirect(`/login?next=${encodeURIComponent(`/oauth/authorize?${next.toString()}`)}`);
   }
+
+  let consent: Awaited<ReturnType<typeof getMcpConsentRequest>>;
+  try {
+    consent = await getMcpConsentRequest(session.user.id, consentCode);
+  } catch (error) {
+    if (!isDomainError(error) || (error.code !== 'unauthorized' && error.code !== 'forbidden')) {
+      throw error;
+    }
+    return (
+      <ConsentShell>
+        <p className="text-center text-muted text-sm">
+          This authorization request is invalid or has expired. Start the connection again.
+        </p>
+      </ConsentShell>
+    );
+  }
+  const clientId = consent.clientId;
+  const scope = consent.scope.join(' ');
 
   const [client, organizations, requirePasskey] = await Promise.all([
     getMcpClient(clientId),

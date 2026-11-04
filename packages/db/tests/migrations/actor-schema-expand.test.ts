@@ -131,10 +131,11 @@ async function readBusinessState(sql: postgres.Sql): Promise<BusinessState> {
     select to_jsonb(notification) as payload from notification order by id
   `;
   const grants = await sql<PayloadRow[]>`
-    select to_jsonb(mcp_grant) as payload from mcp_grant order by id
+    select to_jsonb(mcp_grant) - 'identity_kind' - 'agent_identity_id' - 'owner_member_id'
+      as payload from mcp_grant order by id
   `;
   const tokens = await sql<PayloadRow[]>`
-    select to_jsonb(oauth_access_token) as payload from oauth_access_token order by id
+    select to_jsonb(oauth_access_token) - 'mcp_grant_id' as payload from oauth_access_token order by id
   `;
   const consents = await sql<PayloadRow[]>`
     select to_jsonb(oauth_consent) as payload from oauth_consent order by id

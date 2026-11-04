@@ -19,6 +19,7 @@ const decisionSchema = z.object({
   clientId: z.string().min(1).optional(),
   scope: z.string().optional(),
   organizationId: z.string().min(1),
+  agent: z.never().optional(),
 });
 
 export async function POST(request: Request): Promise<Response> {
