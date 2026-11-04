@@ -1,5 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
-import { db, pruneOperationalTables } from '@orbit/db';
+import { db, pruneHistoryTables, pruneOperationalTables } from '@orbit/db';
+
+export const maxDuration = 300;
 
 function presented(request: Request): string {
   const header = request.headers.get('authorization') ?? '';
@@ -22,6 +24,8 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const pruned = await pruneOperationalTables(db);
+  const operational = await pruneOperationalTables(db);
+  const history = await pruneHistoryTables(db);
+  const pruned = [...history, ...operational];
   return Response.json({ pruned });
 }
