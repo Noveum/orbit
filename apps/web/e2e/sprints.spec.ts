@@ -16,6 +16,10 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
   test.setTimeout(120_000);
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await signIn(context, 'alex@orbit.example');
+  const hydrationErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    if (/hydration|server rendered HTML/i.test(error.message)) hydrationErrors.push(error.message);
+  });
 
   await page.goto(`${BASE}/sprints`);
   await expect(page.getByTestId('sprint-tabs').first()).toBeVisible();
@@ -35,6 +39,7 @@ test('a sprint can be opened and closed, and its outcome survives the rollover',
   await expect(page).toHaveURL(`${BASE}/sprints?sprint=${sprint.number}`);
   await expect(page.getByTestId('sprint-outcome').first()).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 }).first()).toContainText(label);
+  expect(hydrationErrors).toEqual([]);
 
   await context.close();
 });
