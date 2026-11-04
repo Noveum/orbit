@@ -6,7 +6,7 @@ stage 3a artifact before deploying the final stage 3b checkout.
 
 ## Stage 3a: compatibility preparation
 
-Start from published main commit `b2a122a3d33e94a2810e68049e61e3a5ceed2297`.
+Start from published main commit `348f08059ceda3bbc3d5cdb33cb71c113032abd4`.
 Keep its released migrations through `0033_polite_lord_tyger`, including
 `0030_actor_schema_expand` and `0031_broad_lifeguard`, their snapshots and
 journal entries unchanged. The actor expansion
@@ -59,7 +59,7 @@ prevents a removed and rejoined owner from reviving an old grant.
 ## Stage 3b: deployment prerequisites
 
 Deployable stage 3a artifact: commit
-`d6216240a6038d5052d1681cf133d8785169c2d3`. This source artifact contains
+`e4c50b1779c34bf15674cd5588b7dd703e3ca4ca`. This source artifact contains
 current main and compatibility migration `0034`, without `0035` or the
 stage 3b consent runtime. It is retained as an ancestor of the final branches.
 The earlier artifact `037e941376a42ba730e3d75d974ad1f6bbc415ca` remains
