@@ -224,7 +224,11 @@ export async function encryptFile(
   const cipher = createCipheriv('aes-256-gcm', dek, iv);
 
   const inputStream = createReadStream(inputFile);
-  const outputStream = createWriteStream(outputFile, { mode: 0o600 });
+  let outputCreated = false;
+  const outputStream = createWriteStream(outputFile, { mode: 0o600, flags: 'wx' });
+  outputStream.once('open', () => {
+    outputCreated = true;
+  });
 
   const plaintextHash = createHash('sha256');
   const ciphertextHash = createHash('sha256');
@@ -286,7 +290,9 @@ export async function encryptFile(
       plaintextSha256: plaintextHash.digest('hex'),
     };
   } catch (error) {
-    await rm(outputFile, { force: true }).catch(() => undefined);
+    if (outputCreated) {
+      await rm(outputFile, { force: true }).catch(() => undefined);
+    }
     throw error;
   }
 }
@@ -297,6 +303,7 @@ export async function decryptFile(
   dek: Buffer,
 ): Promise<DecryptFileResult> {
   const fileHandle = await open(encryptedFile, 'r');
+  let outputCreated = false;
   try {
     const stat = await fileHandle.stat();
     if (stat.size < MIN_ENCRYPTED_FILE_SIZE) {
@@ -328,7 +335,8 @@ export async function decryptFile(
       if (finalDecrypted.length > 0) {
         plaintextHash.update(finalDecrypted);
       }
-      await writeFile(outputFile, finalDecrypted, { mode: 0o600 });
+      await writeFile(outputFile, finalDecrypted, { mode: 0o600, flag: 'wx' });
+      outputCreated = true;
       return {
         bytes: finalDecrypted.length,
         sha256: plaintextHash.digest('hex'),
@@ -339,7 +347,10 @@ export async function decryptFile(
       start: ciphertextStart,
       end: ciphertextEnd,
     });
-    const writeStream = createWriteStream(outputFile, { mode: 0o600 });
+    const writeStream = createWriteStream(outputFile, { mode: 0o600, flags: 'wx' });
+    writeStream.once('open', () => {
+      outputCreated = true;
+    });
     const plaintextHash = createHash('sha256');
     let plaintextBytes = 0;
 
@@ -379,7 +390,9 @@ export async function decryptFile(
       sha256: plaintextHash.digest('hex'),
     };
   } catch (error) {
-    await rm(outputFile, { force: true }).catch(() => undefined);
+    if (outputCreated) {
+      await rm(outputFile, { force: true }).catch(() => undefined);
+    }
     const isAuthFailure =
       error instanceof Error &&
       (error.message.includes('authenticate') ||
