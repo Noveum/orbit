@@ -288,6 +288,7 @@ export const docSchema = z.object({
   slug: z.string(),
   kind: z.enum(DOC_KINDS).default('markdown'),
   content: z.string(),
+  revision: z.number().int().default(1),
   sortOrder: z.number().default(0),
   visibility: z.string(),
   publishToken: z.string().nullable(),

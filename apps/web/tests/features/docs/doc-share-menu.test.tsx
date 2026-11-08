@@ -43,6 +43,7 @@ function doc(
     slug: 'delta-protocol',
     kind,
     content: '',
+    revision: 1,
     sortOrder: 0,
     visibility,
     publishToken,
