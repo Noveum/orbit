@@ -1525,7 +1525,7 @@ export async function restoreDocVersion(
       .set({
         title: version.title,
         content: version.content,
-        ...contentRevisionBump(version.content),
+        revision: sql`${schema.doc.revision} + 1`,
         updatedAt: new Date(),
         syncId,
       })
