@@ -25,7 +25,13 @@ import {
   REBALANCE_THRESHOLD,
   SORT_ORDER_STEP,
 } from '@orbit/shared/constants';
-import { conflict, forbidden, notFound, validationFailed } from '@orbit/shared/errors';
+import {
+  conflict,
+  type DomainError,
+  forbidden,
+  notFound,
+  validationFailed,
+} from '@orbit/shared/errors';
 import type { Actor, SyncAction } from '@orbit/shared/events';
 import { scopes } from '@orbit/shared/events';
 import type { Principal } from '@orbit/shared/policy';
@@ -1355,13 +1361,45 @@ async function lockDocVisibilityUpdate(
   if (visibility !== undefined) await lockNotificationPolicyMutation(tx, organizationId);
 }
 
+async function staleDocError(tx: Executor, docId: string): Promise<DomainError> {
+  const [existing] = await tx
+    .select({ revision: schema.doc.revision })
+    .from(schema.doc)
+    .where(eq(schema.doc.id, docId))
+    .limit(1);
+  if (existing === undefined) return notFound('That doc does not exist.');
+  return conflict('That doc changed since you opened it. Your draft was not saved.', {
+    details: { reason: 'stale_revision', revision: existing.revision },
+  });
+}
+
+async function requireSavedDoc(
+  tx: Executor,
+  docId: string,
+  saved: DocRow | undefined,
+): Promise<DocRow> {
+  if (saved !== undefined) return saved;
+  throw await staleDocError(tx, docId);
+}
+
+function docRevisionGuard(docId: string, baseRevision: number | undefined): SQL {
+  const byId = eq(schema.doc.id, docId);
+  if (baseRevision === undefined) return byId;
+  return and(byId, eq(schema.doc.revision, baseRevision)) ?? byId;
+}
+
+function contentRevisionBump(content: string | undefined, current: DocRow): { revision?: SQL } {
+  if (content === undefined || content === current.content) return {};
+  return { revision: sql`${schema.doc.revision} + 1` };
+}
+
 export async function updateDoc(
   principal: Principal,
   docId: string,
   input: unknown,
 ): Promise<SavedDoc> {
   assertCan(principal, 'doc:write');
-  const parsed = docUpdateSchema.parse(input);
+  const { baseRevision, ...parsed } = docUpdateSchema.parse(input);
   if (parsed.visibility !== undefined && isExternallyShared(parsed.visibility)) {
     assertCan(principal, 'doc:publish');
   }
@@ -1383,6 +1421,7 @@ export async function updateDoc(
       .update(schema.doc)
       .set({
         ...parsed,
+        ...contentRevisionBump(parsed.content, current),
         ...placement,
         ...(samePlacement(placement, placementOf(current))
           ? {}
@@ -1396,9 +1435,9 @@ export async function updateDoc(
         updatedAt: new Date(),
         syncId,
       })
-      .where(eq(schema.doc.id, docId))
+      .where(docRevisionGuard(docId, baseRevision))
       .returning(DOC_COLUMNS);
-    const doc = requireRow(saved, 'That doc does not exist.');
+    const doc = await requireSavedDoc(tx, docId, saved);
     await snapshotChangedDocVersion(tx, principal, current, doc);
 
     const descendants = samePlacement(placement, placementOf(current))
@@ -1484,6 +1523,9 @@ export async function restoreDocVersion(
       .set({
         title: version.title,
         content: version.content,
+        ...(version.content === current.content
+          ? {}
+          : { revision: sql`${schema.doc.revision} + 1` }),
         updatedAt: new Date(),
         syncId,
       })
