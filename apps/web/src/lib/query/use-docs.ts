@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import { DOCS_HOME_ROOT, DOCS_ROOT, queryKeys } from './keys.ts';
@@ -52,6 +53,14 @@ export function useDoc(docId: string | null) {
     queryFn: async ({ signal }): Promise<DocDetail> =>
       await apiFetch(`/api/docs/${docId ?? ''}`, docDetailSchema, { signal }),
   });
+}
+
+export function useRefreshDoc(docId: string) {
+  const client = useQueryClient();
+  return useCallback(async (): Promise<DocDetail | undefined> => {
+    await client.refetchQueries({ queryKey: queryKeys.doc(docId) });
+    return client.getQueryData<DocDetail>(queryKeys.doc(docId));
+  }, [client, docId]);
 }
 
 export function useDocsHome() {

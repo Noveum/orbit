@@ -32,6 +32,7 @@ import {
   useDocs,
   useDuplicateDoc,
   useRecordDocVisit,
+  useRefreshDoc,
   useToggleDocFavorite,
   useUpdateDoc,
 } from '@/lib/query/use-docs.ts';
@@ -522,12 +523,31 @@ function EditSession({
     setContent(incoming.content);
   }, [doc.title, doc.content, doc.revision, settled, revisioned.adoptRevision]);
 
+  const refreshDoc = useRefreshDoc(doc.id);
+  const [theirVersion, setTheirVersion] = useState<Doc | null>(null);
+
+  useEffect(() => {
+    if (!revisioned.stale) {
+      setTheirVersion(null);
+      return;
+    }
+    let live = true;
+    refreshDoc().then((detail) => {
+      if (live && detail !== undefined) setTheirVersion(detail.doc);
+    });
+    return () => {
+      live = false;
+    };
+  }, [revisioned.stale, refreshDoc]);
+
   const loadTheirVersion = () => {
-    const incoming = { title: doc.title, content: doc.content };
+    if (theirVersion === null) return;
+    const incoming = { title: theirVersion.title, content: theirVersion.content };
     server.current = incoming;
-    revisioned.adoptRevision(doc.revision);
+    revisioned.adoptRevision(theirVersion.revision);
     setTitle(incoming.title);
     setContent(incoming.content);
+    setTheirVersion(null);
   };
 
   const titleControl = (
@@ -559,8 +579,14 @@ function EditSession({
           <span className="text-danger">
             Someone else saved this doc while you were editing. Your draft is still here.
           </span>
-          <Button type="button" variant="secondary" size="sm" onClick={loadTheirVersion}>
-            Load their version
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={theirVersion === null}
+            onClick={loadTheirVersion}
+          >
+            {theirVersion === null ? 'Fetching their version' : 'Load their version'}
           </Button>
         </div>
       ) : null}

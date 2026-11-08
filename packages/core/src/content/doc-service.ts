@@ -1388,9 +1388,11 @@ function docRevisionGuard(docId: string, baseRevision: number | undefined): SQL 
   return and(byId, eq(schema.doc.revision, baseRevision)) ?? byId;
 }
 
-function contentRevisionBump(content: string | undefined, current: DocRow): { revision?: SQL } {
-  if (content === undefined || content === current.content) return {};
-  return { revision: sql`${schema.doc.revision} + 1` };
+function contentRevisionBump(content: string | undefined): { revision?: SQL } {
+  if (content === undefined) return {};
+  return {
+    revision: sql`case when ${schema.doc.content} is distinct from ${content} then ${schema.doc.revision} + 1 else ${schema.doc.revision} end`,
+  };
 }
 
 export async function updateDoc(
@@ -1421,7 +1423,7 @@ export async function updateDoc(
       .update(schema.doc)
       .set({
         ...parsed,
-        ...contentRevisionBump(parsed.content, current),
+        ...contentRevisionBump(parsed.content),
         ...placement,
         ...(samePlacement(placement, placementOf(current))
           ? {}
@@ -1523,9 +1525,7 @@ export async function restoreDocVersion(
       .set({
         title: version.title,
         content: version.content,
-        ...(version.content === current.content
-          ? {}
-          : { revision: sql`${schema.doc.revision} + 1` }),
+        ...contentRevisionBump(version.content),
         updatedAt: new Date(),
         syncId,
       })
