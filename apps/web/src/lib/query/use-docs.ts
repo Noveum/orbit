@@ -23,6 +23,7 @@ import {
 export interface DocPatch {
   readonly title?: string;
   readonly content?: string;
+  readonly baseRevision?: number;
   readonly collectionId?: string | null;
   readonly projectId?: string | null;
   readonly parentId?: string | null;
@@ -168,7 +169,8 @@ export function useUpdateDoc(docId: string) {
       await client.cancelQueries({ queryKey: key });
       const previous = client.getQueryData<DocDetail>(key);
       if (previous !== undefined) {
-        client.setQueryData<DocDetail>(key, { ...previous, doc: { ...previous.doc, ...patch } });
+        const { baseRevision: _baseRevision, ...fields } = patch;
+        client.setQueryData<DocDetail>(key, { ...previous, doc: { ...previous.doc, ...fields } });
       }
       return { previous };
     },

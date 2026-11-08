@@ -23,6 +23,7 @@ function summary(id: string, title: string, snippet = ''): DocSummary {
     slug: id,
     kind: 'markdown',
     content: '',
+    revision: 1,
     sortOrder: 0,
     visibility: 'workspace',
     publishToken: null,
