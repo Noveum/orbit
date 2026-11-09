@@ -137,7 +137,7 @@
       },
       "devDependencies": {
         "@types/bun": "1.4.4",
-        "postgres": "^3.4.9",
+        "postgres": "^4.1.0",
         "typescript": "5.9.3",
       },
     },
@@ -147,7 +147,7 @@
       "dependencies": {
         "@orbit/shared": "workspace:*",
         "drizzle-orm": "0.45.4",
-        "postgres": "^3.4.9",
+        "postgres": "^4.1.0",
         "zod": "4.6.7",
       },
       "devDependencies": {
@@ -225,7 +225,7 @@
         "linkedom": "0.18.13",
         "lowlight": "^3",
         "marked": "18.1.2",
-        "postgres": "^3.4.9",
+        "postgres": "^4.1.0",
         "resend": "6.37.0",
         "zod": "4.6.7",
       },
@@ -1821,7 +1821,7 @@
 
     "postcss": ["postcss@8.5.22", "", { "dependencies": { "nanoid": "^3.3.16", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-KBDEIpLrvpv16pp3K0Fw+UCoZfopFjjgeB+0tA/aaThfEE74kKDLrgg603YvOWJyg3+WYtyq3xYsQWsIyZlPqQ=="],
 
-    "postgres": ["postgres@3.4.9", "", {}, "sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw=="],
+    "postgres": ["postgres@4.1.0", "", {}, "sha512-s+0WH67YAyLdBQUb6XczbziBhY+C9uiQsg9S8R5RHdZhk6sdyK6202E+T2tXpiInSEEjDLRSJ3OpYBe3PN6MsQ=="],
 
     "postgres-array": ["postgres-array@2.0.0", "", {}, "sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA=="],
 
