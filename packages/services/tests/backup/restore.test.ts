@@ -14,6 +14,7 @@ import {
   setRecoveryState,
 } from '../../src/backup/readiness.ts';
 import { restoreBackup } from '../../src/backup/restore.ts';
+import { runUpgradeMatrix } from '../../src/backup/upgrade-matrix.ts';
 import type { StorageDriver, StoredObject, UploadTarget } from '../../src/storage/types.ts';
 
 const MIGRATIONS = fileURLToPath(new URL('../../../db/drizzle', import.meta.url));
@@ -256,6 +257,54 @@ describe('restoreBackup integration and readiness lifecycle', () => {
       await rm(temporaryShimDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it('backs up injected storage when running the destructive upgrade scenario', async () => {
+    const suffix = crypto.randomUUID();
+    const orgId = `org_matrix_${suffix}`;
+    const userId = `usr_matrix_${suffix}`;
+    const attachmentId = crypto.randomUUID();
+    const key = `${orgId}/fixture.txt`;
+    const bytes = new TextEncoder().encode('supplied matrix storage bytes');
+    const store = new Map([[key, bytes]]);
+    const sql = postgres(databaseUrl, { max: 1, prepare: false });
+    const previousDump = process.env['PG_DUMP_PATH'];
+    const previousRestore = process.env['PG_RESTORE_PATH'];
+    try {
+      await sql`insert into organization (id, name, slug) values (${orgId}, 'Matrix Org', ${orgId})`;
+      await sql`insert into "user" (id, name, email, handle) values (${userId}, 'Matrix User', ${`${userId}@orbit.test`}, ${userId})`;
+      await sql`insert into member (id, organization_id, user_id, role) values (${`mbr_${suffix}`}, ${orgId}, ${userId}, 'owner')`;
+      await sql`insert into attachment (id, organization_id, parent_type, parent_id, file_name, content_type, size, storage_key, uploaded_by_id, status) values (${attachmentId}, ${orgId}, 'issue', 'matrix-fixture', 'fixture.txt', 'text/plain', ${bytes.length}, ${key}, ${userId}, 'ready')`;
+      if (resolvedPgDump !== undefined) process.env['PG_DUMP_PATH'] = resolvedPgDump;
+      if (resolvedPgRestore !== undefined) process.env['PG_RESTORE_PATH'] = resolvedPgRestore;
+      const result = await runUpgradeMatrix({
+        databaseUrl,
+        scenario: 'backup_restore',
+        confirmDestructiveTarget: computeRestoreTargetIdentity(
+          databaseUrl,
+          process.env['S3_BUCKET'],
+        ).identity,
+        storageDriver: createMockDriver(store),
+      });
+      expect(result.scenarios[0]?.error).toBeUndefined();
+      expect(result.allPassed).toBe(true);
+      const [attachment] = await sql<
+        { storage_key: string }[]
+      >`select storage_key from attachment where id = ${attachmentId}`;
+      expect(attachment?.storage_key).toBe(key);
+      expect(new TextDecoder().decode(store.get(key))).toBe('supplied matrix storage bytes');
+    } finally {
+      if (previousDump === undefined) delete process.env['PG_DUMP_PATH'];
+      else process.env['PG_DUMP_PATH'] = previousDump;
+      if (previousRestore === undefined) delete process.env['PG_RESTORE_PATH'];
+      else process.env['PG_RESTORE_PATH'] = previousRestore;
+      await sql`delete from attachment where id = ${attachmentId}`;
+      await sql`delete from member where organization_id = ${orgId}`;
+      await setRecoveryState(databaseUrl, 'ready');
+      await sql`delete from "user" where id = ${userId}`;
+      await sql`delete from organization where id = ${orgId}`;
+      await sql.end();
+    }
+  }, 30000);
 
   it('rejects concurrent restore attempt when another restore holds the lock', async () => {
     expect(reachable).toBe(true);
