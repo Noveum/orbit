@@ -1,10 +1,12 @@
-import { describe, expect, it, mock } from 'bun:test';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Editor } from '@tiptap/core';
 import { useState } from 'react';
 import type { Member } from '@/lib/query/schemas.ts';
 import {
+  type BubbleAnchor,
+  bubblePosition,
   RichTextEditor,
   settledMarkdown,
   type UploadedAttachment,
@@ -350,5 +352,176 @@ describe('keyboard saving', () => {
     editor.commands.setTextSelection('First line'.length + 1);
     fireEvent.keyDown(editor.view.dom, { key: 'Enter', shiftKey: true });
     expect(editor.getJSON().content?.[0]?.content?.at(-1)?.type).toBe('hardBreak');
+  });
+});
+
+describe('bubble placement inside the editor box', () => {
+  const box = { width: 397, height: 560 };
+  const size = { width: 196, height: 40 };
+  const anchored = (center: number, top: number, bottom: number): BubbleAnchor => ({
+    center,
+    top,
+    bottom,
+    width: box.width,
+    height: box.height,
+  });
+
+  it('clamps the first word of a narrow drawer inside the left edge', () => {
+    const centred = 23 - size.width / 2;
+
+    expect(centred).toBeLessThan(0);
+    expect(bubblePosition(anchored(23, 100, 116), size)).toEqual({ left: 8, top: 52 });
+  });
+
+  it('clamps a selection at the right edge back inside', () => {
+    expect(bubblePosition(anchored(390, 100, 116), size)).toEqual({ left: 193, top: 52 });
+  });
+
+  it('keeps centring the popover where the selection has room on both sides', () => {
+    const wide: BubbleAnchor = { center: 400, top: 300, bottom: 316, width: 800, height: 560 };
+
+    expect(bubblePosition(wide, size)).toEqual({ left: 302, top: 252 });
+  });
+
+  it('flips below the selection when the first line has no room above it', () => {
+    expect(bubblePosition(anchored(200, 4, 20), size)).toEqual({ left: 102, top: 28 });
+  });
+
+  it('keeps the popover inside a box shorter than the space it asks for', () => {
+    const cramped: BubbleAnchor = { center: 200, top: 0, bottom: 16, width: 397, height: 40 };
+
+    expect(bubblePosition(cramped, size)).toEqual({ left: 102, top: 8 });
+  });
+
+  it('holds the left margin when the popover is wider than the box', () => {
+    const narrow: BubbleAnchor = { center: 200, top: 100, bottom: 116, width: 160, height: 560 };
+
+    expect(bubblePosition(narrow, { width: 240, height: 40 })).toEqual({ left: 8, top: 52 });
+  });
+});
+
+describe('selection bubble in a narrow drawer', () => {
+  const original = Element.prototype.getBoundingClientRect;
+  let drawerWidth = 397;
+
+  function drawerBox(width: number, height: number): DOMRect {
+    return {
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: height,
+      width,
+      height,
+      x: 0,
+      y: 0,
+      toJSON: () => ({ width, height }),
+    };
+  }
+
+  beforeEach(() => {
+    drawerWidth = 397;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const id = this instanceof HTMLElement ? this.dataset['testid'] : undefined;
+      if (id === 'rich') return drawerBox(drawerWidth, 560);
+      if (id === 'rich-bubble') return drawerBox(196, 40);
+      return original.call(this);
+    };
+  });
+
+  afterEach(() => {
+    Element.prototype.getBoundingClientRect = original;
+  });
+
+  it('keeps the popover inside the box when the selection starts at the left edge', async () => {
+    const editor = await mountEditor();
+    editor.view.coordsAtPos = () => ({ left: 12, right: 34, top: 100, bottom: 116 });
+    editor.chain().focus().insertContent('format me').run();
+    editor.commands.setTextSelection({ from: 1, to: 7 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    await waitFor(() => expect(bubble.style.left).toBe('8px'));
+    expect(bubble.style.top).toBe('52px');
+  });
+
+  it('places the popover below the last selected line when there is no room above', async () => {
+    const editor = await mountEditor();
+    editor.view.coordsAtPos = (position) =>
+      position === 22
+        ? { left: 34, right: 56, top: 68, bottom: 84 }
+        : { left: 12, right: 34, top: 4, bottom: 20 };
+    editor.chain().focus().insertContent('<p>first line</p><p>last line</p>').run();
+    editor.commands.setTextSelection({ from: 1, to: 22 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    await waitFor(() => expect(bubble.style.top).toBe('92px'));
+    expect(bubble.style.left).toBe('8px');
+  });
+
+  it('repositions a retained selection when its editor container shrinks', async () => {
+    const originalObserver = globalThis.ResizeObserver;
+    let resized: (() => void) | undefined;
+    globalThis.ResizeObserver = class implements ResizeObserver {
+      readonly observe: ResizeObserver['observe'];
+      readonly unobserve = mock();
+      readonly disconnect = mock();
+
+      constructor(callback: ResizeObserverCallback) {
+        this.observe = (target) => {
+          if (!(target instanceof HTMLElement) || target.dataset['testid'] !== 'rich') return;
+          resized = () =>
+            callback(
+              [
+                {
+                  target,
+                  contentRect: drawerBox(drawerWidth, 560),
+                  borderBoxSize: [],
+                  contentBoxSize: [],
+                  devicePixelContentBoxSize: [],
+                },
+              ],
+              this,
+            );
+        };
+      }
+    };
+    try {
+      const editor = await mountEditor();
+      editor.view.coordsAtPos = (position) => {
+        const first = drawerWidth === 397 ? 350 : 150;
+        const last = drawerWidth === 397 ? 390 : 220;
+        return { left: position === 35 ? first : last, right: last, top: 100, bottom: 116 };
+      };
+      editor
+        .chain()
+        .focus()
+        .insertContent('A selection near the right edge of this narrow editor')
+        .run();
+      editor.commands.setTextSelection({ from: 35, to: 54 });
+      const bubble = await screen.findByTestId('rich-bubble');
+      await waitFor(() => expect(bubble.style.left).toBe('193px'));
+
+      act(() => {
+        drawerWidth = 250;
+        resized?.();
+        window.dispatchEvent(new Event('resize'));
+      });
+
+      await waitFor(() => expect(bubble.style.left).toBe('46px'));
+      expect(editor.state.selection.from).toBe(35);
+      expect(editor.state.selection.to).toBe(54);
+    } finally {
+      globalThis.ResizeObserver = originalObserver;
+    }
+  });
+
+  it('flips the popover below the first line when there is no room above it', async () => {
+    const editor = await mountEditor();
+    editor.view.coordsAtPos = () => ({ left: 12, right: 34, top: 4, bottom: 20 });
+    editor.chain().focus().insertContent('format me').run();
+    editor.commands.setTextSelection({ from: 1, to: 7 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    await waitFor(() => expect(bubble.style.top).toBe('28px'));
+    expect(bubble.style.left).toBe('8px');
   });
 });

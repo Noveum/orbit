@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SLUG_PATTERN } from '../constants/index.ts';
+import { ianaTimezoneSchema } from './cycle.ts';
 
 export const handleSchema = z
   .string()
@@ -13,7 +14,7 @@ export const profileUpdateSchema = z
   .object({
     name: z.string().trim().min(1).max(64),
     handle: handleSchema,
-    timezone: z.string().trim().min(1).max(64),
+    timezone: ianaTimezoneSchema,
   })
   .partial();
 
