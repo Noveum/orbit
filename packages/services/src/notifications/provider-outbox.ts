@@ -7,7 +7,19 @@ import {
   notificationSlackNamespaceSchema,
 } from '@orbit/shared';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, asc, count, eq, inArray, isNull, lte, min, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  eq,
+  getTableColumns,
+  inArray,
+  isNull,
+  lte,
+  min,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { githubFailureDetails } from '../github/failure-details.ts';
 import { decryptSlackBotToken } from '../slack/credentials.ts';
 import { SlackApiError, SlackClient } from '../slack/index.ts';
@@ -1020,8 +1032,12 @@ export async function deliverNotificationProviders(
   const seen = new Set<string>();
   while (attempted < limit && now() < deadline) {
     const candidates = await database
-      .select()
+      .select(getTableColumns(schema.notificationDelivery))
       .from(schema.notificationDelivery)
+      .innerJoin(
+        schema.notificationSourceEvent,
+        eq(schema.notificationSourceEvent.id, schema.notificationDelivery.sourceEventId),
+      )
       .where(
         and(
           inArray(schema.notificationDelivery.channel, channels),
@@ -1033,11 +1049,11 @@ export async function deliverNotificationProviders(
           lte(schema.notificationDelivery.availableAt, now()),
           isNull(schema.notificationDelivery.deduplicatedIntoDeliveryId),
           sql`${schema.notificationDelivery.sourceEventId} is not null`,
-          sql`(${schema.notificationDelivery.channel} = 'email' or not exists (
+          sql`not exists (
             select 1 from notification_delivery earlier
             join notification_source_event earlier_source on earlier_source.id = earlier.source_event_id
-            join notification_source_event current_source on current_source.id = ${schema.notificationDelivery.sourceEventId}
-            where earlier.organization_id = ${schema.notificationDelivery.organizationId}
+            where ${schema.notificationDelivery.channel} <> 'email'
+              and earlier.organization_id = ${schema.notificationDelivery.organizationId}
               and earlier.channel = ${schema.notificationDelivery.channel}
               and earlier.integration_id = ${schema.notificationDelivery.integrationId}
               and earlier.slack_team_id = ${schema.notificationDelivery.slackTeamId}
@@ -1047,8 +1063,8 @@ export async function deliverNotificationProviders(
               and earlier.conversation_key = ${schema.notificationDelivery.conversationKey}
               and earlier.deduplicated_into_delivery_id is null
               and earlier.status in ('pending', 'failed', 'processing', 'ambiguous')
-              and (earlier_source.ingestion_seq, earlier.id) < (current_source.ingestion_seq, ${schema.notificationDelivery.id})
-          ))`,
+              and (earlier_source.ingestion_seq, earlier.id) < (${schema.notificationSourceEvent.ingestionSeq}, ${schema.notificationDelivery.id})
+          )`,
           or(
             sql`${schema.notificationDelivery.notificationId} is null`,
             sql`exists(select 1 from notification where id = ${schema.notificationDelivery.notificationId} and deduplicated_into_notification_id is null)`,
