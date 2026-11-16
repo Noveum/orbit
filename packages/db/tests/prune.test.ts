@@ -161,6 +161,46 @@ describe('pruneOperationalTables', () => {
     expect(rows[0]?.id).toBe(quarantinedId);
   });
 
+  it('preserves a quarantine replay replacement while pruning unrelated expired deliveries', async () => {
+    const parentId = await seedDelivery(RECENT);
+    await db
+      .update(schema.webhookDelivery)
+      .set({ status: 'quarantined' })
+      .where(eq(schema.webhookDelivery.id, parentId));
+    const replacementId = await seedDelivery(OLD);
+    const expiredId = await seedDelivery(OLD);
+    await db.insert(schema.webhookDeliveryQuarantine).values({
+      deliveryId: parentId,
+      scopeKind: 'unresolved',
+      scopeKeyHash: 'replayed-quarantine-scope',
+      payloadEnvelope: null,
+      encryptionKeyVersion: 1,
+      parserSchemaVersion: 1,
+      reasonCode: 'invalid_head_sha',
+      reasonPath: 'check_run.head_sha',
+      disposition: 'replayed',
+      replacementDeliveryId: replacementId,
+      replayedAt: RECENT,
+      ciphertextClearedAt: RECENT,
+    });
+
+    const pruned = await pruneOperationalTables(db, [{ table: 'webhook_delivery', days: 30 }]);
+
+    expect(pruned).toEqual([{ table: 'webhook_delivery', days: 30, deleted: 1 }]);
+    const remaining = await db
+      .select({ id: schema.webhookDelivery.id })
+      .from(schema.webhookDelivery);
+    expect(remaining).toHaveLength(2);
+    expect(remaining.map((row) => row.id)).toContain(parentId);
+    expect(remaining.map((row) => row.id)).toContain(replacementId);
+    expect(remaining.map((row) => row.id)).not.toContain(expiredId);
+    const [quarantine] = await db
+      .select({ replacementDeliveryId: schema.webhookDeliveryQuarantine.replacementDeliveryId })
+      .from(schema.webhookDeliveryQuarantine)
+      .where(eq(schema.webhookDeliveryQuarantine.deliveryId, parentId));
+    expect(quarantine?.replacementDeliveryId).toBe(replacementId);
+  });
+
   it('exempts processed parents retained by GitHub check audit provenance', async () => {
     await seedDelivery(OLD);
     const auditedId = await seedAuditedDelivery(OLD);
