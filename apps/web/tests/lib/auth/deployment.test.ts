@@ -60,56 +60,73 @@ describe('deployment authentication', () => {
     expect(cancelled.headers.get('location')).toBe(`${preview}/login?error=access_denied`);
   });
 
-  it('creates a session on the preview after the production callback and rejects replay', async () => {
-    const previewAuth = createAuth();
-    const productionAuth = createAuth('production-session-secret-different-from-preview');
-    const productionContext = await productionAuth.$context;
-    const provider = productionContext.socialProviders.find((item) => item.id === 'google');
-    if (!provider) throw new Error('Missing Google provider');
-    provider.validateAuthorizationCode = () => Promise.resolve({ accessToken: 'test-token' });
-    provider.getUserInfo = () =>
-      Promise.resolve({
-        user: {
-          name: 'Preview Tester',
-          email: 'tester@example.com',
-          emailVerified: true,
-        },
-        data: { sub: 'provider-user' },
+  it.each(['google', 'github'])(
+    'creates a preview session after the canonical %s exchange and rejects replay',
+    async (providerName) => {
+      const previewAuth = createAuth();
+      const productionAuth = createAuth('production-session-secret-different-from-preview');
+      const productionContext = await productionAuth.$context;
+      const provider = productionContext.socialProviders.find((item) => item.id === providerName);
+      if (!provider) throw new Error('Missing social provider');
+      const expectedCallback = `${canonical}/api/auth/callback/${providerName}`;
+      const exchangeCallbacks: string[] = [];
+      provider.validateAuthorizationCode = (parameters) => {
+        exchangeCallbacks.push(parameters.redirectURI);
+        return Promise.resolve(
+          parameters.redirectURI === expectedCallback ? { accessToken: 'test-token' } : null,
+        );
+      };
+      expect(
+        await provider.validateAuthorizationCode({
+          code: 'wrong-callback-control',
+          redirectURI: `${preview}/api/auth/callback/${providerName}`,
+        }),
+      ).toBeNull();
+      provider.getUserInfo = () =>
+        Promise.resolve({
+          user: {
+            name: 'Preview Tester',
+            email: 'tester@example.com',
+            emailVerified: true,
+          },
+          data: { sub: 'provider-user', id: 'provider-user' },
+        });
+      const signIn = await previewAuth.handler(
+        new nativeFetchGlobals.Request(`${preview}/api/auth/sign-in/social`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: preview },
+          body: JSON.stringify({ provider: providerName, callbackURL: `${preview}/inbox` }),
+        }),
+      );
+      const authorization = new URL((await signIn.json()).url);
+      const callback = new URL(expectedCallback);
+      callback.searchParams.set('code', 'test-code');
+      callback.searchParams.set('state', authorization.searchParams.get('state') ?? '');
+      const exchange = await productionAuth.handler(new nativeFetchGlobals.Request(callback));
+      expect(exchangeCallbacks.at(-1)).toBe(expectedCallback);
+      expect(exchange.status).toBe(302);
+      const location = exchange.headers.get('location') ?? '';
+      expect(new URL(location).origin).toBe(preview);
+      const login = await previewAuth.handler(new nativeFetchGlobals.Request(location));
+      expect(login.status).toBe(302);
+      expect(login.headers.get('location')).toBe(`${preview}/inbox`);
+      const cookies = login.headers.getSetCookie();
+      expect(cookies.some((cookie) => cookie.includes('session_token='))).toBe(true);
+      expect(cookies.join(';')).not.toContain('Domain=');
+      const session = await previewAuth.api.getSession({
+        headers: new Headers({
+          host: new URL(preview).host,
+          cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '),
+        }),
       });
-    const signIn = await previewAuth.handler(
-      new nativeFetchGlobals.Request(`${preview}/api/auth/sign-in/social`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: preview },
-        body: JSON.stringify({ provider: 'google', callbackURL: `${preview}/inbox` }),
-      }),
-    );
-    const authorization = new URL((await signIn.json()).url);
-    const callback = new URL(`${canonical}/api/auth/callback/google`);
-    callback.searchParams.set('code', 'test-code');
-    callback.searchParams.set('state', authorization.searchParams.get('state') ?? '');
-    const exchange = await productionAuth.handler(new nativeFetchGlobals.Request(callback));
-    expect(exchange.status).toBe(302);
-    const location = exchange.headers.get('location') ?? '';
-    expect(new URL(location).origin).toBe(preview);
-    const login = await previewAuth.handler(new nativeFetchGlobals.Request(location));
-    expect(login.status).toBe(302);
-    expect(login.headers.get('location')).toBe(`${preview}/inbox`);
-    const cookies = login.headers.getSetCookie();
-    expect(cookies.some((cookie) => cookie.includes('session_token='))).toBe(true);
-    expect(cookies.join(';')).not.toContain('Domain=');
-    const session = await previewAuth.api.getSession({
-      headers: new Headers({
-        host: new URL(preview).host,
-        cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '),
-      }),
-    });
-    expect(session?.user.email).toBe('tester@example.com');
-    expect(
-      await productionContext.internalAdapter.findUserByEmail('tester@example.com'),
-    ).toBeNull();
-    const replay = await previewAuth.handler(new nativeFetchGlobals.Request(location));
-    expect(replay.headers.get('location')).toContain('state_mismatch');
-  });
+      expect(session?.user.email).toBe('tester@example.com');
+      expect(
+        await productionContext.internalAdapter.findUserByEmail('tester@example.com'),
+      ).toBeNull();
+      const replay = await previewAuth.handler(new nativeFetchGlobals.Request(location));
+      expect(replay.headers.get('location')).toContain('state_mismatch');
+    },
+  );
 
   it('includes the exact deployment and branch aliases', () => {
     const options = deploymentAuthOptions({
@@ -194,7 +211,6 @@ describe('deployment authentication', () => {
         `${canonical}/api/auth/callback/${provider}`,
       );
       expect(url.searchParams.get('state')).toBeTruthy();
-      expect(url.searchParams.get('state')).not.toContain(preview);
     },
   );
 

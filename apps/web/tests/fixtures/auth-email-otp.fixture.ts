@@ -3,6 +3,7 @@ import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { emailOTP } from 'better-auth/plugins';
 import { z } from 'zod';
+import { SESSION_COOKIE_CACHE_POLICY } from '../../src/lib/auth/session-policy.ts';
 
 let delivered = '';
 const auth = betterAuth({
@@ -10,6 +11,7 @@ const auth = betterAuth({
   secret: 'local-email-otp-regression-secret-20261116',
   database: memoryAdapter({ user: [], account: [], session: [], verification: [] }),
   emailAndPassword: { enabled: true },
+  session: { cookieCache: SESSION_COOKIE_CACHE_POLICY },
   plugins: [
     emailOTP({
       storeOTP: 'hashed',
