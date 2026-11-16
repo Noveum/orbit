@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import {
+  bindAgentMcpCredential,
+  bindMcpCredential,
   createInvite,
   createOrganization,
   finalizeMcpConsent,
   recordMcpGrant,
+  revokeMcpGrant,
+  unbindAgentMcpCredential,
   unbindMcpCredential,
   verifyMcpAccessToken,
 } from '@orbit/core';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { and, db, eq, schema } from '@orbit/db';
+import { type AgentConsentSelection, mcpTokenResponseSchema } from '@orbit/shared/validators';
 import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
 import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
 import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
@@ -164,7 +169,10 @@ async function withNativeFetchGlobals<T>(operation: () => Promise<T>): Promise<T
   }
 }
 
-async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
+async function finalizedAuthorizationCode(
+  workspace: Workspace,
+  scopes = ['openid', 'offline_access', 'orbit.read'],
+): Promise<{
   code: string;
   verifier: string;
 }> {
@@ -176,7 +184,7 @@ async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
     value: JSON.stringify({
       clientId: 'client_test',
       redirectURI: CALLBACK_URL,
-      scope: ['openid', 'offline_access', 'orbit.read'],
+      scope: scopes,
       userId: workspace.adminUser.id,
       requireConsent: true,
       state: 'state_test',
@@ -194,6 +202,87 @@ async function finalizedAuthorizationCode(workspace: Workspace): Promise<{
   const code = new URL(approved.redirectUri).searchParams.get('code');
   if (code === null) throw new Error('the consent redirect did not carry a code');
   return { code, verifier };
+}
+
+async function providerAuthorizationCode(
+  workspace: Workspace,
+  cookie: string,
+  agent?: AgentConsentSelection,
+) {
+  const verifier = 'mcp-provider-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
+  const search = authorizeSearch('consent');
+  search.set(
+    'scope',
+    `openid offline_access orbit.read${agent === undefined ? '' : ' orbit.write'}`,
+  );
+  search.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
+  search.set('code_challenge_method', 'S256');
+  const authorized = await GET(authorizeRequest(search, cookie));
+  expect(authorized.status).toBe(302);
+  const consentCode = new URL(
+    authorized.headers.get('location') ?? '',
+    APP_ORIGIN,
+  ).searchParams.get('consent_code');
+  if (consentCode === null) throw new Error('The provider did not request consent.');
+  const approved = await finalizeMcpConsent({
+    userId: workspace.adminUser.id,
+    consentCode,
+    accept: true,
+    organizationId: workspace.organizationId,
+    ...(agent === undefined ? {} : { agent }),
+  });
+  const code = new URL(approved.redirectUri).searchParams.get('code');
+  if (code === null) throw new Error('The consent did not return an authorization code.');
+  const [record] = await db
+    .select()
+    .from(schema.verification)
+    .where(eq(schema.verification.identifier, code));
+  if (record === undefined) throw new Error('The consent code was not stored.');
+  const value = JSON.parse(record.value) as Record<string, unknown>;
+  expect(value['codeChallengeMethod']).toBe('s256');
+  return { code, verifier };
+}
+
+function codeRequest(code: string, verifier: string): Request {
+  return new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      client_id: 'client_test',
+      redirect_uri: CALLBACK_URL,
+      code_verifier: verifier,
+    }),
+  });
+}
+
+function refreshRequest(refreshToken: string): Request {
+  return new Request(`${APP_ORIGIN}/api/auth/mcp/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: 'client_test',
+    }),
+  });
+}
+
+async function issuedCredentials(workspace: Workspace, scopes?: string[]) {
+  const { code, verifier } = await finalizedAuthorizationCode(workspace, scopes);
+  const response = await authPost(codeRequest(code, verifier));
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as Record<string, unknown>;
+  const accessToken = body['access_token'];
+  const refreshToken = body['refresh_token'];
+  if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
+    throw new Error('The response did not contain both credentials.');
+  }
+  const context = await auth.$context;
+  const binding = unbindMcpCredential(refreshToken, context.secret);
+  if (binding === null) throw new Error('The response did not contain a legacy credential.');
+  return { accessToken, refreshToken, binding, secret: context.secret };
 }
 
 describe('MCP authorize consent boundary', () => {
@@ -472,6 +561,122 @@ describe('MCP authorize PKCE boundary', () => {
     expect(location.searchParams.get('consent_code')).not.toBeNull();
   });
 
+  it('exchanges an authorization code created by the real provider after legacy consent', async () => {
+    await withNativeFetchGlobals(async () => {
+      const { code, verifier } = await providerAuthorizationCode(workspace, cookie);
+      const response = await authPost(codeRequest(code, verifier));
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      const accessToken = body['access_token'];
+      if (typeof accessToken !== 'string') throw new Error('The provider did not return a token.');
+      expect((await verifyMcpAccessToken(accessToken)).identity.kind).toBe('legacy');
+      expect((await verifyMcpAccessToken(accessToken)).organizationId).toBe(
+        workspace.organizationId,
+      );
+    });
+  });
+
+  it('issues and refreshes read-only v2 credentials after real provider Agent consent', async () => {
+    const previous = process.env['ORBIT_AGENT_MCP'];
+    const previousWrite = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
+    try {
+      await withNativeFetchGlobals(async () => {
+        const { code, verifier } = await providerAuthorizationCode(workspace, cookie, {
+          name: 'Review reader',
+        });
+        const issued = await authPost(codeRequest(code, verifier));
+        expect(issued.status).toBe(200);
+        const token = mcpTokenResponseSchema.parse(await issued.json());
+        expect(token.scope).toBe('openid offline_access orbit.read');
+        if (token.refresh_token === undefined) throw new Error('No Agent refresh credential.');
+        const { secret } = await auth.$context;
+        const accessBinding = unbindAgentMcpCredential(token.access_token, secret);
+        const refreshBinding = unbindAgentMcpCredential(token.refresh_token, secret);
+        expect(unbindMcpCredential(token.access_token, secret)).toBeNull();
+        expect(unbindMcpCredential(token.refresh_token, secret)).toBeNull();
+        if (accessBinding === null || refreshBinding === null)
+          throw new Error('Agent credentials were not bound.');
+        expect(refreshBinding.grantId).toBe(accessBinding.grantId);
+        const context = await verifyMcpAccessToken(token.access_token);
+        expect(context.identity).toMatchObject({ kind: 'agent', name: 'Review reader' });
+        expect(context.organizationId).toBe(workspace.organizationId);
+        expect(context.scopes).not.toContain('orbit.write');
+        process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+        const refreshed = await authPost(refreshRequest(token.refresh_token));
+        expect(refreshed.status).toBe(200);
+        const replacement = mcpTokenResponseSchema.parse(await refreshed.json());
+        expect(replacement.scope).toBe(token.scope);
+        expect(unbindMcpCredential(replacement.access_token, secret)).toBeNull();
+        expect(unbindAgentMcpCredential(replacement.access_token, secret)?.grantId).toBe(
+          accessBinding.grantId,
+        );
+        const refreshedContext = await verifyMcpAccessToken(replacement.access_token);
+        expect(refreshedContext.identity).toEqual(context.identity);
+        expect(refreshedContext.scopes).not.toContain('orbit.write');
+        const [stored] = await db.select().from(schema.oauthAccessToken);
+        expect(stored?.mcpGrantId).toBe(accessBinding.grantId);
+      });
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previous;
+      if (previousWrite === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previousWrite;
+    }
+  });
+
+  it('issues exact write-bound v2 credentials after explicit consent and preserves reads with writes disabled', async () => {
+    const previousAgent = process.env['ORBIT_AGENT_MCP'];
+    const previousWrite = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
+    try {
+      await withNativeFetchGlobals(async () => {
+        const { code, verifier } = await providerAuthorizationCode(workspace, cookie, {
+          name: 'Issue writer',
+          write: true,
+        });
+        const response = await authPost(codeRequest(code, verifier));
+        expect(response.status).toBe(200);
+        const token = mcpTokenResponseSchema.parse(await response.json());
+        expect(token.scope).toBe('openid offline_access orbit.read orbit.write');
+        if (token.refresh_token === undefined) throw new Error('No Agent refresh credential.');
+        const { secret } = await auth.$context;
+        const binding = unbindAgentMcpCredential(token.access_token, secret);
+        if (binding === null) throw new Error('No bound Agent credential.');
+        expect(unbindAgentMcpCredential(token.refresh_token, secret)?.grantId).toBe(
+          binding.grantId,
+        );
+        const [grant] = await db
+          .select()
+          .from(schema.mcpGrant)
+          .where(eq(schema.mcpGrant.id, binding.grantId));
+        expect(grant?.scopes).toBe(token.scope);
+        expect((await verifyMcpAccessToken(token.access_token)).grantId).toBe(binding.grantId);
+        process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
+        const refreshed = await authPost(refreshRequest(token.refresh_token));
+        expect(refreshed.status).toBe(200);
+        const replacement = mcpTokenResponseSchema.parse(await refreshed.json());
+        expect(replacement.scope).toBe(token.scope);
+        expect(unbindAgentMcpCredential(replacement.access_token, secret)?.grantId).toBe(
+          binding.grantId,
+        );
+        const context = await verifyMcpAccessToken(replacement.access_token);
+        expect(context.identity).toMatchObject({ kind: 'agent', name: 'Issue writer' });
+        expect(context.scopes).toBe(token.scope ?? 'missing-scopes');
+        const [stored] = await db.select().from(schema.oauthAccessToken);
+        expect(stored?.mcpGrantId).toBe(binding.grantId);
+        expect(stored?.scopes).toBe(token.scope);
+      });
+    } finally {
+      if (previousAgent === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previousAgent;
+      if (previousWrite === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
+      else process.env['ORBIT_AGENT_ISSUE_WRITE'] = previousWrite;
+    }
+  });
+
   it('rejects authorization code verifiers outside RFC 7636 syntax before consuming the code', async () => {
     await withNativeFetchGlobals(async () => {
       const invalidVerifiers = ['A'.repeat(42), 'A'.repeat(129), `${'A'.repeat(42)}%`];
@@ -636,6 +841,165 @@ describe('MCP authorize PKCE boundary', () => {
       for (const response of failures) {
         expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
       }
+    });
+  });
+
+  it('keeps legacy consent and nullable token bindings usable while agent access is disabled', async () => {
+    const previous = process.env['ORBIT_AGENT_MCP'];
+    process.env['ORBIT_AGENT_MCP'] = 'false';
+    try {
+      await withNativeFetchGlobals(async () => {
+        const credentials = await issuedCredentials(workspace, [
+          'openid',
+          'offline_access',
+          'orbit.read',
+          'orbit.write',
+        ]);
+        await db.update(schema.oauthAccessToken).set({ mcpGrantId: null });
+        expect((await verifyMcpAccessToken(credentials.accessToken)).scopes).toContain(
+          'orbit.write',
+        );
+        const refreshed = await authPost(refreshRequest(credentials.refreshToken));
+        expect(refreshed.status).toBe(200);
+        const body = (await refreshed.json()) as Record<string, unknown>;
+        const accessToken = body['access_token'];
+        if (typeof accessToken !== 'string') throw new Error('No refreshed access token.');
+        expect((await verifyMcpAccessToken(accessToken)).identity.kind).toBe('legacy');
+        const [stored] = await db.select().from(schema.oauthAccessToken);
+        expect(stored?.mcpGrantId).toBe(credentials.binding.grantId);
+      });
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previous;
+    }
+  });
+
+  it('refuses a refresh credential wrapped with another grant without consuming its source', async () => {
+    await withNativeFetchGlobals(async () => {
+      const credentials = await issuedCredentials(workspace);
+      const other = await createWorkspace('RefreshOtherOwner');
+      const grantId = await recordMcpGrant({
+        clientId: 'client_test',
+        userId: other.adminUser.id,
+        organizationId: other.organizationId,
+        scopes: 'openid offline_access orbit.read',
+      });
+      const forged = bindMcpCredential(credentials.binding.credential, grantId, credentials.secret);
+      const response = await authPost(refreshRequest(forged));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(1);
+      expect((await authPost(refreshRequest(credentials.refreshToken))).status).toBe(200);
+    });
+  });
+
+  it('requires approved authorization context to agree with the exact grant', async () => {
+    await withNativeFetchGlobals(async () => {
+      for (const override of [
+        { requireConsent: true },
+        { userId: 'another-user' },
+        { clientId: 'another-client' },
+        { scope: ['openid', 'offline_access', 'orbit.read', 'orbit.write'] },
+      ]) {
+        const { code, verifier } = await finalizedAuthorizationCode(workspace);
+        const [record] = await db
+          .select()
+          .from(schema.verification)
+          .where(eq(schema.verification.identifier, code));
+        if (record === undefined) throw new Error('No authorization record.');
+        const value = JSON.parse(record.value) as Record<string, unknown>;
+        await db
+          .update(schema.verification)
+          .set({ value: JSON.stringify({ ...value, ...override }) })
+          .where(eq(schema.verification.id, record.id));
+        const response = await authPost(codeRequest(code, verifier));
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+        expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
+      }
+    });
+  });
+
+  it('never refreshes an agent grant through legacy credentials or a disabled agent gate', async () => {
+    const previous = process.env['ORBIT_AGENT_MCP'];
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    try {
+      await withNativeFetchGlobals(async () => {
+        const credentials = await issuedCredentials(workspace);
+        const identityId = randomUUID();
+        const [member] = await db
+          .select()
+          .from(schema.member)
+          .where(
+            and(
+              eq(schema.member.userId, workspace.adminUser.id),
+              eq(schema.member.organizationId, workspace.organizationId),
+            ),
+          );
+        if (member === undefined) throw new Error('No owner membership.');
+        await db.insert(schema.agentIdentity).values({
+          id: identityId,
+          organizationId: workspace.organizationId,
+          ownerUserId: workspace.adminUser.id,
+          clientId: 'client_test',
+          name: 'Read assistant',
+          ownerNameSnapshot: workspace.adminUser.name,
+          clientNameSnapshot: 'Test MCP client',
+        });
+        await db
+          .update(schema.mcpGrant)
+          .set({ identityKind: 'agent', agentIdentityId: identityId, ownerMemberId: member.id })
+          .where(eq(schema.mcpGrant.id, credentials.binding.grantId));
+        const agentRefresh = bindAgentMcpCredential(
+          credentials.binding.credential,
+          credentials.binding.grantId,
+          credentials.secret,
+        );
+        expect(unbindMcpCredential(agentRefresh, credentials.secret)).toBeNull();
+        expect((await authPost(refreshRequest(credentials.refreshToken))).status).toBe(400);
+        await db.update(schema.oauthAccessToken).set({ mcpGrantId: null });
+        expect((await authPost(refreshRequest(agentRefresh))).status).toBe(400);
+        await db.update(schema.oauthAccessToken).set({ mcpGrantId: credentials.binding.grantId });
+        process.env['ORBIT_AGENT_MCP'] = 'false';
+        expect((await authPost(refreshRequest(agentRefresh))).status).toBe(400);
+        process.env['ORBIT_AGENT_MCP'] = 'true';
+        const refreshed = await authPost(refreshRequest(agentRefresh));
+        expect(refreshed.status).toBe(200);
+        const body = (await refreshed.json()) as Record<string, unknown>;
+        const accessToken = body['access_token'];
+        if (typeof accessToken !== 'string') throw new Error('No refreshed access token.');
+        expect(unbindMcpCredential(accessToken, credentials.secret)).toBeNull();
+        expect(unbindAgentMcpCredential(accessToken, credentials.secret)).not.toBeNull();
+        expect((await verifyMcpAccessToken(accessToken)).identity).toEqual({
+          kind: 'agent',
+          id: identityId,
+          name: 'Read assistant',
+        });
+      });
+    } finally {
+      if (previous === undefined) delete process.env['ORBIT_AGENT_MCP'];
+      else process.env['ORBIT_AGENT_MCP'] = previous;
+    }
+  });
+
+  it('leaves no usable token when revocation races refresh', async () => {
+    await withNativeFetchGlobals(async () => {
+      const credentials = await issuedCredentials(workspace);
+      const [response] = await Promise.all([
+        authPost(refreshRequest(credentials.refreshToken)),
+        revokeMcpGrant(credentials.binding.grantId, workspace.adminUser.id),
+      ]);
+      if (response.ok) {
+        const body = (await response.json()) as Record<string, unknown>;
+        const accessToken = body['access_token'];
+        if (typeof accessToken !== 'string') throw new Error('No refreshed access token.');
+        await expect(verifyMcpAccessToken(accessToken)).rejects.toMatchObject({
+          code: 'unauthorized',
+        });
+      } else {
+        expect(await response.json()).toMatchObject({ error: 'invalid_grant' });
+      }
+      expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
     });
   });
 

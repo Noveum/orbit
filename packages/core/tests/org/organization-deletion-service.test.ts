@@ -681,11 +681,11 @@ describe('deleteOrganization', () => {
 
   it('prevents a waiting upload from minting a target after deletion starts', async () => {
     const now = new Date();
-    await makeDeletionReady(nova.organizationId, now);
     const { issue } = await createIssue(nova.admin, {
       teamId: nova.teamId,
       title: 'Upload race',
     });
+    await makeDeletionReady(nova.organizationId, now);
     let announceDeletion: (() => void) | undefined;
     let releaseDeletion: (() => void) | undefined;
     const deletionStarted = new Promise<void>((resolve) => {

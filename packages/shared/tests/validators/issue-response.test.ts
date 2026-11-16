@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { issueActorSchema, issueSchema } from '../../src/validators/issue-response.ts';
 
 const actorsSchema = issueSchema.pick({
+  creatorId: true,
   creator: true,
   assignee: true,
   owner: true,
@@ -28,7 +29,8 @@ describe('Issue Actor response contract', () => {
       avatar: 'https://example.com/helper.png',
       deleted: true,
     };
-    expect(actorsSchema.parse({ creator, assignee, owner: null })).toEqual({
+    expect(actorsSchema.parse({ creatorId: creator.id, creator, assignee, owner: null })).toEqual({
+      creatorId: creator.id,
       creator,
       assignee,
       owner: null,
@@ -36,12 +38,33 @@ describe('Issue Actor response contract', () => {
   });
 
   it('distinguishes legacy omissions from explicit null identities', () => {
-    expect(actorsSchema.parse({})).toEqual({});
-    expect(actorsSchema.parse({ assignee: null, owner: null, ownerUserId: null })).toEqual({
+    expect(actorsSchema.omit({ creatorId: true }).parse({})).toEqual({});
+    expect(
+      actorsSchema.parse({ creatorId: null, assignee: null, owner: null, ownerUserId: null }),
+    ).toEqual({
+      creatorId: null,
       assignee: null,
       owner: null,
       ownerUserId: null,
     });
+  });
+
+  it('retains an Agent creator with no legacy Human identity', () => {
+    const creator = {
+      type: 'agent' as const,
+      id: 'agent-1',
+      name: 'Build helper',
+      avatar: null,
+      deleted: false,
+    };
+    expect(
+      actorsSchema.parse({
+        creatorId: null,
+        creatorUserId: null,
+        creatorAgentId: creator.id,
+        creator,
+      }),
+    ).toEqual({ creatorId: null, creatorUserId: null, creatorAgentId: creator.id, creator });
   });
 
   it('rejects incomplete actors rather than inventing lifecycle or avatar values', () => {

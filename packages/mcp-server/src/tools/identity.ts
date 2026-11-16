@@ -8,15 +8,36 @@ import {
 } from '@orbit/core';
 import { db, eq, schema } from '@orbit/db';
 import { notFound } from '@orbit/shared/errors';
-import type { Principal } from '@orbit/shared/policy';
+import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { permissionsFor } from '@orbit/shared/policy';
 import { z } from 'zod';
 import { resolveTeam } from '../resolve.ts';
-import { defineTool } from './support.ts';
+import { canWriteAgentIssues, defineTool } from './support.ts';
 
 const teamRef = z.string().min(1).describe('A team key like "ENG", a team name, or a team id.');
 
-export function registerIdentityTools(server: McpServer, principal: Principal): void {
+export function registerIdentityTools(
+  server: McpServer,
+  principal: Principal,
+  identity: McpIdentity,
+): void {
+  if (identity.kind === 'agent') {
+    defineTool(
+      server,
+      {
+        name: 'get_agent_identity',
+        title: 'Get the Agent Identity',
+        description:
+          'Return this connection explicit Agent Identity and Issue write capability. get_me and me continue to identify the Human Principal who authorized it.',
+        readOnly: true,
+        inputSchema: {},
+      },
+      async () => ({
+        agent: { id: identity.id, name: identity.name },
+        readOnly: !canWriteAgentIssues(server),
+      }),
+    );
+  }
   defineTool(
     server,
     {
@@ -39,7 +60,7 @@ export function registerIdentityTools(server: McpServer, principal: Principal): 
       name: 'get_me',
       title: 'Get the current identity',
       description:
-        'Return the Orbit user, workspace, role and teams authorized by the OAuth grant. Call this first to learn which teams you may write to.',
+        'Return the Human Principal who authorized the OAuth connection, with their workspace role and teams. me and my issues refer to this user. Connection scopes and identity restrictions may limit the available tools further.',
       readOnly: true,
       inputSchema: {},
     },

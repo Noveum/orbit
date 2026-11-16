@@ -8,6 +8,7 @@ import React from 'react';
 
 import type { IssueGroup } from '@/features/filters/grouping.ts';
 import type { MoveUndoEntry } from '@/features/issues/use-issue-property-undo.ts';
+import { queryKeys } from '@/lib/query/keys.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import type { MoveInput } from '@/lib/query/use-issues.ts';
 
@@ -191,6 +192,144 @@ describe('Issue move undo and redo', () => {
   beforeEach(() => {
     clearTabHistory();
     toast.mockClear();
+  });
+
+  it('restores an Agent assignment and retains identity checks across undo and redo', async () => {
+    const originalFetch = globalThis.fetch;
+    const assignee = {
+      type: 'agent' as const,
+      id: 'agent_1',
+      name: 'Build bot',
+      avatar: null,
+      deleted: false,
+    };
+    const restored = { ...mockIssue, assignee, ownerUserId: 'user_owner', syncId: 2 };
+    const cleared = {
+      ...mockIssue,
+      assignee: null,
+      assigneeAgentId: null,
+      ownerUserId: 'user_owner',
+      syncId: 3,
+    };
+    const requests: unknown[] = [];
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return Promise.resolve(
+        response({ issue: requests.length === 1 ? restored : cleared, rebalanced: [] }),
+      );
+    }) as typeof fetch;
+    const client = createQueryClient();
+    recordTabMove(
+      moveEntry({
+        issue: cleared,
+        forward: moveInput({ issue: cleared, assigneeId: null }),
+        inverse: moveInput({ issue: cleared, assigneeAgentId: assignee.id }),
+        expectedForUndo: { assigneeId: null, assigneeAgentId: null },
+        expectedForRedo: { assigneeId: null, assigneeAgentId: assignee.id },
+      }),
+    );
+    const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+      wrapper: createWrapper(client),
+    });
+    try {
+      await act(async () => {
+        await result.current.undo();
+      });
+      expect(requests[0]).toMatchObject({
+        assigneeAgentId: assignee.id,
+        expected: { assigneeAgentId: null },
+      });
+      expect(getTabRedoStackForTests()[0]?.expectedForRedo).toMatchObject({
+        assigneeId: null,
+        assigneeAgentId: assignee.id,
+      });
+      expect(getTabRedoStackForTests()[0]?.issue.assignee).toEqual(assignee);
+      await act(async () => {
+        await result.current.redo();
+      });
+      expect(requests[1]).toMatchObject({
+        assigneeId: null,
+        expected: { assigneeId: null, assigneeAgentId: assignee.id },
+      });
+      expect(getTabUndoStackForTests()[0]?.expectedForUndo).toMatchObject({
+        assigneeId: null,
+        assigneeAgentId: null,
+      });
+      expect(getTabUndoStackForTests()[0]?.issue.ownerUserId).toBe('user_owner');
+    } finally {
+      unmount();
+      client.clear();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('preserves a newer Agent assignment when a stale move undo conflicts', async () => {
+    const originalFetch = globalThis.fetch;
+    const newer = {
+      ...mockIssue,
+      assigneeAgentId: 'agent_new',
+      assignee: {
+        type: 'agent' as const,
+        id: 'agent_new',
+        name: 'New bot',
+        avatar: null,
+        deleted: false,
+      },
+      ownerUserId: 'user_owner',
+      syncId: 4,
+    };
+    const requests: unknown[] = [];
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method !== 'POST')
+        return Promise.resolve(response({ issues: [newer], nextCursor: null }));
+      requests.push(JSON.parse(String(init.body)));
+      return Promise.resolve(
+        response(
+          {
+            error: {
+              code: 'conflict',
+              message: 'Cannot undo: agent assignee was changed by another update.',
+            },
+          },
+          409,
+        ),
+      );
+    }) as typeof fetch;
+    const client = createQueryClient();
+    const key = queryKeys.issues(mockIssue.teamId);
+    const pages = { pages: [{ issues: [newer], nextCursor: null }], pageParams: [null] };
+    client.setQueryData(key, pages);
+    recordTabMove(
+      moveEntry({
+        forward: moveInput({ assigneeId: null }),
+        inverse: moveInput({ assigneeAgentId: 'agent_old' }),
+        expectedForUndo: { assigneeId: null, assigneeAgentId: null },
+        expectedForRedo: { assigneeId: null, assigneeAgentId: 'agent_old' },
+      }),
+    );
+    const { result, unmount } = renderHook(() => useIssuePropertyUndo(), {
+      wrapper: createWrapper(client),
+    });
+    try {
+      await act(async () => {
+        await result.current.undo();
+      });
+      expect(requests[0]).toMatchObject({
+        assigneeAgentId: 'agent_old',
+        expected: { assigneeId: null, assigneeAgentId: null },
+      });
+      expect(client.getQueryData<typeof pages>(key)?.pages[0]?.issues[0]).toMatchObject({
+        assignee: newer.assignee,
+        ownerUserId: newer.ownerUserId,
+      });
+      expect(getTabUndoStackForTests()).toHaveLength(0);
+      expect(getTabRedoStackForTests()).toHaveLength(0);
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Could not undo' }));
+    } finally {
+      unmount();
+      client.clear();
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('plans a move into another state with the destination neighbours', () => {

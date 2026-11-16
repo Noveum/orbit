@@ -783,7 +783,7 @@ const LOADERS: Record<SyncModel, Loader> = {
       scopes: [
         scopes.issue(row.issueId),
         scopes.team(teamId),
-        scopes.user(creatorId),
+        ...(creatorId === null ? [] : [scopes.user(creatorId)]),
         ...(assigneeId === null ? [] : [scopes.user(assigneeId)]),
       ],
       data: row,

@@ -57,10 +57,12 @@ export function restorable(raw: unknown): PersistedClient {
   if (!persistedClientSchema.safeParse(raw).success) return emptyClient();
 
   const client = raw as PersistedClient;
-  const queries = client.clientState.queries.filter((query) => {
-    const schema = schemaForKey(query.queryKey);
-    return schema?.safeParse(query.state.data).success === true;
-  });
+  const queries = client.clientState.queries
+    .filter((query) => {
+      const schema = schemaForKey(query.queryKey);
+      return schema?.safeParse(query.state.data).success === true;
+    })
+    .map((query) => ({ ...query, state: { ...query.state, isInvalidated: true } }));
 
   return { ...client, clientState: { ...client.clientState, queries } };
 }

@@ -197,6 +197,9 @@ describe('IssueCard display properties', () => {
     render(
       <IssueCard
         issue={issue({
+          creatorId: null,
+          creatorUserId: null,
+          creatorAgentId: 'agent_creator',
           creator: {
             type: 'agent',
             id: 'agent_creator',
