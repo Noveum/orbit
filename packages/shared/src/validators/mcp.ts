@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-export const mcpClientRegistrationCompatibilitySchema = z.looseObject({
-  redirect_uris: z.array(z.url()).min(1),
-  application_type: z.enum(['web', 'native']).optional(),
-});
 export const mcpRevocationRequestSchema = z
   .object({ token: z.string().min(1) })
   .catchall(z.string());

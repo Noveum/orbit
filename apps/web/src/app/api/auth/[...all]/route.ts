@@ -14,7 +14,6 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
   type McpTokenRequest,
   mcpAuthorizationCodeSchema,
-  mcpClientRegistrationCompatibilitySchema,
   mcpCodeChallengeSchema,
   mcpCodeVerifierSchema,
   mcpProviderAuthorizationCodeSchema,
@@ -34,37 +33,6 @@ const providerResource = oauthProviderResourceClient(auth).getActions();
 
 const MCP_AUTHORIZE_PATH = '/api/auth/mcp/authorize';
 const MCP_TOKEN_PATH = '/api/auth/mcp/token';
-
-async function registerMcpClient(request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  url.pathname = '/api/auth/oauth2/register';
-  const raw: unknown = await request
-    .clone()
-    .json()
-    .catch(() => null);
-  const parsed = mcpClientRegistrationCompatibilitySchema.safeParse(raw);
-  if (
-    parsed.success &&
-    parsed.data.application_type === undefined &&
-    parsed.data.redirect_uris.every((uri) => {
-      const target = new URL(uri);
-      return (
-        target.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)
-      );
-    })
-  ) {
-    const headers = new Headers(request.headers);
-    headers.delete('content-length');
-    return handlers.POST(
-      new Request(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ ...parsed.data, application_type: 'native' }),
-      }),
-    );
-  }
-  return handlers.POST(new Request(url, request));
-}
 
 async function revokeMcpCredential(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -596,9 +564,6 @@ export function POST(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === '/api/auth/oauth2/revoke' || url.pathname === '/api/auth/mcp/revoke') {
     return revokeMcpCredential(request);
-  }
-  if (url.pathname === '/api/auth/mcp/register' || url.pathname === '/api/auth/oauth2/register') {
-    return registerMcpClient(request);
   }
   if (url.pathname === MCP_TOKEN_PATH || url.pathname === '/api/auth/oauth2/token') {
     return handleMcpTokenRequest(request);

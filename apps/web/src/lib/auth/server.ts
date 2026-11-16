@@ -299,6 +299,7 @@ export const auth = betterAuth({
       consentPage: MCP_CONSENT_PATH,
       resource: mcpServerUrl(),
       allowDynamicClientRegistration: true,
+      clientRegistrationDefaultApplicationType: 'infer',
       allowUnauthenticatedClientRegistration: true,
       scopes: [...MCP_SCOPES],
       grantTypes: ['authorization_code', 'refresh_token'],

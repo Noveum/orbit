@@ -30,6 +30,7 @@ const mode = z
     'legacy-post-wrong',
     'modern-basic',
     'modern-basic-post',
+    'registration',
   ])
   .parse(process.argv[2] ?? 'grant');
 if (
@@ -255,6 +256,64 @@ if (mode.startsWith('legacy-')) {
   }
 }
 const routes = await import('../../src/app/api/auth/[...all]/route.ts');
+if (mode === 'registration') {
+  const cases = [
+    {
+      redirects: ['cursor://anysphere.cursor-mcp/oauth/callback'],
+      expected: 201,
+      application: 'native',
+    },
+    {
+      redirects: [
+        'cursor://anysphere.cursor-mcp/oauth/callback',
+        'https://client.example.test/callback',
+        'http://localhost:8787/callback',
+      ],
+      expected: 201,
+      application: 'native',
+    },
+    { redirects: ['http://127.0.0.1:9000/callback'], expected: 201, application: 'native' },
+    { redirects: ['http://[::1]:9000/callback'], expected: 201, application: 'native' },
+    { redirects: ['https://client.example.test/callback'], expected: 201, application: 'web' },
+    { redirects: ['cursor://anysphere.cursor-mcp/oauth/callback'], expected: 400, explicit: 'web' },
+    { redirects: ['javascript:alert(1)'], expected: 400 },
+    { redirects: ['https://user:password@client.example.test/callback'], expected: 400 },
+    {
+      redirects: [
+        'cursor://anysphere.cursor-mcp/oauth/callback',
+        'http://client.example.test/callback',
+      ],
+      expected: 400,
+    },
+  ];
+  for (const test of cases) {
+    const response = await routes.POST(
+      new Request(`${origin}/api/auth/mcp/register`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          client_name: 'Local redirect policy control',
+          redirect_uris: test.redirects,
+          token_endpoint_auth_method: 'none',
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          ...(test.explicit === undefined ? {} : { application_type: test.explicit }),
+        }),
+      }),
+    );
+    assert.equal(
+      response.status,
+      test.expected,
+      'The registered redirect policy must retain native compatibility without weakening explicit web or URI validation',
+    );
+    const body = await response.json();
+    if (test.expected === 201) assert.equal(body.application_type, test.application);
+    else assert.equal(body.error, 'invalid_redirect_uri');
+  }
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 const decision = await import('../../src/app/(auth)/oauth/authorize/decision/route.ts');
 const { default: consentPage } = await import('../../src/app/(auth)/oauth/authorize/page.tsx');
 const { verifyMcpAccessToken, revokeMcpGrant } = await import('@orbit/core');

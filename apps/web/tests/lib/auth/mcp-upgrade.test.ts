@@ -24,6 +24,7 @@ describe('patched MCP OAuth integration', () => {
     'legacy-post-wrong',
     'modern-basic',
     'modern-basic-post',
+    'registration',
   ] as const) {
     it(`keeps workspace-bound credentials safe through ${mode}`, () => {
       const databaseUrl = process.env['DATABASE_URL'] ?? '';
