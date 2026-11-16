@@ -13,7 +13,7 @@ schema migration during an Orbit release upgrade.
 
 Orbit takes an advisory lock during migrations (`releaseDatabase`) to ensure single-worker
 safety. If a migration process was terminated abruptly (e.g. killed by an out-of-memory event),
-the connection or lock may remain open.
+a surviving backend can retain the session lock. A closed backend releases it automatically.
 
 Inspect active PostgreSQL locks:
 
@@ -58,27 +58,25 @@ Compare the ledger rows with committed files in `packages/db/drizzle/`:
 
 ## Step 3: Run forward-repair with `db:release`
 
-Orbit migrations are atomic and idempotent. Run the release command through a direct
-connection:
+Use the exact committed release and a direct connection from the reviewed operator
+environment. Do not assume arbitrary partially applied DDL is safe to repeat:
 
 ```bash
-DIRECT_URL="postgres://$PGUSER:$PGPASSWORD@$PGHOST:5432/$PGDATABASE" \
-bun run db:release
+bun --env-file=/etc/orbit/recovery.env run db:release
 ```
 
 What `db:release` does during recovery:
-1. Validates that every existing ledger record matches the SHA-256 hash in `packages/db/drizzle/meta/_journal.json`.
-2. Applies any unapplied migrations inside a transaction.
-3. Automatically reconciles missing ledger records if the catalog already contains approved tables.
-4. Performs a full catalog check covering columns, indexes, types, and check constraints.
+1. Reads the journal to locate ordered SQL migrations and their timestamps; hashes are computed from the SQL file contents, not stored in the journal.
+2. Validates the applied ledger against those migrations and the explicitly supported compatibility baselines.
+3. Applies pending migrations under the release lock and runs narrowly scoped reconciliation for known historical contracts. It is not a general repair tool for arbitrary missing ledger rows or partial schemas.
+4. Checks the declared catalog for missing or incompatible schema. Review the actual report, including compatible extra artifacts; a zero exit does not prove an exact empty-drift result.
 
 ## Step 4: Verify zero catalog drift
 
 Run `db:check-drift` to confirm the live database matches the codebase:
 
 ```bash
-DATABASE_URL="postgres://$PGUSER:$PGPASSWORD@$PGHOST:5432/$PGDATABASE" \
-bun run db:check-drift
+bun --env-file=/etc/orbit/recovery.env run db:check-drift
 ```
 
 Ensure the command exits 0 and reports no missing or altered columns.

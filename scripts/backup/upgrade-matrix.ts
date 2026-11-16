@@ -116,22 +116,26 @@ function printHumanMatrixResults(result: {
   scenarios: readonly {
     name: string;
     passed: boolean;
+    skipped?: boolean | undefined;
     durationMs: number;
     error?: string | undefined;
   }[];
 }): void {
   process.stdout.write('Scenario Results:\n');
   for (const sc of result.scenarios) {
-    const mark = sc.passed ? '[PASS]' : '[FAIL]';
+    const completedMark = sc.passed ? '[PASS]' : '[FAIL]';
+    const mark = sc.skipped === true ? '[SKIP]' : completedMark;
     process.stdout.write(`  ${mark} ${sc.name} (${sc.durationMs} ms)\n`);
     if (sc.error !== undefined) {
       process.stdout.write(`         Error: ${sc.error}\n`);
     }
   }
   process.stdout.write(`\nTotal Duration: ${result.totalDurationMs} ms\n`);
-  process.stdout.write(
-    `Overall Status: ${result.allPassed ? 'ALL PASSED' : 'FAILURES DETECTED'}\n`,
-  );
+  const completedStatus = result.scenarios.some((scenario) => scenario.skipped === true)
+    ? 'COMPLETED WITH SKIPS'
+    : 'ALL PASSED';
+  const status = result.allPassed ? completedStatus : 'FAILURES DETECTED';
+  process.stdout.write(`Overall Status: ${status}\n`);
 }
 
 function emitError(message: string, isJson: boolean): never {

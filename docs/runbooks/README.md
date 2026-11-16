@@ -1,39 +1,73 @@
 # Operator runbooks
 
-These runbooks provide step-by-step procedures for routine backup administration,
-staging restores, disaster recovery, security incidents, and database repairs.
+Use these procedures with the exact Orbit release whose migrations will run during
+recovery. A restore replaces the target database. A recovery drill also deletes
+target data and flushes its separately confirmed Redis database. Use isolated
+resources until the incident owner approves a production cutover.
 
-Every procedure uses supported Orbit commands (`bun run backup:create`,
-`bun run backup:restore`, `bun run backup:validate`, `bun run backup:prune`,
-`bun run backup:recovery-drill`, and `bun run db:release`) or standard PostgreSQL
-and object-storage tooling.
+## Preparation shared by every procedure
 
-## Runbook catalog
+Run commands from the repository root. The examples use protected operator-owned
+environment files at /etc/orbit/orbit.env for backup capture and
+/etc/orbit/recovery.env for an isolated restore. Configure explicit database, Redis
+and storage endpoints in each file, including S3_ENDPOINT for a custom provider.
+Ensure inherited environment variables and the repository .env do not point a
+recovery command at production. Existing shell variables can override env-file
+values. Loading an env file with Bun does not export it into the parent shell.
 
-| Scenario | Objective | Runbook |
-| --- | --- | --- |
-| Routine backup | Capture consistent, encrypted snapshots and automate retention | [Routine backup](routine-backup.md) |
-| Routine test restore | Practice restores in a safe staging environment | [Routine restore into test environment](routine-restore-test-environment.md) |
-| Total host loss | Rebuild a deployment from scratch using an offsite backup archive | [Complete host loss](complete-host-loss.md) |
-| Database corruption | Recover relational integrity following storage or disk failure | [Database corruption](database-corruption.md) |
-| Storage bucket loss | Restore uploaded file attachments and reconcile S3 state | [Object storage loss](object-storage-loss.md) |
-| Leaked encryption key | Rotate master keys and re-encrypt archives following a leak | [Leaked backup encryption key](leaked-backup-encryption-key.md) |
-| Failed migration | Reconcile advisory locks and forward-repair schema state | [Failed migration](failed-migration.md) |
-| Accidental deletion | Recover accidentally deleted workspace or project content | [Accidental deletion recovery](accidental-deletion-recovery.md) |
-| Region or cloud migration | Relocate an Orbit deployment across regions or cloud providers | [Region and provider migration](region-provider-migration.md) |
-| Validation failure | Diagnose and resolve post-restore integrity errors | [Validation failure after restore](validation-failure-after-restore.md) |
+Use a direct PostgreSQL connection, not a transaction-mode pooler. Install a
+pg_dump version at least as new as the source server and compatible pg_restore
+tools. The operator running the command, including the orbit systemd user, must
+be able to read the key and environment files. Create private directories with
+mode 0700 and files with mode 0600 before putting secrets in them.
 
-## Core operator principles
+For encrypted backups, use a 32-byte key encoded as 64 hex characters or 44 base64
+characters. A nonempty ORBIT_BACKUP_ENCRYPTION_KEY overrides a key file, even an
+explicit --encryption-key-file. Key files take precedence over helper commands.
+Before selecting a key file, remove or blank an old inline key in both the
+inherited environment and every loaded environment file. Never put key material
+in command arguments. Key IDs are labels, not a key lookup service.
 
-1. **Target identity confirmation:** Every destructive restore requires passing
-   `--confirm-destructive-restore-target=<target>`, where `<target>` matches the
-   computed destination identity (`<host>:<port>/db/<database>#bucket:<bucket>`).
-   This prevents accidentally restoring a snapshot into a production cluster.
-2. **Envelope encryption:** Backups are encrypted before leaving the host using
-   AES-256-GCM. Never pass raw encryption keys as command-line arguments. Use
-   `--encryption-key-file` or the `ORBIT_BACKUP_ENCRYPTION_KEY` environment variable.
-3. **Machine-readable validation:** Orbit gates deployment readiness until
-   `bun run backup:validate` passes ledger checks, catalog drift, referential
-   integrity, object storage byte verification, and Redis connectivity.
-4. **Automated drills:** Recovery readiness is verified continuously in CI via
-   `bun run backup:recovery-drill` and `bun run backup:upgrade-matrix`.
+Use the exact backupDir returned by backup:create --json, or its manifest.json.
+The destination is a parent containing generated archive directories. Orbit does
+not create a latest alias. Replace example archive paths with that exact child.
+
+A restore confirmation names the computed database host, port, database and bucket:
+`host:port/db/database#bucket:bucket`. It is an acknowledgement of destruction,
+not proof that the target is safe. Independently verify the configured endpoints,
+credentials and ownership before confirming. The drill has a separate Redis
+confirmation including protocol, host, port and database.
+
+## What validation proves
+
+| Operation | Checks and limits |
+| --- | --- |
+| backup:restore | Verifies archived checksums/compatibility and decrypts the dump before database replacement; decrypts and reconciles objects afterward by default; validates relational state, referenced object presence/read size, and configured Redis connectivity; records recovery readiness |
+| backup:validate | Reports ledger/catalog compatibility, relational references, ownership/bootstrap checks and configured Redis connectivity; the CLI supplies no storage driver, so its zero storage counts do not prove object recovery |
+| backup:recovery-drill | Exercises representative backup/restore, attachment hashes and access checks on disposable targets; does not certify every application workflow |
+
+Standalone validation reports `status` plus `validation.valid`,
+`validation.migrationStatus`, `validation.integrity`, `validation.storage`,
+`validation.auth`, `validation.redis`, `validation.errors` and duration.
+It does not inspect archive bytes, establish Redis emptiness or update
+orbit_recovery_state. A skipped/unconfigured Redis check is not a successful ping.
+
+Restore owns the restoring/validation_failed/ready transitions. Preflight failures
+can leave the prior state unchanged. The health endpoint reports that state; keep
+traffic fenced operationally until integrated recovery and user checks pass.
+Do not clear readiness with SQL based only on standalone validation.
+
+## Catalog
+
+| Scenario | Runbook |
+| --- | --- |
+| Capture, encryption and scheduling | [Routine backup](routine-backup.md) |
+| Isolated full restore | [Routine test restore](routine-restore-test-environment.md) |
+| Total host loss | [Complete host loss](complete-host-loss.md) |
+| Database corruption | [Database corruption](database-corruption.md) |
+| Bucket or attachment loss | [Object storage loss](object-storage-loss.md) |
+| Compromised backup key | [Leaked key](leaked-backup-encryption-key.md) |
+| Interrupted migration | [Failed migration](failed-migration.md) |
+| Deleted application content | [Accidental deletion](accidental-deletion-recovery.md) |
+| Infrastructure cutover | [Region/provider migration](region-provider-migration.md) |
+| Failed recovery checks | [Validation failure](validation-failure-after-restore.md) |

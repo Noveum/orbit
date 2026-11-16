@@ -162,7 +162,8 @@ export const redisDrillUrlSchema = z
       /^\d*$/.test(database) &&
       Number.isSafeInteger(Number(database))
     );
-  }, 'A Redis drill URL must identify an explicit host, port, and database without query options.');
+  }, 'A Redis drill URL must identify an explicit host, port, and database without query options.')
+  .transform((value) => new URL(value).toString());
 
 export function computeRestoreTargetIdentity(
   databaseUrl: string,

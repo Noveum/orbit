@@ -61,6 +61,8 @@ in [Complete host loss](./complete-host-loss.md).
 
 ## Step 5: Retire the isolated recovery resources
 
-After confirming recovery with affected users, remove only the disposable database, Redis,
-and bucket created for this incident. Retain the source backup, incident-state backup,
-validation report, and recovery decision according to your retention policy.
+After confirming recovery with affected users, inventory each resource and its current role.
+If the restored database, bucket or Redis has been promoted into live service, exclude it
+from teardown and record its production owner. Remove only resources that remain disposable
+and are not referenced by the live deployment or rollback plan. Retain the source backup,
+incident-state backup, validation report, and recovery decision under the retention policy.

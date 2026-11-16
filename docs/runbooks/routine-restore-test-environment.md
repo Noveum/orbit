@@ -1,87 +1,65 @@
-# Routine restore into test environment runbook
+# Routine restore into a test environment
 
-This runbook describes how to restore a production backup into an isolated staging
-or test environment to verify recoverability without endangering live production data.
+Restore a full archive into disposable resources before trusting it for recovery.
+Follow the [shared preparation](README.md#preparation-shared-by-every-procedure).
 
-## Prerequisites
+Provision an empty recovery database, a separate object bucket and separate Redis.
+Configure only their endpoints and credentials in /etc/orbit/recovery.env, including
+S3_ENDPOINT for custom storage. Keep outbound integrations disabled in the isolated
+application so restored tokens cannot send messages or reconcile production work.
+Use the matching encoded key and the exact archive child returned at capture.
 
-- Verified backup archive (e.g. `/var/backups/orbit/orbit-backup-<timestamp>`)
-- Matching master encryption key (`/etc/orbit/master.key` or `ORBIT_BACKUP_ENCRYPTION_KEY`)
-- Isolated test PostgreSQL instance or database (e.g. `orbit_staging`)
-- Isolated test S3 bucket (e.g. `orbit-uploads-staging`)
-- `pg_restore` available locally
+## Confirm the target without mutation
 
-## Step 1: Provision isolated staging infrastructure
-
-Create a blank database and S3 bucket dedicated to test recovery:
-
-```bash
-# Create staging database
-createdb -h staging-db -p 5432 -U orbit orbit_staging
-
-# Ensure staging S3 bucket exists
-aws s3 mb s3://orbit-uploads-staging --endpoint-url "$S3_ENDPOINT"
-```
-
-## Step 2: Determine target identity string
-
-Orbit enforces a target-identity guard before any mutation occurs. If you invoke
-restore without confirmation, Orbit reports the exact required identity and safely exits:
+The CLI rejects a missing confirmation before it can display the computed identity.
+To inspect that identity, use a valid archive and a deliberately nonmatching value:
 
 ```bash
-DIRECT_URL="$STAGING_DATABASE_URL" \
-S3_BUCKET="orbit-uploads-staging" \
-bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-20T12-00-00-abc123
+bun --env-file=/etc/orbit/recovery.env run backup:restore \
+  /var/backups/orbit/orbit-backup-EXACT-ID \
+  --confirm-destructive-restore-target=inspect-only \
+  --json
 ```
 
-Output:
-```
-Refusing to restore into target "staging-db:5432/db/orbit_staging#bucket:orbit-uploads-staging".
-Pass --confirm-destructive-restore-target=staging-db:5432/db/orbit_staging#bucket:orbit-uploads-staging to confirm this destructive operation.
-```
+Expect a nonzero exit and a mismatch error naming the required target identity.
+No restore is authorized by that probe. Independently compare the database and
+bucket with the disposable resources you provisioned.
 
-## Step 3: Execute guarded restore
+## Restore the database and objects
 
-Provide the target confirmation, S3_BUCKET environment, and master encryption key:
+For a recovery environment configured as staging-db:5432/orbit_staging and bucket
+orbit-uploads-staging, the confirmation is:
 
 ```bash
-DIRECT_URL="$STAGING_DATABASE_URL" \
-S3_BUCKET="orbit-uploads-staging" \
-bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-20T12-00-00-abc123 \
+bun --env-file=/etc/orbit/recovery.env run backup:restore \
+  /var/backups/orbit/orbit-backup-EXACT-ID \
   --confirm-destructive-restore-target="staging-db:5432/db/orbit_staging#bucket:orbit-uploads-staging" \
   --encryption-key-file=/etc/orbit/master.key \
   --json
 ```
 
-During execution, Orbit:
-1. Verifies pre-mutation checksums of the database dump and object payloads.
-2. Checks migration ledger compatibility and prevents unsupported downgrades.
-3. Acquires an advisory lock on the target database.
-4. Decrypts and restores the PostgreSQL dump via `pg_restore`.
-5. Applies any pending migrations if the target Orbit release is newer.
-6. Reconciles and uploads stored attachment objects into the staging bucket.
-7. Executes application-aware integrity checks.
+Replace the example identity with the one verified for your environment. Apply
+the key-source precedence checks in the index before using a file-based key.
 
-## Step 4: Run application validation check
+The engine verifies archive checksums and compatible migration history, decrypts
+the dump, acquires its target lock, replaces the target database, applies supported
+pending migrations, reconciles objects and runs integrated validation. A successful
+result has `status: "ok"`, `databaseRestored: true` and `validation.valid: true`.
+Review `objectsReconciled` and `validation.storage` rather than assuming a fixed
+number of objects.
 
-Confirm that all referential integrity checks and object checksums pass:
-
-```bash
-DIRECT_URL="$STAGING_DATABASE_URL" \
-S3_BUCKET="orbit-uploads-staging" \
-bun run backup:validate --json
-```
-
-Output should confirm:
-- `valid`: `true`
-- Referential integrity: 0 dangling members, teams, issues, or documents
-- Storage check: 0 missing objects, 0 size mismatches
-
-## Step 5: Teardown staging environment
-
-Once recovery verification is complete, drop the staging database:
+## Validate the application
 
 ```bash
-dropdb -h staging-db -p 5432 -U orbit orbit_staging
-aws s3 rm s3://orbit-uploads-staging --recursive --endpoint-url "$S3_ENDPOINT"
+bun --env-file=/etc/orbit/recovery.env run backup:validate --json
 ```
+
+Require `validation.valid` true and no validation errors. This additional standalone
+check is relational and Redis-aware; its storage counters are zero because the CLI
+does not supply a storage driver. The preceding full restore supplies object checks.
+Download representative attachments, inspect complete relationships, sign in as
+restored users, and verify ordinary/private-team access and revoked credentials.
+
+Only remove resources still classified as disposable after testing. If any database,
+bucket or Redis instance is promoted into live use, exclude it from teardown and
+record its new owner and retention obligations.

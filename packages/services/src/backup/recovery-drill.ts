@@ -400,6 +400,14 @@ export async function verifyDrillRepresentativeData(
   };
 }
 
+async function closeDrillRedis(client: Redis): Promise<void> {
+  try {
+    await client.quit();
+  } finally {
+    client.disconnect();
+  }
+}
+
 export async function verifyRedisRealtimeAfterEmpty(
   redisUrl: string,
 ): Promise<{ valid: boolean; errors: string[] }> {
@@ -408,14 +416,17 @@ export async function verifyRedisRealtimeAfterEmpty(
   let pubClient: Redis | undefined;
 
   try {
-    subClient = new Redis(redisUrl, {
+    const canonicalUrl = redisDrillUrlSchema.parse(redisUrl);
+    subClient = new Redis(canonicalUrl, {
       connectTimeout: 3000,
+      commandTimeout: 2000,
       lazyConnect: true,
-      maxRetriesPerRequest: null,
+      maxRetriesPerRequest: 0,
       retryStrategy: () => null,
     });
-    pubClient = new Redis(redisUrl, {
+    pubClient = new Redis(canonicalUrl, {
       connectTimeout: 3000,
+      commandTimeout: 2000,
       lazyConnect: true,
       maxRetriesPerRequest: 0,
       retryStrategy: () => null,
@@ -461,12 +472,16 @@ export async function verifyRedisRealtimeAfterEmpty(
   } catch (err) {
     errors.push(`Redis empty realtime check failed: ${String(err)}`);
   } finally {
-    if (subClient !== undefined) {
-      await subClient.quit().catch(() => subClient?.disconnect());
-    }
-    if (pubClient !== undefined) {
-      await pubClient.quit().catch(() => pubClient?.disconnect());
-    }
+    await Promise.all(
+      [subClient, pubClient].map(async (client) => {
+        if (client === undefined) return;
+        try {
+          await closeDrillRedis(client);
+        } catch (error) {
+          errors.push(`Redis cleanup failed: ${String(error)}`);
+        }
+      }),
+    );
   }
 
   return {
@@ -572,8 +587,9 @@ async function wipeDatabaseAndStorage(
     if (confirmRedisTarget !== computeDrillRedisTargetIdentity(redisUrl)) {
       throw validationFailed('Destructive Redis flush refused without confirmed target.');
     }
-    const redis = new Redis(redisUrl, {
+    const redis = new Redis(redisDrillUrlSchema.parse(redisUrl), {
       connectTimeout: 2000,
+      commandTimeout: 2000,
       lazyConnect: true,
       maxRetriesPerRequest: 0,
       retryStrategy: () => null,
@@ -582,7 +598,7 @@ async function wipeDatabaseAndStorage(
       await redis.connect();
       await redis.flushdb();
     } finally {
-      await redis.quit().catch(() => redis.disconnect());
+      await closeDrillRedis(redis);
     }
   }
 }

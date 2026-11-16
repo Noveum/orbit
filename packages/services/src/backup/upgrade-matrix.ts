@@ -9,6 +9,7 @@ import * as schema from '@orbit/db/schema';
 import { CURRENT_BACKUP_FORMAT_VERSION, validationFailed } from '@orbit/shared';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
 import postgres from 'postgres';
+import type { StorageDriver } from '../storage/types.ts';
 import { verifyBackupCompatibility } from './compatibility.ts';
 import { createBackup } from './create.ts';
 import { restoreBackup } from './restore.ts';
@@ -97,6 +98,7 @@ export async function runScenarioBackupRestore(
   databaseUrl: string,
   migrationsFolder: string | undefined,
   confirmDestructiveTarget?: string | undefined,
+  driver?: StorageDriver | undefined,
 ): Promise<UpgradeScenarioResult> {
   const start = performance.now();
   if (confirmDestructiveTarget === undefined || confirmDestructiveTarget.length === 0) {
@@ -120,6 +122,7 @@ export async function runScenarioBackupRestore(
       encrypt: true,
       encryptionKey,
       migrationsFolder: folder,
+      storageDriver: driver,
     });
 
     const restoreResult = await restoreBackup({
@@ -257,7 +260,12 @@ export async function runUpgradeMatrix(
               durationMs: 0,
               details: { skipped: true },
             })
-          : runScenarioBackupRestore(databaseUrl, folder, options.confirmDestructiveTarget),
+          : runScenarioBackupRestore(
+              databaseUrl,
+              folder,
+              options.confirmDestructiveTarget,
+              options.storageDriver,
+            ),
     ],
     ['unsafe_rollback_refusal', () => runScenarioUnsafeRollbackRefusal(folder)],
   ];

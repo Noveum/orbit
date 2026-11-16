@@ -1,140 +1,68 @@
-# Validation failure after restore runbook
+# Validation failure after restore
 
-This runbook guides operators through diagnosing and resolving validation failures
-reported by `bun run backup:restore` or `bun run backup:validate`.
+Keep the recovery deployment isolated and traffic fenced until the failure is
+understood. Preserve the archive, exact release, target identity and redacted
+command output. Do not delete attachment rows, flush shared Redis or clear the
+recovery gate just to make a check pass.
 
-## Understanding the recovery gate
+## Identify which operation failed
 
-When a restore is executed or validation fails, Orbit creates or updates the
-`public.orbit_recovery_state` table with `status = 'validation_failed'` and records
-the specific error. While in this state, the `/api/health` endpoint responds with
-HTTP 503 Service Unavailable, preventing traffic from reaching an unready deployment.
-
-## Step 1: Inspect machine-readable validation output
-
-Run `bun run backup:validate --json` to inspect the structured report:
+backup:restore controls recovery readiness and can record restoring,
+validation_failed or ready. A failure during an early manifest, confirmation or
+checksum check can leave the previous state unchanged. backup:validate only
+reports consistency and does not change orbit_recovery_state, even when it fails.
 
 ```bash
-bun run backup:validate --json | jq .
+bun --env-file=/etc/orbit/recovery.env run backup:validate --json
 ```
 
-The report categorizes failures into specific subsystems:
+The actual output has top-level status and a validation result containing:
 
-```json
-{
-  "status": "invalid",
-  "validation": {
-    "valid": false,
-    "ledgerCheck": { "ledgerCount": 35, "errors": [] },
-    "catalogCheck": { "behind": false, "errors": [] },
-    "referentialIntegrity": { "referentialIntegrityPassed": false, "errors": ["Found 1 dangling member row(s) missing organization or user."] },
-    "bootstrapCheck": { "bootstrapWindowClosed": true, "errors": [] },
-    "storageCheck": { "checkedObjects": 42, "missingObjects": 2, "sizeMismatches": 0, "errors": ["Object org_1/issue/123/file.pdf does not exist in storage driver."] },
-    "redisCheck": { "reachable": true, "empty": true, "errors": [] },
-    "errors": [ ... ]
-  }
-}
-```
+| Field | Meaning |
+| --- | --- |
+| validation.valid and validation.errors | Overall result and error messages |
+| validation.migrationStatus | ledgerCount, isBehind, databaseVersion |
+| validation.integrity | Entity counts and referentialIntegrityPassed |
+| validation.auth | accountsCount and bootstrapWindowClosed |
+| validation.storage | checkedObjects, missingObjects, sizeMismatches |
+| validation.redis | tested and emptyStartSafe |
+| validation.durationMs | Elapsed validation time |
 
-## Step 2: Resolve specific validation failure categories
+The standalone CLI has no storage driver, so its storage counters do not establish
+that a bucket is intact. Redis tested is only a connectivity check; emptyStartSafe
+does not measure whether Redis is empty.
 
-### Category A: Migration ledger or catalog drift failure
+## Resolve the reported cause
 
-**Symptom:** `ledgerCheck` or `catalogCheck` reports database schema behind or hash mismatch.
+For a migration or catalog failure, use [the failed-migration procedure](failed-migration.md)
+with the exact release and explicit target environment. Do not edit the migration
+ledger or previously applied SQL.
 
-**Resolution:**
-1. If the database ledger is behind committed migrations, apply pending migrations:
+For object failures reported by the integrated restore, compare the manifest and
+its verified payloads with the target bucket, endpoint and credentials. A missing
+archive object requires a complete good archive or provider recovery, not deletion
+of its database reference. Follow [object storage loss](object-storage-loss.md).
 
-```bash
-bun run db:release
-```
+For relational or ownership failures, inspect the named relationships without
+deleting evidence. Restore from a known-good recovery point or prepare a reviewed
+forward repair that preserves the complete graph.
 
-2. Confirm with `bun run db:check-drift` that catalog differences are resolved.
+For Redis connectivity failures, verify the isolated target URL, TLS/CA settings
+and network access. Do not flush a shared instance. A skipped Redis check is not
+proof of connectivity or emptiness.
 
-### Category B: Storage object missing or size mismatch
+## Re-establish readiness through a complete restore
 
-**Symptom:** `storageCheck` reports missing objects or size mismatches.
+After correcting the target configuration or choosing a good archive, repeat the
+guarded full restore, including object reconciliation, against isolated replacement
+resources. This repeats archive checks, relational checks, referenced-object checks
+and configured Redis connectivity before the engine records ready.
 
-**Resolution:**
-1. Check S3 bucket credentials and endpoint connectivity:
+A standalone valid result does not provide that object evidence and cannot clear
+the gate. Do not directly update orbit_recovery_state as a shortcut. If preserving
+manual post-restore repairs prevents repeating restore, keep the deployment fenced
+and obtain a separately reviewed recovery procedure.
 
-```bash
-aws s3 ls "s3://$S3_BUCKET/"
-```
-
-2. If objects were missing from the backup archive itself, re-run restore without skipping objects,
-   or inspect the specific attachment rows in PostgreSQL:
-
-```sql
-SELECT id, storage_key, file_name, size, created_at
-FROM public.attachment
-WHERE storage_key IN ('missing_key_1', 'missing_key_2');
-```
-
-3. If missing attachments belong to deleted or orphan test issues, clean up dangling attachment rows:
-
-```sql
-DELETE FROM public.attachment WHERE id = 'orphan_id';
-```
-
-### Category C: Referential integrity dangling rows
-
-**Symptom:** `referentialIntegrity` reports dangling foreign keys.
-
-**Resolution:**
-Inspect the dangling rows indicated in `errors`:
-
-```sql
--- Find dangling members missing an organization:
-SELECT m.id, m.organization_id, m.user_id
-FROM public.member m
-LEFT JOIN public.organization o ON m.organization_id = o.id
-WHERE o.id IS NULL;
-```
-
-Remediate by restoring the missing parent record or pruning orphaned child rows within a transaction.
-
-### Category D: Redis connectivity or dirty state
-
-**Symptom:** `redisCheck` reports Redis unreachable or unexpected keys.
-
-**Resolution:**
-1. Confirm Redis is reachable using `redis-cli -u "$REDIS_URL" ping`.
-2. Ensure Redis starts empty. Flush disposable cache if appropriate:
-
-```bash
-redis-cli -u "$REDIS_URL" flushdb
-```
-
-## Step 3: Re-run validator and clear recovery gate
-
-Once the underlying issue is resolved, re-run the validator:
-
-```bash
-bun run backup:validate --json
-```
-
-Note that `backup:validate` inspects and reports current consistency but does
-not change recovery state. Once validation passes with `valid: true`, clear the recovery
-gate by setting `status = 'ready'` in `public.orbit_recovery_state` manually or by running
-a clean `backup:restore`:
-
-```sql
-UPDATE public.orbit_recovery_state
-SET status = 'ready', error = NULL, updated_at = NOW()
-WHERE id = 'readiness' AND status = 'validation_failed';
-```
-
-Verify that the health check responds with HTTP 200:
-
-```bash
-curl -i http://localhost:3000/api/health
-```
-
-Expected response:
-```
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"status":"ok","service":"web"}
-```
+Inspect /api/health for readiness, then verify user sign-in, permissions, attachment
+downloads and realtime behavior before reopening traffic. Health is a readiness
+signal, not a substitute for operator traffic controls.

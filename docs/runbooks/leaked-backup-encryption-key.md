@@ -1,95 +1,60 @@
-# Leaked backup encryption key incident runbook
+# Leaked backup encryption key
 
-This runbook defines the incident response procedure when a master backup encryption
-key (KEK) is compromised, leaked in logs, inadvertently committed to version control,
-or accessed by unauthorized parties.
+A leaked key compromises every archive encrypted with it that an attacker obtained.
+Changing keys protects future captures; it cannot secure copies already exfiltrated.
+Record the incident, restrict access to backups, and inventory exact archive IDs,
+replicas, key IDs and legal holds before changing retention.
 
-## Threat model and scope
+## Create a replacement key safely
 
-Orbit backups protect customer content, issue descriptions, user accounts, password
-hashes, OAuth tokens, and attachment binaries using envelope encryption (AES-256-GCM).
-A leaked Key Encryption Key compromises the confidentiality of all backup archives
-encrypted with that key ID.
-
-## Step 1: Containment and assessment
-
-1. Identify where the key was leaked (e.g. public repository, application log, shell history).
-2. Determine which backup archives were encrypted with the compromised key ID by inspecting
-   `manifest.json` under your backup storage directory:
+Create /etc/orbit as a private directory owned by the operator who runs capture.
+The systemd orbit user must be able to read its selected key. Create a new encoded
+key with restrictive permissions from the first write and refuse to overwrite it:
 
 ```bash
-# Find all backups encrypted with the compromised key ID:
-grep -rn "keyId" /var/backups/orbit/*/manifest.json
+bun -e 'const { randomBytes } = await import("node:crypto"); const { writeFile } = await import("node:fs/promises"); await writeFile("/etc/orbit/master-key-new.key", randomBytes(32).toString("hex") + "\n", { mode: 0o600, flag: "wx" });'
 ```
 
-3. Remove the leaked key from public or untrusted locations immediately.
+Store a protected offsite copy through your approved secret-custody process.
+Never print the key, put it in process arguments or reuse the compromised key ID.
 
-## Step 2: Generate a fresh master key
+## Ensure the new file actually wins
 
-Generate a cryptographically secure 256-bit (32-byte) key in hex or base64 format:
-
-```bash
-# Generate a new 64-character hex key
-openssl rand -hex 32 > /etc/orbit/master-key-new.key
-chmod 600 /etc/orbit/master-key-new.key
-```
-
-Or store the key in AWS KMS, Vault, or 1Password.
-
-## Step 3: Capture an immediate backup with the new key
-
-Capture a fresh, verified snapshot using the new key before modifying existing archives:
+A nonempty ORBIT_BACKUP_ENCRYPTION_KEY overrides --encryption-key-file. Remove or
+blank that old inline value from the scheduler environment, inherited shell, root
+.env and /etc/orbit/orbit.env. Update the actual systemd environment file,
+/etc/orbit/orbit.env, to select the new key file and key ID. Keep these values
+consistent before restarting or enabling scheduled capture.
 
 ```bash
-bun run backup:create \
+bun --env-file=/etc/orbit/orbit.env -e 'if (process.env["ORBIT_BACKUP_ENCRYPTION_KEY"]?.trim()) throw new Error("The inline key still overrides the replacement key file");'
+bun --env-file=/etc/orbit/orbit.env run backup:create \
   --destination /var/backups/orbit \
-  --encryption-key-file /etc/orbit/master-key-new.key \
-  --encryption-key-id "prod-kek-2026-v2" \
+  --encrypt \
+  --encryption-key-file=/etc/orbit/master-key-new.key \
+  --encryption-key-id=prod-kek-replacement \
   --json
 ```
 
-## Step 4: Address historical archives and purge compromised copies
+Check the returned manifest reports encryption enabled and the replacement key ID.
+Complete an isolated full restore using only the replacement key before relying on
+this archive or deleting an older copy. A key ID label alone is not proof of the
+key material used.
 
-Archives created with the compromised key remain permanently exposed to anyone who obtained
-the leaked key, because re-encryption protects only the local copies you control. Any previously
-exfiltrated or replicated copy cannot be retroactively secured.
+## Handle historical copies separately
 
-1. If historical backups must be preserved locally under the new key, decrypt the payload into an isolated directory and re-encrypt with the new master key.
-2. Expire compromised backups from the local destination:
+Orbit has no archive rewrap or in-place re-encryption CLI. If history must be
+preserved, keep restricted copies and matching old keys under incident custody,
+or use a separately reviewed isolated restore and fresh capture with the new key.
+That process must preserve the required recovery points and validate each result.
 
-```bash
-# Keep only the fresh backup created under the new key:
-bun run backup:prune \
-  --destination /var/backups/orbit \
-  --keep-count 1 \
-  --json
-```
+Do not use --keep-count 1 as key rotation or key revocation. It can discard required
+history, and other retention rules or holds may preserve compromised copies anyway.
+Do not delete guessed directory prefixes: archive names do not encode the key ID.
+Select exact archive IDs from verified manifests and inventory every replica,
+provider version and immutable retention policy. Any removal requires a separate
+approved deletion list after recovery and retention obligations are satisfied.
 
-3. Delete compromised archives across every configured backup destination:
-
-```bash
-# Local storage deletion:
-rm -rf /var/backups/orbit/orbit-backup-compromised-*
-
-# S3 or cold-storage replica deletion:
-aws s3 rm s3://company-cold-storage/orbit-backups/orbit-backup-compromised --recursive
-
-# Secondary mirror or disaster recovery bucket deletion:
-aws s3 rm s3://company-dr-storage/orbit-backups/orbit-backup-compromised --recursive
-```
-
-## Step 5: Update automated services
-
-Update systemd timers and environment files to point to the new key:
-
-```bash
-# Update key file location in /etc/orbit/backup.env
-sudo sed -i 's|/etc/orbit/master.key|/etc/orbit/master-key-new.key|' /etc/orbit/backup.env
-sudo systemctl restart orbit-backup.timer
-```
-
-## Step 6: Post-incident review
-
-- Revoke the compromised key in your KMS or password manager.
-- Review access logs to determine if external IP addresses accessed the backup storage bucket.
-- Record the incident in your organization's security log.
+Revoking a KMS/password-manager entry does not make an already copied static key
+unusable. Retain whatever historical-key custody is necessary for required archives,
+and record what remains exposed.

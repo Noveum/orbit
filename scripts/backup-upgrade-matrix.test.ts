@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'bun:test';
 import { parseMatrixArgs } from './backup/upgrade-matrix.ts';
 
+function preflightEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: '',
+    DIRECT_URL: '',
+    ORBIT_DRILL_DATABASE_URL: '',
+    ORBIT_DRILL_CONFIRM_TARGET: '',
+    ORBIT_DRILL_REDIS_URL: '',
+    ORBIT_DRILL_CONFIRM_REDIS_TARGET: '',
+  };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('ORBIT_DRILL_')) env[key] = '';
+  }
+  return env;
+}
+
 describe('upgrade matrix CLI args', () => {
   it('parses default matrix arguments', () => {
     const args = parseMatrixArgs(['bun', 'scripts/backup/upgrade-matrix.ts']);
@@ -71,12 +87,7 @@ describe('upgrade matrix CLI args', () => {
   });
 
   it('emits json error and exits nonzero when database url is missing and --json is passed', () => {
-    const env = {
-      ...process.env,
-      ORBIT_DRILL_DATABASE_URL: '',
-      DATABASE_URL: '',
-      DIRECT_URL: '',
-    };
+    const env = preflightEnvironment();
     const proc = Bun.spawnSync(['bun', 'scripts/backup/upgrade-matrix.ts', '--json'], {
       env,
       stdout: 'pipe',
@@ -90,10 +101,7 @@ describe('upgrade matrix CLI args', () => {
   });
 
   it('emits json error and exits nonzero when confirm-destructive is missing for destructive scenario', () => {
-    const env = {
-      ...process.env,
-      ORBIT_DRILL_CONFIRM_TARGET: '',
-    };
+    const env = preflightEnvironment();
     const proc = Bun.spawnSync(
       [
         'bun',
@@ -114,4 +122,25 @@ describe('upgrade matrix CLI args', () => {
     expect(parsed.status).toBe('error');
     expect(parsed.error).toContain('Destructive confirmation is required');
   });
+});
+
+it('labels a skipped destructive scenario without claiming it passed', () => {
+  const proc = Bun.spawnSync(
+    [
+      'bun',
+      'scripts/backup/upgrade-matrix.ts',
+      '--database-url=postgres://127.0.0.1:1/orbit_test_unused',
+      '--scenario=backup_restore',
+      '--skip-destructive',
+    ],
+    {
+      env: { ...preflightEnvironment(), DATABASE_URL: 'postgres://127.0.0.1:1/orbit_test_unused' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  );
+  expect(proc.exitCode).toBe(0);
+  expect(proc.stdout.toString()).toContain('[SKIP] Scenario 2');
+  expect(proc.stdout.toString()).not.toContain('[PASS] Scenario 2');
+  expect(proc.stdout.toString()).toContain('Overall Status: COMPLETED WITH SKIPS');
 });

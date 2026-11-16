@@ -1,119 +1,56 @@
-# Complete host loss disaster recovery runbook
+# Complete host loss recovery
 
-This runbook guides operators through full disaster recovery when the primary host,
-server, or virtual machine is completely lost or destroyed.
+Recover into newly provisioned infrastructure using an offsite archive and its
+matching encoded encryption key. Follow [shared preparation](README.md) and the
+[self-hosting deployment guide](../self-hosting.md). Install the exact supported
+release, Bun, compatible PostgreSQL client tools and storage-provider tools.
 
-## Recovery requirements
+## Prepare the replacement environment
 
-- Offsite replica of the newest encrypted backup archive (e.g. from S3 cold storage or secondary site)
-- Recovery Key Encryption Key (KEK) from your offsite password manager or KMS
-- New host or compute instance meeting minimum requirements (Linux x86_64 or arm64, 2+ CPU cores, 4GB+ RAM)
-- Network connectivity to PostgreSQL, Redis, and S3-compatible storage
+Keep traffic fenced. Retrieve the exact archive directory with its manifest and
+objects; do not assume a latest alias exists. Store the recovery key in a private
+directory with mode 0700 and a file with mode 0600, owned by the operator running
+restore. A root-owned 0600 file is not readable by an unprivileged orbit service.
+Secret-manager output must be the supported hex/base64 text, not undecoded raw
+KMS bytes.
 
-## Step 1: Provision clean host and base dependencies
+Prepare /etc/orbit/recovery.env with the replacement database, Redis and S3 endpoint,
+bucket and credentials. Preserve required application auth secrets and provider
+configuration under your incident policy. Verify inherited variables cannot
+override these destinations. Never source an untrusted backup manifest as shell
+environment.
 
-On the replacement instance, install required system packages:
+## Restore and verify
 
-```bash
-# Install Bun
-curl -fsSL https://bun.sh/install | bash
-export PATH="$HOME/.bun/bin:$PATH"
+Follow [the isolated restore procedure](routine-restore-test-environment.md) using
+the exact archive child and computed replacement-target confirmation. Restore both
+database and objects; do not use --skip-object-restore for a full-host recovery.
 
-# Install PostgreSQL client tools (pg_dump, pg_restore, psql)
-sudo apt-get update && sudo apt-get install -y postgresql-client curl jq
-```
-
-Clone the repository or unpack the candidate release archive:
-
-```bash
-git clone https://github.com/Noveum/orbit.git /opt/orbit
-cd /opt/orbit
-bun install --frozen-lockfile
-```
-
-## Step 2: Retrieve backup archive and master key
-
-Download the latest verified backup archive from your offsite repository:
+The integrated restore validates archive bytes, recovered relational state and
+referenced object presence/read sizes, plus configured Redis connectivity. Inspect
+its JSON result and then run:
 
 ```bash
-mkdir -p /var/backups/orbit
-aws s3 sync s3://company-cold-storage/orbit-backups/latest/ /var/backups/orbit/latest/
-
-# Retrieve the master encryption key securely into an owner-readable file
-sudo mkdir -p /etc/orbit
-sudo chmod 700 /etc/orbit
-aws kms decrypt --ciphertext-blob fileb://master-key.encrypted --output text --query Plaintext | base64 -d | sudo tee /etc/orbit/master.key > /dev/null
-sudo chmod 600 /etc/orbit/master.key
+bun --env-file=/etc/orbit/recovery.env run backup:validate --json
 ```
 
-## Step 3: Prepare configuration
+This standalone check does not inspect storage bytes, verify Redis emptiness or
+update readiness. If restore failed, follow [validation failure](validation-failure-after-restore.md);
+do not manually mark the recovery ready based on this command.
 
-Create the runtime `.env` file with new connection endpoints:
+Use dedicated clean Redis for the replacement. Bun loads the env file for its
+child only; a separate shell redis-cli command would not automatically inherit
+REDIS_URL. The integrated check reports Redis connectivity when configured.
+Do not flush a shared Redis instance.
 
-```bash
-cat << 'EOF' > /opt/orbit/.env
-DATABASE_URL=postgres://orbit:secret@new-postgres:5432/orbit
-DIRECT_URL=postgres://orbit:secret@new-postgres:5432/orbit
-REDIS_URL=redis://new-redis:6379
-BETTER_AUTH_SECRET=fresh-or-preserved-32-byte-hex-secret
-BETTER_AUTH_URL=https://orbit.example.com
-NEXT_PUBLIC_APP_URL=https://orbit.example.com
-S3_ENDPOINT=https://s3.example.com
-S3_REGION=us-east-1
-S3_BUCKET=orbit-uploads
-S3_ACCESS_KEY_ID=access-key
-S3_SECRET_ACCESS_KEY=secret-key
-EOF
-```
+## Cut over and retain rollback
 
-## Step 4: Restore database and object storage
+Deploy the verified release using the deployment guide, with its runtime configured
+for the verified replacement resources. Keep traffic fenced until health, existing
+user sign-in, permissions, attachments and live updates pass. Record the data-loss
+window and obtain incident-owner approval before routing users to the replacement.
 
-Execute guarded restore targeting the new database and bucket. The target identity is
-constructed as `<host>:<port>/db/<database>#bucket:<bucket>`:
-
-```bash
-# Target identity: new-postgres:5432/db/orbit#bucket:orbit-uploads
-bun run backup:restore /var/backups/orbit/latest \
-  --confirm-destructive-restore-target="new-postgres:5432/db/orbit#bucket:orbit-uploads" \
-  --encryption-key-file=/etc/orbit/master.key \
-  --json
-```
-
-## Step 5: Start Redis from clean state
-
-Redis holds disposable fan-out state and starts empty without loss of durable application data:
-
-```bash
-# Ensure Redis is running and reachable
-redis-cli -u "$REDIS_URL" ping
-```
-
-## Step 6: Validate restored application state
-
-Run the validator to verify ledger integrity, referential integrity, and attachment objects:
-
-```bash
-bun run backup:validate --json
-```
-
-A successful `backup:restore` automatically transitions `public.orbit_recovery_state.status`
-to `ready`. Note that `backup:validate` inspects and reports current consistency but does
-not mutate recovery state. If an earlier attempt resulted in `validation_failed`, re-run
-`backup:restore` with a known-good backup or resolve the reported inconsistency so the
-table reflects `ready`, allowing `/api/health` to return HTTP 200.
-
-## Step 7: Start Orbit and verify user login
-
-Launch the web application:
-
-```bash
-bun run build
-PORT=3000 bun run start
-```
-
-Sanity checks:
-1. Verify `/api/health` returns status `ok`.
-2. Existing users can sign in with their passkeys or credentials.
-3. No bootstrap window opens for unknown users.
-4. Issue attachments and documents open without error.
-5. Live updates propagate between two open browser tabs.
+Retain the incident evidence, source archive and former infrastructure until the
+rollback window closes. Once promoted, the replacement database, bucket and Redis
+are live resources, not disposable cleanup targets. Retire only the old resources
+explicitly approved for decommissioning.

@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'bun:test';
 import { parseDrillArgs } from './backup/recovery-drill.ts';
 
+function preflightEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATABASE_URL: '',
+    DIRECT_URL: '',
+    ORBIT_DRILL_DATABASE_URL: '',
+    ORBIT_DRILL_CONFIRM_TARGET: '',
+    ORBIT_DRILL_REDIS_URL: '',
+    ORBIT_DRILL_CONFIRM_REDIS_TARGET: '',
+  };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('ORBIT_DRILL_')) env[key] = '';
+  }
+  return env;
+}
+
 describe('recovery drill CLI args', () => {
   it('parses default drill arguments', () => {
     const args = parseDrillArgs(['bun', 'scripts/backup/recovery-drill.ts']);
@@ -38,11 +54,7 @@ describe('recovery drill CLI args', () => {
   });
 
   it('emits json error and exits nonzero when database url is missing and --json is passed', () => {
-    const env = {
-      ...process.env,
-      DATABASE_URL: '',
-      DIRECT_URL: '',
-    };
+    const env = preflightEnvironment();
     const proc = Bun.spawnSync(['bun', 'scripts/backup/recovery-drill.ts', '--json'], {
       env,
       stdout: 'pipe',
@@ -58,10 +70,7 @@ describe('recovery drill CLI args', () => {
   });
 
   it('emits json error and exits nonzero when confirm-destructive is missing', () => {
-    const env = {
-      ...process.env,
-      ORBIT_DRILL_CONFIRM_TARGET: '',
-    };
+    const env = preflightEnvironment();
     const proc = Bun.spawnSync(
       [
         'bun',

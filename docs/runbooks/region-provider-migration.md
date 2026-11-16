@@ -1,99 +1,55 @@
-# Region and provider migration runbook
+# Region and provider migration
 
-This runbook guides operators through migrating an active Orbit deployment across
-cloud regions or infrastructure providers (e.g. Supabase to self-hosted PostgreSQL,
-or AWS S3 to Cloudflare R2).
+Plan a maintenance window and rollback before moving a live deployment. Provision
+separate destination database, Redis and bucket resources. Configure the real
+storage endpoint and credentials, including S3_ENDPOINT for custom providers.
+Replace __ORBIT_ORIGIN__ in infra/s3-cors.json with the actual destination origin
+before applying the reviewed CORS document through the destination provider.
 
-## Planning and downtime window
+## Capture and transfer the final archive
 
-Because durable application state lives in PostgreSQL and object storage, migrating
-between providers requires capturing a consistent snapshot during a scheduled
-maintenance window to guarantee zero data loss.
-
-## Step 1: Pre-migration preparation
-
-1. Lower the DNS TTL on your Orbit domain to 300 seconds (5 minutes) at least 24 hours in advance.
-2. Provision the destination PostgreSQL database, Redis instance, and S3 bucket in the new region.
-3. Configure bucket CORS on the destination bucket using `infra/s3-cors.json`.
-
-## Step 2: Enable maintenance mode and capture final snapshot
-
-1. Pause public traffic to prevent incoming writes during cutover:
+Fence every writer, including web requests, cron jobs, webhooks and background
+workers. Preserve the old resources throughout the rollback window. Capture from
+the source configuration:
 
 ```bash
-# Return 503 at reverse proxy or stop application processes
-sudo systemctl stop orbit-web
-```
-
-2. Capture a final, coordinated backup snapshot:
-
-```bash
-bun run backup:create \
+bun --env-file=/etc/orbit/orbit.env run backup:create \
   --destination /var/backups/orbit/migration-cutover \
-  --encryption-key-file /etc/orbit/master.key \
-  --json
-```
-
-3. Note the exact backup directory and generated manifest checksums.
-
-## Step 3: Transfer archive to new host/region
-
-Transfer the encrypted backup directory to the destination environment:
-
-```bash
-# Example rsync or aws s3 sync:
-aws s3 sync /var/backups/orbit/migration-cutover/ s3://migration-transit-bucket/cutover/
-```
-
-On the destination host, retrieve the archive:
-
-```bash
-aws s3 sync s3://migration-transit-bucket/cutover/ /var/backups/orbit/migration-cutover/
-```
-
-## Step 4: Execute guarded restore on destination
-
-Compute and confirm the destination target identity:
-
-```bash
-# Execute restore targeting the new database and new S3 bucket with destination storage credentials:
-S3_BUCKET="$NEW_S3_BUCKET" \
-S3_ENDPOINT="$NEW_S3_ENDPOINT" \
-S3_REGION="$NEW_S3_REGION" \
-S3_ACCESS_KEY_ID="$NEW_S3_ACCESS_KEY_ID" \
-S3_SECRET_ACCESS_KEY="$NEW_S3_SECRET_ACCESS_KEY" \
-bun run backup:restore /var/backups/orbit/migration-cutover \
-  --database-url="postgres://$NEW_DB_USER:$NEW_DB_PASSWORD@$NEW_DB_HOST:5432/$NEW_DB_NAME" \
-  --confirm-destructive-restore-target="$NEW_DB_HOST:5432/db/$NEW_DB_NAME#bucket:$NEW_S3_BUCKET" \
+  --encrypt \
   --encryption-key-file=/etc/orbit/master.key \
   --json
 ```
 
-This restores the PostgreSQL dump and re-uploads all attachments to the destination bucket.
+Apply the shared key-source precedence checks first. Record the exact returned
+backupDir and transfer that child directory, including manifest and objects, to
+the destination. The parent migration-cutover directory is not itself an archive.
 
-## Step 5: Validate target environment
+## Restore to destination resources
 
-Run the restore validator to confirm catalog drift, ledger compatibility, and attachments:
+Configure /etc/orbit/recovery.env with the destination direct database URL, Redis,
+S3 endpoint, bucket and credentials. Follow
+[the guarded full restore procedure](routine-restore-test-environment.md), replacing
+its archive path with the exact transferred child and its identity with the computed
+destination identity. Restore both database and objects without skip flags.
 
-```bash
-DIRECT_URL="postgres://$NEW_DB_USER:$NEW_DB_PASSWORD@$NEW_DB_HOST:5432/$NEW_DB_NAME" \
-S3_BUCKET="$NEW_S3_BUCKET" \
-REDIS_URL="$NEW_REDIS_URL" \
-bun run backup:validate --json
-```
-
-Confirm that validation reports `status: "ok"`.
-
-## Step 6: Update configuration and switch DNS
-
-1. Update the application `.env` on the new host with the new database, Redis, and storage endpoints.
-2. Start the Orbit web and realtime services on the new host:
+Review the integrated restore's checksum, object and relational results. Then run
+the standalone relational/Redis check:
 
 ```bash
-bun run build
-PORT=3000 bun run start
+bun --env-file=/etc/orbit/recovery.env run backup:validate --json
 ```
 
-3. Update your DNS A/CNAME record to point to the new IP or CDN origin.
-4. Verify end-to-end functionality (user sign-in, issue loading, attachment downloads, live websocket updates).
-5. Once verified, decommission the old infrastructure.
+A standalone valid result does not independently verify destination attachments.
+Complete sign-in, permissions, object download and realtime checks before cutover.
+
+## Cut over with a rollback window
+
+Deploy the verified release with destination runtime endpoints, then update the
+application's canonical routing/DNS through the normal deployment process. Recheck
+auth origins, storage CORS and Redis reachability. Keep source writers fenced to
+avoid divergent databases. Obtain incident-owner approval before reopening traffic.
+
+Retain old resources and the final archive until the rollback window closes.
+Rollback after destination writes requires a reviewed data-reconciliation decision;
+pointing back to the old snapshot would otherwise lose those writes. Do not delete
+destination resources after promotion under an earlier disposable-resource plan.
