@@ -9,6 +9,44 @@ const originalFetch = globalThis.fetch;
 const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
 describe('AI client complete()', () => {
+  it('rejects an Anthropic text block without a text value', async () => {
+    await expect(
+      complete('test', {
+        config: {
+          kind: 'anthropic',
+          baseUrl: 'https://provider.example/v1',
+          model: 'fixture',
+          enabled: true,
+        },
+        apiKey: 'fixture-key',
+        recordUsage: false,
+        fetchFn: async () => Response.json({ content: [{ type: 'text' }] }),
+      }),
+    ).rejects.toThrow(AiClientError);
+  });
+
+  it('preserves valid non-text Anthropic blocks alongside completion text', async () => {
+    const result = await complete('test', {
+      config: {
+        kind: 'anthropic',
+        baseUrl: 'https://provider.example/v1',
+        model: 'fixture',
+        enabled: true,
+      },
+      apiKey: 'fixture-key',
+      recordUsage: false,
+      fetchFn: async () =>
+        Response.json({
+          content: [
+            { type: 'thinking', thinking: 'fixture', signature: 'fixture-signature' },
+            { type: 'text', text: 'completion' },
+            { type: 'tool_use', id: 'toolu_fixture', name: 'fixture_tool', input: {} },
+          ],
+        }),
+    });
+    expect(result.text).toBe('completion');
+  });
+
   for (const kind of ['openai-compatible', 'anthropic'] as const) {
     for (const payload of [{}, kind === 'anthropic' ? { content: [] } : { choices: [] }]) {
       it(`rejects missing completion structure for ${kind}: ${JSON.stringify(payload)}`, async () => {

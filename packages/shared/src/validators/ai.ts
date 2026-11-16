@@ -293,10 +293,15 @@ export type OpenAiCompletionResponse = z.infer<typeof openAiCompletionResponseSc
 export const anthropicMessagesResponseSchema = z.object({
   content: z
     .array(
-      z.object({
-        type: z.string(),
-        text: z.string().optional(),
-      }),
+      z
+        .object({
+          type: z.string(),
+          text: z.string().optional(),
+        })
+        .refine((block) => block.type !== 'text' || block.text !== undefined, {
+          message: 'Text content blocks require a string text value.',
+          path: ['text'],
+        }),
     )
     .min(1),
   usage: z

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
   aiBaseUrlSchema,
+  anthropicMessagesResponseSchema,
   isPrivateIpv4,
   isPrivateIpv6,
   isPrivateOrLoopbackHost,
@@ -151,4 +152,30 @@ describe('AI endpoint IP parsing and private guard', () => {
     expect(aiBaseUrlSchema.safeParse('http://[::ffff:127.0.0.1]:11434/v1').success).toBe(true);
     expect(aiBaseUrlSchema.safeParse('https://[fc00::1]:8443/v1').success).toBe(true);
   });
+});
+
+describe('Anthropic completion content validation', () => {
+  for (const text of [undefined, null, 42]) {
+    it(`rejects an invalid text value: ${String(text)}`, () => {
+      const block = text === undefined ? { type: 'text' } : { type: 'text', text };
+      expect(anthropicMessagesResponseSchema.safeParse({ content: [block] }).success).toBe(false);
+    });
+  }
+
+  for (const text of ['', 'completion']) {
+    it(`accepts an explicit string text value: ${JSON.stringify(text)}`, () => {
+      expect(
+        anthropicMessagesResponseSchema.safeParse({ content: [{ type: 'text', text }] }).success,
+      ).toBe(true);
+    });
+  }
+
+  for (const block of [
+    { type: 'thinking', thinking: 'fixture', signature: 'fixture-signature' },
+    { type: 'tool_use', id: 'toolu_fixture', name: 'fixture_tool', input: {} },
+  ]) {
+    it(`accepts a valid non-text block: ${block.type}`, () => {
+      expect(anthropicMessagesResponseSchema.safeParse({ content: [block] }).success).toBe(true);
+    });
+  }
 });
