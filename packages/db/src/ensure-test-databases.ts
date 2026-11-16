@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { databaseTlsOptions } from './tls-policy.ts';
 
 const TEST_DATABASES = [
   'orbit_test_db',
@@ -56,7 +57,10 @@ function databaseUrl(url: string, name: string): string {
   return parsed.toString();
 }
 
-const admin = postgres(adminUrl(connectionString), connectionOptions);
+const admin = postgres(adminUrl(connectionString), {
+  ...connectionOptions,
+  ...databaseTlsOptions(adminUrl(connectionString)),
+});
 
 for (const name of TEST_DATABASES) {
   if (!DATABASE_NAME.test(name)) {
@@ -71,7 +75,7 @@ await admin.end();
 
 for (const name of TEST_DATABASES) {
   const url = databaseUrl(connectionString, name);
-  const sql = postgres(url, connectionOptions);
+  const sql = postgres(url, { ...connectionOptions, ...databaseTlsOptions(url) });
   await sql`create extension if not exists pg_trgm`;
   await sql.end();
 }

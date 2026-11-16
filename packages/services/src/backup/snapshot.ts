@@ -1,3 +1,4 @@
+import { databaseTlsOptions } from '@orbit/db/connection';
 import { internal } from '@orbit/shared';
 import postgres from 'postgres';
 import type { AttachmentRecord } from './types.ts';
@@ -20,6 +21,7 @@ export async function openCoordinatedSnapshot(url: string): Promise<DatabaseSnap
     connect_timeout: 5,
     idle_timeout: 10,
     prepare: false,
+    ...databaseTlsOptions(url),
   });
 
   let snapshotId: string | undefined;

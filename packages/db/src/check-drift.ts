@@ -2,6 +2,7 @@ import { SQL } from 'drizzle-orm';
 import { getTableConfig, PgDialect, type PgTable } from 'drizzle-orm/pg-core';
 import postgres from 'postgres';
 import * as schema from './schema/index.ts';
+import { databaseTlsOptions } from './tls-policy.ts';
 
 export interface CatalogColumn {
   readonly name: string;
@@ -771,7 +772,7 @@ function referentialAction(value: string): string {
 }
 
 export async function liveCatalog(url: string): Promise<Catalog> {
-  const sql = postgres(url, { max: 1, prepare: false });
+  const sql = postgres(url, { max: 1, prepare: false, ...databaseTlsOptions(url) });
   try {
     const columns = await sql<LiveColumnRow[]>`
       select
