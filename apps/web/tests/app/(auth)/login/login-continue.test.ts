@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   loginMetadata,
   mcpContinueUrl,
+  mcpLoginRequiresAuthentication,
   safeCallback,
 } from '../../../../src/app/(auth)/login/continue-url.ts';
 
@@ -23,6 +24,45 @@ describe('mcpContinueUrl', () => {
     expect(parsed.searchParams.get('client_id')).toBe('client_123');
     expect(parsed.searchParams.get('code_challenge')).toBe('abc');
     expect(parsed.searchParams.get('prompt')).toBe('consent');
+  });
+
+  it('preserves the signed provider request and resource across login', () => {
+    const url = mcpContinueUrl({
+      response_type: 'code',
+      client_id: 'client',
+      resource: 'http://localhost:3000/mcp',
+      max_age: '0',
+      sig: 'signature',
+      exp: '1800000000',
+      ba_iat: '1790000000000',
+      ba_param: ['client_id', 'resource', 'max_age'],
+    });
+    const parsed = new URL(url ?? '', 'http://localhost:3000');
+    expect(parsed.searchParams.get('resource')).toBe('http://localhost:3000/mcp');
+    expect(parsed.searchParams.get('max_age')).toBe('0');
+    expect(parsed.searchParams.get('sig')).toBe('signature');
+    expect(parsed.searchParams.getAll('ba_param')).toEqual(['client_id', 'resource', 'max_age']);
+  });
+
+  it('requires fresh authentication when the provider resumes a stale session', () => {
+    expect(
+      mcpLoginRequiresAuthentication({ client_id: 'client', response_type: 'code', max_age: '0' }),
+    ).toBe(true);
+    expect(
+      mcpLoginRequiresAuthentication({
+        client_id: 'client',
+        response_type: 'code',
+        prompt: 'login consent',
+      }),
+    ).toBe(true);
+    expect(
+      mcpLoginRequiresAuthentication({
+        client_id: 'client',
+        response_type: 'code',
+        prompt: 'consent',
+      }),
+    ).toBe(false);
+    expect(mcpLoginRequiresAuthentication({ max_age: '0' })).toBe(false);
   });
 
   it('ignores a request that is not an MCP authorize', () => {

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, db, desc, eq, gt, isNull, or, schema, sql, type Transaction } from '@orbit/db';
 import { forbidden, notFound, unauthorized, validationFailed } from '@orbit/shared/errors';
 import { assertMcpGrantOwner, type McpIdentity, type Principal } from '@orbit/shared/policy';
@@ -198,6 +198,36 @@ export async function verifyMcpTokenBinding(
   now: Date = new Date(),
 ): Promise<McpAccessContext> {
   const invalid = unauthorized('That access token is not valid.');
+  if (token.sessionId !== null) {
+    const [session] = await tx
+      .select()
+      .from(schema.session)
+      .where(eq(schema.session.id, token.sessionId))
+      .limit(1)
+      .for('share');
+    if (session === undefined || session.userId !== token.userId || session.expiresAt <= now)
+      throw invalid;
+    if (token.refreshTokenExpiresAt > now) {
+      const hash = createHash('sha256').update(token.refreshToken).digest('base64url');
+      const [refresh] = await tx
+        .select()
+        .from(schema.oauthProviderRefreshToken)
+        .where(eq(schema.oauthProviderRefreshToken.token, hash))
+        .limit(1)
+        .for('share');
+      if (
+        refresh === undefined ||
+        refresh.revoked !== null ||
+        refresh.rotatedAt !== null ||
+        refresh.expiresAt <= now ||
+        refresh.clientId !== token.clientId ||
+        refresh.userId !== token.userId ||
+        refresh.sessionId !== token.sessionId ||
+        refresh.referenceId !== grantId
+      )
+        throw invalid;
+    }
+  }
   const [grant] = await tx
     .select()
     .from(schema.mcpGrant)

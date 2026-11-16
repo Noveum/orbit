@@ -1,4 +1,5 @@
 export * from './auth.ts';
+export * from './auth-provider.ts';
 export * from './comms.ts';
 export * from './content.ts';
 export * from './oauth.ts';
