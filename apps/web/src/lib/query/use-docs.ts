@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiFetch, messageOf } from './fetcher.ts';
 import { DOCS_HOME_ROOT, DOCS_ROOT, queryKeys } from './keys.ts';
@@ -23,6 +24,7 @@ import {
 export interface DocPatch {
   readonly title?: string;
   readonly content?: string;
+  readonly baseRevision?: number;
   readonly collectionId?: string | null;
   readonly projectId?: string | null;
   readonly parentId?: string | null;
@@ -51,6 +53,19 @@ export function useDoc(docId: string | null) {
     queryFn: async ({ signal }): Promise<DocDetail> =>
       await apiFetch(`/api/docs/${docId ?? ''}`, docDetailSchema, { signal }),
   });
+}
+
+export function useRefreshDoc(docId: string) {
+  const client = useQueryClient();
+  return useCallback(async (): Promise<DocDetail> => {
+    await client.cancelQueries({ queryKey: queryKeys.doc(docId), exact: true });
+    return await client.fetchQuery({
+      queryKey: queryKeys.doc(docId),
+      queryFn: async ({ signal }): Promise<DocDetail> =>
+        await apiFetch(`/api/docs/${docId}`, docDetailSchema, { signal }),
+      staleTime: 0,
+    });
+  }, [client, docId]);
 }
 
 export function useDocsHome() {
@@ -168,7 +183,8 @@ export function useUpdateDoc(docId: string) {
       await client.cancelQueries({ queryKey: key });
       const previous = client.getQueryData<DocDetail>(key);
       if (previous !== undefined) {
-        client.setQueryData<DocDetail>(key, { ...previous, doc: { ...previous.doc, ...patch } });
+        const { baseRevision: _baseRevision, ...fields } = patch;
+        client.setQueryData<DocDetail>(key, { ...previous, doc: { ...previous.doc, ...fields } });
       }
       return { previous };
     },

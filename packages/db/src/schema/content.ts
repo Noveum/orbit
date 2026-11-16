@@ -123,6 +123,7 @@ export const doc = pgTable(
     slug: text('slug').notNull().default(''),
     kind: text('kind').notNull().default('markdown'),
     content: text('content').notNull().default(''),
+    revision: integer('revision').notNull().default(1),
     sortOrder: doublePrecision('sort_order').notNull().default(0),
     searchVector: tsvector('search_vector').generatedAlwaysAs(
       sql`setweight(to_tsvector('english', coalesce(title, '')), 'A') || setweight(to_tsvector('english', left(coalesce(content, ''), 200000)), 'B')`,

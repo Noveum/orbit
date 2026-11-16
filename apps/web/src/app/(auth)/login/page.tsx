@@ -10,7 +10,12 @@ import { authErrorCode } from '@/lib/auth/oauth-error.ts';
 import { enabledSocialProviders, passwordAuthEnabled } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 import { signUpIsOpen } from '@/lib/env.ts';
-import { loginMetadata, mcpContinueUrl, safeCallback } from './continue-url.ts';
+import {
+  loginMetadata,
+  mcpContinueUrl,
+  mcpLoginRequiresAuthentication,
+  safeCallback,
+} from './continue-url.ts';
 
 export async function generateMetadata({
   searchParams,
@@ -29,7 +34,8 @@ export default async function LoginPage({
   const callbackUrl = mcpContinueUrl(params) ?? safeCallback(params['next']);
   const errorCode = authErrorCode(params['error']);
   const session = await getSession();
-  if (session !== null && params['reauth'] !== '1') redirect(callbackUrl ?? '/my-issues');
+  if (session !== null && params['reauth'] !== '1' && !mcpLoginRequiresAuthentication(params))
+    redirect(callbackUrl ?? '/my-issues');
 
   const devUsers = devLoginEnabled() ? await listDevUsers() : [];
 

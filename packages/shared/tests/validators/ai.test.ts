@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
   aiBaseUrlSchema,
+  anthropicMessagesResponseSchema,
   isPrivateIpv4,
   isPrivateIpv6,
   isPrivateOrLoopbackHost,
@@ -11,6 +12,15 @@ import {
 const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
 describe('AI endpoint IP parsing and private guard', () => {
+  it('rejects endpoint credentials that the checked transport does not send', () => {
+    for (const endpoint of [
+      'https://user:password@provider.example/v1',
+      'https://user@provider.example/v1',
+    ]) {
+      expect(aiBaseUrlSchema.safeParse(endpoint).success).toBe(false);
+    }
+  });
+
   afterEach(() => {
     if (originalAllowPrivate === undefined) {
       delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
@@ -142,4 +152,30 @@ describe('AI endpoint IP parsing and private guard', () => {
     expect(aiBaseUrlSchema.safeParse('http://[::ffff:127.0.0.1]:11434/v1').success).toBe(true);
     expect(aiBaseUrlSchema.safeParse('https://[fc00::1]:8443/v1').success).toBe(true);
   });
+});
+
+describe('Anthropic completion content validation', () => {
+  for (const text of [undefined, null, 42]) {
+    it(`rejects an invalid text value: ${String(text)}`, () => {
+      const block = text === undefined ? { type: 'text' } : { type: 'text', text };
+      expect(anthropicMessagesResponseSchema.safeParse({ content: [block] }).success).toBe(false);
+    });
+  }
+
+  for (const text of ['', 'completion']) {
+    it(`accepts an explicit string text value: ${JSON.stringify(text)}`, () => {
+      expect(
+        anthropicMessagesResponseSchema.safeParse({ content: [{ type: 'text', text }] }).success,
+      ).toBe(true);
+    });
+  }
+
+  for (const block of [
+    { type: 'thinking', thinking: 'fixture', signature: 'fixture-signature' },
+    { type: 'tool_use', id: 'toolu_fixture', name: 'fixture_tool', input: {} },
+  ]) {
+    it(`accepts a valid non-text block: ${block.type}`, () => {
+      expect(anthropicMessagesResponseSchema.safeParse({ content: [block] }).success).toBe(true);
+    });
+  }
 });

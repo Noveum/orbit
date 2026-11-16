@@ -4,8 +4,7 @@ import { safeNextPath } from '@/lib/next-path.ts';
 import { pageMetadata } from '@/lib/page-metadata.ts';
 
 export function safeCallback(value: string | string[] | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  return /^\/(?!\/)/.test(value) ? value : undefined;
+  return safeNextPath(value) ?? undefined;
 }
 
 const MCP_AUTHORIZE_PARAMS = [
@@ -18,6 +17,13 @@ const MCP_AUTHORIZE_PARAMS = [
   'code_challenge_method',
   'prompt',
   'nonce',
+  'resource',
+  'max_age',
+  'exp',
+  'sig',
+  'ba_iat',
+  'ba_pl',
+  'ba_param',
 ] as const;
 
 export function mcpContinueUrl(
@@ -30,8 +36,20 @@ export function mcpContinueUrl(
   for (const key of MCP_AUTHORIZE_PARAMS) {
     const value = params[key];
     if (typeof value === 'string' && value.length > 0) search.set(key, value);
+    else if (Array.isArray(value)) for (const item of value) search.append(key, item);
   }
   return `/api/auth/mcp/authorize?${search.toString()}`;
+}
+
+export function mcpLoginRequiresAuthentication(
+  params: Record<string, string | string[] | undefined>,
+): boolean {
+  if (typeof params['client_id'] !== 'string' || typeof params['response_type'] !== 'string')
+    return false;
+  const prompt = typeof params['prompt'] === 'string' ? params['prompt'].split(/\s+/) : [];
+  return (
+    typeof params['max_age'] === 'string' || prompt.includes('login') || prompt.includes('create')
+  );
 }
 
 const ISSUE_IDENTIFIER = /^[A-Za-z][A-Za-z0-9]{1,5}-[1-9]\d{0,8}$/;

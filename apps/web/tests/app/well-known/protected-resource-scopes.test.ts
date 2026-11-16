@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 import { withOrbitScopes } from '../../../src/app/.well-known/oauth-protected-resource/route.ts';
-import { MCP_SCOPES } from '../../../src/lib/auth/server.ts';
 
 describe('the protected resource metadata', () => {
-  it('advertises every scope the authorization server issues', () => {
+  it('advertises the protected tools separately from identity scopes', () => {
     const metadata = withOrbitScopes({
       resource: 'https://orbit.noveum.ai/mcp',
       scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
     });
 
-    expect(metadata['scopes_supported']).toEqual([...MCP_SCOPES]);
+    expect(metadata['scopes_supported']).toEqual(['orbit.read', 'orbit.write']);
   });
 
   it('names the scopes the tools actually require, which is what a client asks for', () => {

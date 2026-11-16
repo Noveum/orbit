@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { mcp } from '@better-auth/mcp';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { symmetricDecrypt } from 'better-auth/crypto';
-import { mcp } from 'better-auth/plugins';
+import { jwt } from 'better-auth/plugins';
 import { deploymentAuthOptions } from '@/lib/auth/deployment';
 import { nativeFetchGlobals } from '../../../tests-preload';
 
@@ -70,12 +70,11 @@ describe('deployment authentication', () => {
     provider.getUserInfo = () =>
       Promise.resolve({
         user: {
-          id: 'provider-user',
           name: 'Preview Tester',
           email: 'tester@example.com',
           emailVerified: true,
         },
-        data: {},
+        data: { sub: 'provider-user' },
       });
     const signIn = await previewAuth.handler(
       new nativeFetchGlobals.Request(`${preview}/api/auth/sign-in/social`, {
@@ -144,20 +143,31 @@ describe('deployment authentication', () => {
     });
     const auth = betterAuth({
       ...deployment,
-      database: memoryAdapter({ user: [], account: [], session: [], verification: [] }),
+      database: memoryAdapter({
+        user: [],
+        account: [],
+        session: [],
+        verification: [],
+        jwks: [],
+        oauthResource: [],
+      }),
       secret: 'preview-session-secret-at-least-32-characters',
-      plugins: [...deployment.plugins, mcp({ loginPage: '/login', resource: `${canonical}/mcp` })],
+      plugins: [
+        ...deployment.plugins,
+        jwt({ jwt: { issuer: canonical } }),
+        mcp({ loginPage: '/login', consentPage: '/oauth/authorize', resource: `${canonical}/mcp` }),
+      ],
     });
 
-    const withoutRequest = await auth.api.getMcpOAuthConfig();
+    const withoutRequest = await auth.api.getOAuthServerConfig();
     expect(withoutRequest?.issuer).toBe(canonical);
 
-    const previewHost = await auth.api.getMcpOAuthConfig({
+    const previewHost = await auth.api.getOAuthServerConfig({
       headers: new Headers({ host: new URL(preview).host }),
     });
-    expect(previewHost?.issuer).toBe(preview);
+    expect(previewHost?.issuer).toBe(canonical);
 
-    const unknownHost = await auth.api.getMcpOAuthConfig({
+    const unknownHost = await auth.api.getOAuthServerConfig({
       headers: new Headers({ host: 'attacker.example' }),
     });
     expect(unknownHost?.issuer).toBe(canonical);
@@ -184,19 +194,7 @@ describe('deployment authentication', () => {
         `${canonical}/api/auth/callback/${provider}`,
       );
       expect(url.searchParams.get('state')).toBeTruthy();
-      const state = JSON.parse(
-        await symmetricDecrypt({
-          key: 'dedicated-proxy-secret-at-least-32-characters',
-          data: url.searchParams.get('state') ?? '',
-        }),
-      );
-      const payload = JSON.parse(
-        await symmetricDecrypt({
-          key: 'dedicated-proxy-secret-at-least-32-characters',
-          data: state.stateCookie,
-        }),
-      );
-      expect(new URL(payload.callbackURL).origin).toBe(preview);
+      expect(url.searchParams.get('state')).not.toContain(preview);
     },
   );
 

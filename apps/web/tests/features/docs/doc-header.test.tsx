@@ -27,6 +27,7 @@ const doc: Doc = {
   slug: 'delta-protocol',
   kind: 'markdown',
   content: '',
+  revision: 1,
   sortOrder: 0,
   visibility: 'workspace',
   publishToken: null,

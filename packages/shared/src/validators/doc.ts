@@ -40,6 +40,7 @@ export const docUpdateSchema = z
   .object({
     title: z.string().trim().min(1).max(DOC_TITLE_LIMIT),
     content: docContentSchema,
+    baseRevision: z.number().int().nonnegative(),
     projectId: idSchema.nullable(),
     collectionId: idSchema.nullable(),
     parentId: idSchema.nullable(),

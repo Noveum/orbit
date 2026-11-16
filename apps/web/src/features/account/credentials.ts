@@ -6,6 +6,24 @@ export interface SignInMethodCount {
   readonly passkeys: number;
 }
 
+export function linkedAccountRowId(
+  accounts: readonly {
+    readonly id: string;
+    readonly providerId: string;
+    readonly accountId: string;
+  }[],
+  providerId: string,
+  accountId?: string,
+): string | null {
+  const selected = accounts.filter(
+    (account) =>
+      account.providerId === providerId &&
+      (accountId === undefined || account.accountId === accountId),
+  );
+  if (selected.length !== 1) return null;
+  return selected[0]?.id ?? null;
+}
+
 export function signInMethodTotal(counts: SignInMethodCount): number {
   return counts.accounts + counts.passkeys;
 }

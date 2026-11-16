@@ -236,6 +236,7 @@ describe('doc nesting', () => {
       slug: id,
       kind: 'markdown' as const,
       content: '',
+      revision: 1,
       sortOrder: 0,
       visibility: 'workspace',
       publishToken: null,
