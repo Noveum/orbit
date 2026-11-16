@@ -37,7 +37,7 @@ CREATE TABLE "oauth_provider_client" (
   "enable_end_session" boolean,
   "subject_type" text,
   "scopes" text[],
-  "client_credentials_scopes" text[] DEFAULT '{}',
+  "client_credentials_scopes" text[] DEFAULT '{}'::text[],
   "user_id" text,
   "created_at" timestamp with time zone,
   "updated_at" timestamp with time zone,

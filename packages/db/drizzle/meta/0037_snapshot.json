@@ -921,7 +921,7 @@
           "type": "text[]",
           "primaryKey": false,
           "notNull": false,
-          "default": "'{}'"
+          "default": "'{}'::text[]"
         },
         "user_id": {
           "name": "user_id",
