@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 import { invalidateBootstrap } from '@/lib/query/bootstrap-cache.ts';
+import { DuplicateProjectDialog } from './duplicate-project-dialog.tsx';
 import { HEALTH_LABELS, STATUS_LABELS } from './health-chip.tsx';
 
 export interface ProjectTeamOption {
@@ -238,6 +239,7 @@ export function ProjectSettingsForm({
           <Button type="submit" variant="primary" disabled={pending} data-testid="project-save">
             Save changes
           </Button>
+          <DuplicateProjectDialog projectId={projectId} projectName={name} canManage={canManage} />
           <Button
             type="button"
             variant="ghost"
