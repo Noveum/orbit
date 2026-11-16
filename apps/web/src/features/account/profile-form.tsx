@@ -103,7 +103,7 @@ export function ProfileForm({ name, handle, image, timezone }: ProfileFormProps)
         body: {
           name: displayName,
           handle: userHandle,
-          timezone: zone,
+          ...(zone === timezone ? {} : { timezone: zone }),
         },
       });
       toast({ title: 'Profile updated', tone: 'success' });

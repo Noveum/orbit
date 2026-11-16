@@ -3,6 +3,7 @@ import { z } from 'zod';
 const instantSchema = z.union([z.string().trim().min(1), z.date()]).pipe(z.coerce.date());
 
 function isIanaTimezone(value: string): boolean {
+  if (/^[+-]/u.test(value)) return false;
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
     return true;

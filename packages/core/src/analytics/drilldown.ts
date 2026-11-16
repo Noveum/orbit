@@ -28,6 +28,7 @@ import {
   selectedAssigneeIds,
   UNASSIGNED_PERSON_ID,
 } from './person-attribution.ts';
+import { storedReportingTimezone } from './timezone.ts';
 import type { AnalyticsResolutionContext, ResolvedAnalyticsQuery } from './types.ts';
 
 const MAX_LIMIT = 200;
@@ -262,7 +263,7 @@ export async function resolveOverviewQuery(
   ]);
   const resolution: AnalyticsResolutionContext = {
     now,
-    timezone: context.timezone ?? person[0]?.timezone ?? 'UTC',
+    timezone: context.timezone ?? storedReportingTimezone(person[0]?.timezone),
     cycles,
     earliestIssueAt: earliest[0]?.createdAt ?? null,
   };
