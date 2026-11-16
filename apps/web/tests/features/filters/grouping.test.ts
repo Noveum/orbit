@@ -91,6 +91,44 @@ describe('groupKeysOf', () => {
 });
 
 describe('groupIssues', () => {
+  it('groups agents separately from unassigned and preserves canonical human names without members', () => {
+    const groups = groupIssues(
+      [
+        issue({
+          id: 'a',
+          assignee: {
+            type: 'agent',
+            id: 'agent_1',
+            name: 'Build bot',
+            avatar: null,
+            deleted: true,
+          },
+        }),
+        issue({
+          id: 'b',
+          assignee: {
+            type: 'user',
+            id: 'outside_team',
+            name: 'Outside team',
+            avatar: null,
+            deleted: false,
+          },
+        }),
+        issue({ id: 'c', assignee: null }),
+      ],
+      'assignee',
+      context,
+      options,
+    );
+
+    expect(groups.map((group) => [group.id, group.title])).toEqual([
+      ['none', 'No assignee'],
+      ['agent:agent_1', 'Build bot (Agent) (Deleted)'],
+      ['outside_team', 'Outside team'],
+    ]);
+    expect(groups.find((group) => group.id === 'none')?.issues.map((row) => row.id)).toEqual(['c']);
+  });
+
   it('lists priorities urgent first and no priority last', () => {
     const groups = groupIssues(
       [

@@ -1,5 +1,6 @@
 export * from './activity/activity-service.ts';
 export * from './analytics/index.ts';
+export * from './auth/agent-identity-service.ts';
 export * from './auth/mcp-token.ts';
 export * from './auth/rate-limit-storage.ts';
 export * from './content/attachment-service.ts';
@@ -23,7 +24,9 @@ export * from './org/team-service.ts';
 export * from './realtime/backfill.ts';
 export * from './realtime/publisher.ts';
 export * from './sync/sync-id.ts';
+export * from './work/agent-issue-context.ts';
 export * from './work/cycle-service.ts';
+export * from './work/issue-actor-view.ts';
 export * from './work/issue-service.ts';
 export * from './work/label-service.ts';
 export * from './work/milestone-service.ts';

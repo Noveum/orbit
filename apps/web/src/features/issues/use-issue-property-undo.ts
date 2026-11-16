@@ -5,6 +5,7 @@ import { useCallback, useRef } from 'react';
 import { useToast } from '@/components/ui/toast.tsx';
 import { useHotkey } from '@/lib/keyboard/use-hotkey.ts';
 import { ApiError } from '@/lib/query/fetcher.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue, MoveInput } from '@/lib/query/use-issues.ts';
 import { useMoveIssue, useUpdateIssue } from '@/lib/query/use-issues.ts';
 
@@ -102,7 +103,13 @@ function refreshMoveExpected(issue: Issue, expected: IssueMoveExpected): IssueMo
   };
 
   if (expected.assigneeId !== undefined) {
-    refreshed.assigneeId = issue.assigneeId;
+    const assignee = resolveIssueActor(issue, 'assignee');
+    refreshed.assigneeId = assignee?.type === 'user' ? assignee.id : null;
+  }
+
+  if (expected.assigneeAgentId !== undefined) {
+    const assignee = resolveIssueActor(issue, 'assignee');
+    refreshed.assigneeAgentId = assignee?.type === 'agent' ? assignee.id : null;
   }
 
   if (expected.projectId !== undefined) {

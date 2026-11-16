@@ -145,6 +145,7 @@ test('shift+f removes only the last filter and alt+shift+f clears them all', asy
   await page.goto(`${BASE}/team/eng/issues?filter=${encodeURIComponent(JSON.stringify(tree))}`);
   await expect(page.getByTestId('filter-chip-priority')).toBeVisible();
   await expect(page.getByTestId('filter-chip-due')).toBeVisible();
+  await expect(page.getByTestId('add-filter')).toBeEnabled();
 
   await page.keyboard.press('Shift+F');
   await expect(page.getByTestId('filter-chip-due')).toBeHidden();

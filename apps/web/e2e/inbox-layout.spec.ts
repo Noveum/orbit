@@ -94,6 +94,8 @@ test('a list longer than the pane never pushes the shell off the page', async ({
   await expect(reader.getByTestId('inbox-detail')).toBeVisible();
 
   const list = reader.locator('main ul').first();
+  await expect(reader.getByTestId('property-owner')).toBeVisible();
+  await expect(reader.getByTestId('property-creator')).toBeVisible();
   await expect
     .poll(async () => await list.evaluate((node) => node.scrollHeight - node.clientHeight))
     .toBeGreaterThan(0);
@@ -108,6 +110,41 @@ test('a list longer than the pane never pushes the shell off the page', async ({
 
   await reading.close();
   await writing.close();
+});
+
+test('issue properties scroll inside the sidebar and keep bottom actions reachable', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const author = await signIn(context, 'alex@orbit.example');
+  const teamId = await teamIdByKey(author, 'ENG');
+  const issue = await createIssue(author, teamId, 'An issue with a full property sidebar');
+
+  await author.goto(`${BASE}/issue/${issue.identifier}`);
+  await expect(author.getByTestId('property-owner')).toBeVisible();
+  await expect(author.getByTestId('property-creator')).toBeVisible();
+
+  expect(await overflowOf(author)).toEqual({ documentY: 0, mainY: 0, mainX: 0 });
+  const properties = author.getByTestId('issue-properties');
+  expect(
+    await properties.evaluate((node) => ({
+      overflowY: getComputedStyle(node).overflowY,
+      scrolls: node.scrollHeight > node.clientHeight,
+    })),
+  ).toEqual({ overflowY: 'auto', scrolls: true });
+
+  const deletion = author.getByTestId('property-delete-issue');
+  await deletion.focus();
+  await expect(deletion).toBeInViewport({ ratio: 1 });
+  expect(await properties.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(await author.locator('main').evaluate((node) => node.scrollTop)).toBe(0);
+  await deletion.press('Enter');
+  const dialog = author.getByTestId('delete-issue-dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+
+  await context.close();
 });
 
 test('a code block scrolls inside itself rather than widening the pane', async ({ browser }) => {

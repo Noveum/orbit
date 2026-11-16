@@ -10,6 +10,7 @@ import { type Executor, isUniqueViolation, newId, requireRow } from '../internal
 import { requireTeam } from '../org/team-service.ts';
 import { buildSyncAction } from '../realtime/publisher.ts';
 import { nextSyncId } from '../sync/sync-id.ts';
+import { attachIssueActors } from './issue-actor-view.ts';
 import { issueScopes } from './issue-fields.ts';
 import { reviewerIdsByIssue } from './reviewer-service.ts';
 
@@ -209,7 +210,8 @@ async function detachFromOtherTeams(
     .where(inArray(schema.issue.id, issueIds))
     .returning();
 
-  return rows.map((row) =>
+  const actors = await attachIssueActors(executor, label.organizationId, rows);
+  return actors.map((row) =>
     buildSyncAction({
       syncId,
       organizationId: row.organizationId,

@@ -19,6 +19,11 @@ GlobalRegistrator.register({
   settings: { navigation: { disableChildFrameNavigation: true } },
 });
 
+Object.defineProperty(Element.prototype, 'animate', {
+  configurable: true,
+  value: undefined,
+});
+
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({

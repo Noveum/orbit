@@ -354,9 +354,14 @@ describe('the granted oauth scopes decide which tools exist', () => {
     return tools.map((tool) => tool.name);
   }
 
-  async function readOnlyNames(client: TestClient): Promise<string[]> {
+  async function readScopedNames(client: TestClient): Promise<string[]> {
     const { tools } = await client.client.listTools();
-    return tools.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name);
+    return tools
+      .filter(
+        (tool) =>
+          tool.annotations?.readOnlyHint === true || tool.name === 'list_inbox_conversations',
+      )
+      .map((tool) => tool.name);
   }
 
   it('turns an openid only token away instead of letting it read the workspace', async () => {
@@ -382,7 +387,7 @@ describe('the granted oauth scopes decide which tools exist', () => {
     const reader = await clientWith('openid orbit.read');
     try {
       const everything = await toolNames(full);
-      const reads = await readOnlyNames(full);
+      const reads = await readScopedNames(full);
       const writes = everything.filter((name) => !reads.includes(name));
       expect(reads.length).toBeGreaterThan(0);
       expect(writes.length).toBeGreaterThan(0);
@@ -417,7 +422,7 @@ describe('the granted oauth scopes decide which tools exist', () => {
     const full = await clientWith('openid orbit.read orbit.write');
     const writer = await clientWith('openid orbit.write');
     try {
-      const reads = await readOnlyNames(full);
+      const reads = await readScopedNames(full);
       const offered = await toolNames(writer);
 
       expect(offered.length).toBeGreaterThan(0);

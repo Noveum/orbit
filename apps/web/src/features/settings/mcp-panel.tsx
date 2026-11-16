@@ -13,6 +13,7 @@ export interface McpConnection {
   readonly clientName: string;
   readonly organizationName: string;
   readonly lastUsedAt: string | null;
+  readonly identityName?: string | null;
 }
 
 export interface McpPanelProps {
@@ -87,6 +88,11 @@ export function McpPanel({ mcpUrl, connections }: McpPanelProps) {
               >
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate text-dense text-text">{connection.clientName}</span>
+                  {connection.identityName == null ? null : (
+                    <span className="truncate text-dense text-text">
+                      {connection.identityName}, read-only Agent
+                    </span>
+                  )}
                   <span className="text-2xs text-faint">
                     {connection.organizationName}, {formatLastUsed(connection.lastUsedAt)}
                   </span>
@@ -94,7 +100,11 @@ export function McpPanel({ mcpUrl, connections }: McpPanelProps) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  aria-label={`Disconnect ${connection.clientName}`}
+                  aria-label={
+                    connection.identityName == null
+                      ? `Disconnect ${connection.clientName}`
+                      : `Disconnect ${connection.clientName} as ${connection.identityName} in ${connection.organizationName}`
+                  }
                   onClick={() => disconnect(connection.id)}
                 >
                   Disconnect

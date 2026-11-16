@@ -289,15 +289,20 @@ base databases.
 
 ## Backup and retention
 
+Use the [operator runbooks](runbooks/README.md) for key-source precedence, private
+file ownership, explicit recovery environments and validation limits. The packaged
+systemd backup units read `/etc/orbit/orbit.env`; configure encryption and the key
+source there before enabling timers.
+
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `ORBIT_BACKUP_DESTINATION` | `./backups` | Target directory where backup archives are stored and discovered |
 | `ORBIT_BACKUP_ENCRYPTION_KEY` | unset | 32-byte master key encoded as 64-character hex or 44-character base64 |
-| `ORBIT_BACKUP_ENCRYPTION_KEY_FILE` | unset | Path to a file containing the 32-byte master encryption key |
+| `ORBIT_BACKUP_ENCRYPTION_KEY_FILE` | unset | Operator-readable encoded key file; a nonempty inline `ORBIT_BACKUP_ENCRYPTION_KEY` takes precedence, even over a CLI file flag |
 | `ORBIT_BACKUP_ENCRYPTION_COMMAND` | unset | Secret helper command executed to print the master key to stdout |
 | `ORBIT_BACKUP_ENCRYPTION_KEY_ID` | `default` | Key identifier stamped into manifest encryption metadata |
-| `ORBIT_BACKUP_KEEP_COUNT` | unset | Number of newest backups to retain during pruning |
-| `ORBIT_BACKUP_KEEP_DAYS` | unset | Number of days to retain backups during pruning |
+| `ORBIT_BACKUP_KEEP_COUNT` | unset | Newest-count selection, combined with age/GFS selections; byte quota can remove older unpinned selections |
+| `ORBIT_BACKUP_KEEP_DAYS` | unset | Age selection combined with count/GFS as a union, subject to byte quota |
 | `ORBIT_BACKUP_KEEP_HOURLY` | unset | Number of hourly GFS slots to retain |
 | `ORBIT_BACKUP_KEEP_DAILY` | unset | Number of daily GFS slots to retain |
 | `ORBIT_BACKUP_KEEP_WEEKLY` | unset | Number of weekly GFS slots to retain |
@@ -305,7 +310,7 @@ base databases.
 | `ORBIT_BACKUP_MAX_BYTES` | unset | Storage quota (e.g. `50GB`); prunes oldest non-pinned backups when exceeded |
 | `ORBIT_BACKUP_PINNED` | unset | Comma-separated list of backup directory IDs immune from prune deletion |
 | `ORBIT_BACKUP_STALE_ALERT_HOURS` | unset | Alert threshold in hours; prune exits with code 2 if newest backup exceeds it |
-| `ORBIT_BACKUP_INCOMPLETE_MAX_AGE_HOURS` | `24` | Maximum age in hours before abandoned temporary or incomplete backups are purged |
+| `ORBIT_BACKUP_INCOMPLETE_MAX_AGE_HOURS` | unset | Overrides abandoned-directory age thresholds; without it, `.tmp` defaults to 24 hours and `.incomplete` to immediate eligibility, subject to lock-age checks |
 
 ## Reference: a deployment environment
 

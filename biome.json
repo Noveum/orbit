@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -56,6 +56,16 @@
     },
     "linter": {
       "enabled": true
+    }
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    }
+  },
+  "yaml": {
+    "formatter": {
+      "enabled": false
     }
   },
   "linter": {
@@ -215,7 +225,14 @@
       }
     },
     {
-      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/tests/**", "**/e2e/**", "**/*.spec.ts"],
+      "includes": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/tests/**",
+        "**/e2e/**",
+        "**/*.spec.ts",
+        "**/src/test/**"
+      ],
       "linter": {
         "rules": {
           "suspicious": {
@@ -227,6 +244,9 @@
           },
           "complexity": {
             "noExcessiveCognitiveComplexity": "off"
+          },
+          "correctness": {
+            "noComponentHookFactories": "off"
           }
         }
       }
@@ -249,6 +269,16 @@
           },
           "style": {
             "useFilenamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/src/features/docs/diagram-viewer.tsx"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off"
           }
         }
       }

@@ -4,14 +4,15 @@ import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Avatar } from '@/components/ui/avatar.tsx';
 import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnCardHover } from '@/lib/interaction.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { AssigneeControl, PriorityControl, StatusControl } from './card-controls.tsx';
 import { IssueActionsMenu } from './issue-actions.tsx';
+import { IssueActorDisplay } from './issue-actor.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { ReviewerAvatars } from './reviewer-avatars.tsx';
@@ -177,20 +178,14 @@ function CardAssigneeSlot({
   assignee: Member | undefined;
   dragging: boolean;
 }) {
-  if (dragging) return <CardAssignee assignee={assignee} />;
+  if (dragging) {
+    return (
+      <span className="ml-auto">
+        <IssueActorDisplay actor={resolveIssueActor(issue, 'assignee', assignee)} size="sm" />
+      </span>
+    );
+  }
   return <AssigneeControl issue={issue} assignee={assignee} />;
-}
-
-function CardAssignee({ assignee }: { assignee: Member | undefined }) {
-  return (
-    <span className="ml-auto">
-      {assignee === undefined ? (
-        <span className="block size-5.5 rounded-full border border-border border-dashed" />
-      ) : (
-        <Avatar name={assignee.name} src={assignee.image} size="sm" />
-      )}
-    </span>
-  );
 }
 
 interface CardMetaProps {
@@ -225,8 +220,8 @@ function CardMeta({ issue, creator, project, cycle, subIssueCount, properties }:
       {shows('completed') ? <MetaDate value={issue.completedAt} title="Completed" /> : null}
       {shows('created') ? <MetaDate value={issue.createdAt} title="Created" /> : null}
       {shows('updated') ? <MetaDate value={issue.updatedAt} title="Updated" /> : null}
-      {shows('creator') && creator !== undefined ? (
-        <Avatar name={creator.name} src={creator.image} size="xs" />
+      {shows('creator') ? (
+        <IssueActorDisplay actor={resolveIssueActor(issue, 'creator', creator)} />
       ) : null}
     </>
   );

@@ -177,11 +177,6 @@ const HEADINGS_THE_RENDERER_FINDS = [
     before: '# One\n\n- Listed\n',
     after: '# One\n\n- Listed\n  ---\n',
   },
-  {
-    what: 'a setext underline that lazily continues the list item above it',
-    before: '# One\n\n- Listed\n',
-    after: '# One\n\n- Listed\n===\n',
-  },
 ] as const;
 
 describe('the outline memo never goes stale', () => {
@@ -202,6 +197,18 @@ describe('the outline memo never goes stale', () => {
     const grown = outlineFor(memo, '# One\n\n> ## Inserted\n\n## Two\n', headingsOf);
 
     expect(grown.headings.map((heading) => heading.id)).toEqual(['one', 'inserted', 'two']);
+  });
+
+  it('keeps lazy setext underlines in a list item as text', () => {
+    const before = '# One\n\n- Listed\n';
+    const after = '# One\n\n- Listed\n===\n';
+    const expected = [{ id: 'one', text: 'One', level: 1 }];
+    const first = outlineFor(EMPTY_OUTLINE, before, headingsOf);
+    const second = outlineFor(first, after, headingsOf);
+
+    expect(headingsOf(before)).toEqual(expected);
+    expect(headingsOf(after)).toEqual(expected);
+    expect(second.headings).toEqual(expected);
   });
 });
 

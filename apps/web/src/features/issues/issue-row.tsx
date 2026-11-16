@@ -3,13 +3,14 @@
 import type { DisplayProperty } from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES } from '@orbit/shared/filters';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Avatar } from '@/components/ui/avatar.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
 import { cn } from '@/lib/cn.ts';
 import { revealOnHover } from '@/lib/interaction.ts';
+import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Issue, Label, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { usePrefetchIssueDetail } from '@/lib/query/use-issues.ts';
 import { IssueActionsMenu } from './issue-actions.tsx';
+import { IssueActorDisplay } from './issue-actor.tsx';
 import { IssueLink } from './issue-link.tsx';
 import { MetaChip, MetaDate } from './issue-meta.tsx';
 import { PriorityGlyph } from './priority-glyph.tsx';
@@ -137,17 +138,12 @@ export function IssueRow({
         properties={properties}
       />
       <ReviewerAvatars reviewers={reviewers} />
-      {shows('assignee') ? <RowAssignee assignee={assignee} /> : null}
+      {shows('assignee') ? (
+        <IssueActorDisplay actor={resolveIssueActor(issue, 'assignee', assignee)} />
+      ) : null}
       <IssueActionsMenu issue={issue} className={revealOnHover} />
     </div>
   );
-}
-
-function RowAssignee({ assignee }: { assignee: Member | undefined }) {
-  if (assignee === undefined) {
-    return <span className="size-4.5 rounded-full border border-border border-dashed" />;
-  }
-  return <Avatar name={assignee.name} src={assignee.image} size="xs" />;
 }
 
 interface RowMetaProps {
@@ -192,8 +188,8 @@ function RowMeta({ issue, creator, project, cycle, subIssueCount, properties }: 
           {issue.estimate}
         </span>
       ) : null}
-      {shows('creator') && creator !== undefined ? (
-        <Avatar name={creator.name} src={creator.image} size="xs" />
+      {shows('creator') ? (
+        <IssueActorDisplay actor={resolveIssueActor(issue, 'creator', creator)} />
       ) : null}
     </>
   );

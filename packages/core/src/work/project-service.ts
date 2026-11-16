@@ -898,7 +898,11 @@ function duplicateIssueValues(
     description: sourceIssue.description,
     stateId,
     priority: sourceIssue.priority,
-    assigneeId: sourceIssue.assigneeId,
+    assigneeId:
+      sourceIssue.assigneeAgentId === null
+        ? (sourceIssue.assigneeUserId ?? sourceIssue.assigneeId)
+        : null,
+    assigneeAgentId: sourceIssue.assigneeAgentId,
     reviewerIds,
     projectId: targetProjectId,
     milestoneId,
@@ -960,7 +964,7 @@ async function duplicateProjectIssues(
       reviewerMap,
       shiftDays,
     );
-    const createdIssue = await createIssue(principal, input, tx);
+    const createdIssue = await createIssue(principal, input, undefined, tx);
     issueIdMap.set(sourceIssue.id, createdIssue.issue.id);
     copiedIssues.set(sourceIssue.id, createdIssue.issue);
     const column = JSON.stringify([createdIssue.issue.teamId, createdIssue.issue.stateId]);
