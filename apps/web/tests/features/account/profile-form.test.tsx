@@ -40,6 +40,19 @@ function renderForm() {
 }
 
 describe('ProfileForm', () => {
+  it('does not resubmit an unchanged legacy timezone when editing the name', async () => {
+    const fetchSpy = mockFetch(200, { user: { name: 'Pulkit S', handle: 'pulkit' } });
+    const user = userEvent.setup();
+    render(<ProfileForm name="Pulkit Sharma" handle="pulkit" image={null} timezone="UTC+8" />);
+    await user.clear(screen.getByLabelText('Display name'));
+    await user.type(screen.getByLabelText('Display name'), 'Pulkit S');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    const [, init] = fetchSpy.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({ name: 'Pulkit S' });
+    expect(JSON.parse(init.body)).not.toHaveProperty('timezone');
+  });
+
   it('sends the edited profile and refreshes', async () => {
     const fetchSpy = mockFetch(200, { user: { name: 'Pulkit S', handle: 'pulkit' } });
     const user = userEvent.setup();
@@ -47,6 +60,8 @@ describe('ProfileForm', () => {
 
     await user.clear(screen.getByLabelText('Display name'));
     await user.type(screen.getByLabelText('Display name'), 'Pulkit S');
+    await user.clear(screen.getByLabelText('Timezone'));
+    await user.type(screen.getByLabelText('Timezone'), 'Asia/Tokyo');
     await user.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await waitFor(() => {
@@ -57,7 +72,7 @@ describe('ProfileForm', () => {
     expect(body).toMatchObject({
       name: 'Pulkit S',
       handle: 'pulkit',
-      timezone: 'Asia/Kolkata',
+      timezone: 'Asia/Tokyo',
     });
     expect(body).not.toHaveProperty('image');
   });
