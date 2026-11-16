@@ -282,8 +282,10 @@ describe('MCP authorize consent boundary', () => {
     await resetDatabase();
   });
 
-  it('rejects a direct request that omits prompt before login', async () => {
-    const response = await GET(authorizeRequest(authorizeSearch()));
+  it('rejects a signed request that omits prompt before login', async () => {
+    const search = authorizeSearch();
+    search.set('sig', 'invalid-local-signature');
+    const response = await GET(authorizeRequest(search));
     expect(response.status).toBe(400);
   });
 
@@ -470,14 +472,14 @@ describe('MCP authorize PKCE boundary', () => {
     cookie = await signedSessionCookie(token);
   });
 
-  it('keeps authorization behind consent after login resumes the request', async () => {
+  it('adds consent before login and preserves it when the request resumes', async () => {
     const previousDevLogin = process.env['ORBIT_DEV_LOGIN'];
     process.env['ORBIT_DEV_LOGIN'] = '1';
     try {
       await withNativeFetchGlobals(async () => {
         await db.delete(schema.session);
         const cookies = new Map<string, string>();
-        const search = authorizeSearch('consent');
+        const search = authorizeSearch();
         search.set('code_challenge', VALID_PKCE_CHALLENGE);
         search.set('code_challenge_method', 'S256');
         const start = await GET(authorizeRequest(search));
@@ -486,6 +488,7 @@ describe('MCP authorize PKCE boundary', () => {
         expect(start.headers.get('location')).toContain('sig=');
         const loginLocation = new URL(start.headers.get('location') ?? '', APP_ORIGIN);
         expect(loginLocation.pathname).toBe('/login');
+        expect(loginLocation.searchParams.get('prompt')).toBe('consent');
         const callbackUrl = mcpContinueUrl(Object.fromEntries(loginLocation.searchParams));
         expect(callbackUrl).toBeDefined();
 
