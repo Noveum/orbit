@@ -6,7 +6,7 @@ import {
   testAiConnectionResponseSchema,
 } from '@orbit/shared/validators';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
@@ -209,7 +209,8 @@ function AiProviderInputs(props: AiProviderInputsProps) {
           className="mt-1 block w-full rounded-md border border-border bg-surface-2 px-3 py-1.5 text-dense text-text"
         />
         <p className="mt-1 text-2xs text-muted">
-          Local endpoints such as http://localhost:11434/v1 or custom proxy gateways work here.
+          Use a public HTTPS endpoint for your provider or gateway. Private endpoints require your
+          administrator to enable them.
         </p>
       </div>
 
@@ -340,8 +341,17 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
   const [testResult, setTestResult] = useState<TestAiConnectionResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const testRevision = useRef(0);
+
+  function clearFeedback() {
+    testRevision.current += 1;
+    setTestResult(null);
+    setStatusMessage(null);
+    setErrorMessage(null);
+  }
 
   function handleKindChange(nextKind: AiProviderKind) {
+    clearFeedback();
     setKind(nextKind);
     const fallback = defaultEndpoint(nextKind);
     if (shouldResetBaseUrl(baseUrl)) setBaseUrl(fallback.baseUrl);
@@ -349,10 +359,9 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
   }
 
   async function handleTest() {
+    clearFeedback();
+    const revision = testRevision.current;
     setTesting(true);
-    setTestResult(null);
-    setErrorMessage(null);
-    setStatusMessage(null);
     try {
       const rawPayload = await apiRequest<unknown>('/api/settings/ai/test', {
         method: 'POST',
@@ -363,6 +372,7 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
           apiKey: apiKey.trim().length > 0 ? apiKey.trim() : undefined,
         },
       });
+      if (testRevision.current !== revision) return;
       const parsed = testAiConnectionResponseSchema.safeParse(rawPayload);
       if (parsed.success) {
         setTestResult(parsed.data);
@@ -370,7 +380,9 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
         setTestResult({ ok: false, error: 'Invalid response payload from connection test.' });
       }
     } catch (caught) {
-      setTestResult({ ok: false, error: messageOf(caught) });
+      if (testRevision.current === revision) {
+        setTestResult({ ok: false, error: messageOf(caught) });
+      }
     } finally {
       setTesting(false);
     }
@@ -378,8 +390,7 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
 
   async function handleSave() {
     setSaving(true);
-    setErrorMessage(null);
-    setStatusMessage(null);
+    clearFeedback();
     try {
       await apiRequest<AiSettingsData>('/api/settings/ai', {
         method: 'POST',
@@ -403,8 +414,7 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
 
   async function handleDisconnect() {
     setDisconnecting(true);
-    setErrorMessage(null);
-    setStatusMessage(null);
+    clearFeedback();
     try {
       await apiRequest<{ ok: boolean }>('/api/settings/ai', {
         method: 'DELETE',
@@ -466,10 +476,22 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
             hasApiKey={settings.hasApiKey}
             canManage={canManage}
             onKindChange={handleKindChange}
-            onBaseUrlChange={setBaseUrl}
-            onModelChange={setModel}
-            onApiKeyChange={setApiKey}
-            onEnabledChange={setEnabled}
+            onBaseUrlChange={(value) => {
+              clearFeedback();
+              setBaseUrl(value);
+            }}
+            onModelChange={(value) => {
+              clearFeedback();
+              setModel(value);
+            }}
+            onApiKeyChange={(value) => {
+              clearFeedback();
+              setApiKey(value);
+            }}
+            onEnabledChange={(value) => {
+              clearFeedback();
+              setEnabled(value);
+            }}
           />
 
           <AiActionButtons

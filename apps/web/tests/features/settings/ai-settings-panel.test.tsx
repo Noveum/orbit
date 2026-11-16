@@ -64,6 +64,41 @@ afterEach(() => {
 });
 
 describe('AiSettingsPanel', () => {
+  for (const label of ['Base URL', 'Model identifier', 'API Key']) {
+    it(`clears connection feedback when ${label} changes`, async () => {
+      const user = userEvent.setup();
+      fetchResponder = async () => Response.json({ ok: true, latencyMs: 12, message: 'Connected' });
+      render(<AiSettingsPanel settings={INITIAL_SETTINGS} canManage={true} />);
+      await user.click(screen.getByRole('button', { name: 'Test connection' }));
+      await waitFor(() =>
+        expect(screen.getByRole('status').textContent).toContain('Connection successful'),
+      );
+      await user.type(screen.getByLabelText(label), '-changed');
+      expect(screen.queryByText(/Connection successful/)).toBeNull();
+    });
+  }
+
+  it('does not display an old connection result after an edit while testing', async () => {
+    const user = userEvent.setup();
+    let finish: ((response: Response) => void) | undefined;
+    fetchResponder = () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    render(<AiSettingsPanel settings={INITIAL_SETTINGS} canManage={true} />);
+    await user.click(screen.getByRole('button', { name: 'Test connection' }));
+    await waitFor(() => expect(lastFetchRequest?.url).toBe('/api/settings/ai/test'));
+    await user.type(screen.getByLabelText('Model identifier'), '-changed');
+    expect(finish).toBeDefined();
+    finish?.(Response.json({ ok: true, latencyMs: 12, message: 'Old configuration' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Test connection' }).hasAttribute('disabled')).toBe(
+        false,
+      ),
+    );
+    expect(screen.queryByText(/Connection successful/)).toBeNull();
+  });
+
   it('updates base URL and model defaults when switching provider shape', async () => {
     const user = userEvent.setup();
     render(<AiSettingsPanel settings={UNCONFIGURED_SETTINGS} canManage={true} />);

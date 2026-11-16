@@ -102,6 +102,21 @@ function hasHeader(headers: Record<string, string> | undefined, name: string): b
   return Object.keys(headers).some((k) => k.toLowerCase() === target);
 }
 
+function providerRequestHeaders(options: SafeFetchOptions): Record<string, string> {
+  const headers: Record<string, string> = { ...options.headers };
+  if (!hasHeader(headers, 'accept-encoding')) {
+    headers['accept-encoding'] = 'gzip, deflate, br';
+  }
+  if (
+    options.body !== undefined &&
+    !hasHeader(headers, 'content-length') &&
+    !hasHeader(headers, 'transfer-encoding')
+  ) {
+    headers['content-length'] = String(Buffer.byteLength(options.body));
+  }
+  return headers;
+}
+
 function createDecompressor(encoding: string): stream.Transform | null {
   switch (encoding) {
     case 'gzip':
@@ -253,18 +268,13 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
   const lookup = createSafeLookup(allowPrivate, options.dnsLookup);
   const client = parsed.protocol === 'https:' ? https : http;
 
-  const reqHeaders: Record<string, string> = { ...options.headers };
-  if (!hasHeader(options.headers, 'accept-encoding')) {
-    reqHeaders['accept-encoding'] = 'gzip, deflate, br';
-  }
-
   const reqOptions: https.RequestOptions = {
     protocol: parsed.protocol,
     hostname: cleanHost,
     port: defaultPortForProtocol(parsed.protocol, parsed.port),
     path: parsed.pathname + parsed.search,
     method: options.method ?? 'GET',
-    headers: reqHeaders,
+    headers: providerRequestHeaders(options),
     lookup,
     servername: cleanHost,
   };

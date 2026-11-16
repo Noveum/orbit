@@ -7,6 +7,48 @@ import { safeFetch } from '../../src/ai/transport.ts';
 
 const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
+describe('safeFetch request framing', () => {
+  for (const body of ['{"model":"fixture"}', '{"message":"héllo 🌍"}', '']) {
+    it(`declares the UTF-8 byte length of ${JSON.stringify(body)}`, async () => {
+      const server = http.createServer((request, response) => {
+        let received = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk: string) => {
+          received += chunk;
+        });
+        request.on('end', () => {
+          response.writeHead(
+            request.headers['content-length'] === String(Buffer.byteLength(body)) ? 200 : 411,
+            { 'content-type': 'application/json' },
+          );
+          response.end(
+            JSON.stringify({
+              received,
+              transferEncoding: request.headers['transfer-encoding'] ?? null,
+            }),
+          );
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const port = (server.address() as AddressInfo).port;
+        const response = await safeFetch(`http://127.0.0.1:${port}/completion`, {
+          allowPrivate: true,
+          method: 'POST',
+          body,
+        });
+        const result: unknown = await response.json();
+        expect(response.status).toBe(200);
+        expect(result).toEqual({ received: body, transferEncoding: null });
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    });
+  }
+});
+
 function mockDns(address: string, family = 4): DnsLookupFn {
   return (_hostname, _options, callback: DnsLookupCallback) => {
     callback(null, [{ address, family }], family);
