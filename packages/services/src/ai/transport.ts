@@ -181,7 +181,7 @@ function hookCancellation(
 
   let closing = false;
   const closeUpstream = () => {
-    if (closing || res.complete) return;
+    if (closing || res.readableEnded) return;
     closing = true;
     if (!res.destroyed) res.destroy();
     if (!req.destroyed) req.destroy();
