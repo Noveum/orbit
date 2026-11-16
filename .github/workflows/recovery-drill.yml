@@ -101,13 +101,17 @@ jobs:
       - name: Execute automated continuous recovery drill
         run: |
           mkdir -p artifacts
+          bun -e 'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("artifacts/drill-backups/older-backup", { recursive: true }); await writeFile("artifacts/drill-backups/unrelated.txt", "keep this file"); await writeFile("artifacts/drill-backups/older-backup/manifest.json", "keep this backup");'
           set -o pipefail
           bun run backup:recovery-drill \
             --database-url="$DATABASE_URL" \
             --redis-url="$REDIS_URL" \
             --confirm-redis-target="redis://localhost:6380/db/0" \
             --confirm-destructive="localhost:5433/db/orbit_recovery_drill#bucket:orbit-uploads" \
+            --destination="artifacts/drill-backups" \
+            --clean \
             --json | tee artifacts/recovery-drill-report.json
+          bun -e 'import assert from "node:assert/strict"; import { readFile, readdir } from "node:fs/promises"; assert.equal(await readFile("artifacts/drill-backups/unrelated.txt", "utf8"), "keep this file"); assert.equal(await readFile("artifacts/drill-backups/older-backup/manifest.json", "utf8"), "keep this backup"); assert.deepEqual((await readdir("artifacts/drill-backups")).sort(), ["older-backup", "unrelated.txt"]);'
       - name: Execute automated upgrade matrix
         run: |
           set -o pipefail

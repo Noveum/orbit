@@ -89,11 +89,11 @@ and verifies byte-for-byte attachment integrity and authorization boundaries.
 Options:
   --database-url=<url>       Target database connection URL (default: ORBIT_DRILL_DATABASE_URL)
   --confirm-destructive=<identity> Confirm the exact database and bucket target to restore
-  --destination=<path>       Backup destination directory (default: system temporary directory)
+  --destination=<path>       Parent directory for a unique drill directory (default: system temporary directory)
   --redis-url=<url>          Redis URL for empty start verification (default: ORBIT_DRILL_REDIS_URL)
   --confirm-redis-target=<identity> Confirm the exact Redis protocol, host, port, and database to flush
   --skip-redis               Skip Redis empty start pub/sub verification
-  --clean                    Clean destination directory after drill finishes
+  --clean                    Remove only this drill's directory after success or failure
   --json                     Emit machine-readable JSON result
   -h, --help                 Show this help message
 `);

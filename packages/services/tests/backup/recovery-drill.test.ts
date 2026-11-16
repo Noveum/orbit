@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { computeRestoreTargetIdentity } from '@orbit/shared';
 import postgres from 'postgres';
 import {
@@ -65,6 +68,52 @@ function createMockDriver(files: Map<string, Uint8Array>): StorageDriver {
     },
   };
 }
+
+describe('recovery drill output ownership', () => {
+  it.each([true, false])(
+    'preserves caller files when a failed drill has cleanup set to %s',
+    async (cleanDestination) => {
+      const root = await mkdtemp(join(tmpdir(), 'orbit-drill-owned-output-'));
+      const sentinel = join(root, 'unrelated.txt');
+      const olderBackup = join(root, 'older-backup');
+      await mkdir(olderBackup);
+      await writeFile(sentinel, 'keep this file');
+      await writeFile(join(olderBackup, 'manifest.json'), 'keep this backup');
+      const databaseUrl = 'postgres://orbit:orbit@127.0.0.1:1/orbit_test_drill_cleanup';
+
+      try {
+        for (const attempt of [1, 2]) {
+          await expect(
+            runRecoveryDrill({
+              databaseUrl,
+              confirmDestructiveTarget: computeRestoreTargetIdentity(
+                databaseUrl,
+                process.env['S3_BUCKET'],
+              ).identity,
+              destinationDir: root,
+              storageDriver: createMockDriver(new Map()),
+              skipRedisCheck: true,
+              cleanDestination,
+            }),
+          ).rejects.toThrow('ECONNREFUSED');
+
+          expect(await Bun.file(sentinel).exists()).toBe(true);
+          expect(await readFile(sentinel, 'utf8')).toBe('keep this file');
+          expect(await readFile(join(olderBackup, 'manifest.json'), 'utf8')).toBe(
+            'keep this backup',
+          );
+          const ownedDirectories = (await readdir(root, { withFileTypes: true })).filter(
+            (entry) => !['unrelated.txt', 'older-backup'].includes(entry.name),
+          );
+          expect(ownedDirectories).toHaveLength(cleanDestination ? 0 : attempt);
+          for (const directory of ownedDirectories) expect(directory.isDirectory()).toBe(true);
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe('recovery drill verification', () => {
   for (const table of [

@@ -633,11 +633,9 @@ export async function runRecoveryDrill(
     onnotice: () => undefined,
   });
 
-  const destinationDir =
-    options.destinationDir ?? (await mkdtemp(join(tmpdir(), 'orbit-recovery-drill-')));
-  if (options.destinationDir !== undefined) {
-    await mkdir(destinationDir, { recursive: true });
-  }
+  const destinationRoot = options.destinationDir ?? tmpdir();
+  await mkdir(destinationRoot, { recursive: true });
+  const drillDirectory = await mkdtemp(join(destinationRoot, 'orbit-recovery-drill-'));
 
   const encryptionKey = options.encryptionKey ?? randomBytes(32).toString('hex');
   const allErrors: string[] = [];
@@ -648,7 +646,7 @@ export async function runRecoveryDrill(
 
     const backupStart = performance.now();
     const backupResult = await createBackup({
-      destinationDir,
+      destinationDir: drillDirectory,
       databaseUrl,
       encrypt: true,
       encryptionKey,
@@ -723,7 +721,7 @@ export async function runRecoveryDrill(
   } finally {
     await cleanupRepresentativeRows(sql, driver, representativeData).catch(() => undefined);
     if (options.cleanDestination === true) {
-      await rm(destinationDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(drillDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
     await sql.end({ timeout: 5 }).catch(() => undefined);
   }

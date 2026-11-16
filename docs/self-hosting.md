@@ -487,6 +487,12 @@ teams, issues, comments, docs, MCP grants, and uploaded attachments), captures a
 encrypted snapshot, wipes the target environment and Redis, restores the snapshot,
 and asserts byte-for-byte attachment integrity and authorization boundaries.
 
+Each drill creates its own unique directory inside the parent selected by
+`--destination`, or inside the system temporary directory when no parent is supplied.
+Without `--clean`, that drill directory remains for inspection. With `--clean`, only
+that directory is removed after success or failure; the parent and unrelated files
+or sibling backups are preserved.
+
 Redis confirmation includes its protocol, host, port, and database independently of the
 database and bucket confirmation. Query options are refused for Redis drill URLs; specify
 the database in the URL path. The fresh-install matrix scenario creates and removes its
