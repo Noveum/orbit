@@ -62,6 +62,7 @@ truncate tables another package is mid-test on.
 
 | Package | Database |
 | --- | --- |
+| `packages/db` | `orbit_test_db` |
 | `packages/core` | `orbit_test_core` |
 | `packages/services` | `orbit_test_svc` |
 | `apps/realtime` | `orbit_test_rt` |
@@ -74,9 +75,12 @@ transaction that rolls back. Not a mock, because the things that break in
 practice are constraints, cascades and concurrent writes, and a mock has none of
 those.
 
-`scripts/test-env.ts` refuses to run against a database whose name does not
-contain `test`, so you cannot wipe your development data by pointing a test run
-at the wrong `DATABASE_URL`.
+`packages/db` validates the server and selected test database before any test
+module loads. It requires a loopback PostgreSQL URL, an `orbit_test_` database
+name and a matching `current_database()` result. A local development URL supplies
+connection details only; tests use their own database and lane. Remote ambient
+or explicit test URLs are refused. Other packages resolve their own test databases
+through `scripts/test-env.ts`.
 
 ## Running two suites at once
 
@@ -110,7 +114,7 @@ read exactly like broken tests. When you genuinely want a clean slate:
 bun run db:test-lanes-drop --all
 ```
 
-That takes every lane on that Postgres, live ones included. The six base
+That takes every lane on that Postgres, live ones included. The seven base
 databases survive either way. Without `ORBIT_TEST_LANE` set on a test run,
 nothing about the lane mechanism changes.
 
