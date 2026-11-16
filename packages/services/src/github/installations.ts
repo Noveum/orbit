@@ -15,7 +15,7 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { GithubInstallationAccount, GithubInstalledRepository } from './app.ts';
 import type { GithubDatabase } from './apply.ts';
-import { forgetWatchedRepositories } from './watched.ts';
+import { forgetWatchedRepositories, removeGithubRepositorySyncs } from './watched.ts';
 
 export type GithubInstallationRow = typeof githubInstallation.$inferSelect;
 export type GithubRepositoryRow = typeof githubRepository.$inferSelect;
@@ -247,20 +247,32 @@ export async function removeGithubInstallation(
   database: GithubDatabase,
   input: { readonly organizationId: string; readonly installationId: string },
 ): Promise<boolean> {
-  const [row] = await database
-    .select({ id: githubInstallation.id, integrationId: githubInstallation.integrationId })
-    .from(githubInstallation)
-    .where(
+  return await database.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ id: githubInstallation.id, integrationId: integration.id })
+      .from(integration)
+      .innerJoin(githubInstallation, eq(githubInstallation.integrationId, integration.id))
+      .where(
+        and(
+          eq(integration.organizationId, input.organizationId),
+          eq(githubInstallation.organizationId, input.organizationId),
+          eq(githubInstallation.installationId, input.installationId),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    if (row === undefined) return false;
+    await removeGithubRepositorySyncs(
+      tx,
       and(
-        eq(githubInstallation.organizationId, input.organizationId),
-        eq(githubInstallation.installationId, input.installationId),
+        eq(githubRepositorySync.organizationId, input.organizationId),
+        eq(githubRepositorySync.integrationId, row.integrationId),
       ),
-    )
-    .limit(1);
-  if (row === undefined) return false;
-  await database.delete(githubInstallation).where(eq(githubInstallation.id, row.id));
-  await database.delete(integration).where(eq(integration.id, row.integrationId));
-  return true;
+    );
+    await tx.delete(githubInstallation).where(eq(githubInstallation.id, row.id));
+    await tx.delete(integration).where(eq(integration.id, row.integrationId));
+    return true;
+  });
 }
 
 export async function purgeGithubInstallation(
