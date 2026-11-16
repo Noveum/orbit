@@ -19,6 +19,7 @@ import {
   type Workspace,
 } from '../../src/test-support.ts';
 import { createIssue, getIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createLabel } from '../../src/work/label-service.ts';
 import {
   createMilestone,
   listMilestones,
@@ -1184,14 +1185,34 @@ describe('duplicateProject', () => {
       name: 'Ops Migration',
       teamIds: [workspace.teamId],
     });
-
-    await createIssue(workspace.admin, {
+    const { label } = await createLabel(workspace.admin, {
+      teamId: workspace.teamId,
+      name: 'Source team label',
+      color: '#bb3344',
+    });
+    const { user: reviewer } = await addMember(workspace, 'member', { name: 'Source reviewer' });
+    const { issue: sourceIssue } = await createIssue(workspace.admin, {
       teamId: workspace.teamId,
       title: 'Migrate logs',
       projectId: source.id,
+      assigneeId: null,
+      labelIds: [label.id],
+      reviewerIds: [reviewer.id],
     });
+    expect(
+      await db
+        .select({ labelId: schema.issueLabel.labelId })
+        .from(schema.issueLabel)
+        .where(eq(schema.issueLabel.issueId, sourceIssue.id)),
+    ).toEqual([{ labelId: label.id }]);
+    expect(
+      await db
+        .select({ userId: schema.issueReviewer.userId })
+        .from(schema.issueReviewer)
+        .where(eq(schema.issueReviewer.issueId, sourceIssue.id)),
+    ).toEqual([{ userId: reviewer.id }]);
 
-    const { project: copy } = await duplicateProject(workspace.admin, source.id, {
+    const { project: copy, actions } = await duplicateProject(workspace.admin, source.id, {
       teamIds: [otherTeam.team.id],
     });
 
@@ -1199,8 +1220,22 @@ describe('duplicateProject', () => {
       .select()
       .from(schema.issue)
       .where(eq(schema.issue.projectId, copy.id));
-    expect(copyIssue).toBeDefined();
-    expect(copyIssue?.teamId).toBe(otherTeam.team.id);
+    if (copyIssue === undefined) throw new Error('The copied issue is missing.');
+    expect(copyIssue.teamId).toBe(otherTeam.team.id);
+    expect(
+      await db.select().from(schema.issueLabel).where(eq(schema.issueLabel.issueId, copyIssue.id)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.issueReviewer)
+        .where(eq(schema.issueReviewer.issueId, copyIssue.id)),
+    ).toHaveLength(0);
+    const action = actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === copyIssue.id,
+    );
+    expect(action?.data['labelIds']).toEqual([]);
+    expect(action?.data['reviewerIds']).toEqual([]);
   });
 
   it('refuses cross-workspace duplication', async () => {
