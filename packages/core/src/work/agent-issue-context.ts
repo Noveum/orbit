@@ -55,7 +55,7 @@ export async function issueWriteTransaction<T>(
   permission: Permission,
   context: AgentIssueWriteContext | undefined,
   work: (tx: Transaction, current: Principal) => Promise<T>,
-  database: Database = db,
+  database: Database | Transaction = db,
 ): Promise<T> {
   return await database.transaction(async (tx) => {
     await lockNotificationPolicyRead(tx, principal.organizationId);
@@ -122,7 +122,7 @@ export function issueWriteTransactionFor(
   principal: Principal,
   permission: Permission,
   context: AgentIssueWriteContext | undefined,
-  database: Database = db,
+  database: Database | Transaction = db,
 ) {
   return <T>(work: (tx: Transaction, current: Principal) => Promise<T>): Promise<T> =>
     issueWriteTransaction(principal, permission, context, work, database);

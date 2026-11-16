@@ -884,15 +884,23 @@ export async function createIssue(
   principal: Principal,
   input: unknown,
   writeContext?: AgentIssueWriteContext,
+  executor?: Transaction,
 ): Promise<CreatedIssue> {
   assertCan(principal, 'issue:create');
   const parsed = issueCreateSchema.parse(input);
 
-  const allocationTeam = await requireTeam(principal, parsed.teamId);
+  const allocationTeam = await requireTeam(principal, parsed.teamId, executor ?? db);
   const allocatedNumber =
-    writeContext === undefined ? await allocateIssueNumber(db, allocationTeam) : undefined;
+    writeContext === undefined && executor === undefined
+      ? await allocateIssueNumber(db, allocationTeam)
+      : undefined;
 
-  const transact = issueWriteTransactionFor(principal, 'issue:create', writeContext);
+  const transact = issueWriteTransactionFor(
+    principal,
+    'issue:create',
+    writeContext,
+    executor ?? db,
+  );
   return await transact(async (tx, principal) => {
     const team = await requireTeam(principal, parsed.teamId, tx);
     const id = newId();

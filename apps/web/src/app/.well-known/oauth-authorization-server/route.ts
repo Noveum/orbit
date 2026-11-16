@@ -6,7 +6,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request): Promise<Response> {
-  const metadata = await auth.api.getMcpOAuthConfig({ headers: request.headers });
+  const metadata = await auth.api.getOAuthServerConfig({
+    request,
+    headers: request.headers,
+    asResponse: false,
+  });
   const patched = {
     ...metadata,
     authorization_endpoint: absoluteUrl(MCP_AUTHORIZE_START_PATH),

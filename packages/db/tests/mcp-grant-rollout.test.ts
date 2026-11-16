@@ -31,9 +31,10 @@ async function legacyRows(sql: postgres.Sql): Promise<Record<string, unknown>[]>
   return [
     ...(await sql<Record<string, unknown>[]>`
     select 'grant' as kind, to_jsonb(mcp_grant) as payload from mcp_grant
-    union all select 'token', to_jsonb(oauth_access_token) from oauth_access_token
+    union all select 'token', to_jsonb(oauth_access_token) - 'session_id' from oauth_access_token
     union all select 'consent', to_jsonb(oauth_consent) from oauth_consent
     union all select 'identity', to_jsonb(agent_identity) from agent_identity
+    union all select 'client', to_jsonb(oauth_application) - 'provider_migrated_at' from oauth_application
     order by kind
   `),
   ];
@@ -98,6 +99,8 @@ describe('MCP agent grant binding rollout', () => {
     expect(first.applied).toBe(migrations.length - prefix.length);
     expect(await run(legacyRows)).toEqual(before);
     await run(async (sql) => {
+      const [client] = await sql`select provider_migrated_at from oauth_application`;
+      expect(client?.['provider_migrated_at']).toBeInstanceOf(Date);
       const [grant] =
         await sql`select identity_kind, agent_identity_id, owner_member_id, revoked_at from mcp_grant`;
       expect(grant).toMatchObject({
@@ -107,11 +110,12 @@ describe('MCP agent grant binding rollout', () => {
         revoked_at: null,
       });
       const [token] =
-        await sql`select access_token, refresh_token, mcp_grant_id from oauth_access_token`;
+        await sql`select access_token, refresh_token, mcp_grant_id, session_id from oauth_access_token`;
       expect(token).toMatchObject({
         access_token: 'old-access',
         refresh_token: 'old-refresh',
         mcp_grant_id: null,
+        session_id: null,
       });
       await sql`
         insert into mcp_grant (id, client_id, user_id, organization_id, scopes)

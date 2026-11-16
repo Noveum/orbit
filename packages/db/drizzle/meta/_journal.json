@@ -264,8 +264,29 @@
     {
       "idx": 37,
       "version": "7",
-      "when": 1794107739731,
-      "tag": "0037_purple_plazm",
+      "when": 1794851071438,
+      "tag": "0037_auth_provider_upgrade",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794851071439,
+      "tag": "0038_auth_provider_clients",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794859967444,
+      "tag": "0039_ai_provider_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794862298822,
+      "tag": "0040_marvelous_purifiers",
       "breakpoints": true
     }
   ]

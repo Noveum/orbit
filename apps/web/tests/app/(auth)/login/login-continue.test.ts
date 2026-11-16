@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   loginMetadata,
   mcpContinueUrl,
+  mcpLoginRequiresAuthentication,
   safeCallback,
 } from '../../../../src/app/(auth)/login/continue-url.ts';
 
@@ -25,6 +26,45 @@ describe('mcpContinueUrl', () => {
     expect(parsed.searchParams.get('prompt')).toBe('consent');
   });
 
+  it('preserves the signed provider request and resource across login', () => {
+    const url = mcpContinueUrl({
+      response_type: 'code',
+      client_id: 'client',
+      resource: 'http://localhost:3000/mcp',
+      max_age: '0',
+      sig: 'signature',
+      exp: '1800000000',
+      ba_iat: '1790000000000',
+      ba_param: ['client_id', 'resource', 'max_age'],
+    });
+    const parsed = new URL(url ?? '', 'http://localhost:3000');
+    expect(parsed.searchParams.get('resource')).toBe('http://localhost:3000/mcp');
+    expect(parsed.searchParams.get('max_age')).toBe('0');
+    expect(parsed.searchParams.get('sig')).toBe('signature');
+    expect(parsed.searchParams.getAll('ba_param')).toEqual(['client_id', 'resource', 'max_age']);
+  });
+
+  it('requires fresh authentication when the provider resumes a stale session', () => {
+    expect(
+      mcpLoginRequiresAuthentication({ client_id: 'client', response_type: 'code', max_age: '0' }),
+    ).toBe(true);
+    expect(
+      mcpLoginRequiresAuthentication({
+        client_id: 'client',
+        response_type: 'code',
+        prompt: 'login consent',
+      }),
+    ).toBe(true);
+    expect(
+      mcpLoginRequiresAuthentication({
+        client_id: 'client',
+        response_type: 'code',
+        prompt: 'consent',
+      }),
+    ).toBe(false);
+    expect(mcpLoginRequiresAuthentication({ max_age: '0' })).toBe(false);
+  });
+
   it('ignores a request that is not an MCP authorize', () => {
     expect(mcpContinueUrl({ next: '/my-issues' })).toBeUndefined();
     expect(mcpContinueUrl({ client_id: 'x' })).toBeUndefined();
@@ -32,6 +72,24 @@ describe('mcpContinueUrl', () => {
 });
 
 describe('safeCallback', () => {
+  it('keeps callback destinations on the application origin', () => {
+    const origin = 'https://orbit.example.test';
+    for (const value of [
+      '/\\callback.example.test',
+      '/\n/callback.example.test',
+      '/settings\u0000',
+      `/${'a'.repeat(2048)}`,
+    ]) {
+      const callback = safeCallback(value);
+      expect(callback === undefined || new URL(callback, origin).origin === origin).toBe(true);
+      expect(callback).toBeUndefined();
+    }
+    for (const value of ['/', '/settings?panel=security', '/issue/ENG-1#comments']) {
+      expect(safeCallback(value)).toBe(value);
+      expect(new URL(safeCallback(value) ?? '', origin).origin).toBe(origin);
+    }
+  });
+
   it('accepts a same-origin path and rejects an absolute URL', () => {
     expect(safeCallback('/settings')).toBe('/settings');
     expect(safeCallback('https://evil.example')).toBeUndefined();

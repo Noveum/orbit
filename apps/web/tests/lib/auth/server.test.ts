@@ -30,7 +30,7 @@ describe('password authentication', () => {
 
   it('exposes the MCP OAuth provider for one-click clients', () => {
     expect(auth.options.plugins?.map((plugin) => plugin.id)).toEqual(
-      expect.arrayContaining(['mcp']),
+      expect.arrayContaining(['jwt', 'oauth-provider']),
     );
   });
 

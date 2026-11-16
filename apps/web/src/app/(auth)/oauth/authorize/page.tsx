@@ -12,6 +12,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { OrbitMark } from '@/components/brand/orbit-logo.tsx';
+import { createProviderConsent, providerConsentQuery } from '@/lib/auth/mcp-consent.ts';
 import { getSession } from '@/lib/auth/session.ts';
 import { ConsentForm } from './consent-form.tsx';
 
@@ -44,7 +45,19 @@ export default async function AuthorizePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const consentCode = first(params['consent_code']);
+  const session = await getSession();
+  const oauthQuery = providerConsentQuery(params);
+  if (session === null && typeof params['sig'] === 'string') {
+    redirect(`/login?next=${encodeURIComponent(`/oauth/authorize?${oauthQuery}`)}`);
+  }
+  const consentCode =
+    first(params['consent_code']) ??
+    (session !== null && typeof params['sig'] === 'string'
+      ? await createProviderConsent(session.user.id, oauthQuery).catch((error: unknown) => {
+          if (isDomainError(error) && error.code === 'unauthorized') return undefined;
+          throw error;
+        })
+      : undefined);
 
   if (consentCode === undefined) {
     return (
@@ -57,7 +70,6 @@ export default async function AuthorizePage({
     );
   }
 
-  const session = await getSession();
   if (session === null) {
     const next = new URLSearchParams({
       consent_code: consentCode,

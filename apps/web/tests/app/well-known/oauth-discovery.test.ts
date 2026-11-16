@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
 const webRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 describe('OAuth discovery with deployment host resolution', () => {
-  it.each(['oauth-authorization-server', 'openid-configuration'])(
+  it.each(['oauth-authorization-server', 'openid-configuration', 'oauth-protected-resource'])(
     'serves %s when authentication uses dynamic allowed hosts',
     async (route) => {
       const subprocess = Bun.spawn(
@@ -21,12 +22,18 @@ describe('OAuth discovery with deployment host resolution', () => {
             cors: response.headers.get('access-control-allow-origin'),
             metadata: await response.json(),
           }));
+          await (await import('@orbit/db')).pool.end();
           `,
         ],
         {
           cwd: webRoot,
           env: {
-            ...process.env,
+            PATH: process.env['PATH'] ?? '',
+            NODE_ENV: 'test',
+            CI: 'true',
+            DATABASE_URL: process.env['DATABASE_URL'] ?? '',
+            DATABASE_POOL_MAX: '1',
+            BETTER_AUTH_SECRET: 'local-oauth-discovery-test-secret-20261116',
             BETTER_AUTH_URL: 'https://orbit.example.com',
             NEXT_PUBLIC_APP_URL: 'https://orbit.example.com',
             ORBIT_AUTH_ALLOWED_HOSTS: 'orbit-preview.vercel.app',
@@ -42,15 +49,32 @@ describe('OAuth discovery with deployment host resolution', () => {
         subprocess.exited,
       ]);
       expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
-      const output = JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}');
+      const output: unknown = JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}');
+      if (route === 'oauth-protected-resource') {
+        expect(output).toMatchObject({
+          status: 200,
+          cors: '*',
+          metadata: {
+            resource: 'https://orbit.example.com/mcp',
+            authorization_servers: ['https://orbit.example.com'],
+            scopes_supported: ['orbit.read', 'orbit.write'],
+          },
+        });
+        const resource = z
+          .object({ metadata: z.object({ scopes_supported: z.array(z.string()) }) })
+          .parse(output);
+        expect(resource.metadata.scopes_supported).not.toContain('openid');
+        return;
+      }
       expect(output).toMatchObject({
         status: 200,
         cors: '*',
         metadata: {
           issuer: 'https://orbit.example.com',
           authorization_endpoint: 'https://orbit.example.com/api/oauth/start',
-          token_endpoint: 'https://orbit.example.com/api/auth/mcp/token',
-          registration_endpoint: 'https://orbit.example.com/api/auth/mcp/register',
+          token_endpoint: 'https://orbit.example.com/api/auth/oauth2/token',
+          registration_endpoint: 'https://orbit.example.com/api/auth/oauth2/register',
+          revocation_endpoint: 'https://orbit.example.com/api/auth/oauth2/revoke',
           scopes_supported: expect.arrayContaining(['orbit.read', 'orbit.write']),
         },
       });
