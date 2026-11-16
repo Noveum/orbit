@@ -89,6 +89,26 @@ describe('compatible DNS destinations', () => {
   });
 });
 
+describe('local-use translation DNS destinations', () => {
+  for (const address of [
+    '64:ff9b:1::',
+    '64:ff9b:1::a00:1',
+    '64:ff9b:1:1234:5678:9abc:def0:1234',
+    '64:ff9b:1:ffff:ffff:ffff:ffff:ffff',
+  ]) {
+    it(`rejects local-use translation DNS result ${address} without connecting`, async () => {
+      const violation = await compatibleDnsError(address);
+      expect(violation).not.toBeNull();
+      expect(violation?.message).toContain('Blocked connection to private address');
+    });
+  }
+
+  it('retains the explicit local-use translation override without connecting', async () => {
+    expect(await compatibleDnsError('64:ff9b:1::a00:1', true)).toBeNull();
+    expect(await compatibleDnsError('64:ff9b::808:808')).toBeNull();
+  });
+});
+
 describe('safeFetch connection establishment destination validation', () => {
   afterEach(() => {
     if (originalAllowPrivate === undefined) {

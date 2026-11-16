@@ -130,6 +130,10 @@ function hasIpv4CompatiblePrefix(groups: readonly number[]): boolean {
   );
 }
 
+function hasLocalTranslationPrefix(g0: number, g1: number, g2: number): boolean {
+  return g0 === 0x0064 && g1 === 0xff9b && g2 === 1;
+}
+
 export function isPrivateIpv6Groups(groups: readonly number[]): boolean {
   if (groups.length !== 8) return false;
   const [g0, g1, g2, g3, g4, g5, g6, g7] = groups as [
@@ -161,6 +165,7 @@ export function isPrivateIpv6Groups(groups: readonly number[]): boolean {
   if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) {
     return isPrivateIpv4Octets(extractEmbeddedIpv4(g6, g7));
   }
+  if (hasLocalTranslationPrefix(g0, g1, g2)) return true;
   if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
     return isPrivateIpv4Octets(extractEmbeddedIpv4(g6, g7));
   }

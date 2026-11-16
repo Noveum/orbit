@@ -101,6 +101,29 @@ describe('AI endpoint IP parsing and private guard', () => {
     expect(isPrivateIpv6('fc-ai.com')).toBe(false);
   });
 
+  it('rejects the whole local-use translation prefix in provider URLs', () => {
+    delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
+    for (const address of [
+      '64:ff9b:1::',
+      '64:ff9b:1::a00:1',
+      '64:ff9b:1:1234:5678:9abc:def0:1234',
+      '64:ff9b:1:ffff:ffff:ffff:ffff:ffff',
+    ]) {
+      expect(aiBaseUrlSchema.safeParse(`https://[${address}]/v1`).success).toBe(false);
+      expect(isPrivateIpv6(address)).toBe(true);
+    }
+    expect(aiBaseUrlSchema.safeParse('https://[64:ff9b::808:808]/v1').success).toBe(true);
+    expect(isPrivateIpv6('64:ff9b:2::')).toBe(false);
+  });
+
+  it('permits local-use translation URLs only with the explicit private override', () => {
+    process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] = 'true';
+    expect(aiBaseUrlSchema.safeParse('https://[64:ff9b:1::a00:1]/v1').success).toBe(true);
+    expect(
+      aiBaseUrlSchema.safeParse('https://[64:ff9b:1:1234:5678:9abc:def0:1234]/v1').success,
+    ).toBe(true);
+  });
+
   it('accepts ordinary provider hostnames starting with fc or fd', () => {
     expect(isPrivateOrLoopbackHost('fc-ai.com')).toBe(false);
     expect(isPrivateOrLoopbackHost('fd-provider.org')).toBe(false);
