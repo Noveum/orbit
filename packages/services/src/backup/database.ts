@@ -4,6 +4,7 @@ import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { internal, validationFailed } from '@orbit/shared';
+import { withDatabaseTlsContext } from './database-tls.ts';
 import type { DatabaseDumpResult } from './types.ts';
 
 export interface ParsedConnection {
@@ -79,124 +80,124 @@ export async function dumpDatabase(options: DumpDatabaseOptions): Promise<Databa
     });
   }
   parsed.password = '';
-  const sanitizedUrl = parsed.toString();
+  return withDatabaseTlsContext(parsed.toString(), (sanitizedUrl) => {
+    const binary = pgDumpPath ?? process.env['PG_DUMP_PATH'] ?? 'pg_dump';
+    const args = [
+      '-Fc',
+      '--no-owner',
+      '--no-acl',
+      '--exclude-table=public.orbit_recovery_state',
+      '--exclude-table=orbit_recovery_state',
+      '-d',
+      sanitizedUrl,
+      `--snapshot=${snapshotId}`,
+    ];
 
-  const binary = pgDumpPath ?? process.env['PG_DUMP_PATH'] ?? 'pg_dump';
-  const args = [
-    '-Fc',
-    '--no-owner',
-    '--no-acl',
-    '--exclude-table=public.orbit_recovery_state',
-    '--exclude-table=orbit_recovery_state',
-    '-d',
-    sanitizedUrl,
-    `--snapshot=${snapshotId}`,
-  ];
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(password === undefined ? {} : { PGPASSWORD: password }),
+    };
 
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...(password === undefined ? {} : { PGPASSWORD: password }),
-  };
+    return new Promise<DatabaseDumpResult>((resolve, reject) => {
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (error) {
+        reject(internal(`Failed to spawn "${binary}": ${String(error)}`, error));
+        return;
+      }
 
-  return new Promise((resolve, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      reject(internal(`Failed to spawn "${binary}": ${String(error)}`, error));
-      return;
-    }
+      if (child.stdout === null) {
+        reject(internal('pg_dump stdout stream is not available'));
+        return;
+      }
 
-    if (child.stdout === null) {
-      reject(internal('pg_dump stdout stream is not available'));
-      return;
-    }
+      const hash = createHash('sha256');
+      let byteCount = 0;
 
-    const hash = createHash('sha256');
-    let byteCount = 0;
+      const fileStream = createWriteStream(outputFile, { mode: 0o600 });
+      let stderrText = '';
 
-    const fileStream = createWriteStream(outputFile, { mode: 0o600 });
-    let stderrText = '';
+      if (child.stderr !== null) {
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', (chunk: string) => {
+          stderrText += chunk;
+        });
+        child.stderr.on('error', (err) => {
+          fileStream.destroy();
+          child.kill('SIGTERM');
+          settleReject(internal(`pg_dump stderr stream error: ${err.message}`, err));
+        });
+      }
 
-    if (child.stderr !== null) {
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        stderrText += chunk;
+      child.stdout.on('data', (chunk: Buffer) => {
+        byteCount += chunk.length;
+        hash.update(chunk);
       });
-      child.stderr.on('error', (err) => {
+
+      child.stdout.on('error', (err) => {
         fileStream.destroy();
         child.kill('SIGTERM');
-        settleReject(internal(`pg_dump stderr stream error: ${err.message}`, err));
+        settleReject(internal(`pg_dump stdout stream error: ${err.message}`, err));
       });
-    }
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      byteCount += chunk.length;
-      hash.update(chunk);
+      let settled = false;
+      let exitCode: number | null = null;
+      let streamFinished = false;
+
+      const settleReject = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
+      const settleResolve = (val: DatabaseDumpResult) => {
+        if (settled) return;
+        settled = true;
+        resolve(val);
+      };
+
+      const checkComplete = () => {
+        if (settled || exitCode === null || !streamFinished) return;
+        if (exitCode === 0) {
+          settleResolve({
+            file: 'database.dump',
+            sha256: hash.digest('hex'),
+            bytes: byteCount,
+            databaseVersion,
+            migrationLedger: ledger,
+            counts,
+          });
+        } else {
+          settleReject(
+            internal(`pg_dump exited with nonzero status code ${exitCode}: ${stderrText.trim()}`),
+          );
+        }
+      };
+
+      fileStream.on('finish', () => {
+        streamFinished = true;
+        checkComplete();
+      });
+
+      fileStream.on('error', (err) => {
+        child.stdout?.unpipe(fileStream);
+        child.stdout?.destroy();
+        child.kill('SIGTERM');
+        settleReject(internal(`Database dump write stream error: ${err.message}`, err));
+      });
+
+      child.on('error', (err) => {
+        fileStream.destroy();
+        settleReject(internal(`Failed to spawn "${binary}": ${err.message}`, err));
+      });
+
+      child.on('close', (code) => {
+        exitCode = code ?? -1;
+        checkComplete();
+      });
+
+      child.stdout.pipe(fileStream);
     });
-
-    child.stdout.on('error', (err) => {
-      fileStream.destroy();
-      child.kill('SIGTERM');
-      settleReject(internal(`pg_dump stdout stream error: ${err.message}`, err));
-    });
-
-    let settled = false;
-    let exitCode: number | null = null;
-    let streamFinished = false;
-
-    const settleReject = (err: unknown) => {
-      if (settled) return;
-      settled = true;
-      reject(err);
-    };
-
-    const settleResolve = (val: DatabaseDumpResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(val);
-    };
-
-    const checkComplete = () => {
-      if (settled || exitCode === null || !streamFinished) return;
-      if (exitCode === 0) {
-        settleResolve({
-          file: 'database.dump',
-          sha256: hash.digest('hex'),
-          bytes: byteCount,
-          databaseVersion,
-          migrationLedger: ledger,
-          counts,
-        });
-      } else {
-        settleReject(
-          internal(`pg_dump exited with nonzero status code ${exitCode}: ${stderrText.trim()}`),
-        );
-      }
-    };
-
-    fileStream.on('finish', () => {
-      streamFinished = true;
-      checkComplete();
-    });
-
-    fileStream.on('error', (err) => {
-      child.stdout?.unpipe(fileStream);
-      child.stdout?.destroy();
-      child.kill('SIGTERM');
-      settleReject(internal(`Database dump write stream error: ${err.message}`, err));
-    });
-
-    child.on('error', (err) => {
-      fileStream.destroy();
-      settleReject(internal(`Failed to spawn "${binary}": ${err.message}`, err));
-    });
-
-    child.on('close', (code) => {
-      exitCode = code ?? -1;
-      checkComplete();
-    });
-
-    child.stdout.pipe(fileStream);
   });
 }

@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from '@orbit/db/check-drift';
+import { databaseTlsOptions } from '@orbit/db/connection';
 import * as schema from '@orbit/db/schema';
 import type { RestoreValidationResult } from '@orbit/shared';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
@@ -386,6 +387,7 @@ async function checkStorageObjects(
     connect_timeout: 5,
     idle_timeout: 5,
     prepare: false,
+    ...databaseTlsOptions(databaseUrl),
   });
   try {
     const activeAttachments = await checkSql<
@@ -460,6 +462,7 @@ export async function validateRestore(
     connect_timeout: 5,
     idle_timeout: 5,
     prepare: false,
+    ...databaseTlsOptions(databaseUrl),
   });
 
   const allErrors: string[] = [];

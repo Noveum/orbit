@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./check-drift": "./src/check-drift.ts",
+    "./connection": "./src/tls-policy.ts",
     "./migration-release": "./src/migration-release.ts",
     "./schema": "./src/schema/index.ts",
     "./test-lane": "./src/test-lane.ts"

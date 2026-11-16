@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from '@orbit/db/check-drift';
+import { databaseTlsOptions } from '@orbit/db/connection';
 import * as schema from '@orbit/db/schema';
 import { internal, validationFailed } from '@orbit/shared';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
@@ -19,6 +20,7 @@ export async function verifyPreflight(
     connect_timeout: 5,
     idle_timeout: 10,
     prepare: false,
+    ...databaseTlsOptions(url),
   });
   try {
     const [versionRow] = await sql<{ version: string }[]>`select version() as version`;

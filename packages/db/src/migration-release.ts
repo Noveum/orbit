@@ -14,6 +14,7 @@ import {
   needsCatchup,
 } from './check-drift.ts';
 import * as schema from './schema/index.ts';
+import { databaseTlsOptions } from './tls-policy.ts';
 
 interface LedgerRow {
   readonly hash: string;
@@ -558,7 +559,12 @@ export async function releaseDatabase(
   url: string,
   migrationsFolder: string,
 ): Promise<ReleaseResult> {
-  const sql = postgres(url, { max: 1, prepare: false, idle_timeout: 10 });
+  const sql = postgres(url, {
+    max: 1,
+    prepare: false,
+    idle_timeout: 10,
+    ...databaseTlsOptions(url),
+  });
   const migrations = readMigrationFiles({ migrationsFolder });
   let locked = false;
   try {
