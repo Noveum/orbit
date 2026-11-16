@@ -58,6 +58,7 @@ export function useDoc(docId: string | null) {
 export function useRefreshDoc(docId: string) {
   const client = useQueryClient();
   return useCallback(async (): Promise<DocDetail> => {
+    await client.cancelQueries({ queryKey: queryKeys.doc(docId), exact: true });
     return await client.fetchQuery({
       queryKey: queryKeys.doc(docId),
       queryFn: async ({ signal }): Promise<DocDetail> =>

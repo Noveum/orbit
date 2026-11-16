@@ -176,4 +176,80 @@ describe('loading the other editor version after a stale save', () => {
     view.unmount();
     client.clear();
   });
+  it('fetches after the conflict instead of adopting a background read started while saving', async () => {
+    const original = detail(1, 'Stored title', 'Original body');
+    const latest = detail(9, 'Other editor title', 'Body from the other editor');
+    let reads = 0;
+    let writes = 0;
+    let completeSave: (response: Response) => void = () => undefined;
+    const saveResponse = new Promise<Response>((resolve) => {
+      completeSave = resolve;
+    });
+    let completeBackground: (response: Response) => void = () => undefined;
+    const backgroundResponse = new Promise<Response>((resolve) => {
+      completeBackground = resolve;
+    });
+    const answer = (payload: unknown, status = 200) =>
+      new Response(JSON.stringify(payload), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/docs/doc_1' && init?.method === 'PATCH') {
+        writes += 1;
+        return saveResponse;
+      }
+      if (url === '/api/docs/doc_1') {
+        reads += 1;
+        if (reads === 2) return backgroundResponse;
+        return Promise.resolve(answer(reads === 1 ? original : latest));
+      }
+      if (url.endsWith('/visit')) return Promise.resolve(answer({ docId: 'doc_1' }));
+      if (url.startsWith('/api/comments')) return Promise.resolve(answer({ comments: [] }));
+      if (url.startsWith('/api/docs')) {
+        return Promise.resolve(answer({ docs: [], collections: [], projects: [] }));
+      }
+      return Promise.resolve(answer({}));
+    }) as unknown as typeof fetch;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <TooltipProvider>
+            <DocSurface docId="doc_1" canWriteDocs canPublish={false} />
+          </TooltipProvider>
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    const title = await screen.findByTestId('doc-title-input');
+    const body = await screen.findByRole('textbox', { name: 'Doc body' });
+    fireEvent.change(title, { target: { value: 'My unsaved draft' } });
+    fireEvent.keyDown(body, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(writes).toBe(1));
+    const background = client.refetchQueries({ queryKey: queryKeys.doc('doc_1'), exact: true });
+    await waitFor(() => expect(reads).toBe(2));
+    completeSave(
+      answer(
+        {
+          error: {
+            code: 'conflict',
+            message: 'The document changed.',
+            details: { reason: 'stale_revision', revision: 9 },
+          },
+        },
+        409,
+      ),
+    );
+    await screen.findByTestId('doc-save-conflict');
+    completeBackground(answer(original));
+    await background;
+    const load = await screen.findByRole('button', { name: 'Load their version' });
+    await userEvent.click(load);
+    await waitFor(() => expect(title).toHaveValue('Other editor title'));
+    expect(body).toHaveTextContent('Body from the other editor');
+    expect(reads).toBe(3);
+    view.unmount();
+    client.clear();
+  });
 });
