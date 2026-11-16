@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { db, eq, schema } from '@orbit/db';
+import { asc, db, eq, schema } from '@orbit/db';
 import {
   bindGithubInstallation,
   linkGithubRepository,
   replaceGithubRepositories,
 } from '@orbit/services/github';
 import { scopes } from '@orbit/shared/events';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { newId } from '../../src/internal.ts';
 import { createTeam } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -16,7 +18,8 @@ import {
   stateNamed,
   type Workspace,
 } from '../../src/test-support.ts';
-import { createIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createIssue, getIssue, updateIssue } from '../../src/work/issue-service.ts';
+import { createLabel } from '../../src/work/label-service.ts';
 import {
   createMilestone,
   listMilestones,
@@ -27,6 +30,7 @@ import {
   archiveProject,
   createProject,
   deleteProject,
+  duplicateProject,
   getProject,
   listProjects,
   listProjectsForTeams,
@@ -771,5 +775,513 @@ describe('listWorkspaceProjectUpdates', () => {
 
     const updates = await listWorkspaceProjectUpdates(workspace.admin);
     expect(updates.map((u) => u.projectId)).not.toContain(otherProject.id);
+  });
+});
+
+describe('duplicateProject', () => {
+  it('rolls back copied milestones, issues, and allocated numbers with the caller transaction', async () => {
+    const source = await newProject('Rollback source');
+    await createMilestone(workspace.admin, { projectId: source.id, name: 'Checkpoint' });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      projectId: source.id,
+      title: 'Checkpoint issue',
+    });
+    const [before] = await db
+      .select()
+      .from(schema.team)
+      .where(eq(schema.team.id, workspace.teamId));
+    const cancellation = new Error('Cancel the project copy');
+    let copiedProjectId: string | undefined;
+    const pool = postgres(databaseUrl(), { max: 1 });
+    const caller = drizzle({ client: pool, schema, casing: 'snake_case' });
+    try {
+      await expect(
+        caller.transaction(async (tx) => {
+          const { project } = await duplicateProject(
+            workspace.admin,
+            source.id,
+            { name: 'Cancelled copy' },
+            tx,
+          );
+          copiedProjectId = project.id;
+          const copied = await tx
+            .select()
+            .from(schema.issue)
+            .where(eq(schema.issue.projectId, project.id));
+          expect(copied).toHaveLength(1);
+          throw cancellation;
+        }),
+      ).rejects.toBe(cancellation);
+    } finally {
+      await pool.end();
+    }
+    expect(copiedProjectId).toBeDefined();
+    if (copiedProjectId === undefined)
+      throw new Error('The copy did not reach the caller transaction.');
+    expect(
+      await db.select().from(schema.project).where(eq(schema.project.id, copiedProjectId)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.milestone)
+        .where(eq(schema.milestone.projectId, copiedProjectId)),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.issue).where(eq(schema.issue.projectId, copiedProjectId)),
+    ).toHaveLength(0);
+    const [after] = await db.select().from(schema.team).where(eq(schema.team.id, workspace.teamId));
+    expect(after?.issueCounter).toBe(before?.issueCounter);
+  });
+
+  it('copies a canonical Agent assignee and reports it in the issue delta', async () => {
+    const source = await newProject('Agent source');
+    const agentId = newId();
+    await db.insert(schema.agentIdentity).values({
+      id: agentId,
+      organizationId: workspace.organizationId,
+      ownerUserId: workspace.admin.userId,
+      name: 'Planning agent',
+      ownerNameSnapshot: workspace.adminUser.name,
+      clientNameSnapshot: 'Project planner',
+    });
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      projectId: source.id,
+      title: 'Agent task',
+      assigneeAgentId: agentId,
+    });
+    const { project, actions } = await duplicateProject(workspace.admin, source.id);
+    const [copied] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, project.id));
+    expect(copied).toMatchObject({
+      assigneeId: null,
+      assigneeUserId: null,
+      assigneeAgentId: agentId,
+      ownerUserId: workspace.admin.userId,
+    });
+    const action = actions.find((entry) => entry.model === 'issue' && entry.modelId === copied?.id);
+    expect(action?.data['assigneeAgentId']).toBe(agentId);
+    expect(action?.actor).toMatchObject({ type: 'user', id: workspace.admin.userId });
+  });
+
+  it('rejects another Human agent assignment and leaves no partial project copy', async () => {
+    const source = await newProject('Other Agent source');
+    const { principal: owner, user } = await addMember(workspace, 'member', {
+      name: 'Agent owner',
+    });
+    const agentId = newId();
+    await db.insert(schema.agentIdentity).values({
+      id: agentId,
+      organizationId: workspace.organizationId,
+      ownerUserId: owner.userId,
+      name: 'Private personal agent',
+      ownerNameSnapshot: user.name,
+      clientNameSnapshot: 'Project planner',
+    });
+    await createIssue(owner, {
+      teamId: workspace.teamId,
+      projectId: source.id,
+      title: 'Other owner task',
+      assigneeAgentId: agentId,
+    });
+    await expect(
+      duplicateProject(workspace.admin, source.id, { name: 'Unauthorized Agent copy' }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    expect(
+      await db
+        .select()
+        .from(schema.project)
+        .where(eq(schema.project.name, 'Unauthorized Agent copy')),
+    ).toHaveLength(0);
+  });
+
+  it('refuses to copy unreadable issues from a project shared with another team', async () => {
+    const { team: restricted } = await createTeam(workspace.admin, {
+      name: 'Restricted',
+      key: 'SEC',
+    });
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Shared project',
+      teamIds: [workspace.teamId, restricted.id],
+    });
+    const { issue: secret } = await createIssue(workspace.admin, {
+      teamId: restricted.id,
+      title: 'Confidential issue',
+      description: 'Restricted planning details',
+      projectId: source.id,
+    });
+    const { principal } = await addMember(workspace, 'member', { teamIds: [workspace.teamId] });
+    await expect(getIssue(principal, secret.identifier)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    await expect(
+      duplicateProject(principal, source.id, {
+        name: 'Forbidden copy',
+        teamIds: [workspace.teamId],
+      }),
+    ).rejects.toMatchObject({ code: 'forbidden' });
+    const copies = await db
+      .select()
+      .from(schema.project)
+      .where(eq(schema.project.name, 'Forbidden copy'));
+    expect(copies).toHaveLength(0);
+    const { project: metadataOnly } = await duplicateProject(principal, source.id, {
+      teamIds: [workspace.teamId],
+      includeIssues: false,
+    });
+    const issues = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, metadataOnly.id));
+    expect(issues).toHaveLength(0);
+  });
+
+  for (const destination of ['same team', 'another team'] as const) {
+    it(`preserves manual sibling and hierarchy order with new ranks in ${destination}`, async () => {
+      const source = await newProject();
+      const { issue: parent } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Parent',
+        projectId: source.id,
+      });
+      const { issue: child } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Child',
+        projectId: source.id,
+        parentId: parent.id,
+      });
+      const { issue: sibling } = await createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'Sibling',
+        projectId: source.id,
+      });
+      for (const [row, sortOrder] of [
+        [parent, 300],
+        [child, 100],
+        [sibling, 200],
+      ] as const) {
+        await db.update(schema.issue).set({ sortOrder }).where(eq(schema.issue.id, row.id));
+      }
+      const targetTeamId =
+        destination === 'same team'
+          ? workspace.teamId
+          : (await createTeam(workspace.admin, { name: 'Target', key: 'TGT' })).team.id;
+      const { issue: existingTarget } = await createIssue(workspace.admin, {
+        teamId: targetTeamId,
+        title: 'Existing target issue',
+      });
+      if (destination === 'another team') {
+        await db
+          .update(schema.issue)
+          .set({ sortOrder: 100 })
+          .where(eq(schema.issue.id, existingTarget.id));
+      }
+      const existing = await db
+        .select()
+        .from(schema.issue)
+        .where(eq(schema.issue.teamId, targetTeamId));
+      const { project: copy, actions } = await duplicateProject(workspace.admin, source.id, {
+        teamIds: [targetTeamId],
+      });
+      const copied = await db
+        .select()
+        .from(schema.issue)
+        .where(eq(schema.issue.projectId, copy.id))
+        .orderBy(asc(schema.issue.sortOrder));
+      expect(copied.map((row) => row.title)).toEqual(['Child', 'Sibling', 'Parent']);
+      expect(copied.find((row) => row.title === 'Child')?.parentId).toBe(
+        copied.find((row) => row.title === 'Parent')?.id,
+      );
+      for (const row of copied) {
+        expect(
+          existing.some(
+            (entry) => entry.stateId === row.stateId && entry.sortOrder === row.sortOrder,
+          ),
+        ).toBe(false);
+        expect(
+          actions.find((action) => action.model === 'issue' && action.modelId === row.id)?.data[
+            'sortOrder'
+          ],
+        ).toBe(row.sortOrder);
+      }
+      for (const row of existing) {
+        const [unchanged] = await db.select().from(schema.issue).where(eq(schema.issue.id, row.id));
+        expect(unchanged?.sortOrder).toBe(row.sortOrder);
+      }
+    });
+  }
+
+  it('duplicates a project with shifted dates, milestones, and issues', async () => {
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Q1 Launch',
+      summary: 'Launch project',
+      description: 'Full description',
+      startDate: '2025-01-01',
+      targetDate: '2025-01-31',
+      teamIds: [workspace.teamId],
+    });
+
+    const { milestone: sourceMilestone } = await createMilestone(workspace.admin, {
+      projectId: source.id,
+      name: 'Beta Release',
+      description: 'Ship beta',
+      targetDate: '2025-01-15',
+    });
+
+    const { issue: sourceIssue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Setup staging',
+      projectId: source.id,
+      milestoneId: sourceMilestone.id,
+      dueDate: '2025-01-20',
+    });
+
+    const { project: copy, actions } = await duplicateProject(workspace.admin, source.id, {
+      name: 'Q2 Launch',
+      shiftDays: 14,
+      includeIssues: true,
+    });
+
+    expect(copy.id).not.toBe(source.id);
+    expect(copy.name).toBe('Q2 Launch');
+    expect(copy.startDate).toBe('2025-01-15');
+    expect(copy.targetDate).toBe('2025-02-14');
+
+    const copyMilestones = await listMilestones(workspace.admin, copy.id);
+    expect(copyMilestones).toHaveLength(1);
+    const [copyMilestone] = copyMilestones;
+    expect(copyMilestone?.id).not.toBe(sourceMilestone.id);
+    expect(copyMilestone?.name).toBe('Beta Release');
+    expect(copyMilestone?.targetDate).toBe('2025-01-29');
+
+    const copyIssues = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id));
+    expect(copyIssues).toHaveLength(1);
+    const [copyIssue] = copyIssues;
+    expect(copyIssue?.id).not.toBe(sourceIssue.id);
+    expect(copyIssue?.title).toBe('Setup staging');
+    expect(copyIssue?.dueDate).toBe('2025-02-03');
+    expect(copyIssue?.milestoneId).toBe(copyMilestone?.id);
+
+    expect(actions.some((a) => a.model === 'project' && a.modelId === copy.id)).toBe(true);
+    expect(actions.some((a) => a.model === 'milestone' && a.modelId === copyMilestone?.id)).toBe(
+      true,
+    );
+    expect(actions.some((a) => a.model === 'issue' && a.modelId === copyIssue?.id)).toBe(true);
+  });
+
+  it('covers missing dates by leaving them null', async () => {
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Undated Work',
+      teamIds: [workspace.teamId],
+    });
+
+    const { milestone: sourceMilestone } = await createMilestone(workspace.admin, {
+      projectId: source.id,
+      name: 'Milestone without date',
+    });
+
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Undated issue',
+      projectId: source.id,
+      milestoneId: sourceMilestone.id,
+    });
+
+    const { project: copy } = await duplicateProject(workspace.admin, source.id, {
+      shiftDays: 30,
+      includeIssues: true,
+    });
+
+    expect(copy.startDate).toBeNull();
+    expect(copy.targetDate).toBeNull();
+
+    const [copyMilestone] = await listMilestones(workspace.admin, copy.id);
+    expect(copyMilestone?.targetDate).toBeNull();
+
+    const [copyIssue] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id));
+    expect(copyIssue?.dueDate).toBeNull();
+  });
+
+  it('covers optional issues when includeIssues is false', async () => {
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Template Project',
+      teamIds: [workspace.teamId],
+    });
+
+    await createMilestone(workspace.admin, {
+      projectId: source.id,
+      name: 'Phase 1',
+    });
+
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Discarded issue',
+      projectId: source.id,
+    });
+
+    const { project: copy } = await duplicateProject(workspace.admin, source.id, {
+      includeIssues: false,
+    });
+
+    const copyMilestones = await listMilestones(workspace.admin, copy.id);
+    expect(copyMilestones).toHaveLength(1);
+
+    const copyIssues = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id));
+    expect(copyIssues).toHaveLength(0);
+  });
+
+  it('preserves sub-issue parent relationships in the duplicated project', async () => {
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Epic Project',
+      teamIds: [workspace.teamId],
+    });
+
+    const { issue: parent } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Parent issue',
+      projectId: source.id,
+    });
+
+    await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Sub issue',
+      projectId: source.id,
+      parentId: parent.id,
+    });
+
+    const { project: copy } = await duplicateProject(workspace.admin, source.id);
+
+    const copyIssues = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id));
+    expect(copyIssues).toHaveLength(2);
+
+    const copyParent = copyIssues.find((i) => i.title === 'Parent issue');
+    const copyChild = copyIssues.find((i) => i.title === 'Sub issue');
+    expect(copyParent).toBeDefined();
+    expect(copyChild).toBeDefined();
+    expect(copyParent?.parentId).toBeNull();
+    expect(copyChild?.parentId).toBe(copyParent?.id);
+    expect(copyChild?.parentId).not.toBe(parent.id);
+  });
+
+  it('omits team-scoped labels and reviewers when duplicated issues are reassigned to another team', async () => {
+    const otherTeam = await createTeam(workspace.admin, { name: 'Operations', key: 'OPS' });
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Ops Migration',
+      teamIds: [workspace.teamId],
+    });
+    const { label } = await createLabel(workspace.admin, {
+      teamId: workspace.teamId,
+      name: 'Source team label',
+      color: '#bb3344',
+    });
+    const { user: reviewer } = await addMember(workspace, 'member', { name: 'Source reviewer' });
+    const { issue: sourceIssue } = await createIssue(workspace.admin, {
+      teamId: workspace.teamId,
+      title: 'Migrate logs',
+      projectId: source.id,
+      assigneeId: null,
+      labelIds: [label.id],
+      reviewerIds: [reviewer.id],
+    });
+    expect(
+      await db
+        .select({ labelId: schema.issueLabel.labelId })
+        .from(schema.issueLabel)
+        .where(eq(schema.issueLabel.issueId, sourceIssue.id)),
+    ).toEqual([{ labelId: label.id }]);
+    expect(
+      await db
+        .select({ userId: schema.issueReviewer.userId })
+        .from(schema.issueReviewer)
+        .where(eq(schema.issueReviewer.issueId, sourceIssue.id)),
+    ).toEqual([{ userId: reviewer.id }]);
+
+    const { project: copy, actions } = await duplicateProject(workspace.admin, source.id, {
+      teamIds: [otherTeam.team.id],
+    });
+
+    const [copyIssue] = await db
+      .select()
+      .from(schema.issue)
+      .where(eq(schema.issue.projectId, copy.id));
+    if (copyIssue === undefined) throw new Error('The copied issue is missing.');
+    expect(copyIssue.teamId).toBe(otherTeam.team.id);
+    expect(
+      await db.select().from(schema.issueLabel).where(eq(schema.issueLabel.issueId, copyIssue.id)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.issueReviewer)
+        .where(eq(schema.issueReviewer.issueId, copyIssue.id)),
+    ).toHaveLength(0);
+    const action = actions.find(
+      (entry) => entry.model === 'issue' && entry.modelId === copyIssue.id,
+    );
+    expect(action?.data['labelIds']).toEqual([]);
+    expect(action?.data['reviewerIds']).toEqual([]);
+  });
+
+  it('refuses cross-workspace duplication', async () => {
+    const otherWorkspace = await createWorkspace('Other');
+    const { project: otherProject } = await createProject(otherWorkspace.admin, {
+      name: 'Other Org Project',
+    });
+
+    let error: unknown;
+    try {
+      await duplicateProject(workspace.admin, otherProject.id);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({ code: 'not_found' });
+  });
+
+  it('refuses duplication targeting teams from another workspace', async () => {
+    const project = await newProject();
+    const otherWorkspace = await createWorkspace('OtherTeam');
+
+    let error: unknown;
+    try {
+      await duplicateProject(workspace.admin, project.id, {
+        teamIds: [otherWorkspace.teamId],
+      });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({ code: 'not_found' });
+  });
+
+  it('refuses duplication if caller lacks project:manage permission', async () => {
+    const project = await newProject();
+    const { principal: contributor } = await addMember(workspace, 'contributor');
+
+    await expect(duplicateProject(contributor, project.id)).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+  });
+
+  it('allocates unique copy name when name is omitted', async () => {
+    const project = await newProject('Platform');
+    const { project: copy } = await duplicateProject(workspace.admin, project.id);
+
+    expect(copy.name).toBe('Platform (copy)');
+    expect(copy.slug).toMatch(/^platform-copy/);
   });
 });

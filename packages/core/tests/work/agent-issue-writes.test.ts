@@ -1116,3 +1116,72 @@ describe('Agent Issue mutation coverage and atomicity', () => {
     expect(await db.select().from(schema.issueRelation)).toHaveLength(0);
   });
 });
+
+describe('Agent Issue creation inside caller transactions', () => {
+  it('retains Agent attribution and rolls back a failed savepoint counter before the next creation', async () => {
+    const agent = await connection();
+    const [before] = await db
+      .select()
+      .from(schema.team)
+      .where(eq(schema.team.id, workspace.teamId));
+    await db.transaction(async (tx) => {
+      await expect(
+        createIssue(
+          owner.principal,
+          {
+            teamId: workspace.teamId,
+            title: 'Rejected nested creation',
+            stateId: randomUUID(),
+          },
+          agent.context,
+          tx,
+        ),
+      ).rejects.toMatchObject({ code: 'not_found' });
+      const created = await createIssue(
+        owner.principal,
+        {
+          teamId: workspace.teamId,
+          title: 'Verified nested creation',
+        },
+        agent.context,
+        tx,
+      );
+      expect(created.issue.creatorAgentId).toBe(agent.context.identityId);
+      expect(created.issue.creatorUserId).toBeNull();
+      expect(created.issue.number).toBe((before?.issueCounter ?? 0) + 1);
+      expect(created.actions.find((action) => action.model === 'issue')?.actor).toMatchObject({
+        type: 'agent',
+        id: agent.context.identityId,
+      });
+    });
+  });
+
+  it('rejects a mismatched Agent context without creating an Issue or allocating its number', async () => {
+    const agent = await connection();
+    const [before] = await db
+      .select()
+      .from(schema.team)
+      .where(eq(schema.team.id, workspace.teamId));
+    await expect(
+      db.transaction((tx) =>
+        createIssue(
+          workspace.admin,
+          {
+            teamId: workspace.teamId,
+            title: 'Mismatched nested creation',
+          },
+          agent.context,
+          tx,
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'unauthorized' });
+    expect(
+      await db
+        .select()
+        .from(schema.issue)
+        .where(eq(schema.issue.title, 'Mismatched nested creation')),
+    ).toHaveLength(0);
+    const [after] = await db.select().from(schema.team).where(eq(schema.team.id, workspace.teamId));
+    expect(after?.issueCounter).toBe(before?.issueCounter);
+  });
+});

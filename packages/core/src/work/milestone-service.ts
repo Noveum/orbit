@@ -1,4 +1,4 @@
-import { and, asc, db, desc, eq, schema } from '@orbit/db';
+import { and, asc, db, desc, eq, schema, type Transaction } from '@orbit/db';
 import { SORT_ORDER_STEP } from '@orbit/shared/constants';
 import { conflict } from '@orbit/shared/errors';
 import type { SyncAction } from '@orbit/shared/events';
@@ -53,11 +53,12 @@ async function assertMilestoneReachable(
 export async function createMilestone(
   principal: Principal,
   input: unknown,
+  executor?: Transaction,
 ): Promise<{ milestone: MilestoneRow; actions: SyncAction[] }> {
   assertCan(principal, 'milestone:manage');
   const parsed = milestoneCreateSchema.parse(input);
 
-  return await db.transaction(async (tx) => {
+  const perform = async (tx: Transaction) => {
     await assertProjectVisible(tx, principal, parsed.projectId);
     const syncId = await nextSyncId(tx);
     const actor = await principalActor(tx, principal);
@@ -96,7 +97,12 @@ export async function createMilestone(
         }),
       ],
     };
-  });
+  };
+
+  if (executor !== undefined) {
+    return await perform(executor);
+  }
+  return await db.transaction(perform);
 }
 
 export async function updateMilestone(
