@@ -167,7 +167,7 @@ or delete historical identities as a rollback operation.
 
 Use separate `ORBIT_TEST_LANE` values for each stage and concurrent suite.
 Prepare only those lane databases when schemas differ. `db:test-setup` resets
-all six base databases regardless of lane and must not run during parallel work.
+all seven base databases regardless of lane and must not run during parallel work.
 The rollout tests exercise PR1 SQL on the expanded database, unchanged old
 business rows, minimum identity insertion, repeat release and drift detection.
 Runtime tests exercise old credentials, scopes, mode isolation, exact grant
