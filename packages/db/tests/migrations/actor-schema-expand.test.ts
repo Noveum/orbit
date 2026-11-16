@@ -345,7 +345,7 @@ describe('actor schema expansion compatibility', () => {
     expect(initialState?.activities).toHaveLength(1);
     expect(initialState?.notifications).toHaveLength(1);
     expect(initialState?.tokens).toHaveLength(1);
-    expect(await run((sql) => sql`select session_id from oauth_access_token`)).toEqual([
+    expect([...(await run((sql) => sql`select session_id from oauth_access_token`))]).toEqual([
       { session_id: null },
     ]);
     expect(await run(readBusinessState)).toEqual(legacyBusinessState());
