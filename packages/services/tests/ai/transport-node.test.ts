@@ -3,6 +3,32 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+async function buildNodeFixture(entrypoint: string, directory: string): Promise<void> {
+  const build = Bun.spawn(
+    [
+      process.execPath,
+      '--no-env-file',
+      'build',
+      entrypoint,
+      '--target=node',
+      '--format=esm',
+      '--outfile',
+      join(directory, 'fixture.mjs'),
+    ],
+    {
+      env: { PATH: process.env['PATH'], NODE_ENV: 'test' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  );
+  const [, stderr, exitCode] = await Promise.all([
+    new Response(build.stdout).text(),
+    new Response(build.stderr).text(),
+    build.exited,
+  ]);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' });
+}
+
 it('rechecks DNS when a private override was used for an earlier Node request', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'orbit-provider-node-policy-'));
   try {
@@ -12,6 +38,7 @@ it('rechecks DNS when a private override was used for an earlier Node request', 
       `
 import assert from 'node:assert/strict';
 import http from 'node:http';
+assert.equal(process.versions.bun, undefined);
 import { setImmediate } from 'node:timers/promises';
 import { safeFetch } from ${JSON.stringify(join(import.meta.dir, '../../src/ai/transport.ts'))};
 let requests = 0;
@@ -38,14 +65,7 @@ try {
 console.log('Node provider DNS policy isolation passed');
 `,
     );
-    const build = await Bun.build({
-      entrypoints: [entrypoint],
-      outdir: directory,
-      target: 'node',
-      format: 'esm',
-      naming: 'fixture.mjs',
-    });
-    expect(build.success).toBe(true);
+    await buildNodeFixture(entrypoint, directory);
     const child = Bun.spawn(['node', join(directory, 'fixture.mjs')], {
       env: { PATH: process.env['PATH'], NODE_ENV: 'test' },
       stdout: 'pipe',
@@ -72,6 +92,7 @@ it('sends string provider bodies with their UTF-8 length on the Node runtime', a
       `
 import assert from 'node:assert/strict';
 import http from 'node:http';
+assert.equal(process.versions.bun, undefined);
 import { safeFetch } from ${JSON.stringify(join(import.meta.dir, '../../src/ai/transport.ts'))};
 for (const body of ['{"model":"fixture"}', '{"message":"héllo 🌍"}', '', undefined]) {
   const server = http.createServer((request, response) => {
@@ -99,14 +120,7 @@ for (const body of ['{"model":"fixture"}', '{"message":"héllo 🌍"}', '', unde
 console.log('Node provider framing passed');
 `,
     );
-    const build = await Bun.build({
-      entrypoints: [entrypoint],
-      outdir: directory,
-      target: 'node',
-      format: 'esm',
-      naming: 'fixture.mjs',
-    });
-    expect(build.success).toBe(true);
+    await buildNodeFixture(entrypoint, directory);
     const child = Bun.spawn(['node', join(directory, 'fixture.mjs')], {
       env: { PATH: process.env['PATH'], NODE_ENV: 'test' },
       stdout: 'pipe',
