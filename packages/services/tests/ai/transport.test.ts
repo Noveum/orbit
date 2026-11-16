@@ -66,7 +66,6 @@ function rebindingDns(firstAddress: string, secondAddress: string): DnsLookupFn 
 
 async function compatibleDnsError(address: string, allowPrivate = false): Promise<Error | null> {
   const lookup = createSafeLookup(allowPrivate, mockDns(address, 6));
-  if (lookup === undefined) throw new Error('Lookup is missing');
   return await new Promise((resolve) =>
     lookup('provider.example', { all: true }, (error) => resolve(error)),
   );

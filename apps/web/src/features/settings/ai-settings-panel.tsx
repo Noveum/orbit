@@ -474,7 +474,7 @@ export function AiSettingsPanel({ settings, canManage }: AiSettingsPanelProps) {
             apiKey={apiKey}
             enabled={enabled}
             hasApiKey={settings.hasApiKey}
-            canManage={canManage}
+            canManage={canManage && !saving && !disconnecting}
             onKindChange={handleKindChange}
             onBaseUrlChange={(value) => {
               clearFeedback();

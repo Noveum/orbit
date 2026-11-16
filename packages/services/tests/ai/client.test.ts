@@ -9,6 +9,60 @@ const originalFetch = globalThis.fetch;
 const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
 describe('AI client complete()', () => {
+  for (const kind of ['openai-compatible', 'anthropic'] as const) {
+    for (const payload of [{}, kind === 'anthropic' ? { content: [] } : { choices: [] }]) {
+      it(`rejects missing completion structure for ${kind}: ${JSON.stringify(payload)}`, async () => {
+        await expect(
+          complete('test', {
+            config: {
+              kind,
+              baseUrl: 'https://provider.example/v1',
+              model: 'fixture',
+              enabled: true,
+            },
+            apiKey: 'fixture-key',
+            recordUsage: false,
+            fetchFn: async () => Response.json(payload),
+          }),
+        ).rejects.toThrow(AiClientError);
+      });
+    }
+    it(`preserves explicitly empty text for ${kind}`, async () => {
+      const payload =
+        kind === 'anthropic'
+          ? { content: [{ type: 'text', text: '' }] }
+          : { choices: [{ message: { content: '' } }] };
+      const result = await complete('test', {
+        config: { kind, baseUrl: 'https://provider.example/v1', model: 'fixture', enabled: true },
+        apiKey: 'fixture-key',
+        recordUsage: false,
+        fetchFn: async () => Response.json(payload),
+      });
+      expect(result.text).toBe('');
+    });
+  }
+
+  for (const { usage, expected } of [
+    { usage: { prompt_tokens: 10, completion_tokens: 5 }, expected: 15 },
+    { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 17 }, expected: 17 },
+    { usage: { prompt_tokens: 10 }, expected: undefined },
+  ]) {
+    it(`preserves or derives total token usage: ${JSON.stringify(usage)}`, async () => {
+      const result = await complete('test', {
+        config: {
+          kind: 'openai-compatible',
+          baseUrl: 'https://provider.example/v1',
+          model: 'fixture',
+          enabled: true,
+        },
+        apiKey: 'fixture-key',
+        recordUsage: false,
+        fetchFn: async () => Response.json({ choices: [{ message: { content: 'ok' } }], usage }),
+      });
+      expect(result.usage?.totalTokens).toBe(expected);
+    });
+  }
+
   afterEach(() => {
     globalThis.fetch = originalFetch;
     if (originalAllowPrivate === undefined) {

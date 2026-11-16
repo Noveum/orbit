@@ -38,7 +38,7 @@ function assertAddressesAllowed(
 export function createSafeLookup(
   allowPrivate = false,
   dnsLookup: DnsLookupFn = dns.lookup,
-): https.RequestOptions['lookup'] {
+): NonNullable<https.RequestOptions['lookup']> {
   return (hostname, options, callback) => {
     if (!allowPrivate && isPrivateOrLoopbackHost(hostname)) {
       callback(new Error(`Blocked connection to private destination: ${hostname}`), '', 0);
@@ -181,7 +181,7 @@ function hookCancellation(
 
   let closing = false;
   const closeUpstream = () => {
-    if (closing) return;
+    if (closing || res.complete) return;
     closing = true;
     if (!res.destroyed) res.destroy();
     if (!req.destroyed) req.destroy();
@@ -275,6 +275,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     path: parsed.pathname + parsed.search,
     method: options.method ?? 'GET',
     headers: providerRequestHeaders(options),
+    agent: false,
     lookup,
     servername: cleanHost,
   };

@@ -60,6 +60,7 @@ describe('AI endpoint IP parsing and private guard', () => {
   });
 
   it('classifies IPv4-compatible IPv6 using its embedded destination', () => {
+    delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
     for (const address of [
       '::127.0.0.1',
       '::7f00:1',
