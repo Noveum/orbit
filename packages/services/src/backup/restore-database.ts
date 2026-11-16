@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { internal, validationFailed } from '@orbit/shared';
+import { withDatabaseTlsContext } from './database-tls.ts';
 
 export interface RestoreDatabaseOptions {
   readonly databaseUrl: string;
@@ -33,83 +34,83 @@ export function restoreDatabase(options: RestoreDatabaseOptions): Promise<Restor
   }
 
   parsed.password = '';
-  const sanitizedUrl = parsed.toString();
+  return withDatabaseTlsContext(parsed.toString(), (sanitizedUrl) => {
+    const binary = pgRestorePath ?? process.env['PG_RESTORE_PATH'] ?? 'pg_restore';
+    const args = [
+      '-Fc',
+      '--clean',
+      '--if-exists',
+      '--no-owner',
+      '--no-acl',
+      '-d',
+      sanitizedUrl,
+      dumpFile,
+    ];
 
-  const binary = pgRestorePath ?? process.env['PG_RESTORE_PATH'] ?? 'pg_restore';
-  const args = [
-    '-Fc',
-    '--clean',
-    '--if-exists',
-    '--no-owner',
-    '--no-acl',
-    '-d',
-    sanitizedUrl,
-    dumpFile,
-  ];
-
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...(password === undefined ? {} : { PGPASSWORD: password }),
-  };
-
-  const startTime = Date.now();
-
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(internal('Database restore was aborted due to lock loss.'));
-      return;
-    }
-
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      reject(internal(`Failed to spawn "${binary}": ${String(error)}`, error));
-      return;
-    }
-
-    const onAbort = () => {
-      child.kill('SIGTERM');
-      reject(internal('Database restore was aborted due to lock loss.'));
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(password === undefined ? {} : { PGPASSWORD: password }),
     };
 
-    if (signal !== undefined) {
-      signal.addEventListener('abort', onAbort, { once: true });
-    }
+    const startTime = Date.now();
 
-    let stderrText = '';
-    if (child.stderr !== null) {
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        stderrText += chunk;
-      });
-    }
-
-    child.on('error', (err) => {
-      if (signal !== undefined) {
-        signal.removeEventListener('abort', onAbort);
-      }
-      reject(internal(`Failed to execute "${binary}": ${err.message}`, err));
-    });
-
-    child.on('close', (code) => {
-      if (signal !== undefined) {
-        signal.removeEventListener('abort', onAbort);
-      }
+    return new Promise<RestoreDatabaseResult>((resolve, reject) => {
       if (signal?.aborted) {
         reject(internal('Database restore was aborted due to lock loss.'));
         return;
       }
-      const durationMs = Date.now() - startTime;
-      if (code === 0) {
-        resolve({ success: true, durationMs });
-      } else {
-        reject(
-          internal(
-            `pg_restore exited with nonzero status code ${code ?? -1}: ${stderrText.trim()}`,
-          ),
-        );
+
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (error) {
+        reject(internal(`Failed to spawn "${binary}": ${String(error)}`, error));
+        return;
       }
+
+      const onAbort = () => {
+        child.kill('SIGTERM');
+        reject(internal('Database restore was aborted due to lock loss.'));
+      };
+
+      if (signal !== undefined) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      let stderrText = '';
+      if (child.stderr !== null) {
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', (chunk: string) => {
+          stderrText += chunk;
+        });
+      }
+
+      child.on('error', (err) => {
+        if (signal !== undefined) {
+          signal.removeEventListener('abort', onAbort);
+        }
+        reject(internal(`Failed to execute "${binary}": ${err.message}`, err));
+      });
+
+      child.on('close', (code) => {
+        if (signal !== undefined) {
+          signal.removeEventListener('abort', onAbort);
+        }
+        if (signal?.aborted) {
+          reject(internal('Database restore was aborted due to lock loss.'));
+          return;
+        }
+        const durationMs = Date.now() - startTime;
+        if (code === 0) {
+          resolve({ success: true, durationMs });
+        } else {
+          reject(
+            internal(
+              `pg_restore exited with nonzero status code ${code ?? -1}: ${stderrText.trim()}`,
+            ),
+          );
+        }
+      });
     });
   });
 }
