@@ -6,7 +6,7 @@ import {
   getMcpClient,
   getMcpConsentRequest,
 } from '@orbit/core';
-import { and, db, eq, schema } from '@orbit/db';
+import { and, db, eq, isNull, schema } from '@orbit/db';
 import { unauthorized } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
@@ -113,10 +113,20 @@ export async function createProviderConsent(userId: string, oauthQuery: string):
         redirectUrls: client.redirectUris.join(','),
         type: client.tokenEndpointAuthMethod === 'none' ? 'public' : 'web',
         disabled: client.disabled ?? false,
+        providerMigratedAt: new Date(),
         userId: client.userId,
       })
       .onConflictDoNothing({ target: schema.oauthApplication.clientId });
   }
+  await db
+    .update(schema.oauthApplication)
+    .set({ providerMigratedAt: new Date() })
+    .where(
+      and(
+        eq(schema.oauthApplication.clientId, client.clientId),
+        isNull(schema.oauthApplication.providerMigratedAt),
+      ),
+    );
   const consentCode = randomBytes(32).toString('base64url');
   await db.insert(schema.verification).values({
     id: randomUUIDv7(),

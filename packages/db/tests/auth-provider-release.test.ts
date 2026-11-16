@@ -62,6 +62,9 @@ describe('auth provider release baseline', () => {
         await sql`insert into oauth_application (id, client_id, name, type, client_secret, redirect_urls, disabled) values
           ('release-public', 'release-public', 'Public', 'public', null, 'http://127.0.0.1:9000/callback', false),
           ('release-web', 'release-web', 'Web', 'web', 'local-release-secret', 'https://client.example.test/callback', true)`;
+        expect([
+          ...(await sql`select provider_migrated_at from oauth_application order by client_id`),
+        ]).toEqual([{ provider_migrated_at: null }, { provider_migrated_at: null }]);
         if (ledger === 'absent') await sql`drop schema drizzle cascade`;
         else
           await sql`delete from drizzle.__drizzle_migrations where created_at >= ${authSchemaMigration.folderMillis}`;
@@ -80,6 +83,9 @@ describe('auth provider release baseline', () => {
             createHash('sha256').update('local-release-secret').digest('base64url'),
         ).toBe(true);
         expect(clients[1]?.['disabled']).toBe(true);
+        expect(
+          await sql`select client_id from oauth_application where provider_migrated_at is not null`,
+        ).toHaveLength(2);
         expect(await sql`select * from drizzle.__drizzle_migrations`).toHaveLength(
           migrations.length,
         );
@@ -104,6 +110,9 @@ describe('auth provider release baseline', () => {
     );
     await connection(scratch, async (sql) => {
       expect(await sql`select * from oauth_provider_client`).toHaveLength(0);
+      expect(
+        await sql`select client_id from oauth_application where provider_migrated_at is not null`,
+      ).toHaveLength(0);
       expect(await sql`select * from drizzle.__drizzle_migrations`).toHaveLength(authSchemaIndex);
     });
   }, 60000);

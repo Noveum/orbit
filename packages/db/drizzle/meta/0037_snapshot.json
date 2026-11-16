@@ -12748,6 +12748,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "provider_migrated_at": {
+          "name": "provider_migrated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

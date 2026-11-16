@@ -31,8 +31,33 @@ const mode = z
     'modern-basic',
     'modern-basic-post',
     'registration',
+    'legacy-mixed',
+    'legacy-late-mixed',
+    'legacy-mixed-custom',
+    'legacy-late-mixed-custom',
+    'legacy-deleted-client',
+    'deleted-client',
+    'disabled-client',
+    'legacy-reserved',
+    'legacy-late-reserved',
+    'legacy-userinfo',
+    'legacy-late-userinfo',
+    'legacy-foreign-http',
+    'legacy-late-foreign-http',
+    'legacy-fragment',
+    'legacy-late-fragment',
   ])
   .parse(process.argv[2] ?? 'grant');
+function callbackForMode(): string {
+  if (mode.includes('reserved')) return 'javascript:alert(1)';
+  if (mode.includes('userinfo')) return 'http://user@127.0.0.1:9000/callback';
+  if (mode.includes('foreign-http')) return 'http://client.example.test/callback';
+  if (mode.includes('fragment')) return 'http://127.0.0.1:9000/callback#fragment';
+  return mode.includes('mixed-custom')
+    ? 'http://localhost:8787/callback'
+    : 'http://127.0.0.1:9000/callback';
+}
+const callbackUri = callbackForMode();
 if (
   !(
     ['127.0.0.1', 'localhost', '[::1]'].includes(database.hostname) &&
@@ -73,7 +98,7 @@ if (mode === 'migration') {
       clientId: 'legacy-public',
       name: 'Legacy Public',
       type: 'public',
-      redirectUrls: 'http://127.0.0.1:9000/callback',
+      redirectUrls: callbackUri,
       metadata: JSON.stringify({ purpose: 'legacy fixture' }),
     },
     {
@@ -109,6 +134,15 @@ if (mode === 'migration') {
     clientSecret: createHash('sha256').update('local-modern-client-secret').digest('base64url'),
     tokenEndpointAuthMethod: 'client_secret_post',
   });
+  const originalClients = await db
+    .select()
+    .from(schema.oauthApplication)
+    .orderBy(schema.oauthApplication.clientId);
+  assert.ok(originalClients.every((client) => client.providerMigratedAt === null));
+  const originalClientFields = originalClients.map(({ providerMigratedAt, ...client }) => {
+    assert.equal(providerMigratedAt, null);
+    return client;
+  });
   const grantId = await recordMcpGrant({
     clientId: 'legacy-public',
     userId: workspace.adminUser.id,
@@ -139,6 +173,18 @@ if (mode === 'migration') {
   await pool.begin(async (tx) => {
     for (const statement of statements) await tx.unsafe(statement);
   });
+  const retainedClients = await db
+    .select()
+    .from(schema.oauthApplication)
+    .orderBy(schema.oauthApplication.clientId);
+  assert.deepEqual(
+    retainedClients.map(({ providerMigratedAt, ...client }) => {
+      assert.ok(providerMigratedAt instanceof Date);
+      return client;
+    }),
+    originalClientFields,
+    'The client copy must preserve every original legacy client field',
+  );
   const clients = await db.select().from(schema.oauthProviderClient);
   assert.equal(
     clients.length,
@@ -210,6 +256,11 @@ if (mode === 'migration') {
     for (const statement of statements) await tx.unsafe(statement);
   });
   assert.equal((await db.select().from(schema.oauthProviderClient)).length, 4);
+  assert.deepEqual(
+    await db.select().from(schema.oauthApplication).orderBy(schema.oauthApplication.clientId),
+    retainedClients,
+    'An idempotent client copy must preserve the durable migration marker',
+  );
   await assert.rejects(
     pool.begin(async (tx) => {
       await tx`insert into oauth_application (id, client_id, name, type, redirect_urls) values ('ambiguous', 'ambiguous', 'Ambiguous', 'unknown', 'https://client.example.test/callback')`;
@@ -224,6 +275,9 @@ if (mode === 'migration') {
 const legacyClientId = 'local-migrated-client';
 const legacyClientSecret = 'local-migrated-client-secret';
 const legacyPublic =
+  mode.includes('mixed') ||
+  mode.includes('reserved') ||
+  mode === 'legacy-deleted-client' ||
   mode === 'legacy-public' ||
   mode === 'legacy-unlink' ||
   mode === 'legacy-no-resource' ||
@@ -239,7 +293,15 @@ if (mode.startsWith('legacy-')) {
     type: mode === 'legacy-late-invalid' ? 'unknown' : legacyClientType,
     disabled: mode === 'legacy-late-disabled',
     clientSecret: legacyPublic ? null : legacyClientSecret,
-    redirectUrls: 'http://127.0.0.1:9000/callback',
+    redirectUrls: mode.includes('mixed')
+      ? [
+          callbackUri,
+          'https://client.example.test/callback',
+          ...(mode.includes('mixed-custom')
+            ? ['cursor://anysphere.cursor-mcp/oauth/callback']
+            : []),
+        ].join(',')
+      : callbackUri,
   });
   if (!mode.startsWith('legacy-late-')) {
     const migration = await readFile(
@@ -272,7 +334,7 @@ if (mode === 'registration') {
       expected: 201,
       application: 'native',
     },
-    { redirects: ['http://127.0.0.1:9000/callback'], expected: 201, application: 'native' },
+    { redirects: [callbackUri], expected: 201, application: 'native' },
     { redirects: ['http://[::1]:9000/callback'], expected: 201, application: 'native' },
     { redirects: ['https://client.example.test/callback'], expected: 201, application: 'web' },
     { redirects: ['cursor://anysphere.cursor-mcp/oauth/callback'], expected: 400, explicit: 'web' },
@@ -338,7 +400,7 @@ async function registeredClient() {
       headers,
       body: JSON.stringify({
         client_name: 'Local MCP Client',
-        redirect_uris: ['http://127.0.0.1:9000/callback'],
+        redirect_uris: [callbackUri],
         token_endpoint_auth_method: mode.startsWith('modern-basic')
           ? 'client_secret_basic'
           : 'none',
@@ -364,7 +426,7 @@ const challenge = createHash('sha256').update(verifier).digest('base64url');
 const query = new URLSearchParams({
   response_type: 'code',
   client_id: registered.client_id,
-  redirect_uri: 'http://127.0.0.1:9000/callback',
+  redirect_uri: callbackUri,
   scope: 'openid profile email offline_access orbit.read',
   prompt: 'consent',
   code_challenge: challenge,
@@ -378,6 +440,17 @@ const authorization = await routes.GET(
 );
 assert.equal(authorization.status, 302, 'The existing MCP authorization URL must remain usable');
 const consentUrl = new URL(authorization.headers.get('location') ?? '', origin);
+if (['reserved', 'userinfo', 'foreign-http', 'fragment'].some((name) => mode.includes(name))) {
+  assert.notEqual(
+    consentUrl.pathname,
+    '/oauth/authorize',
+    'An unsafe callback must not reach consent',
+  );
+  assert.equal((await db.select().from(schema.mcpGrant)).length, 0);
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode === 'foreign-resource') {
   assert.equal(consentUrl.searchParams.get('error'), 'invalid_target');
   assert.equal((await db.select().from(schema.mcpGrant)).length, 0);
@@ -466,7 +539,7 @@ function token(body: Record<string, string>): Promise<Response> {
 const issued = await token({
   grant_type: 'authorization_code',
   code: authorizationCode,
-  redirect_uri: 'http://127.0.0.1:9000/callback',
+  redirect_uri: callbackUri,
   code_verifier: verifier,
   resource: `${origin}/mcp`,
 });
@@ -489,6 +562,55 @@ const credentials = tokenSchema.parse(await issued.json());
 const access = await verifyMcpAccessToken(credentials.access_token);
 assert.equal(access.organizationId, workspace.organizationId);
 assert.equal(access.userId, workspace.adminUser.id);
+if (mode === 'deleted-client' || mode === 'legacy-deleted-client') {
+  const [copied] = await db
+    .select()
+    .from(schema.oauthApplication)
+    .where(eq(schema.oauthApplication.clientId, registered.client_id));
+  assert.ok(copied?.providerMigratedAt instanceof Date);
+  await db
+    .delete(schema.oauthProviderClient)
+    .where(eq(schema.oauthProviderClient.clientId, registered.client_id));
+  await assert.rejects(verifyMcpAccessToken(credentials.access_token));
+  const migration = await readFile(
+    new URL('../../../../packages/db/drizzle/0038_auth_provider_clients.sql', import.meta.url),
+    'utf8',
+  );
+  await pool.begin(async (tx) => {
+    for (const statement of migration.split('--> statement-breakpoint').filter(Boolean))
+      await tx.unsafe(statement);
+  });
+  const retried = await routes.GET(
+    new Request(`${origin}/api/auth/mcp/authorize?${query}`, { headers }),
+  );
+  assert.notEqual(
+    new URL(retried.headers.get('location') ?? '', origin).pathname,
+    '/oauth/authorize',
+    'A deleted provider client must remain inactive through the legacy bridge',
+  );
+  assert.equal((await db.select().from(schema.oauthProviderClient)).length, 0);
+  const [retained] = await db
+    .select()
+    .from(schema.oauthApplication)
+    .where(eq(schema.oauthApplication.clientId, registered.client_id));
+  assert.equal(retained?.providerMigratedAt?.getTime(), copied.providerMigratedAt.getTime());
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
+if (mode === 'disabled-client') {
+  await db
+    .update(schema.oauthProviderClient)
+    .set({ disabled: true })
+    .where(eq(schema.oauthProviderClient.clientId, registered.client_id));
+  await assert.rejects(
+    verifyMcpAccessToken(credentials.access_token),
+    'A disabled provider client must not retain Orbit access',
+  );
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode === 'legacy-unlink') {
   await db
     .delete(schema.oauthProviderClientResource)
@@ -568,7 +690,7 @@ if (mode === 'replay') {
   const replay = await token({
     grant_type: 'authorization_code',
     code: authorizationCode,
-    redirect_uri: 'http://127.0.0.1:9000/callback',
+    redirect_uri: callbackUri,
     code_verifier: verifier,
     resource: `${origin}/mcp`,
   });

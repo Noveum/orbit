@@ -125,6 +125,26 @@ export async function lockMcpOwner(tx: Transaction, userId: string): Promise<voi
   );
 }
 
+async function assertMcpClientActive(tx: Transaction, clientId: string): Promise<void> {
+  const invalid = unauthorized('Reconnect Orbit to continue.');
+  const [client] = await tx
+    .select()
+    .from(schema.oauthApplication)
+    .where(eq(schema.oauthApplication.clientId, clientId))
+    .limit(1)
+    .for('share');
+  if (client === undefined || client.disabled) throw invalid;
+  if (client.providerMigratedAt !== null) {
+    const [providerClient] = await tx
+      .select({ disabled: schema.oauthProviderClient.disabled })
+      .from(schema.oauthProviderClient)
+      .where(eq(schema.oauthProviderClient.clientId, clientId))
+      .limit(1)
+      .for('share');
+    if (providerClient === undefined || providerClient.disabled) throw invalid;
+  }
+}
+
 export async function validateMcpGrant(
   tx: Transaction,
   grant: typeof schema.mcpGrant.$inferSelect,
@@ -133,6 +153,7 @@ export async function validateMcpGrant(
 ): Promise<McpAccessContext> {
   const invalid = unauthorized('Reconnect Orbit to continue.');
   if (grant.revokedAt !== null || grant.identityKind !== kind) throw invalid;
+  await assertMcpClientActive(tx, grant.clientId);
   let identity: McpIdentity = { kind: 'legacy' };
   if (kind === 'agent') {
     if (!isAgentMcpEnabled() || grant.agentIdentityId === null || grant.ownerMemberId === null)
@@ -156,20 +177,12 @@ export async function validateMcpGrant(
       .where(eq(schema.agentIdentity.id, grant.agentIdentityId))
       .limit(1)
       .for('share');
-    const [client] = await tx
-      .select()
-      .from(schema.oauthApplication)
-      .where(eq(schema.oauthApplication.clientId, grant.clientId))
-      .limit(1)
-      .for('share');
     if (
       agent === undefined ||
       agent.deletedAt !== null ||
       agent.ownerUserId !== grant.userId ||
       agent.clientId !== grant.clientId ||
       agent.organizationId !== grant.organizationId ||
-      client === undefined ||
-      client.disabled ||
       !grant.scopes.split(/\s+/).includes('orbit.read')
     )
       throw invalid;

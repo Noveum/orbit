@@ -1,8 +1,9 @@
 DO $migration$
 DECLARE unsupported integer;
 BEGIN
+  PERFORM 1 FROM "oauth_application" legacy WHERE legacy."provider_migrated_at" IS NULL FOR UPDATE;
   SELECT count(*) INTO unsupported FROM "oauth_application" legacy
-  WHERE NOT EXISTS (SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id") AND NOT (
+  WHERE legacy."provider_migrated_at" IS NULL AND NOT EXISTS (SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id") AND NOT (
     (legacy."type" = 'public' AND coalesce(legacy."client_secret", '') = '') OR
     (legacy."type" = 'web' AND coalesce(legacy."client_secret", '') <> '')
   );
@@ -12,7 +13,7 @@ BEGIN
   BEGIN
     WITH candidates AS MATERIALIZED (
       SELECT legacy."metadata" FROM "oauth_application" legacy
-      WHERE NOT EXISTS (SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id")
+      WHERE legacy."provider_migrated_at" IS NULL AND NOT EXISTS (SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id")
     )
     SELECT count(*) INTO unsupported FROM candidates
     WHERE coalesce(jsonb_typeof(nullif("metadata", '')::jsonb), 'object') NOT IN ('object', 'null');
@@ -27,7 +28,7 @@ $migration$;
 --> statement-breakpoint
 WITH candidates AS MATERIALIZED (
   SELECT legacy.* FROM "oauth_application" legacy
-  WHERE NOT EXISTS (SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id")
+  WHERE legacy."provider_migrated_at" IS NULL AND NOT EXISTS (SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id")
 )
 INSERT INTO "oauth_provider_client" (
   "id", "client_id", "client_secret", "disabled", "skip_consent", "enable_end_session",
@@ -44,11 +45,17 @@ SELECT
   ARRAY[]::text[], legacy."user_id", legacy."created_at", legacy."updated_at", legacy."name", legacy."icon",
   string_to_array(legacy."redirect_urls", ','),
   CASE WHEN legacy."type" = 'public' THEN 'none' ELSE 'client_secret_basic' END,
-  CASE WHEN NOT EXISTS (
+  CASE WHEN EXISTS (
     SELECT 1 FROM unnest(string_to_array(legacy."redirect_urls", ',')) uri
-    WHERE uri !~ '^http://(127\.0\.0\.1|\[::1\]|localhost)(:[0-9]+)?(/|$)'
+    WHERE uri !~* '^https?:' OR uri ~* '^http://(127\.0\.0\.1|\[::1\]|localhost)(:[0-9]+)?(/|$)'
   ) THEN 'native' ELSE 'web' END,
   ARRAY['authorization_code', 'refresh_token'], ARRAY['code'], true, false,
   coalesce(nullif(legacy."metadata", '')::jsonb, '{}'::jsonb), legacy."type" = 'web', true
 FROM candidates legacy
 ON CONFLICT ("client_id") DO NOTHING;
+--> statement-breakpoint
+UPDATE "oauth_application" legacy
+SET "provider_migrated_at" = now()
+WHERE legacy."provider_migrated_at" IS NULL AND EXISTS (
+  SELECT 1 FROM "oauth_provider_client" existing WHERE existing."client_id" = legacy."client_id"
+);

@@ -41,6 +41,7 @@ export const oauthApplication = pgTable(
     redirectUrls: text('redirect_urls').notNull(),
     type: text('type').notNull(),
     disabled: boolean('disabled').notNull().default(false),
+    providerMigratedAt: timestamp('provider_migrated_at', { withTimezone: true }),
     userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

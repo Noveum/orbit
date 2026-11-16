@@ -136,6 +136,7 @@ CREATE TABLE "oauth_provider_resource" (
 );
 --> statement-breakpoint
 ALTER TABLE "oauth_access_token" ADD COLUMN "session_id" text;--> statement-breakpoint
+ALTER TABLE "oauth_application" ADD COLUMN "provider_migrated_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "oauth_provider_access_token" ADD CONSTRAINT "oauth_provider_access_token_client_id_oauth_provider_client_client_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."oauth_provider_client"("client_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "oauth_provider_access_token" ADD CONSTRAINT "oauth_provider_access_token_session_id_session_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."session"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "oauth_provider_access_token" ADD CONSTRAINT "oauth_provider_access_token_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
