@@ -8,6 +8,18 @@ beforeEach(async () => {
 });
 
 describe('updateProfile', () => {
+  it.each(['UTC+8', 'UTC+3', 'UTC+1', 'Unknown/Timezone', '+08:00'])(
+    'rejects invalid new profile timezone %s without changing the profile',
+    async (timezone) => {
+      const user = await createUser('Timezone');
+      await expect(updateProfile(user.id, { timezone })).rejects.toThrow();
+      const [stored] = await db
+        .select({ timezone: schema.user.timezone })
+        .from(schema.user)
+        .where(eq(schema.user.id, user.id));
+      expect(stored?.timezone).toBe(user.timezone);
+    },
+  );
   it('saves the display name, handle and timezone', async () => {
     const user = await createUser('Nia New');
 

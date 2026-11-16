@@ -15,7 +15,7 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { GithubInstallationAccount, GithubInstalledRepository } from './app.ts';
 import type { GithubDatabase } from './apply.ts';
-import { forgetWatchedRepositories } from './watched.ts';
+import { forgetWatchedRepositories, removeGithubRepositorySyncs } from './watched.ts';
 
 export type GithubInstallationRow = typeof githubInstallation.$inferSelect;
 export type GithubRepositoryRow = typeof githubRepository.$inferSelect;
@@ -258,6 +258,13 @@ export async function removeGithubInstallation(
     )
     .limit(1);
   if (row === undefined) return false;
+  await removeGithubRepositorySyncs(
+    database,
+    and(
+      eq(githubRepositorySync.organizationId, input.organizationId),
+      eq(githubRepositorySync.integrationId, row.integrationId),
+    ),
+  );
   await database.delete(githubInstallation).where(eq(githubInstallation.id, row.id));
   await database.delete(integration).where(eq(integration.id, row.integrationId));
   return true;
