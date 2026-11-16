@@ -46,6 +46,11 @@ export async function pruneOperationalTables(
             )
             and not exists (
               select 1
+              from webhook_delivery_quarantine
+              where webhook_delivery_quarantine.replacement_delivery_id = webhook_delivery.id
+            )
+            and not exists (
+              select 1
               from github_check_activity
               where github_check_activity.webhook_delivery_id = webhook_delivery.id
                 and github_check_activity.organization_id = webhook_delivery.organization_id
