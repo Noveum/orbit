@@ -159,6 +159,14 @@ describe('poolCacheKey', () => {
     expect(poolCacheKey(SESSION, 10, true)).not.toBe(poolCacheKey(SESSION, 10, false));
   });
 
+  it('differs when TLS enforcement or its certificate authority changes', () => {
+    const verified = { rejectUnauthorized: true };
+    expect(poolCacheKey(SESSION, 10, false)).not.toBe(poolCacheKey(SESSION, 10, false, verified));
+    expect(poolCacheKey(SESSION, 10, false, verified)).not.toBe(
+      poolCacheKey(SESSION, 10, false, { ...verified, ca: 'public-ca-fixture' }),
+    );
+  });
+
   it('does not confuse a pool size with a url fragment', () => {
     expect(poolCacheKey(`${SESSION}1`, 1, true)).not.toBe(poolCacheKey(SESSION, 11, true));
   });

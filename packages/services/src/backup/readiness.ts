@@ -1,3 +1,4 @@
+import { databaseTlsOptions } from '@orbit/db/connection';
 import {
   internal,
   type RestoreRecoveryState,
@@ -40,6 +41,7 @@ export async function acquireRestoreLock(
         abortController.abort(new Error('Restore lock connection was lost unexpectedly.'));
       }
     },
+    ...databaseTlsOptions(databaseUrl),
   });
 
   try {
@@ -106,6 +108,7 @@ export async function setRecoveryState(
     idle_timeout: 5,
     prepare: false,
     onnotice: (_notice) => undefined,
+    ...databaseTlsOptions(databaseUrl),
   });
   try {
     await sql`
@@ -136,6 +139,7 @@ export async function getRecoveryState(databaseUrl: string): Promise<RestoreReco
     idle_timeout: 5,
     prepare: false,
     onnotice: (_notice) => undefined,
+    ...databaseTlsOptions(databaseUrl),
   });
   try {
     const [rowExists] = await sql<{ exists: boolean }[]>`
