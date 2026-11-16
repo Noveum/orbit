@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { databaseTlsOptions } from '@orbit/db/connection';
 import { computeRestoreTargetIdentity, redisDrillUrlSchema, validationFailed } from '@orbit/shared';
 import { can, isInTeam, policyRole } from '@orbit/shared/policy';
 import Redis from 'ioredis';
@@ -647,6 +648,7 @@ export async function runRecoveryDrill(
     keep_alive: 10,
     prepare: false,
     onnotice: () => undefined,
+    ...databaseTlsOptions(databaseUrl),
   });
 
   const destinationRoot = options.destinationDir ?? tmpdir();

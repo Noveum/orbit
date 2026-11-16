@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catalogDriftBetween, expectedCatalog, isBehind, liveCatalog } from '@orbit/db/check-drift';
+import { databaseTlsOptions } from '@orbit/db/connection';
 import { releaseDatabase } from '@orbit/db/migration-release';
 import * as schema from '@orbit/db/schema';
 import { CURRENT_BACKUP_FORMAT_VERSION, validationFailed } from '@orbit/shared';
@@ -33,7 +34,12 @@ export async function runScenarioFreshInstall(
   const folder = defaultMigrationsFolder(migrationsFolder);
   const maintenanceUrl = new URL(databaseUrl);
   maintenanceUrl.pathname = '/postgres';
-  const admin = postgres(maintenanceUrl.toString(), { max: 1, prepare: false, connect_timeout: 5 });
+  const admin = postgres(maintenanceUrl.toString(), {
+    max: 1,
+    prepare: false,
+    connect_timeout: 5,
+    ...databaseTlsOptions(maintenanceUrl.toString()),
+  });
   const databaseName = `orbit_matrix_fresh_${randomBytes(12).toString('hex')}`;
   const freshUrl = new URL(databaseUrl);
   freshUrl.pathname = `/${databaseName}`;
@@ -42,7 +48,11 @@ export async function runScenarioFreshInstall(
   try {
     await admin`create database ${admin(databaseName)} template template0`;
     created = true;
-    const fresh = postgres(freshUrl.toString(), { max: 1, prepare: false });
+    const fresh = postgres(freshUrl.toString(), {
+      max: 1,
+      prepare: false,
+      ...databaseTlsOptions(freshUrl.toString()),
+    });
     let startedEmpty = false;
     try {
       const [row] = await fresh<{ count: number }[]>`

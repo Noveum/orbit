@@ -1,5 +1,6 @@
 import postgres from 'postgres';
 import { currentLane, laneDatabase } from '../../../scripts/test-env.ts';
+import { databaseTlsOptions } from './tls-policy.ts';
 
 const TEST_DATABASE_NAME = /^orbit_test(?:_[a-z0-9]+)*$/;
 
@@ -23,7 +24,12 @@ export async function ensureLaneDatabase(url: string, base: string): Promise<voi
     throw new Error(`Refusing to clone "${base}" into "${database}".`);
   }
 
-  const admin = postgres(adminUrl(url), { max: 1, idle_timeout: 5, onnotice: () => undefined });
+  const admin = postgres(adminUrl(url), {
+    max: 1,
+    idle_timeout: 5,
+    onnotice: () => undefined,
+    ...databaseTlsOptions(adminUrl(url)),
+  });
   try {
     const existing = await admin`select 1 from pg_database where datname = ${database}`;
     if (existing.length > 0) return;
