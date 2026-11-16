@@ -13,6 +13,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -70,6 +71,31 @@ export interface RichTextEditorProps {
 interface MenuPosition {
   readonly left: number;
   readonly top: number;
+}
+
+export interface BubbleAnchor {
+  readonly center: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface MenuSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+const MENU_MARGIN = 8;
+const MENU_GAP = 8;
+
+export function bubblePosition(anchor: BubbleAnchor, size: MenuSize): MenuPosition {
+  const widestLeft = Math.max(anchor.width - size.width - MENU_MARGIN, MENU_MARGIN);
+  const left = Math.min(Math.max(anchor.center - size.width / 2, MENU_MARGIN), widestLeft);
+  const above = anchor.top - size.height - MENU_GAP;
+  const lowestTop = Math.max(anchor.height - size.height - MENU_MARGIN, MENU_MARGIN);
+  const top = above >= MENU_MARGIN ? above : Math.min(anchor.bottom + MENU_GAP, lowestTop);
+  return { left, top };
 }
 
 interface MenuState {
@@ -144,7 +170,7 @@ export function RichTextEditor({
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [highlight, setHighlight] = useState(0);
-  const [bubble, setBubble] = useState<MenuPosition | null>(null);
+  const [bubble, setBubble] = useState<BubbleAnchor | null>(null);
   const [tableMenu, setTableMenu] = useState<MenuPosition | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -265,8 +291,11 @@ export function RichTextEditor({
       const end = editor.view.coordsAtPos(to);
       const box = container.getBoundingClientRect();
       setBubble({
-        left: (start.left + end.left) / 2 - box.left,
-        top: start.top - box.top - 44,
+        center: (start.left + end.left) / 2 - box.left,
+        top: start.top - box.top,
+        bottom: start.bottom - box.top,
+        width: box.width,
+        height: box.height,
       });
     };
 
@@ -486,7 +515,7 @@ export function RichTextEditor({
       {bubble === null || editor === null ? null : (
         <SelectionBubble
           editor={editor}
-          position={bubble}
+          anchor={bubble}
           testId={testId}
           link={link}
           onLinkChange={setLink}
@@ -605,7 +634,7 @@ function MenuOption({
 
 interface SelectionBubbleProps {
   readonly editor: Editor;
-  readonly position: MenuPosition;
+  readonly anchor: BubbleAnchor;
   readonly testId: string;
   readonly link: string | null;
   readonly onLinkChange: (value: string | null) => void;
@@ -614,17 +643,34 @@ interface SelectionBubbleProps {
 
 function SelectionBubble({
   editor,
-  position,
+  anchor,
   testId,
   link,
   onLinkChange,
   onComment,
 }: SelectionBubbleProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState<MenuSize>({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    const rect = element.getBoundingClientRect();
+    setSize((current) =>
+      current.width === rect.width && current.height === rect.height
+        ? current
+        : { width: rect.width, height: rect.height },
+    );
+  });
+
+  const placement = bubblePosition(anchor, size);
+
   return (
     <div
+      ref={ref}
       data-testid={`${testId}-bubble`}
-      style={{ left: `${position.left}px`, top: `${position.top}px` }}
-      className="-translate-x-1/2 absolute z-30 flex items-center gap-0.5 rounded-lg border border-border bg-surface p-1 shadow-pop"
+      style={{ left: `${placement.left}px`, top: `${placement.top}px` }}
+      className="absolute z-30 flex items-center gap-0.5 rounded-lg border border-border bg-surface p-1 shadow-pop"
     >
       <BubbleButton
         label="Bold"
