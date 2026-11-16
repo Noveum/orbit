@@ -1,5 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import type { Workspace } from '@orbit/core/test-support';
+import { and, db, eq, schema } from '@orbit/db';
+import { decryptAiApiKey } from '@orbit/services/ai';
 
 process.env['BETTER_AUTH_SECRET'] ??= 'ai-settings-route-test-secret';
 
@@ -25,14 +27,48 @@ function signIn(user: Workspace['adminUser']): void {
 
 beforeAll(async () => {
   await resetDatabase();
+});
+
+beforeEach(async () => {
   workspace = await createWorkspace('AiSettings');
   const added = await addMember(workspace, 'member');
   memberUser = added.user;
-});
-
-beforeEach(() => {
   signIn(workspace.adminUser);
 });
+
+async function configureProvider(
+  kind: 'anthropic' | 'openai-compatible' = 'anthropic',
+): Promise<void> {
+  const response = await POST(
+    new Request('https://orbit.local/api/settings/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind,
+        baseUrl: kind === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1',
+        model: kind === 'anthropic' ? 'claude-sonnet-5' : 'gpt-4o-mini',
+        apiKey: 'local-provider-fixture-key',
+        enabled: true,
+      }),
+    }),
+  );
+  expect(response.status).toBe(200);
+}
+
+async function storedApiKey(): Promise<string | null> {
+  const [integration] = await db
+    .select({ credentials: schema.integration.credentials })
+    .from(schema.integration)
+    .where(
+      and(
+        eq(schema.integration.organizationId, workspace.organizationId),
+        eq(schema.integration.provider, 'ai'),
+        eq(schema.integration.externalId, 'default'),
+      ),
+    )
+    .limit(1);
+  return decryptAiApiKey(integration?.credentials, { organizationId: workspace.organizationId });
+}
 
 describe('AI provider settings API', () => {
   it('returns unconfigured default state initially', async () => {
@@ -141,6 +177,7 @@ describe('AI provider settings API', () => {
   });
 
   it('rotates API key and updates configuration on an existing row via onConflictDoUpdate', async () => {
+    await configureProvider('openai-compatible');
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai', {
         method: 'POST',
@@ -167,9 +204,11 @@ describe('AI provider settings API', () => {
     expect(body.kind).toBe('anthropic');
     expect(body.model).toBe('claude-sonnet-5');
     expect(body.hasApiKey).toBe(true);
+    expect(await storedApiKey()).toBe('sk-ant-rotated-new-key');
   });
 
   it('allows updating model without re-supplying the key', async () => {
+    await configureProvider();
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai', {
         method: 'POST',
@@ -194,9 +233,11 @@ describe('AI provider settings API', () => {
     expect(body.enabled).toBe(false);
     expect(body.hasApiKey).toBe(true);
     expect(body.model).toBe('claude-3-5-haiku-20241022');
+    expect(await storedApiKey()).toBe('local-provider-fixture-key');
   });
 
   it('rejects changing endpoint without re-supplying the key', async () => {
+    await configureProvider('openai-compatible');
     const response = await POST(
       new Request('https://orbit.local/api/settings/ai', {
         method: 'POST',
@@ -214,6 +255,7 @@ describe('AI provider settings API', () => {
   });
 
   it('disconnects and removes provider configuration', async () => {
+    await configureProvider();
     const deleteResponse = await DELETE();
     expect(deleteResponse.status).toBe(200);
 
