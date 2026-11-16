@@ -293,7 +293,7 @@ export function RichTextEditor({
       setBubble({
         center: (start.left + end.left) / 2 - box.left,
         top: start.top - box.top,
-        bottom: start.bottom - box.top,
+        bottom: end.bottom - box.top,
         width: box.width,
         height: box.height,
       });

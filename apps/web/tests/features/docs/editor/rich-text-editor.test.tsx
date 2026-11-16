@@ -441,6 +441,20 @@ describe('selection bubble in a narrow drawer', () => {
     expect(bubble.style.top).toBe('52px');
   });
 
+  it('places the popover below the last selected line when there is no room above', async () => {
+    const editor = await mountEditor();
+    editor.view.coordsAtPos = (position) =>
+      position === 22
+        ? { left: 34, right: 56, top: 68, bottom: 84 }
+        : { left: 12, right: 34, top: 4, bottom: 20 };
+    editor.chain().focus().insertContent('<p>first line</p><p>last line</p>').run();
+    editor.commands.setTextSelection({ from: 1, to: 22 });
+
+    const bubble = await screen.findByTestId('rich-bubble');
+    await waitFor(() => expect(bubble.style.top).toBe('92px'));
+    expect(bubble.style.left).toBe('8px');
+  });
+
   it('flips the popover below the first line when there is no room above it', async () => {
     const editor = await mountEditor();
     editor.view.coordsAtPos = () => ({ left: 12, right: 34, top: 4, bottom: 20 });
