@@ -1,7 +1,11 @@
-import { conflict, unauthorized } from '@orbit/shared/errors';
+import { conflict, notFound, unauthorized } from '@orbit/shared/errors';
 import { credentialRemoveSchema } from '@orbit/shared/validators';
 import { headers } from 'next/headers';
-import { canRemoveSignInMethod, LAST_CREDENTIAL_MESSAGE } from '@/features/account/credentials.ts';
+import {
+  canRemoveSignInMethod,
+  LAST_CREDENTIAL_MESSAGE,
+  linkedAccountRowId,
+} from '@/features/account/credentials.ts';
 import { handleRoute, readJson } from '@/lib/api/handler.ts';
 import { auth } from '@/lib/auth/server.ts';
 
@@ -26,11 +30,12 @@ export async function DELETE(request: Request): Promise<Response> {
       return { removed: 'passkey' };
     }
 
+    const accountId = linkedAccountRowId(accounts, parsed.providerId, parsed.accountId);
+    if (accountId === null) throw notFound('That connected account does not exist.');
     await auth.api.unlinkAccount({
       headers: requestHeaders,
       body: {
-        providerId: parsed.providerId,
-        ...(parsed.accountId === undefined ? {} : { accountId: parsed.accountId }),
+        accountId,
       },
     });
     return { removed: 'account' };

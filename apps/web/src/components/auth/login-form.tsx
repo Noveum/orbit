@@ -293,7 +293,15 @@ export function LoginForm({
     withPending('passkey', async () => {
       const result = await authClient.signIn.passkey();
       if (result?.error) throw new Error(result.error.message ?? 'No passkey available.');
-      window.location.assign(callbackUrl);
+      if (
+        !(
+          typeof result.data === 'object' &&
+          result.data !== null &&
+          'redirect' in result.data &&
+          result.data.redirect === true
+        )
+      )
+        window.location.assign(callbackUrl);
     });
 
   const signInWithSocial = (provider: 'google' | 'github') =>
@@ -312,7 +320,15 @@ export function LoginForm({
         ? await authClient.signUp.email({ email, password, name, callbackURL: callbackUrl })
         : await authClient.signIn.email({ email, password, callbackURL: callbackUrl });
       if (result.error) throw new Error(result.error.message ?? 'Check your details and retry.');
-      window.location.assign(callbackUrl);
+      if (
+        !(
+          typeof result.data === 'object' &&
+          result.data !== null &&
+          'redirect' in result.data &&
+          result.data.redirect === true
+        )
+      )
+        window.location.assign(callbackUrl);
     });
 
   const sendOtp = () =>
@@ -339,7 +355,15 @@ export function LoginForm({
       if (session.error || !session.data?.user.emailVerified) {
         throw new Error('Could not confirm your verified session. Sign in again.');
       }
-      window.location.assign(callbackUrl);
+      if (
+        !(
+          typeof result.data === 'object' &&
+          result.data !== null &&
+          'redirect' in result.data &&
+          result.data.redirect === true
+        )
+      )
+        window.location.assign(callbackUrl);
     });
 
   const forgotPassword = () =>

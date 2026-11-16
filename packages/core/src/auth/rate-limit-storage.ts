@@ -44,6 +44,7 @@ function connection(): Redis | null {
   if (url === undefined || url.length === 0) return null;
   if (client === null) {
     const created = new Redis(url, {
+      lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: true,
       connectTimeout: 2000,

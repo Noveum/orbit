@@ -5,7 +5,6 @@ import {
   bindMcpCredential,
   createInvite,
   createOrganization,
-  finalizeMcpConsent,
   recordMcpGrant,
   revokeMcpGrant,
   unbindAgentMcpCredential,
@@ -18,6 +17,8 @@ import { type AgentConsentSelection, mcpTokenResponseSchema } from '@orbit/share
 import { mcpContinueUrl } from '@/app/(auth)/login/continue-url.ts';
 import { POST as authPost, GET } from '@/app/api/auth/[...all]/route.ts';
 import { DEV_LOGIN_HEADER } from '@/lib/api/dev-login.ts';
+import { createProviderConsent, finalizeProviderConsent } from '@/lib/auth/mcp-consent.ts';
+import { providerTokenHash } from '@/lib/auth/mcp-provider.ts';
 import { auth } from '@/lib/auth/server.ts';
 import { nativeFetchGlobals } from '../../../../../tests-preload.ts';
 
@@ -107,7 +108,10 @@ describe('organization API boundary', () => {
       const response = await authPost(
         request('set-active', cookie, { organizationId: workspace.organizationId }),
       );
-      expect(response.status).toBe(200);
+      expect(
+        response.status,
+        response.status === 200 ? '' : JSON.stringify(await response.clone().json()),
+      ).toBe(200);
       const denied = await authPost(
         request('set-active', cookie, { organizationId: other.organizationId }),
       );
@@ -172,74 +176,59 @@ async function withNativeFetchGlobals<T>(operation: () => Promise<T>): Promise<T
 async function finalizedAuthorizationCode(
   workspace: Workspace,
   scopes = ['openid', 'offline_access', 'orbit.read'],
-): Promise<{
-  code: string;
-  verifier: string;
-}> {
-  const verifier = 'mcp-code-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
-  const consentCode = randomUUID().replace(/-/g, '');
-  await db.insert(schema.verification).values({
+) {
+  const token = randomUUID();
+  await db.insert(schema.session).values({
     id: randomUUID(),
-    identifier: consentCode,
-    value: JSON.stringify({
-      clientId: 'client_test',
-      redirectURI: CALLBACK_URL,
-      scope: scopes,
-      userId: workspace.adminUser.id,
-      requireConsent: true,
-      state: 'state_test',
-      codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
-      codeChallengeMethod: 'S256',
-    }),
-    expiresAt: new Date(Date.now() + 600_000),
-  });
-  const approved = await finalizeMcpConsent({
+    token,
     userId: workspace.adminUser.id,
-    consentCode,
-    accept: true,
-    organizationId: workspace.organizationId,
+    activeOrganizationId: workspace.organizationId,
+    expiresAt: new Date(Date.now() + 3_600_000),
   });
-  const code = new URL(approved.redirectUri).searchParams.get('code');
-  if (code === null) throw new Error('the consent redirect did not carry a code');
-  return { code, verifier };
+  return providerAuthorizationCode(workspace, await signedSessionCookie(token), undefined, scopes);
 }
 
 async function providerAuthorizationCode(
   workspace: Workspace,
   cookie: string,
   agent?: AgentConsentSelection,
+  scopes = [
+    'openid',
+    'offline_access',
+    'orbit.read',
+    ...(agent === undefined ? [] : ['orbit.write']),
+  ],
 ) {
   const verifier = 'mcp-provider-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
   const search = authorizeSearch('consent');
-  search.set(
-    'scope',
-    `openid offline_access orbit.read${agent === undefined ? '' : ' orbit.write'}`,
-  );
+  search.set('scope', scopes.join(' '));
   search.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
   search.set('code_challenge_method', 'S256');
   const authorized = await GET(authorizeRequest(search, cookie));
   expect(authorized.status).toBe(302);
-  const consentCode = new URL(
-    authorized.headers.get('location') ?? '',
-    APP_ORIGIN,
-  ).searchParams.get('consent_code');
-  if (consentCode === null) throw new Error('The provider did not request consent.');
-  const approved = await finalizeMcpConsent({
-    userId: workspace.adminUser.id,
-    consentCode,
-    accept: true,
-    organizationId: workspace.organizationId,
-    ...(agent === undefined ? {} : { agent }),
-  });
+  const location = new URL(authorized.headers.get('location') ?? '', APP_ORIGIN);
+  expect(location.pathname).toBe('/oauth/authorize');
+  const consentCode = await createProviderConsent(workspace.adminUser.id, location.search.slice(1));
+  const approved = await finalizeProviderConsent(
+    {
+      userId: workspace.adminUser.id,
+      consentCode,
+      accept: true,
+      organizationId: workspace.organizationId,
+      ...(agent === undefined ? {} : { agent }),
+    },
+    auth.api,
+    new Headers({ cookie, origin: APP_ORIGIN }),
+  );
   const code = new URL(approved.redirectUri).searchParams.get('code');
   if (code === null) throw new Error('The consent did not return an authorization code.');
   const [record] = await db
     .select()
     .from(schema.verification)
-    .where(eq(schema.verification.identifier, code));
+    .where(eq(schema.verification.identifier, providerTokenHash(code)));
   if (record === undefined) throw new Error('The consent code was not stored.');
-  const value = JSON.parse(record.value) as Record<string, unknown>;
-  expect(value['codeChallengeMethod']).toBe('s256');
+  const value = JSON.parse(record.value) as { query: { code_challenge_method: string } };
+  expect(value.query.code_challenge_method).toBe('S256');
   return { code, verifier };
 }
 
@@ -272,7 +261,10 @@ function refreshRequest(refreshToken: string): Request {
 async function issuedCredentials(workspace: Workspace, scopes?: string[]) {
   const { code, verifier } = await finalizedAuthorizationCode(workspace, scopes);
   const response = await authPost(codeRequest(code, verifier));
-  expect(response.status).toBe(200);
+  expect(
+    response.status,
+    response.status === 200 ? '' : JSON.stringify(await response.clone().json()),
+  ).toBe(200);
   const body = (await response.json()) as Record<string, unknown>;
   const accessToken = body['access_token'];
   const refreshToken = body['refresh_token'];
@@ -431,7 +423,9 @@ describe('MCP authorize PKCE boundary', () => {
   let cookie: string;
 
   beforeEach(async () => {
+    const signingKeys = await db.select().from(schema.authJwks);
     await resetDatabase();
+    if (signingKeys.length > 0) await db.insert(schema.authJwks).values(signingKeys);
     workspace = await createWorkspace('McpAuthorization');
     await db.insert(schema.oauthApplication).values({
       id: randomUUID(),
@@ -440,6 +434,30 @@ describe('MCP authorize PKCE boundary', () => {
       redirectUrls: CALLBACK_URL,
       type: 'public',
       userId: workspace.adminUser.id,
+    });
+    await db
+      .insert(schema.oauthProviderResource)
+      .values({
+        id: randomUUID(),
+        identifier: `${APP_ORIGIN}/mcp`,
+        name: 'Orbit MCP',
+        allowedScopes: ['orbit.read', 'orbit.write'],
+        disabled: false,
+      })
+      .onConflictDoNothing();
+    await db.insert(schema.oauthProviderClient).values({
+      id: randomUUID(),
+      clientId: 'client_test',
+      name: 'Test MCP client',
+      redirectUris: [CALLBACK_URL],
+      tokenEndpointAuthMethod: 'none',
+      applicationType: 'native',
+      scopes: ['openid', 'profile', 'email', 'offline_access', 'orbit.read', 'orbit.write'],
+      grantTypes: ['authorization_code', 'refresh_token'],
+      responseTypes: ['code'],
+      requirePKCE: true,
+      legacyResourceMigrationPending: true,
+      disabled: false,
     });
     const token = `session_${randomUUID()}`;
     await db.insert(schema.session).values({
@@ -465,7 +483,7 @@ describe('MCP authorize PKCE boundary', () => {
         const start = await GET(authorizeRequest(search));
         expect(start.status).toBe(302);
         storeResponseCookies(cookies, start);
-        expect(cookies.has('oidc_login_prompt')).toBe(true);
+        expect(start.headers.get('location')).toContain('sig=');
         const loginLocation = new URL(start.headers.get('location') ?? '', APP_ORIGIN);
         expect(loginLocation.pathname).toBe('/login');
         const callbackUrl = mcpContinueUrl(Object.fromEntries(loginLocation.searchParams));
@@ -495,25 +513,24 @@ describe('MCP authorize PKCE boundary', () => {
             origin: APP_ORIGIN,
             [DEV_LOGIN_HEADER]: '1',
           },
-          body: JSON.stringify({ email: workspace.adminUser.email, otp }),
+          body: JSON.stringify({
+            email: workspace.adminUser.email,
+            otp,
+            oauth_query: loginLocation.search.slice(1),
+          }),
         });
         verify.headers.set('cookie', cookieHeader(cookies));
         const verified = await authPost(verify);
-        expect(verified.status).toBe(302);
+        expect(verified.status).toBe(200);
         storeResponseCookies(cookies, verified);
-        expect(new URL(verified.headers.get('location') ?? '', APP_ORIGIN).pathname).toBe(
-          '/oauth/authorize',
-        );
-
-        const records = await db
-          .select({ value: schema.verification.value })
-          .from(schema.verification);
-        const parsedRecords = records.map(
-          (record) => JSON.parse(record.value) as Record<string, unknown>,
-        );
-        const resumed = parsedRecords.find((value) => value['clientId'] === 'client_test');
-        expect(resumed?.['requireConsent']).toBe(true);
-        expect(resumed?.['state']).toBe('state_test');
+        const resumed = (await verified.json()) as { redirect: boolean; url: string };
+        expect(resumed.redirect).toBe(true);
+        const consentLocation = new URL(resumed.url, APP_ORIGIN);
+        expect(consentLocation.pathname).toBe('/oauth/authorize');
+        expect(consentLocation.searchParams.get('state')).toBe('state_test');
+        expect(consentLocation.searchParams.get('sig')).not.toBeNull();
+        expect(consentLocation.searchParams.has('code')).toBe(false);
+        expect(await db.select().from(schema.oauthAccessToken)).toHaveLength(0);
       });
     } finally {
       if (previousDevLogin === undefined) delete process.env['ORBIT_DEV_LOGIN'];
@@ -551,21 +568,26 @@ describe('MCP authorize PKCE boundary', () => {
   });
 
   it('accepts an S256 challenge and continues to explicit consent', async () => {
-    const search = authorizeSearch('consent');
-    search.set('code_challenge', VALID_PKCE_CHALLENGE);
-    search.set('code_challenge_method', 'S256');
-    const response = await GET(authorizeRequest(search, cookie));
-    expect(response.status).toBe(302);
-    const location = new URL(response.headers.get('location') ?? '', APP_ORIGIN);
-    expect(location.pathname).toBe('/oauth/authorize');
-    expect(location.searchParams.get('consent_code')).not.toBeNull();
+    await withNativeFetchGlobals(async () => {
+      const search = authorizeSearch('consent');
+      search.set('code_challenge', VALID_PKCE_CHALLENGE);
+      search.set('code_challenge_method', 'S256');
+      const response = await GET(authorizeRequest(search, cookie));
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('location') ?? '', APP_ORIGIN);
+      expect(location.pathname).toBe('/oauth/authorize');
+      expect(location.searchParams.get('sig')).not.toBeNull();
+    });
   });
 
   it('exchanges an authorization code created by the real provider after legacy consent', async () => {
     await withNativeFetchGlobals(async () => {
       const { code, verifier } = await providerAuthorizationCode(workspace, cookie);
       const response = await authPost(codeRequest(code, verifier));
-      expect(response.status).toBe(200);
+      expect(
+        response.status,
+        response.status === 200 ? '' : JSON.stringify(await response.clone().json()),
+      ).toBe(200);
       const body = (await response.json()) as Record<string, unknown>;
       const accessToken = body['access_token'];
       if (typeof accessToken !== 'string') throw new Error('The provider did not return a token.');
@@ -589,7 +611,7 @@ describe('MCP authorize PKCE boundary', () => {
         const issued = await authPost(codeRequest(code, verifier));
         expect(issued.status).toBe(200);
         const token = mcpTokenResponseSchema.parse(await issued.json());
-        expect(token.scope).toBe('openid offline_access orbit.read');
+        expect(token.scope).toBe('orbit.read');
         if (token.refresh_token === undefined) throw new Error('No Agent refresh credential.');
         const { secret } = await auth.$context;
         const accessBinding = unbindAgentMcpCredential(token.access_token, secret);
@@ -638,9 +660,12 @@ describe('MCP authorize PKCE boundary', () => {
           write: true,
         });
         const response = await authPost(codeRequest(code, verifier));
-        expect(response.status).toBe(200);
+        expect(
+          response.status,
+          response.status === 200 ? '' : JSON.stringify(await response.clone().json()),
+        ).toBe(200);
         const token = mcpTokenResponseSchema.parse(await response.json());
-        expect(token.scope).toBe('openid offline_access orbit.read orbit.write');
+        expect(token.scope).toBe('orbit.read orbit.write');
         if (token.refresh_token === undefined) throw new Error('No Agent refresh credential.');
         const { secret } = await auth.$context;
         const binding = unbindAgentMcpCredential(token.access_token, secret);
@@ -652,7 +677,7 @@ describe('MCP authorize PKCE boundary', () => {
           .select()
           .from(schema.mcpGrant)
           .where(eq(schema.mcpGrant.id, binding.grantId));
-        expect(grant?.scopes).toBe(token.scope);
+        expect(grant?.scopes).toBe('openid offline_access orbit.read orbit.write');
         expect((await verifyMcpAccessToken(token.access_token)).grantId).toBe(binding.grantId);
         process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'false';
         const refreshed = await authPost(refreshRequest(token.refresh_token));
@@ -700,8 +725,8 @@ describe('MCP authorize PKCE boundary', () => {
         const [remaining] = await db
           .select({ identifier: schema.verification.identifier })
           .from(schema.verification)
-          .where(eq(schema.verification.identifier, code));
-        expect(remaining?.identifier).toBe(code);
+          .where(eq(schema.verification.identifier, providerTokenHash(code)));
+        expect(remaining?.identifier).toBe(providerTokenHash(code));
       }
     });
   });
@@ -896,16 +921,16 @@ describe('MCP authorize PKCE boundary', () => {
   it('requires approved authorization context to agree with the exact grant', async () => {
     await withNativeFetchGlobals(async () => {
       for (const override of [
-        { requireConsent: true },
+        { type: 'pending_consent' },
         { userId: 'another-user' },
-        { clientId: 'another-client' },
-        { scope: ['openid', 'offline_access', 'orbit.read', 'orbit.write'] },
+        { query: { client_id: 'another-client' } },
+        { query: { scope: 'openid offline_access orbit.read orbit.write' } },
       ]) {
         const { code, verifier } = await finalizedAuthorizationCode(workspace);
         const [record] = await db
           .select()
           .from(schema.verification)
-          .where(eq(schema.verification.identifier, code));
+          .where(eq(schema.verification.identifier, providerTokenHash(code)));
         if (record === undefined) throw new Error('No authorization record.');
         const value = JSON.parse(record.value) as Record<string, unknown>;
         await db
@@ -1016,8 +1041,16 @@ describe('MCP authorize PKCE boundary', () => {
       });
       await db
         .update(schema.oauthApplication)
-        .set({ type: 'confidential', clientSecret: 'client-secret' })
+        .set({ type: 'web', clientSecret: 'client-secret' })
         .where(eq(schema.oauthApplication.clientId, 'client_test'));
+      await db
+        .update(schema.oauthProviderClient)
+        .set({
+          tokenEndpointAuthMethod: 'client_secret_basic',
+          clientSecret: providerTokenHash('client-secret'),
+          legacyAuthMethods: true,
+        })
+        .where(eq(schema.oauthProviderClient.clientId, 'client_test'));
       const [otherClient] = await db
         .select({ type: schema.oauthApplication.type })
         .from(schema.oauthApplication)
@@ -1099,7 +1132,14 @@ describe('MCP authorize PKCE boundary', () => {
   it('rejects alternate token paths without exposing an unbound token', async () => {
     await withNativeFetchGlobals(async () => {
       const { code, verifier } = await finalizedAuthorizationCode(workspace);
-      for (const path of ['/api/auth/mcp/token/', '/api/auth/mcp/TOKEN', '/api/auth/mcp/%74oken']) {
+      for (const path of [
+        '/api/auth/mcp/token/',
+        '/api/auth/mcp/TOKEN',
+        '/api/auth/mcp/%74oken',
+        '/api/auth/oauth2/token/',
+        '/api/auth/oauth2/TOKEN',
+        '/api/auth/oauth2/%74oken',
+      ]) {
         const token = await authPost(
           new Request(`${APP_ORIGIN}${path}`, {
             method: 'POST',

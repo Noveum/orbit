@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   closeAuthRateLimitStorage,
   redisRateLimitStorage,
@@ -35,6 +37,29 @@ describe('redisRateLimitStorage', () => {
 
   it('is absent when no Redis is configured, so better-auth keeps its own store', () => {
     expect(redisRateLimitStorage()).toBeUndefined();
+  });
+
+  it('does not open a Redis connection before the storage is used', async () => {
+    let connections = 0;
+    const server = createServer((socket) => {
+      connections += 1;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string')
+        throw new Error('A TCP address is required.');
+      process.env['REDIS_URL'] = `redis://127.0.0.1:${address.port}`;
+      expect(redisRateLimitStorage()).toBeDefined();
+      await delay(100);
+      expect(connections).toBe(0);
+    } finally {
+      closeAuthRateLimitStorage();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      });
+    }
   });
 
   it('allows a request up to the maximum and refuses the one after it', async () => {

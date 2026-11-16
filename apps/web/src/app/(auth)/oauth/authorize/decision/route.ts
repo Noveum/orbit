@@ -1,11 +1,8 @@
-import {
-  finalizeMcpConsent,
-  listOrganizationsForUser,
-  passkeyVerifiedWithin,
-  userHasPasskey,
-} from '@orbit/core';
+import { listOrganizationsForUser, passkeyVerifiedWithin, userHasPasskey } from '@orbit/core';
 import { toDomainError } from '@orbit/shared/errors';
 import { mcpConsentDecisionSchema } from '@orbit/shared/validators';
+import { finalizeProviderConsent } from '@/lib/auth/mcp-consent.ts';
+import { auth } from '@/lib/auth/server.ts';
 import { getSession } from '@/lib/auth/session.ts';
 import { publicAppUrl } from '@/lib/env.ts';
 import { FRESH_SESSION_WINDOW_MS, PASSKEY_STEP_UP_WINDOW_MS, signedInWithin } from '../step-up.ts';
@@ -35,7 +32,11 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     if (decision === 'deny') {
-      const denied = await finalizeMcpConsent({ userId, consentCode, accept: false });
+      const denied = await finalizeProviderConsent(
+        { userId, consentCode, accept: false },
+        auth.api,
+        request.headers,
+      );
       return Response.json({ redirectUri: denied.redirectUri });
     }
 
@@ -50,13 +51,17 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'invalid_workspace' }, { status: 400 });
     }
 
-    const approved = await finalizeMcpConsent({
-      userId,
-      consentCode,
-      accept: true,
-      organizationId,
-      ...(agent === undefined ? {} : { agent }),
-    });
+    const approved = await finalizeProviderConsent(
+      {
+        userId,
+        consentCode,
+        accept: true,
+        organizationId,
+        ...(agent === undefined ? {} : { agent }),
+      },
+      auth.api,
+      request.headers,
+    );
     return Response.json({ redirectUri: approved.redirectUri });
   } catch (error) {
     const domain = toDomainError(error);

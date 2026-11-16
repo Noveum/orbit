@@ -3,6 +3,7 @@ import {
   canRemoveSignInMethod,
   deviceLabelOf,
   LAST_CREDENTIAL_MESSAGE,
+  linkedAccountRowId,
   removalBlockReason,
 } from '../../../src/features/account/credentials.ts';
 
@@ -27,6 +28,32 @@ describe('canRemoveSignInMethod', () => {
 
   it('allows removal with two providers', () => {
     expect(canRemoveSignInMethod({ accounts: 2, passkeys: 0 })).toBe(true);
+  });
+});
+
+describe('linkedAccountRowId', () => {
+  const accounts = [
+    { id: 'local-google', providerId: 'google', accountId: 'provider-42' },
+    { id: 'local-github', providerId: 'github', accountId: 'provider-42' },
+  ];
+
+  it('maps the existing provider selector to its local account row', () => {
+    expect(linkedAccountRowId(accounts, 'github', 'provider-42')).toBe('local-github');
+    expect(linkedAccountRowId(accounts, 'google', 'provider-42')).toBe('local-google');
+  });
+
+  it('rejects an account outside the signed-in account list', () => {
+    expect(linkedAccountRowId(accounts, 'github', 'another-account')).toBeNull();
+    expect(linkedAccountRowId(accounts, 'unknown')).toBeNull();
+  });
+
+  it('requires an exact account when a provider has multiple linked identities', () => {
+    const multiple = [
+      ...accounts,
+      { id: 'other-google', providerId: 'google', accountId: 'other' },
+    ];
+    expect(linkedAccountRowId(multiple, 'google')).toBeNull();
+    expect(linkedAccountRowId(multiple, 'google', 'other')).toBe('other-google');
   });
 });
 

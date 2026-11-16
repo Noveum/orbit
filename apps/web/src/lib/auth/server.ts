@@ -1,11 +1,14 @@
 import { createHmac } from 'node:crypto';
+import { mcp } from '@better-auth/mcp';
 import { passkey } from '@better-auth/passkey';
 import {
   assertEmailDomainAllowed,
   ingestExternalAvatar,
   isExternalImageUrl,
+  lockMcpOwner,
   publishSessionRevoked,
   redisRateLimitStorage,
+  validateMcpGrant,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
 import {
@@ -20,10 +23,12 @@ import { type BetterAuthPlugin, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { nextCookies } from 'better-auth/next-js';
-import { emailOTP, mcp } from 'better-auth/plugins';
+import { emailOTP, jwt } from 'better-auth/plugins';
 import { z } from 'zod';
 import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { deploymentAuthOptions } from '@/lib/auth/deployment.ts';
+import { linkMigratedMcpResource } from '@/lib/auth/mcp-consent.ts';
+import { mcpConsentGrantId, providerTokenHash } from '@/lib/auth/mcp-provider.ts';
 import { organizationSessionPlugin } from '@/lib/auth/organization.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 import { uniqueHandleFor } from './handle.ts';
@@ -38,6 +43,8 @@ export const MCP_SCOPES = [
   'orbit.write',
 ] as const;
 
+export const MCP_RESOURCE_SCOPES = MCP_SCOPES.filter((scope) => scope.startsWith('orbit.'));
+
 export const MCP_CONSENT_PATH = '/oauth/authorize';
 export const MCP_LOGIN_PATH = '/login';
 export const MCP_AUTHORIZE_START_PATH = '/api/oauth/start';
@@ -47,7 +54,9 @@ function mcpTokenRateLimitProbe() {
   return {
     id: 'orbit-mcp-token-rate-limit-probe' as const,
     onRequest(request: Request) {
-      if (new URL(request.url).pathname !== '/api/auth/mcp/token') {
+      if (
+        !['/api/auth/mcp/token', '/api/auth/oauth2/token'].includes(new URL(request.url).pathname)
+      ) {
         return Promise.resolve(undefined);
       }
       if (request.headers.get(MCP_TOKEN_RATE_LIMIT_PROBE_HEADER) !== '1') {
@@ -211,12 +220,13 @@ export const auth = betterAuth({
     },
   },
   hooks: {
-    before: createAuthMiddleware((ctx) => {
+    before: createAuthMiddleware(async (ctx) => {
       if (ctx.path === SIGN_IN_CODE_PATH) {
         const parsed = signInCodeRequestSchema.safeParse(ctx.body);
         if (parsed.success) assertSignUpAllowed(parsed.data.email);
       }
-      return Promise.resolve();
+      if (ctx.path === '/oauth2/authorize')
+        await linkMigratedMcpResource(ctx.query, mcpServerUrl());
     }),
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path === '/passkey/verify-authentication' && verificationSucceeded(ctx)) {
@@ -279,15 +289,64 @@ export const auth = betterAuth({
       },
     }),
     organizationSessionPlugin(),
+    jwt({
+      disableSettingJwtHeader: true,
+      jwt: { issuer: new URL(serverEnv().BETTER_AUTH_URL).origin },
+      schema: { jwks: { modelName: 'authJwks' } },
+    }),
     mcp({
       loginPage: MCP_LOGIN_PATH,
+      consentPage: MCP_CONSENT_PATH,
       resource: mcpServerUrl(),
-      oidcConfig: {
-        loginPage: MCP_LOGIN_PATH,
-        consentPage: MCP_CONSENT_PATH,
-        allowDynamicClientRegistration: true,
-        requirePKCE: true,
-        scopes: [...MCP_SCOPES],
+      allowDynamicClientRegistration: true,
+      clientRegistrationDefaultApplicationType: 'infer',
+      allowUnauthenticatedClientRegistration: true,
+      scopes: [...MCP_SCOPES],
+      grantTypes: ['authorization_code', 'refresh_token'],
+      clientRegistrationDefaultScopes: [...MCP_SCOPES],
+      clientRegistrationAllowedScopes: [...MCP_SCOPES],
+      clientRegistrationAllowedResources: [mcpServerUrl()],
+      enforcePerClientResources: true,
+      refreshTokenReuseInterval: 0,
+      storeTokens: { hash: providerTokenHash },
+      postLogin: {
+        page: MCP_CONSENT_PATH,
+        shouldRedirect: () => false,
+        consentReferenceId: () => mcpConsentGrantId(),
+      },
+      customAccessTokenClaims: async ({ user, referenceId, scopes }) => {
+        if (user == null || referenceId === undefined) {
+          throw new APIError('UNAUTHORIZED', {
+            message: 'Explicit workspace consent is required.',
+          });
+        }
+        await db.transaction(async (tx) => {
+          await lockMcpOwner(tx, user.id);
+          const [grant] = await tx
+            .select()
+            .from(schema.mcpGrant)
+            .where(eq(schema.mcpGrant.id, referenceId))
+            .limit(1);
+          if (
+            grant === undefined ||
+            grant.userId !== user.id ||
+            (grant.identityKind !== 'legacy' && grant.identityKind !== 'agent') ||
+            scopes.some((scope) => !grant.scopes.split(' ').includes(scope))
+          ) {
+            throw new APIError('UNAUTHORIZED', { message: 'Reconnect Orbit to continue.' });
+          }
+          await validateMcpGrant(tx, grant, grant.identityKind);
+        });
+        return { orbit_grant_id: referenceId };
+      },
+      schema: {
+        oauthClient: { modelName: 'oauthProviderClient' },
+        oauthResource: { modelName: 'oauthProviderResource' },
+        oauthClientResource: { modelName: 'oauthProviderClientResource' },
+        oauthRefreshToken: { modelName: 'oauthProviderRefreshToken' },
+        oauthAccessToken: { modelName: 'oauthProviderAccessToken' },
+        oauthConsent: { modelName: 'oauthProviderConsent' },
+        oauthClientAssertion: { modelName: 'oauthProviderClientAssertion' },
       },
     }),
     nextCookies(),

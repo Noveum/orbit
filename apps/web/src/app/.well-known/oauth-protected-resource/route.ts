@@ -1,14 +1,13 @@
-import { oAuthProtectedResourceMetadata } from 'better-auth/plugins';
-import { auth, MCP_SCOPES } from '@/lib/auth/server.ts';
+import { auth, MCP_RESOURCE_SCOPES } from '@/lib/auth/server.ts';
 import { METADATA_CORS_HEADERS, metadataPreflight } from '../metadata-headers.ts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const advertised = oAuthProtectedResourceMetadata(auth);
+const advertised = (request: Request) => auth.handler(request);
 
 export function withOrbitScopes(metadata: Record<string, unknown>): Record<string, unknown> {
-  return { ...metadata, scopes_supported: [...MCP_SCOPES] };
+  return { ...metadata, scopes_supported: [...MCP_RESOURCE_SCOPES] };
 }
 
 export async function GET(request: Request): Promise<Response> {
