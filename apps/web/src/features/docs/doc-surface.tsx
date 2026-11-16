@@ -10,6 +10,7 @@ import { Check, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -525,20 +526,34 @@ function EditSession({
 
   const refreshDoc = useRefreshDoc(doc.id);
   const [theirVersion, setTheirVersion] = useState<Doc | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const refreshSequence = useRef(0);
+
+  const retryRefreshDoc = useCallback(() => {
+    const sequence = ++refreshSequence.current;
+    setTheirVersion(null);
+    setRefreshFailed(false);
+    refreshDoc()
+      .then((detail) => {
+        if (sequence === refreshSequence.current) setTheirVersion(detail.doc);
+      })
+      .catch(() => {
+        if (sequence === refreshSequence.current) setRefreshFailed(true);
+      });
+  }, [refreshDoc]);
 
   useEffect(() => {
     if (!revisioned.stale) {
       setTheirVersion(null);
       return;
     }
-    let live = true;
-    refreshDoc().then((detail) => {
-      if (live && detail !== undefined) setTheirVersion(detail.doc);
-    });
+    retryRefreshDoc();
     return () => {
-      live = false;
+      refreshSequence.current += 1;
     };
-  }, [revisioned.stale, refreshDoc]);
+  }, [revisioned.stale, retryRefreshDoc]);
+
+  const versionLabel = theirVersion === null ? 'Fetching their version' : 'Load their version';
 
   const loadTheirVersion = () => {
     if (theirVersion === null) return;
@@ -583,10 +598,10 @@ function EditSession({
             type="button"
             variant="secondary"
             size="sm"
-            disabled={theirVersion === null}
-            onClick={loadTheirVersion}
+            disabled={theirVersion === null && !refreshFailed}
+            onClick={refreshFailed ? retryRefreshDoc : loadTheirVersion}
           >
-            {theirVersion === null ? 'Fetching their version' : 'Load their version'}
+            {refreshFailed ? 'Retry fetching their version' : versionLabel}
           </Button>
         </div>
       ) : null}

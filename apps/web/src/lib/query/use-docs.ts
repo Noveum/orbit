@@ -57,9 +57,13 @@ export function useDoc(docId: string | null) {
 
 export function useRefreshDoc(docId: string) {
   const client = useQueryClient();
-  return useCallback(async (): Promise<DocDetail | undefined> => {
-    await client.refetchQueries({ queryKey: queryKeys.doc(docId) });
-    return client.getQueryData<DocDetail>(queryKeys.doc(docId));
+  return useCallback(async (): Promise<DocDetail> => {
+    return await client.fetchQuery({
+      queryKey: queryKeys.doc(docId),
+      queryFn: async ({ signal }): Promise<DocDetail> =>
+        await apiFetch(`/api/docs/${docId}`, docDetailSchema, { signal }),
+      staleTime: 0,
+    });
   }, [client, docId]);
 }
 
