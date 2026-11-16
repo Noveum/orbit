@@ -32,7 +32,10 @@ const reportSchema = z.object({
 });
 
 async function contexts(): Promise<string[]> {
-  return (await readdir(tmpdir())).filter((name) => name.startsWith('orbit-database-tls-'));
+  return (await readdir(tmpdir(), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('orbit-database-tls-'))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 beforeEach(async () => {
