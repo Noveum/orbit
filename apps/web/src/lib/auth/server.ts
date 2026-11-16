@@ -29,10 +29,12 @@ import { isDevLoginRequest } from '@/lib/api/dev-login.ts';
 import { deploymentAuthOptions } from '@/lib/auth/deployment.ts';
 import { linkMigratedMcpResource } from '@/lib/auth/mcp-consent.ts';
 import { mcpConsentGrantId, providerTokenHash } from '@/lib/auth/mcp-provider.ts';
+import { isSafeMcpRedirectUri } from '@/lib/auth/mcp-redirect-uri.ts';
 import { organizationSessionPlugin } from '@/lib/auth/organization.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
+import { SESSION_COOKIE_CACHE_POLICY } from './session-policy.ts';
 
 export const MCP_SCOPES = [
   'openid',
@@ -88,7 +90,6 @@ async function touchPasskeyLastUsed(body: unknown): Promise<void> {
     .where(eq(schema.passkey.credentialID, parsed.data.response.id));
 }
 
-const SESSION_CACHE_SECONDS = 5 * 60;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 const SESSION_REVOKING_PATHS = new Set([
@@ -211,7 +212,7 @@ export const auth = betterAuth({
   },
   session: {
     expiresIn: SESSION_MAX_AGE_SECONDS,
-    cookieCache: { enabled: true, maxAge: SESSION_CACHE_SECONDS },
+    cookieCache: SESSION_COOKIE_CACHE_POLICY,
   },
   user: {
     additionalFields: {
@@ -300,6 +301,8 @@ export const auth = betterAuth({
       resource: mcpServerUrl(),
       allowDynamicClientRegistration: true,
       clientRegistrationDefaultApplicationType: 'infer',
+      validateRedirectUri: (uri, _registered, matched) =>
+        matched === true && isSafeMcpRedirectUri(uri),
       allowUnauthenticatedClientRegistration: true,
       scopes: [...MCP_SCOPES],
       grantTypes: ['authorization_code', 'refresh_token'],
