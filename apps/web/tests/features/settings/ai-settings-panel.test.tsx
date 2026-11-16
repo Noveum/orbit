@@ -74,7 +74,7 @@ describe('AiSettingsPanel', () => {
         expect(screen.getByRole('status').textContent).toContain('Connection successful'),
       );
       await user.type(screen.getByLabelText(label), '-changed');
-      expect(screen.queryByText(/Connection successful/)).toBeNull();
+      expect(screen.queryByText(/Connection successful/)?.textContent).toBeUndefined();
     });
   }
 
@@ -96,7 +96,19 @@ describe('AiSettingsPanel', () => {
         false,
       ),
     );
-    expect(screen.queryByText(/Connection successful/)).toBeNull();
+    expect(screen.queryByText(/Connection successful/)?.textContent).toBeUndefined();
+  });
+
+  it('clears connection feedback when the provider shape changes', async () => {
+    const user = userEvent.setup();
+    fetchResponder = async () => Response.json({ ok: true, latencyMs: 12, message: 'Connected' });
+    render(<AiSettingsPanel settings={INITIAL_SETTINGS} canManage={true} />);
+    await user.click(screen.getByRole('button', { name: 'Test connection' }));
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain('Connection successful'),
+    );
+    await user.selectOptions(screen.getByLabelText('Provider shape'), 'openai-compatible');
+    expect(screen.queryByText(/Connection successful/)?.textContent).toBeUndefined();
   });
 
   it('updates base URL and model defaults when switching provider shape', async () => {

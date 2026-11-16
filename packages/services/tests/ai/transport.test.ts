@@ -3,7 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import zlib from 'node:zlib';
 import type { DnsLookupCallback, DnsLookupFn } from '../../src/ai/transport.ts';
-import { safeFetch } from '../../src/ai/transport.ts';
+import { createSafeLookup, safeFetch } from '../../src/ai/transport.ts';
 
 const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
@@ -63,6 +63,32 @@ function rebindingDns(firstAddress: string, secondAddress: string): DnsLookupFn 
     callback(null, [{ address, family: 4 }], 4);
   };
 }
+
+async function compatibleDnsError(address: string, allowPrivate = false): Promise<Error | null> {
+  const lookup = createSafeLookup(allowPrivate, mockDns(address, 6));
+  if (lookup === undefined) throw new Error('Lookup is missing');
+  return await new Promise((resolve) =>
+    lookup('provider.example', { all: true }, (error) => resolve(error)),
+  );
+}
+
+describe('compatible DNS destinations', () => {
+  for (const address of ['::7f00:2', '::a00:1', '::127.0.0.2']) {
+    it(`rejects private compatible DNS result ${address} without connecting`, async () => {
+      const violation = await compatibleDnsError(address);
+      expect(violation).not.toBeNull();
+      expect(violation?.message).toContain('Blocked connection to private address');
+    });
+  }
+
+  it('allows a public compatible DNS result without connecting', async () => {
+    expect(await compatibleDnsError('::8.8.8.8')).toBeNull();
+  });
+
+  it('preserves the private compatible DNS override without connecting', async () => {
+    expect(await compatibleDnsError('::127.0.0.2', true)).toBeNull();
+  });
+});
 
 describe('safeFetch connection establishment destination validation', () => {
   afterEach(() => {

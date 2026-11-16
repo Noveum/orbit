@@ -13,22 +13,23 @@ it('sends string provider bodies with their UTF-8 length on the Node runtime', a
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { safeFetch } from ${JSON.stringify(join(import.meta.dir, '../../src/ai/transport.ts'))};
-for (const body of ['{"model":"fixture"}', '{"message":"héllo 🌍"}', '']) {
+for (const body of ['{"model":"fixture"}', '{"message":"héllo 🌍"}', '', undefined]) {
   const server = http.createServer((request, response) => {
     let received = '';
     request.setEncoding('utf8');
     request.on('data', chunk => { received += chunk; });
     request.on('end', () => {
-      response.writeHead(request.headers['content-length'] === String(Buffer.byteLength(body)) ? 200 : 411, { 'content-type': 'application/json' });
+      const expectedLength = body === undefined ? undefined : String(Buffer.byteLength(body));
+      response.writeHead(request.headers['content-length'] === expectedLength ? 200 : 411, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ received, transferEncoding: request.headers['transfer-encoding'] ?? null }));
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
-    const response = await safeFetch('http://127.0.0.1:' + server.address().port + '/completion', { method: 'POST', body, allowPrivate: true });
+    const response = await safeFetch('http://127.0.0.1:' + server.address().port + '/completion', { method: body === undefined ? 'GET' : 'POST', body, allowPrivate: true });
     const result = await response.json();
     assert.equal(response.status, 200);
-    assert.deepEqual(result, { received: body, transferEncoding: null });
+    assert.deepEqual(result, { received: body ?? '', transferEncoding: null });
   } finally {
     const closed = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     server.closeAllConnections();
