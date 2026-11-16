@@ -210,6 +210,40 @@ async function verifyMcpAccessOnlyRegistry(
   now: Date,
 ): Promise<void> {
   const hash = createHash('sha256').update(token.accessToken).digest('base64url');
+  const [hint] = await tx
+    .select({
+      id: schema.oauthProviderAccessToken.id,
+      refreshId: schema.oauthProviderAccessToken.refreshId,
+    })
+    .from(schema.oauthProviderAccessToken)
+    .where(eq(schema.oauthProviderAccessToken.token, hash))
+    .limit(1);
+  if (hint === undefined) throw unauthorized('That access token is not valid.');
+  const [family] =
+    hint.refreshId === null
+      ? []
+      : await tx
+          .select()
+          .from(schema.oauthProviderRefreshToken)
+          .where(eq(schema.oauthProviderRefreshToken.id, hint.refreshId))
+          .limit(1)
+          .for('share');
+  if (
+    hint.refreshId !== null &&
+    (family === undefined ||
+      family.revoked !== null ||
+      family.rotatedAt !== null ||
+      family.expiresAt <= now ||
+      family.clientId !== token.clientId ||
+      family.userId !== token.userId ||
+      family.sessionId !== token.sessionId ||
+      family.referenceId !== grantId ||
+      token.scopes
+        .split(/\s+/)
+        .filter(Boolean)
+        .some((scope) => !family.scopes.includes(scope)))
+  )
+    throw unauthorized('That access token is not valid.');
   const [access] = await tx
     .select()
     .from(schema.oauthProviderAccessToken)
@@ -218,6 +252,9 @@ async function verifyMcpAccessOnlyRegistry(
     .for('share');
   if (
     access === undefined ||
+    access.id !== hint.id ||
+    access.refreshId !== hint.refreshId ||
+    (family !== undefined && access.authorizationCodeId !== family.authorizationCodeId) ||
     access.revoked !== null ||
     access.expiresAt <= now ||
     access.clientId !== token.clientId ||

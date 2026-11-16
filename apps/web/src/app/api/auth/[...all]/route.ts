@@ -9,7 +9,7 @@ import {
   validateMcpGrant,
   verifyMcpTokenBinding,
 } from '@orbit/core';
-import { and, db, eq, gt, isNotNull, schema, type Transaction } from '@orbit/db';
+import { and, db, eq, gt, isNotNull, isNull, schema, type Transaction } from '@orbit/db';
 import { isDomainError } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
@@ -168,6 +168,8 @@ interface McpTokenExchange {
   readonly scopes: string;
   readonly sourceRefreshToken: string | null;
   readonly authorizationCodeId: string | null;
+  readonly pendingTokenHash: string;
+  readonly refreshId: string | null;
 }
 
 function pendingMcpTokenHash(authorizationCodeId: string): string {
@@ -314,11 +316,12 @@ async function authorizationCodeExchange(
       }
       await validateMcpGrant(tx, grant, grant.identityKind);
       const authorizationCodeId = providerTokenHash(code);
+      const pendingTokenHash = pendingMcpTokenHash(authorizationCodeId);
       await tx
         .insert(schema.oauthProviderAccessToken)
         .values({
           id: randomUUIDv7(),
-          token: pendingMcpTokenHash(authorizationCodeId),
+          token: pendingTokenHash,
           clientId: value.clientId,
           userId: value.userId,
           sessionId: provider.data.sessionId,
@@ -339,6 +342,8 @@ async function authorizationCodeExchange(
         scopes: value.scope.join(' '),
         sourceRefreshToken: null,
         authorizationCodeId,
+        pendingTokenHash,
+        refreshId: null,
       };
     }),
   );
@@ -365,6 +370,44 @@ async function refreshExchange(
       await lockMcpOwner(tx, userId);
       await verifyMcpTokenBinding(tx, source, binding.grantId, kind);
       if (source.refreshTokenExpiresAt.getTime() <= Date.now()) return null;
+      const [family] = await tx
+        .select()
+        .from(schema.oauthProviderRefreshToken)
+        .where(eq(schema.oauthProviderRefreshToken.token, providerTokenHash(binding.credential)))
+        .limit(1)
+        .for('share');
+      if (
+        family === undefined ||
+        family.revoked !== null ||
+        family.rotatedAt !== null ||
+        family.expiresAt <= new Date() ||
+        family.sessionId === null ||
+        family.sessionId !== source.sessionId ||
+        family.clientId !== source.clientId ||
+        family.userId !== userId ||
+        family.referenceId !== binding.grantId ||
+        !scopesMatch(family.scopes.join(' '), source.scopes)
+      )
+        return null;
+      const pendingTokenHash = providerTokenHash(`orbit-pending-refresh:${family.token}`);
+      await tx
+        .insert(schema.oauthProviderAccessToken)
+        .values({
+          id: randomUUIDv7(),
+          token: pendingTokenHash,
+          clientId: family.clientId,
+          userId,
+          sessionId: family.sessionId,
+          referenceId: binding.grantId,
+          authorizationCodeId: family.authorizationCodeId,
+          refreshId: family.id,
+          resources: [mcpServerUrl()],
+          scopes: family.scopes,
+          expiresAt: family.expiresAt,
+          createdAt: new Date(),
+          revoked: new Date(),
+        })
+        .onConflictDoNothing({ target: schema.oauthProviderAccessToken.token });
       return {
         grantId: binding.grantId,
         kind,
@@ -372,7 +415,9 @@ async function refreshExchange(
         clientId: source.clientId,
         scopes: source.scopes,
         sourceRefreshToken: binding.credential,
-        authorizationCodeId: null,
+        authorizationCodeId: family.authorizationCodeId,
+        pendingTokenHash,
+        refreshId: family.id,
       };
     }),
   );
@@ -429,8 +474,22 @@ async function persistIssuedMcpToken(
   payload: Awaited<ReturnType<typeof providerResource.verifyBearerToken>>,
   { session, refresh }: NonNullable<Awaited<ReturnType<typeof issuedProviderState>>>,
 ) {
+  const pending = and(
+    eq(schema.oauthProviderAccessToken.token, exchange.pendingTokenHash),
+    exchange.authorizationCodeId === null
+      ? isNull(schema.oauthProviderAccessToken.authorizationCodeId)
+      : eq(schema.oauthProviderAccessToken.authorizationCodeId, exchange.authorizationCodeId),
+    exchange.refreshId === null
+      ? isNull(schema.oauthProviderAccessToken.refreshId)
+      : eq(schema.oauthProviderAccessToken.refreshId, exchange.refreshId),
+    eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
+    eq(schema.oauthProviderAccessToken.userId, exchange.userId),
+    eq(schema.oauthProviderAccessToken.sessionId, session.id),
+    eq(schema.oauthProviderAccessToken.referenceId, exchange.grantId),
+    isNotNull(schema.oauthProviderAccessToken.revoked),
+    gt(schema.oauthProviderAccessToken.expiresAt, new Date()),
+  );
   if (refreshToken === undefined) {
-    if (exchange.authorizationCodeId === null) return [];
     const tracked = await tx
       .update(schema.oauthProviderAccessToken)
       .set({
@@ -439,38 +498,15 @@ async function persistIssuedMcpToken(
         scopes: String(payload['scope']).split(/\s+/).filter(Boolean),
         revoked: null,
       })
-      .where(
-        and(
-          eq(
-            schema.oauthProviderAccessToken.token,
-            pendingMcpTokenHash(exchange.authorizationCodeId),
-          ),
-          eq(schema.oauthProviderAccessToken.authorizationCodeId, exchange.authorizationCodeId),
-          eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
-          eq(schema.oauthProviderAccessToken.userId, exchange.userId),
-          eq(schema.oauthProviderAccessToken.sessionId, session.id),
-          eq(schema.oauthProviderAccessToken.referenceId, exchange.grantId),
-          isNotNull(schema.oauthProviderAccessToken.revoked),
-          gt(schema.oauthProviderAccessToken.expiresAt, new Date()),
-        ),
-      )
+      .where(pending)
       .returning({ id: schema.oauthProviderAccessToken.id });
     if (tracked.length !== 1) return [];
-  } else if (exchange.authorizationCodeId !== null) {
-    await tx
+  } else {
+    const consumed = await tx
       .delete(schema.oauthProviderAccessToken)
-      .where(
-        and(
-          eq(
-            schema.oauthProviderAccessToken.token,
-            pendingMcpTokenHash(exchange.authorizationCodeId),
-          ),
-          eq(schema.oauthProviderAccessToken.authorizationCodeId, exchange.authorizationCodeId),
-          eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
-          eq(schema.oauthProviderAccessToken.userId, exchange.userId),
-          isNotNull(schema.oauthProviderAccessToken.revoked),
-        ),
-      );
+      .where(pending)
+      .returning({ id: schema.oauthProviderAccessToken.id });
+    if (consumed.length !== 1) return [];
   }
   return tx
     .insert(schema.oauthAccessToken)

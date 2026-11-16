@@ -60,6 +60,15 @@ const mode = z
     'legacy-space-basic',
     'legacy-plus-basic',
     'private-key-revoke',
+    'refresh-access-json',
+    'refresh-access-form',
+    'refresh-access-concurrent',
+    'refresh-access-code-race',
+    'refresh-access-family-race',
+    'refresh-access-parent-revoked',
+    'refresh-access-parent-deleted',
+    'code-refresh-reservation-race',
+    'refresh-rotation-reservation-race',
   ])
   .parse(process.argv[2] ?? 'grant');
 const accessOnlyMode = [
@@ -580,6 +589,21 @@ async function registeredClient() {
     .parse(await registration.json());
 }
 const registered = await registeredClient();
+if (mode.startsWith('refresh-access-')) {
+  await db
+    .insert(schema.oauthProviderResource)
+    .values({
+      id: randomUUID(),
+      identifier: `${origin}/mcp`,
+      name: 'Local constrained resource',
+      allowedScopes: ['orbit.read', 'orbit.write'],
+      disabled: false,
+    })
+    .onConflictDoUpdate({
+      target: schema.oauthProviderResource.identifier,
+      set: { allowedScopes: ['orbit.read', 'orbit.write'] },
+    });
+}
 const clientSecret = 'client_secret' in registered ? registered.client_secret : legacyClientSecret;
 const verifier = 'local-upgrade-pkce-verifier-with-more-than-43-characters';
 const challenge = createHash('sha256').update(verifier).digest('base64url');
@@ -715,6 +739,12 @@ function token(body: Record<string, string>): Promise<Response> {
       ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'resource'))
       : body;
   const tokenHeaders = new Headers(headers);
+  if (mode.startsWith('refresh-access-') || mode === 'refresh-rotation-reservation-race') {
+    tokenHeaders.delete('cookie');
+  }
+  if (mode === 'refresh-access-form') {
+    tokenHeaders.set('content-type', 'application/x-www-form-urlencoded');
+  }
   if (mode.endsWith('-basic') || mode === 'access-revoke') {
     tokenHeaders.set(
       'authorization',
@@ -725,10 +755,12 @@ function token(body: Record<string, string>): Promise<Response> {
     new Request(`${origin}/api/auth/mcp/token`, {
       method: 'POST',
       headers: tokenHeaders,
-      body: JSON.stringify({
+      body: (mode === 'refresh-access-form'
+        ? (value: Record<string, string>) => new URLSearchParams(value)
+        : JSON.stringify)({
         ...parameters,
         client_id: registered.client_id,
-        ...(mode.includes('-post')
+        ...(mode.includes('-post') && clientSecret !== undefined
           ? { client_secret: mode === 'legacy-post-wrong' ? 'wrong-local-secret' : clientSecret }
           : {}),
       }),
@@ -759,7 +791,7 @@ if (mode === 'concurrent-access-only') {
   process.exit(0);
 }
 let replayBeforePersistenceStatus: number | undefined;
-if (mode === 'replay-before-persist') {
+if (mode === 'replay-before-persist' || mode === 'code-refresh-reservation-race') {
   const { auth } = await import('../../src/lib/auth/server.ts');
   const issue = auth.api.oauth2Token;
   let replayed = false;
@@ -767,14 +799,32 @@ if (mode === 'replay-before-persist') {
     const response = await issue(input);
     if (response instanceof Response && response.ok && !replayed) {
       replayed = true;
+      const body = await response.clone().json();
+      const [deferredRefresh] =
+        mode === 'code-refresh-reservation-race' && typeof body.refresh_token === 'string'
+          ? await db
+              .select()
+              .from(schema.oauthProviderRefreshToken)
+              .where(
+                eq(
+                  schema.oauthProviderRefreshToken.token,
+                  createHash('sha256').update(body.refresh_token).digest('base64url'),
+                ),
+              )
+          : [];
       const replay = await issue(input);
       if (replay instanceof Response) replayBeforePersistenceStatus = replay.status;
+      if (mode === 'code-refresh-reservation-race') {
+        assert.ok(deferredRefresh);
+        assert.equal((await db.select().from(schema.oauthProviderAccessToken)).length, 0);
+        await db.insert(schema.oauthProviderRefreshToken).values(deferredRefresh);
+      }
     }
     return response;
   });
 }
 const issued = await token(authorizationExchange);
-if (mode === 'replay-before-persist') {
+if (mode === 'replay-before-persist' || mode === 'code-refresh-reservation-race') {
   assert.equal(replayBeforePersistenceStatus, 400);
   assert.equal(issued.status, 400);
   assert.equal((await db.select().from(schema.oauthAccessToken)).length, 0);
@@ -824,6 +874,131 @@ const credentials = tokenSchema.parse(tokenResponse);
 const access = await verifyMcpAccessToken(credentials.access_token);
 assert.equal(access.organizationId, workspace.organizationId);
 assert.equal(access.userId, workspace.adminUser.id);
+if (mode.startsWith('refresh-access-') || mode === 'refresh-rotation-reservation-race') {
+  const { auth } = await import('../../src/lib/auth/server.ts');
+  const { unbindMcpCredential } = await import('@orbit/core');
+  const context = await auth.$context;
+  const binding = unbindMcpCredential(credentials.refresh_token, context.secret);
+  assert.ok(binding);
+  const [family] = await db
+    .select()
+    .from(schema.oauthProviderRefreshToken)
+    .where(
+      eq(
+        schema.oauthProviderRefreshToken.token,
+        createHash('sha256').update(binding.credential).digest('base64url'),
+      ),
+    );
+  assert.ok(family);
+  if (mode.startsWith('refresh-access-'))
+    assert.equal(family.scopes.includes('offline_access'), false);
+  const issue = auth.api.oauth2Token;
+  if (
+    [
+      'refresh-access-code-race',
+      'refresh-access-family-race',
+      'refresh-rotation-reservation-race',
+    ].includes(mode)
+  ) {
+    let invalidated = false;
+    Reflect.set(auth.api, 'oauth2Token', async (input: Parameters<typeof issue>[0]) => {
+      const response = await issue(input);
+      if (response instanceof Response && response.ok && !invalidated) {
+        invalidated = true;
+        if (mode === 'refresh-access-family-race') {
+          const revoked = await auth.api.oauth2Revoke({
+            headers,
+            body: {
+              token: binding.credential,
+              client_id: registered.client_id,
+              token_type_hint: 'refresh_token',
+            },
+            asResponse: true,
+          });
+          assert.equal(revoked.status, 200);
+        } else {
+          const body = await response.clone().json();
+          const [deferredRefresh] =
+            mode === 'refresh-rotation-reservation-race' && typeof body.refresh_token === 'string'
+              ? await db
+                  .select()
+                  .from(schema.oauthProviderRefreshToken)
+                  .where(
+                    eq(
+                      schema.oauthProviderRefreshToken.token,
+                      createHash('sha256').update(body.refresh_token).digest('base64url'),
+                    ),
+                  )
+              : [];
+          const replay = await issue({
+            ...input,
+            body: { ...authorizationExchange, client_id: registered.client_id },
+          });
+          assert.ok(replay instanceof Response);
+          assert.equal(replay.status, 400);
+          assert.equal((await db.select().from(schema.oauthProviderAccessToken)).length, 0);
+          if (mode === 'refresh-rotation-reservation-race') {
+            assert.ok(deferredRefresh);
+            await db.insert(schema.oauthProviderRefreshToken).values(deferredRefresh);
+          }
+        }
+      }
+      return response;
+    });
+  }
+  const refresh = () =>
+    token({
+      grant_type: 'refresh_token',
+      refresh_token: credentials.refresh_token,
+      resource: `${origin}/mcp`,
+    });
+  if (mode === 'refresh-access-concurrent') {
+    const responses = await Promise.all([refresh(), refresh()]);
+    assert.equal(responses.filter((response) => response.status === 200).length, 1);
+    assert.equal(responses.filter((response) => response.status === 400).length, 1);
+    for (const response of responses) {
+      if (response.status !== 200) continue;
+      const value = z
+        .object({ access_token: z.string(), refresh_token: z.undefined().optional() })
+        .parse(await response.json());
+      await verifyMcpAccessToken(value.access_token);
+    }
+  } else {
+    const refreshed = await refresh();
+    if (mode.endsWith('-race')) {
+      assert.equal(refreshed.status, 400);
+    } else {
+      assert.equal(refreshed.status, 200);
+      const value = z
+        .object({ access_token: z.string(), refresh_token: z.undefined().optional() })
+        .parse(await refreshed.json());
+      assert.equal((await verifyMcpAccessToken(value.access_token)).grantId, access.grantId);
+      const [tracked] = await db.select().from(schema.oauthProviderAccessToken);
+      assert.ok(tracked);
+      assert.equal(tracked.refreshId, family.id);
+      assert.equal(tracked.authorizationCodeId, family.authorizationCodeId);
+      if (mode === 'refresh-access-parent-revoked') {
+        await db
+          .update(schema.oauthProviderRefreshToken)
+          .set({ revoked: new Date() })
+          .where(eq(schema.oauthProviderRefreshToken.id, family.id));
+        assert.equal((await db.select().from(schema.oauthProviderAccessToken)).length, 1);
+        await assert.rejects(verifyMcpAccessToken(value.access_token));
+      }
+      if (mode === 'refresh-access-parent-deleted') {
+        await db
+          .delete(schema.oauthProviderRefreshToken)
+          .where(eq(schema.oauthProviderRefreshToken.id, family.id));
+        assert.equal((await db.select().from(schema.oauthProviderAccessToken)).length, 0);
+        await assert.rejects(verifyMcpAccessToken(value.access_token));
+      }
+      assert.equal((await refresh()).status, 400);
+    }
+  }
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode === 'no-prompt') {
   const repeated = await routes.GET(
     new Request(`${origin}/api/auth/mcp/authorize?${query}`, { headers }),
