@@ -1,11 +1,13 @@
 import {
+  githubCheckActivity,
+  githubCheckHeadContext,
   githubInstallation,
   githubRepository,
   githubRepositoryLink,
   githubRepositorySync,
 } from '@orbit/db/schema';
 import { randomUUIDv7 } from '@orbit/shared/utils';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import type { GithubDatabase } from './apply.ts';
 
 interface WatchedRow {
@@ -52,6 +54,32 @@ async function catalogueRepositoryIds(
   return rows.map((row) => row.repositoryId);
 }
 
+export async function removeGithubRepositorySyncs(
+  database: GithubDatabase,
+  condition: SQL | undefined,
+): Promise<number> {
+  if (condition === undefined) throw new Error('A repository removal filter is required.');
+  return await database.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: githubRepositorySync.id })
+      .from(githubRepositorySync)
+      .where(condition)
+      .orderBy(asc(githubRepositorySync.id))
+      .for('update');
+    const ids = rows.map((row) => row.id);
+    if (ids.length === 0) return 0;
+    await tx
+      .delete(githubCheckHeadContext)
+      .where(inArray(githubCheckHeadContext.repositorySyncId, ids));
+    await tx.delete(githubCheckActivity).where(inArray(githubCheckActivity.repositorySyncId, ids));
+    const removed = await tx
+      .delete(githubRepositorySync)
+      .where(inArray(githubRepositorySync.id, ids))
+      .returning({ id: githubRepositorySync.id });
+    return removed.length;
+  });
+}
+
 export async function reconcileWatchedRepositories(
   database: GithubDatabase,
   organizationId: string,
@@ -63,14 +91,13 @@ export async function reconcileWatchedRepositories(
   const drop = owned.filter((repositoryId) => !keep.has(repositoryId));
 
   if (drop.length > 0) {
-    await database
-      .delete(githubRepositorySync)
-      .where(
-        and(
-          eq(githubRepositorySync.organizationId, organizationId),
-          inArray(githubRepositorySync.repositoryId, drop),
-        ),
-      );
+    await removeGithubRepositorySyncs(
+      database,
+      and(
+        eq(githubRepositorySync.organizationId, organizationId),
+        inArray(githubRepositorySync.repositoryId, drop),
+      ),
+    );
   }
   if (desired.length === 0) return 0;
 
@@ -100,14 +127,11 @@ export async function forgetWatchedRepositories(
   input: { readonly organizationId: string; readonly repositoryIds: readonly string[] },
 ): Promise<number> {
   if (input.repositoryIds.length === 0) return 0;
-  const removed = await database
-    .delete(githubRepositorySync)
-    .where(
-      and(
-        eq(githubRepositorySync.organizationId, input.organizationId),
-        inArray(githubRepositorySync.repositoryId, [...input.repositoryIds]),
-      ),
-    )
-    .returning({ id: githubRepositorySync.id });
-  return removed.length;
+  return await removeGithubRepositorySyncs(
+    database,
+    and(
+      eq(githubRepositorySync.organizationId, input.organizationId),
+      inArray(githubRepositorySync.repositoryId, [...input.repositoryIds]),
+    ),
+  );
 }
