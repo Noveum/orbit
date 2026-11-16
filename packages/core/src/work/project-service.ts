@@ -1032,6 +1032,7 @@ export async function duplicateProject(
         name,
         summary: sourceProject.summary,
         description: sourceProject.description,
+        instructions: sourceProject.instructions,
         status: sourceProject.status,
         health: 'no_update',
         leadId: sourceProject.leadId,
