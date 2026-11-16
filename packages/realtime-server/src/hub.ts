@@ -851,10 +851,29 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     return await resolveActionAudience(action);
   }
 
+  function discardUnobservedAction(action: SyncAction): boolean {
+    if (
+      [...connections.values()].some(
+        (connection) => connection.organizationId === action.organizationId,
+      )
+    )
+      return false;
+    const binding = issueBinding(action);
+    if (binding.kind === 'issue') {
+      issueTeamBoundaries.delete(issueTeamBoundaryKey(action.organizationId, binding.issueId));
+    }
+    if (affectsIssueMoveReach(action)) {
+      issueTeamBoundaries.delete(issueTeamBoundaryKey(action.organizationId, action.modelId));
+      presence.move(scopes.issue(action.modelId), null);
+    }
+    return true;
+  }
+
   async function deliverDelta(payload: string): Promise<void> {
     const actions = parseDeltaActions(payload);
     if (actions === null) return;
     for (const action of actions) {
+      if (discardUnobservedAction(action)) continue;
       const membershipAffected = suspendMembershipDeltaFlush(action);
       const resourceAffected = suspendMutableResourceReach(action);
       const issueMoveAffected = suspendIssueMoveReach(action);
