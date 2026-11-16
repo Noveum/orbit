@@ -52,6 +52,15 @@ describe('patched MCP OAuth integration', () => {
     'legacy-space-basic',
     'legacy-plus-basic',
     'private-key-revoke',
+    'refresh-access-json',
+    'refresh-access-form',
+    'refresh-access-concurrent',
+    'refresh-access-code-race',
+    'refresh-access-family-race',
+    'refresh-access-parent-revoked',
+    'refresh-access-parent-deleted',
+    'code-refresh-reservation-race',
+    'refresh-rotation-reservation-race',
   ] as const) {
     it(`keeps workspace-bound credentials safe through ${mode}`, () => {
       const databaseUrl = process.env['DATABASE_URL'] ?? '';
