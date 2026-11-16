@@ -3,5 +3,11 @@
   "compilerOptions": {
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "drizzle.config.ts", "tests/**/*.ts", "tests/**/*.tsx"]
+  "include": [
+    "src/**/*.ts",
+    "drizzle.config.ts",
+    "tests-preload.ts",
+    "tests/**/*.ts",
+    "tests/**/*.tsx"
+  ]
 }
