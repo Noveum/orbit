@@ -281,186 +281,107 @@ them with `packages/db/catchup/drop-module-tables-catchup.sql`.
 
 ### Backups
 
-Back up Postgres and object storage together. Orbit ships a coordinated backup
-CLI (`bun run backup:create`) that exports a single repeatable-read PostgreSQL
-snapshot, runs `pg_dump` against it, and downloads all referenced attachment
-objects into an atomic backup archive.
+Capture PostgreSQL and stored attachments together with the supported backup CLI.
+Use a direct database connection, compatible PostgreSQL client tools, explicit
+storage endpoints and protected key custody. The [operator runbooks](runbooks/README.md)
+define the current command contracts and recovery limitations.
 
 ```bash
-# Capture a backup into ./backups
-bun run backup:create --destination ./backups
-
-# Pass a direct database connection explicitly
-DIRECT_URL="postgres://user:pass@host:5432/orbit" bun run backup:create -d ./backups
-
-# Machine-readable output for cron or orchestrators
-bun run backup:create --json --destination /var/backups/orbit
+bun --env-file=/etc/orbit/orbit.env run backup:create \
+  --destination /var/backups/orbit \
+  --encrypt \
+  --encryption-key-file=/etc/orbit/master.key \
+  --json
 ```
 
-#### CLI flags and environment variables
+Before selecting a file, remove or blank an old ORBIT_BACKUP_ENCRYPTION_KEY from
+the inherited environment and loaded files: a nonempty inline key overrides even
+an explicit file flag. The file must contain a 32-byte key encoded as hex/base64
+and be readable by the capture operator with private ownership and permissions.
+A helper command is another supported source, but key files take precedence and
+helpers run without shell expansion. A key ID labels the archive; it does not
+select a historical key automatically.
 
-| Flag | Env variable | Default | Description |
-| --- | --- | --- | --- |
-| `--destination`, `-d` | `ORBIT_BACKUP_DESTINATION` | `./backups` | Target directory where the backup folder is published |
-| `--database-url` | `DIRECT_URL`, `DATABASE_URL` | none | Direct connection string to PostgreSQL |
-| `--pg-dump-path` | `PG_DUMP_PATH` | `pg_dump` | Path to the local `pg_dump` binary |
-| `--orbit-version` | `ORBIT_VERSION` | `0.1.0` | Orbit version string stamped into `manifest.json` |
-| `--source-revision` | `SOURCE_REVISION`, `VERCEL_GIT_COMMIT_SHA` | `unknown` | Git commit SHA stamped into `manifest.json` |
-| `--encrypt` | `ORBIT_BACKUP_ENCRYPT` | `false` | Enable AES-256-GCM envelope encryption |
-| `--encryption-key-file` | `ORBIT_BACKUP_ENCRYPTION_KEY_FILE` | none | Path to file containing 256-bit encryption key |
-| `--encryption-command` | `ORBIT_BACKUP_ENCRYPTION_COMMAND` | none | Command to retrieve encryption key from KMS or secret vault |
-| `--encryption-key-id` | `ORBIT_BACKUP_ENCRYPTION_KEY_ID` | `default` | Key identifier stamped in manifest for key rotation |
-| `--json` | none | `false` | Emit JSON status on stdout and stderr |
+Keep the exact returned backupDir and manifest. The destination is a parent, not
+an archive, and no latest alias is created. Successful encrypted archives contain
+database.dump.enc and encrypted objects keyed by storage key. Unencrypted capture
+failures may leave .incomplete siblings; encrypted failures remove their work
+directory rather than retaining plaintext. Validate recoverability with a full
+isolated restore, not manifest inspection alone.
 
-#### Prerequisites
+### Guarded restore and validation
 
-1. **`pg_dump` installed locally:** The backup runner invokes `pg_dump` directly.
-   Its version must match or exceed the version of the PostgreSQL server being
-   backed up. Configure `PG_DUMP_PATH` or `--pg-dump-path` if `pg_dump` is not in
-   `PATH`.
-2. **Direct database connection:** `DIRECT_URL` must point directly to PostgreSQL,
-   not through a transaction-mode connection pooler such as PgBouncer or Supabase's
-   transaction pooler (port 6543). The coordinated snapshot requires
-   `pg_export_snapshot()`, which requires an open transaction session.
-3. **Object storage credentials:** Storage environment variables (`S3_BUCKET`,
-   `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, etc.) must be
-   accessible to the command so it can download attachment files.
+Follow [the isolated restore runbook](runbooks/routine-restore-test-environment.md)
+using a separate database, bucket, Redis and outbound-integration configuration.
+A missing confirmation is rejected by the CLI before identity calculation; a
+valid archive plus a deliberately nonmatching confirmation displays the required
+identity without authorizing a restore. The full restore checks archived payloads,
+reconciles objects and controls recovery readiness.
 
-#### Output structure and atomicity
+Standalone backup:validate reports relational/ledger/catalog checks and configured
+Redis connectivity. Its CLI supplies no storage driver, so zero storage counts do
+not prove attachment integrity. It does not validate archive checksums, measure
+Redis emptiness or change readiness. Keep traffic fenced after a failure and use
+the [validation failure runbook](runbooks/validation-failure-after-restore.md).
 
-Each backup creates an isolated directory named `orbit-backup-<timestamp>-<hash>/`:
+### Retention and automation
 
-```
-orbit-backup-2026-09-10T19-36-31-839Z-68a1dddb/
-├── manifest.json      # Schema ledger, checksums, counts, safe config allowlist
-├── database.dump      # pg_dump custom format (-Fc) archive (or database.dump.enc)
-└── objects/           # Captured attachments keyed by storage key
-    └── org_xxx/issue/att_yyy/file.png
-```
-
-Backups write to a temporary `.tmp` directory first. If `pg_dump`, preflight
-validation, or object capture fails, the working directory is renamed to
-`.incomplete` and the command exits with code 1. Only a fully verified backup
-is published to its final path.
-
-#### Backup encryption and secret handling
-
-Backups contain sensitive application data, password hashes, OAuth tokens, and
-attachments. Orbit supports operator-managed AES-256-GCM envelope encryption
-before data leaves the host.
-
-To prevent credential leakage in shell history, process listings (`ps aux`), or
-manifests, encryption keys must never be passed as CLI arguments. Supported
-secret sources:
-
-1. **Environment variable:** `ORBIT_BACKUP_ENCRYPTION_KEY`
-2. **Key file:** `--encryption-key-file=/etc/orbit/backup.key` or `ORBIT_BACKUP_ENCRYPTION_KEY_FILE`
-3. **KMS / secret helper command:** `--encryption-command="aws kms decrypt ..."` or `ORBIT_BACKUP_ENCRYPTION_COMMAND`
-
-Each backup generates a random 256-bit Data Encryption Key (DEK). The DEK is
-encrypted with the Key Encryption Key (KEK) using AES-256-GCM and stored in the
-manifest alongside its IV, authentication tag, and key ID. Database dumps and
-attachment objects are encrypted with the DEK.
+Preview the complete effective policy before allowing deletion:
 
 ```bash
-# Capture an encrypted backup using a key file
-bun run backup:create --destination ./backups --encryption-key-file /etc/orbit/backup.key
-
-# Capture with KMS helper command and specific key ID
-ORBIT_BACKUP_ENCRYPTION_COMMAND="op read op://infra/orbit-backup/key" \
-ORBIT_BACKUP_ENCRYPTION_KEY_ID="prod-2026-q3" \
-bun run backup:create --destination /var/backups/orbit
-```
-
-##### Key rotation and custody
-
-- **Key rotation:** When rotating to a new master key, new backups are encrypted
-  with the new key ID. Restore does not look up keys automatically by `keyId`,
-  so the operator must supply the corresponding master key that matches the archive's
-  encryption key ID when restoring an older backup.
-- **Recovery custody:** Store recovery keys in an offsite secret manager (e.g.
-  AWS KMS, HashiCorp Vault, 1Password, or hardware security module). Orbit never
-  uploads backups or keys to Noveum infrastructure.
-- **Distinction from image signatures:** Encrypted backup archives protect customer
-  data at rest. Container image provenance and signatures (e.g. Cosign) protect
-  executable code and supply-chain integrity, and operate independently.
-
-#### Backup limitations
-
-- **Online object capture:** The database snapshot guarantees consistent relational
-  state, and object storage capture fetches all attachments present when the
-  snapshot began. If external tooling deletes an object from storage while Orbit
-  is running, the backup fails rather than publishing a partial archive.
-- **Local scratch disk space:** The destination directory must have enough disk
-  capacity to hold the uncompressed PostgreSQL dump and all attachment objects.
-  When encryption is enabled, additional temporary scratch space is required while
-  the raw dump and the encrypted ciphertext file (`database.dump.enc`) coexist during
-  encryption. Similarly, restore decrypts the full database dump into a temporary
-  directory before passing it to `pg_restore`.
-
-#### Guarded restore and validation
-
-Orbit provides a guarded restore engine (`bun run backup:restore`) that validates
-archive integrity, checks database compatibility, prevents accidental production
-overwrites, restores Postgres and storage objects, and gates readiness.
-
-```bash
-# Preview required target identity
-DIRECT_URL="postgres://user:pass@test-db:5432/orbit_staging" \
-bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-10T...
-
-# Execute destructive restore with explicit target confirmation
-bun run backup:restore /var/backups/orbit/orbit-backup-2026-09-10T... \
-  --confirm-destructive-restore-target="test-db:5432/db/orbit_staging#bucket:orbit-uploads-staging" \
-  --database-url="postgres://user:pass@test-db:5432/orbit_staging" \
-  --encryption-key-file=/etc/orbit/backup.key
-```
-
-#### Scheduled retention and pruning
-
-Manage backup disk consumption and lifecycle with `bun run backup:prune`.
-
-```bash
-# Keep 30 newest backups, retain up to 14 days, enforce 50GB quota
-bun run backup:prune \
+bun --env-file=/etc/orbit/orbit.env run backup:prune \
   --destination /var/backups/orbit \
   --keep-count 30 \
   --keep-days 14 \
   --max-bytes 50GB \
-  --stale-alert-hours 26
-
-# Preview pruning actions without deleting files
-bun run backup:prune --destination ./backups --keep-count 10 --dry-run
+  --dry-run \
+  --json
 ```
 
-##### Retention guarantees and policies
+Count, age and GFS rules select a union; the quota can then remove older unpinned
+selections. The newest checksum-valid backup and active pin/legal holds remain
+protected. Read the [routine backup runbook](runbooks/routine-backup.md) for failure
+cleanup, stale monitoring and scheduler prerequisites.
 
-1. **Protection of newest known-good backup:** The prune engine never deletes the
-   newest valid backup, even if `--keep-count=0` or storage exceeds `--max-bytes`.
-2. **Incomplete and stale cleanup:** Cleans orphaned `.incomplete` and `.tmp`
-   directories left by failed runs.
-3. **Legal hold / operator pinning:** Any backup with a `.pinned`, `.hold`, or
-   `legal-hold.json` marker file, or `metadata.pinned: "true"`, is permanently
-   preserved and immune from deletion.
-4. **Stale backup monitoring:** When `--stale-alert-hours=<N>` is set, `backup:prune`
-   exits with code 2 and writes an alert if the newest backup exceeds the threshold.
+Packaged systemd units use /opt/orbit as their working directory and
+/etc/orbit/orbit.env for their environment. Explicitly configure encryption and a
+key source there, verify the orbit user can read them, and complete capture plus
+isolated recovery before enabling timers. A cron wrapper invocation must explicitly
+change to the repository root; an absolute script path alone does not do so.
 
-#### Automated scheduling with systemd
+### Recovery drill and upgrade matrix
 
-Do not run backup cron jobs inside every web replica. Use an external
-orchestration mechanism such as systemd timers on the host running the backup tools.
-
-Install `deploy/backup/systemd/orbit-backup.timer` and `orbit-backup-prune.timer`:
+These commands are destructive and belong only on disposable targets. Configure
+the dedicated ORBIT_DRILL_DATABASE_URL, ORBIT_DRILL_REDIS_URL, S3 bucket/credentials
+and all ambient database/Redis variables for the same isolated environment.
+Confirm the database/bucket identity and Redis identity independently:
 
 ```bash
-sudo cp deploy/backup/systemd/orbit-backup.* /etc/systemd/system/
-sudo cp deploy/backup/systemd/orbit-backup-prune.* /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now orbit-backup.timer orbit-backup-prune.timer
+bun --env-file=/etc/orbit/drill.env run backup:recovery-drill \
+  --confirm-destructive="disposable-host:5432/db/orbit_drill#bucket:orbit-drill-uploads" \
+  --confirm-redis-target="redis://disposable-host:6379/db/0" \
+  --json
+bun --env-file=/etc/orbit/drill.env run backup:upgrade-matrix \
+  --confirm-destructive="disposable-host:5432/db/orbit_drill#bucket:orbit-drill-uploads" \
+  --json
 ```
 
-Alternatively, invoke `deploy/backup/run-backup-and-prune.sh` from a single external
-cron job on a dedicated administration host.
+Replace the example identities with those independently verified for your targets.
+The fresh-install matrix creates and removes its own empty database, requiring
+database-creation permission. Review every scenario result; a skipped scenario is
+not verification of that path. Never run these commands against production.
+
+The drill uses its own unique child under --destination or the temporary directory.
+Without --clean that child remains for inspection. With --clean only that child is
+removed after success or failure; unrelated parent contents remain. Promoting
+recovered database/storage/Redis resources into service removes them from any
+disposable teardown list.
+
+Current manifests use format 1.0.0. Restore requires a supported format and
+compatible migration ledger; a future ledger or unsupported format is refused.
+Supported pending migrations are applied by restore. Preserve applied migration
+bytes and historical keys needed by retained archives.
+
 
 ### Scaling
 

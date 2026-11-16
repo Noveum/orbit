@@ -190,7 +190,9 @@ Projects group related work that does not fit inside one team or one sprint.
 runs across several sprints, and has a lead, a target date and a status.
 
 **Milestones** divide a project into stages, so progress is measured against
-something real rather than a percentage of a moving total.
+something real rather than a percentage of a moving total. Descriptions render
+Markdown, including headings, lists, links, tables and code. Editing a description
+keeps its Markdown source.
 
 **Health and updates** track qualitative project status over time. An update
 captures a health category, markdown notes, the author, and a timestamp:
