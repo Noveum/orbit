@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const mcpRevocationRequestSchema = z
   .object({ token: z.string().min(1) })
   .catchall(z.string());
+export const mcpUnsupportedRevocationSchema = z.object({
+  error: z.literal('unsupported_token_type'),
+});
 export const mcpResourceSelectionSchema = z.object({
   client_id: z.string().min(1),
   resource: z.union([z.url(), z.array(z.url())]).optional(),

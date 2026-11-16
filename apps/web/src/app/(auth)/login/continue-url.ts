@@ -19,6 +19,7 @@ const MCP_AUTHORIZE_PARAMS = [
   'nonce',
   'resource',
   'max_age',
+  'claims',
   'exp',
   'sig',
   'ba_iat',
