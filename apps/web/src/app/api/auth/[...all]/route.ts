@@ -1,3 +1,4 @@
+import { decodeBasicCredentials } from '@better-auth/core/oauth2';
 import { oauthProviderResourceClient } from '@better-auth/oauth-provider/resource-client';
 import {
   bindAgentMcpCredential,
@@ -8,7 +9,7 @@ import {
   validateMcpGrant,
   verifyMcpTokenBinding,
 } from '@orbit/core';
-import { db, eq, schema, type Transaction } from '@orbit/db';
+import { and, db, eq, gt, isNotNull, schema, type Transaction } from '@orbit/db';
 import { isDomainError } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
@@ -20,10 +21,13 @@ import {
   mcpRevocationRequestSchema,
   mcpTokenRequestSchema,
   mcpTokenResponseSchema,
+  mcpUnsupportedRevocationSchema,
 } from '@orbit/shared/validators';
 import { toNextJsHandler } from 'better-auth/next-js';
+import { decodeJwt } from 'jose';
 import { providerClientRequest } from '@/lib/auth/mcp-client-auth.ts';
 import { providerTokenHash } from '@/lib/auth/mcp-provider.ts';
+import { isSafeMcpRedirectUri } from '@/lib/auth/mcp-redirect-uri.ts';
 import { auth, MCP_TOKEN_RATE_LIMIT_PROBE_HEADER } from '@/lib/auth/server.ts';
 import { withSocketRevocation } from '@/lib/auth/sign-out.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
@@ -34,10 +38,80 @@ const providerResource = oauthProviderResourceClient(auth).getActions();
 const MCP_AUTHORIZE_PATH = '/api/auth/mcp/authorize';
 const MCP_TOKEN_PATH = '/api/auth/mcp/token';
 
+function invalidMcpRedirect(): Response {
+  const url = new URL('/api/auth/error', serverEnv().BETTER_AUTH_URL);
+  url.searchParams.set('error', 'invalid_redirect_uri');
+  return Response.redirect(url, 302);
+}
+
+async function providerAuthorizationResponse(request: Request): Promise<Response> {
+  const response = await handlers.GET(request);
+  const location = response.headers.get('location');
+  if (location !== null && !isSafeMcpRedirectUri(new URL(location, request.url).toString()))
+    return invalidMcpRedirect();
+  return response;
+}
+
+function revocationClientId(request: Request, body: Record<string, unknown>): string | null {
+  const authorization = request.headers.get('authorization');
+  try {
+    if (authorization !== null) return decodeBasicCredentials(authorization).clientId;
+    if (typeof body['client_id'] === 'string' && body['client_id'].length > 0)
+      return body['client_id'];
+    if (typeof body['client_assertion'] !== 'string') return null;
+    const assertion = decodeJwt(body['client_assertion']);
+    return assertion.sub ?? assertion.iss ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function revokeBoundAccessToken(
+  credential: string,
+  grantId: string,
+  clientId: string,
+): Promise<void> {
+  const [token] = await db
+    .select()
+    .from(schema.oauthAccessToken)
+    .where(eq(schema.oauthAccessToken.accessToken, credential))
+    .limit(1);
+  if (
+    token === undefined ||
+    token.userId === null ||
+    token.clientId !== clientId ||
+    token.mcpGrantId !== grantId
+  )
+    return;
+  const userId = token.userId;
+  await db.transaction(async (tx) => {
+    await lockMcpOwner(tx, userId);
+    await tx
+      .delete(schema.oauthAccessToken)
+      .where(
+        and(
+          eq(schema.oauthAccessToken.id, token.id),
+          eq(schema.oauthAccessToken.accessToken, credential),
+          eq(schema.oauthAccessToken.clientId, clientId),
+          eq(schema.oauthAccessToken.mcpGrantId, grantId),
+        ),
+      );
+    await tx
+      .delete(schema.oauthProviderAccessToken)
+      .where(
+        and(
+          eq(schema.oauthProviderAccessToken.token, providerTokenHash(credential)),
+          eq(schema.oauthProviderAccessToken.clientId, clientId),
+          eq(schema.oauthProviderAccessToken.referenceId, grantId),
+        ),
+      );
+  });
+}
+
 async function revokeMcpCredential(request: Request): Promise<Response> {
   const url = new URL(request.url);
   url.pathname = '/api/auth/oauth2/revoke';
-  const original = new Request(url, request);
+  const original = new Request(url, request.clone());
   if (
     request.headers.get('content-type')?.split(';')[0]?.trim() !==
     'application/x-www-form-urlencoded'
@@ -59,11 +133,26 @@ async function revokeMcpCredential(request: Request): Promise<Response> {
     ...parsed.data,
     token: binding.credential,
   });
-  return auth.api.oauth2Revoke({
+  const response = await auth.api.oauth2Revoke({
     request: prepared.request,
     headers: prepared.request.headers,
     body: { ...prepared.body, token: binding.credential },
     asResponse: true,
+  });
+  if (response.status !== 400) return response;
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    return response;
+  }
+  if (!mcpUnsupportedRevocationSchema.safeParse(payload).success) return response;
+  const clientId = revocationClientId(prepared.request, prepared.body);
+  if (clientId === null) return response;
+  await revokeBoundAccessToken(binding.credential, binding.grantId, clientId);
+  return new Response(null, {
+    status: 200,
+    headers: { 'cache-control': 'no-store', pragma: 'no-cache' },
   });
 }
 interface ParsedMcpTokenRequest {
@@ -78,6 +167,11 @@ interface McpTokenExchange {
   readonly clientId: string;
   readonly scopes: string;
   readonly sourceRefreshToken: string | null;
+  readonly authorizationCodeId: string | null;
+}
+
+function pendingMcpTokenHash(authorizationCodeId: string): string {
+  return providerTokenHash(`orbit-pending-code:${authorizationCodeId}`);
 }
 
 function mcpTokenError(
@@ -219,6 +313,24 @@ async function authorizationCodeExchange(
         return null;
       }
       await validateMcpGrant(tx, grant, grant.identityKind);
+      const authorizationCodeId = providerTokenHash(code);
+      await tx
+        .insert(schema.oauthProviderAccessToken)
+        .values({
+          id: randomUUIDv7(),
+          token: pendingMcpTokenHash(authorizationCodeId),
+          clientId: value.clientId,
+          userId: value.userId,
+          sessionId: provider.data.sessionId,
+          referenceId: grant.id,
+          authorizationCodeId,
+          resources: [mcpServerUrl()],
+          scopes: value.scope,
+          expiresAt: record.expiresAt,
+          createdAt: new Date(),
+          revoked: new Date(),
+        })
+        .onConflictDoNothing({ target: schema.oauthProviderAccessToken.token });
       return {
         grantId: grant.id,
         kind: grant.identityKind,
@@ -226,6 +338,7 @@ async function authorizationCodeExchange(
         clientId: grant.clientId,
         scopes: value.scope.join(' '),
         sourceRefreshToken: null,
+        authorizationCodeId,
       };
     }),
   );
@@ -259,6 +372,7 @@ async function refreshExchange(
         clientId: source.clientId,
         scopes: source.scopes,
         sourceRefreshToken: binding.credential,
+        authorizationCodeId: null,
       };
     }),
   );
@@ -307,7 +421,7 @@ async function issuedProviderState(
   return { session, refresh };
 }
 
-function persistIssuedMcpToken(
+async function persistIssuedMcpToken(
   tx: Transaction,
   exchange: McpTokenExchange,
   accessToken: string,
@@ -315,6 +429,49 @@ function persistIssuedMcpToken(
   payload: Awaited<ReturnType<typeof providerResource.verifyBearerToken>>,
   { session, refresh }: NonNullable<Awaited<ReturnType<typeof issuedProviderState>>>,
 ) {
+  if (refreshToken === undefined) {
+    if (exchange.authorizationCodeId === null) return [];
+    const tracked = await tx
+      .update(schema.oauthProviderAccessToken)
+      .set({
+        token: providerTokenHash(accessToken),
+        expiresAt: new Date((payload.exp ?? 0) * 1000),
+        scopes: String(payload['scope']).split(/\s+/).filter(Boolean),
+        revoked: null,
+      })
+      .where(
+        and(
+          eq(
+            schema.oauthProviderAccessToken.token,
+            pendingMcpTokenHash(exchange.authorizationCodeId),
+          ),
+          eq(schema.oauthProviderAccessToken.authorizationCodeId, exchange.authorizationCodeId),
+          eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
+          eq(schema.oauthProviderAccessToken.userId, exchange.userId),
+          eq(schema.oauthProviderAccessToken.sessionId, session.id),
+          eq(schema.oauthProviderAccessToken.referenceId, exchange.grantId),
+          isNotNull(schema.oauthProviderAccessToken.revoked),
+          gt(schema.oauthProviderAccessToken.expiresAt, new Date()),
+        ),
+      )
+      .returning({ id: schema.oauthProviderAccessToken.id });
+    if (tracked.length !== 1) return [];
+  } else if (exchange.authorizationCodeId !== null) {
+    await tx
+      .delete(schema.oauthProviderAccessToken)
+      .where(
+        and(
+          eq(
+            schema.oauthProviderAccessToken.token,
+            pendingMcpTokenHash(exchange.authorizationCodeId),
+          ),
+          eq(schema.oauthProviderAccessToken.authorizationCodeId, exchange.authorizationCodeId),
+          eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
+          eq(schema.oauthProviderAccessToken.userId, exchange.userId),
+          isNotNull(schema.oauthProviderAccessToken.revoked),
+        ),
+      );
+  }
   return tx
     .insert(schema.oauthAccessToken)
     .values({
@@ -401,6 +558,15 @@ async function acceptIssuedMcpToken(
     await tx
       .delete(schema.oauthAccessToken)
       .where(eq(schema.oauthAccessToken.accessToken, accessToken));
+    await tx
+      .delete(schema.oauthProviderAccessToken)
+      .where(
+        and(
+          eq(schema.oauthProviderAccessToken.token, providerTokenHash(accessToken)),
+          eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
+          eq(schema.oauthProviderAccessToken.referenceId, exchange.grantId),
+        ),
+      );
     return null;
   });
 }
@@ -535,8 +701,17 @@ async function handleMcpTokenRequest(request: Request): Promise<Response> {
 export function GET(request: Request): Promise<Response> | Response {
   const url = new URL(request.url);
   if (url.pathname === MCP_AUTHORIZE_PATH || url.pathname === '/api/auth/oauth2/authorize') {
+    const callbacks = url.searchParams.getAll('redirect_uri');
+    if (
+      callbacks.length > 1 ||
+      (callbacks[0] !== undefined && !isSafeMcpRedirectUri(callbacks[0])) ||
+      url.searchParams.getAll('client_id').length > 1
+    )
+      return invalidMcpRedirect();
     const prompts = url.searchParams.getAll('prompt');
-    if (prompts.length !== 1 || prompts[0] !== 'consent') {
+    if (prompts.length === 0 && !url.searchParams.has('sig')) {
+      url.searchParams.set('prompt', 'consent');
+    } else if (prompts.length !== 1 || prompts[0] !== 'consent') {
       return Response.json(
         { error: 'invalid_request', error_description: 'Explicit consent is required.' },
         { status: 400, headers: { 'cache-control': 'no-store' } },
@@ -555,9 +730,11 @@ export function GET(request: Request): Promise<Response> | Response {
   }
   if (url.pathname.startsWith('/api/auth/mcp/')) {
     url.pathname = url.pathname.replace('/api/auth/mcp/', '/api/auth/oauth2/');
-    return handlers.GET(new Request(url, request));
+    return providerAuthorizationResponse(new Request(url, request));
   }
-  return handlers.GET(request);
+  if (url.pathname === '/api/auth/oauth2/authorize')
+    return providerAuthorizationResponse(new Request(url, request));
+  return handlers.GET(new Request(url, request));
 }
 
 export function POST(request: Request): Promise<Response> {

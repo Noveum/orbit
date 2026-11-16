@@ -2,8 +2,10 @@ import { mock } from 'bun:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { encodeBasicCredentials } from '@better-auth/core/oauth2';
 import { createWorkspace, resetDatabase } from '@orbit/core/test-support';
-import { db, eq, pool, schema, sql } from '@orbit/db';
+import { db, eq, pool, schema, sql, type Transaction } from '@orbit/db';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { isValidElement } from 'react';
 import { z } from 'zod';
 
@@ -46,10 +48,28 @@ const mode = z
     'legacy-late-foreign-http',
     'legacy-fragment',
     'legacy-late-fragment',
+    'claims-login',
+    'no-prompt',
+    'access-revoke',
+    'replay-access-only',
+    'replay-before-persist',
+    'concurrent-access-only',
+    'legacy-loopback-subnet',
+    'legacy-late-loopback-subnet',
+    'legacy-loopback-policy',
+    'legacy-space-basic',
+    'legacy-plus-basic',
+    'private-key-revoke',
   ])
   .parse(process.argv[2] ?? 'grant');
+const accessOnlyMode = [
+  'replay-access-only',
+  'replay-before-persist',
+  'concurrent-access-only',
+].includes(mode);
 function callbackForMode(): string {
-  if (mode.includes('reserved')) return 'javascript:alert(1)';
+  if (mode.includes('loopback')) return 'http://127.0.0.2:9000/callback';
+  if (mode.includes('reserved')) return 'javascript:alert(1)//';
   if (mode.includes('userinfo')) return 'http://user@127.0.0.1:9000/callback';
   if (mode.includes('foreign-http')) return 'http://client.example.test/callback';
   if (mode.includes('fragment')) return 'http://127.0.0.1:9000/callback#fragment';
@@ -272,10 +292,16 @@ if (mode === 'migration') {
   await pool.end();
   process.exit(0);
 }
-const legacyClientId = 'local-migrated-client';
+function migratedClientId(): string {
+  if (mode === 'legacy-space-basic') return 'local client';
+  if (mode === 'legacy-plus-basic') return 'local+client';
+  return 'local-migrated-client';
+}
+const legacyClientId = migratedClientId();
 const legacyClientSecret = 'local-migrated-client-secret';
 const legacyPublic =
   mode.includes('mixed') ||
+  mode.includes('loopback') ||
   mode.includes('reserved') ||
   mode === 'legacy-deleted-client' ||
   mode === 'legacy-public' ||
@@ -303,6 +329,14 @@ if (mode.startsWith('legacy-')) {
         ].join(',')
       : callbackUri,
   });
+  if (mode.includes('loopback'))
+    await db
+      .update(schema.oauthApplication)
+      .set({
+        createdAt: sql`timestamp with time zone '2026-11-16 00:00:00.123456+00'`,
+        updatedAt: sql`timestamp with time zone '2026-11-16 00:00:00.654321+00'`,
+      })
+      .where(eq(schema.oauthApplication.clientId, legacyClientId));
   if (!mode.startsWith('legacy-late-')) {
     const migration = await readFile(
       new URL('../../../../packages/db/drizzle/0038_auth_provider_clients.sql', import.meta.url),
@@ -318,6 +352,129 @@ if (mode.startsWith('legacy-')) {
   }
 }
 const routes = await import('../../src/app/api/auth/[...all]/route.ts');
+if (mode === 'legacy-loopback-policy') {
+  const { auth } = await import('../../src/lib/auth/server.ts');
+  await auth.$context;
+  const { ensureLegacyMcpClient } = await import('../../src/lib/auth/mcp-legacy-client.ts');
+  const rollback = new Error('Local policy control rollback');
+  const mutations: readonly ((tx: Transaction) => Promise<unknown>)[] = [
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ name: 'Operator name' })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ metadata: { operator: 'preserve' } })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ scopes: ['orbit.read'] })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ tokenEndpointAuthMethod: 'client_secret_post' })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ jwksUri: 'https://operator.example.test/jwks' })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ skipConsent: true })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ legacyResourceMigrationPending: false })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ disabled: true })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ updatedAt: sql`${schema.oauthProviderClient.updatedAt} + interval '1 microsecond'` })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .update(schema.oauthProviderClient)
+        .set({ createdAt: sql`${schema.oauthProviderClient.createdAt} + interval '1 microsecond'` })
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    (tx) =>
+      tx
+        .delete(schema.oauthProviderClient)
+        .where(eq(schema.oauthProviderClient.clientId, legacyClientId)),
+    async (tx) => {
+      await tx.insert(schema.oauthProviderResource).values({
+        id: randomUUID(),
+        identifier: 'https://operator.example.test/mcp',
+        name: 'Operator resource policy',
+      });
+      await tx.insert(schema.oauthProviderClientResource).values({
+        id: randomUUID(),
+        clientId: legacyClientId,
+        resourceId: 'https://operator.example.test/mcp',
+      });
+    },
+  ];
+  for (const mutate of mutations) {
+    try {
+      await db.transaction(async (tx) => {
+        await mutate(tx);
+        const [before] = await tx
+          .select()
+          .from(schema.oauthProviderClient)
+          .where(eq(schema.oauthProviderClient.clientId, legacyClientId));
+        await ensureLegacyMcpClient(tx, legacyClientId);
+        const [after] = await tx
+          .select()
+          .from(schema.oauthProviderClient)
+          .where(eq(schema.oauthProviderClient.clientId, legacyClientId));
+        assert.deepEqual(after, before, 'A modern operator policy edit must remain untouched');
+        throw rollback;
+      });
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+  }
+  await db.transaction((tx) => ensureLegacyMcpClient(tx, legacyClientId));
+  const [repaired] = await db
+    .select()
+    .from(schema.oauthProviderClient)
+    .where(eq(schema.oauthProviderClient.clientId, legacyClientId));
+  assert.ok(repaired);
+  assert.equal(repaired.applicationType, 'native');
+  const [precision] = await db.execute<{ createdPreserved: boolean; policyUpdated: boolean }>(sql`
+    select copied.created_at is not distinct from legacy.created_at as "createdPreserved",
+      copied.updated_at is distinct from legacy.updated_at as "policyUpdated"
+    from oauth_provider_client copied join oauth_application legacy on copied.id=legacy.id
+    where copied.client_id=${legacyClientId}
+  `);
+  assert.equal(precision?.createdPreserved, true);
+  assert.equal(precision?.policyUpdated, true);
+  await db
+    .update(schema.oauthProviderClient)
+    .set({ applicationType: 'web' })
+    .where(eq(schema.oauthProviderClient.clientId, legacyClientId));
+  await db.transaction((tx) => ensureLegacyMcpClient(tx, legacyClientId));
+  const [operatorReset] = await db
+    .select()
+    .from(schema.oauthProviderClient)
+    .where(eq(schema.oauthProviderClient.clientId, legacyClientId));
+  assert.equal(operatorReset?.applicationType, 'web');
+  assert.equal(operatorReset?.updatedAt?.getTime(), repaired.updatedAt?.getTime());
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode === 'registration') {
   const cases = [
     {
@@ -401,12 +558,15 @@ async function registeredClient() {
       body: JSON.stringify({
         client_name: 'Local MCP Client',
         redirect_uris: [callbackUri],
-        token_endpoint_auth_method: mode.startsWith('modern-basic')
-          ? 'client_secret_basic'
-          : 'none',
+        token_endpoint_auth_method:
+          mode.startsWith('modern-basic') || mode === 'access-revoke'
+            ? 'client_secret_basic'
+            : 'none',
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
-        scope: 'openid profile email offline_access orbit.read',
+        scope: accessOnlyMode
+          ? 'openid profile email orbit.read'
+          : 'openid profile email offline_access orbit.read',
       }),
     }),
   );
@@ -427,7 +587,9 @@ const query = new URLSearchParams({
   response_type: 'code',
   client_id: registered.client_id,
   redirect_uri: callbackUri,
-  scope: 'openid profile email offline_access orbit.read',
+  scope: accessOnlyMode
+    ? 'openid profile email orbit.read'
+    : 'openid profile email offline_access orbit.read',
   prompt: 'consent',
   code_challenge: challenge,
   code_challenge_method: 'S256',
@@ -435,17 +597,54 @@ const query = new URLSearchParams({
   state: 'local-flow-state',
 });
 if (mode === 'legacy-no-resource') query.delete('resource');
-const authorization = await routes.GET(
+if (mode === 'no-prompt') query.delete('prompt');
+if (mode === 'claims-login') {
+  query.set('claims', JSON.stringify({ userinfo: { email: null } }));
+  headers.delete('cookie');
+}
+let authorization = await routes.GET(
   new Request(`${origin}/api/auth/mcp/authorize?${query}`, { headers }),
 );
+if (mode === 'claims-login') {
+  assert.equal(authorization.status, 302);
+  const loginUrl = new URL(authorization.headers.get('location') ?? '', origin);
+  assert.equal(loginUrl.pathname, '/login');
+  const { mcpContinueUrl } = await import('../../src/app/(auth)/login/continue-url.ts');
+  const { verifyOAuthQueryParams } = await import('@better-auth/oauth-provider');
+  const loginParameters: Record<string, string | string[]> = {};
+  for (const key of new Set(loginUrl.searchParams.keys())) {
+    const values = loginUrl.searchParams.getAll(key);
+    loginParameters[key] = values.length === 1 ? (values[0] ?? '') : values;
+  }
+  const resumed = mcpContinueUrl(loginParameters);
+  assert.ok(resumed);
+  const resumedUrl = new URL(resumed, origin);
+  assert.equal(resumedUrl.searchParams.get('claims'), query.get('claims'));
+  assert.equal(
+    await verifyOAuthQueryParams(
+      resumedUrl.searchParams.toString(),
+      process.env['BETTER_AUTH_SECRET'] ?? '',
+    ),
+    true,
+  );
+  headers.set('cookie', cookie);
+  authorization = await routes.GET(new Request(resumedUrl, { headers }));
+}
 assert.equal(authorization.status, 302, 'The existing MCP authorization URL must remain usable');
 const consentUrl = new URL(authorization.headers.get('location') ?? '', origin);
 if (['reserved', 'userinfo', 'foreign-http', 'fragment'].some((name) => mode.includes(name))) {
-  assert.notEqual(
-    consentUrl.pathname,
-    '/oauth/authorize',
-    'An unsafe callback must not reach consent',
+  assert.equal(consentUrl.origin, origin);
+  assert.equal(consentUrl.pathname, '/api/auth/error');
+  const invalidSignature = new URLSearchParams(query);
+  invalidSignature.set('sig', 'invalid-local-signature');
+  invalidSignature.set('exp', String(Math.floor(Date.now() / 1000) + 300));
+  const rejectedSignature = await routes.GET(
+    new Request(`${origin}/api/auth/mcp/authorize?${invalidSignature}`, { headers }),
   );
+  assert.equal(rejectedSignature.status, 302);
+  const signatureError = new URL(rejectedSignature.headers.get('location') ?? '', origin);
+  assert.equal(signatureError.origin, origin);
+  assert.equal(signatureError.pathname, '/api/auth/error');
   assert.equal((await db.select().from(schema.mcpGrant)).length, 0);
   console.log(JSON.stringify({ completed: true, mode }));
   await pool.end();
@@ -516,10 +715,10 @@ function token(body: Record<string, string>): Promise<Response> {
       ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'resource'))
       : body;
   const tokenHeaders = new Headers(headers);
-  if (mode.endsWith('-basic')) {
+  if (mode.endsWith('-basic') || mode === 'access-revoke') {
     tokenHeaders.set(
       'authorization',
-      `Basic ${Buffer.from(`${registered.client_id}:${clientSecret}`).toString('base64')}`,
+      encodeBasicCredentials(registered.client_id, clientSecret ?? ''),
     );
   }
   return routes.POST(
@@ -536,13 +735,54 @@ function token(body: Record<string, string>): Promise<Response> {
     }),
   );
 }
-const issued = await token({
+const authorizationExchange = {
   grant_type: 'authorization_code',
   code: authorizationCode,
   redirect_uri: callbackUri,
   code_verifier: verifier,
   resource: `${origin}/mcp`,
-});
+};
+if (mode === 'concurrent-access-only') {
+  const responses = await Promise.all([token(authorizationExchange), token(authorizationExchange)]);
+  assert.ok(responses.some((response) => response.status === 400));
+  for (const response of responses) {
+    assert.ok(response.status === 200 || response.status === 400);
+    if (response.status !== 200) continue;
+    const result = z.object({ access_token: z.string() }).parse(await response.json());
+    await assert.rejects(
+      verifyMcpAccessToken(result.access_token),
+      'Concurrent code replay must not leave a usable access-only credential',
+    );
+  }
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
+let replayBeforePersistenceStatus: number | undefined;
+if (mode === 'replay-before-persist') {
+  const { auth } = await import('../../src/lib/auth/server.ts');
+  const issue = auth.api.oauth2Token;
+  let replayed = false;
+  Reflect.set(auth.api, 'oauth2Token', async (input: Parameters<typeof issue>[0]) => {
+    const response = await issue(input);
+    if (response instanceof Response && response.ok && !replayed) {
+      replayed = true;
+      const replay = await issue(input);
+      if (replay instanceof Response) replayBeforePersistenceStatus = replay.status;
+    }
+    return response;
+  });
+}
+const issued = await token(authorizationExchange);
+if (mode === 'replay-before-persist') {
+  assert.equal(replayBeforePersistenceStatus, 400);
+  assert.equal(issued.status, 400);
+  assert.equal((await db.select().from(schema.oauthAccessToken)).length, 0);
+  assert.equal((await db.select().from(schema.oauthProviderAccessToken)).length, 0);
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode === 'modern-basic-post' || mode === 'legacy-post-wrong') {
   assert.ok([400, 401].includes(issued.status));
   assert.equal((await issued.json()).error, 'invalid_client');
@@ -557,11 +797,170 @@ assert.equal(
   200,
   `The consented PKCE code must exchange for bound credentials: ${issued.status === 200 ? '' : await issued.clone().text()}`,
 );
+const tokenResponse: unknown = await issued.json();
+if (mode === 'replay-access-only') {
+  const accessOnly = z
+    .object({ access_token: z.string(), refresh_token: z.undefined().optional() })
+    .parse(tokenResponse);
+  await verifyMcpAccessToken(accessOnly.access_token);
+  const replayed = await token({
+    grant_type: 'authorization_code',
+    code: authorizationCode,
+    redirect_uri: callbackUri,
+    code_verifier: verifier,
+    resource: `${origin}/mcp`,
+  });
+  assert.equal(replayed.status, 400);
+  await assert.rejects(
+    verifyMcpAccessToken(accessOnly.access_token),
+    'Authorization-code replay must also invalidate access-only credentials',
+  );
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 const tokenSchema = z.object({ access_token: z.string(), refresh_token: z.string() });
-const credentials = tokenSchema.parse(await issued.json());
+const credentials = tokenSchema.parse(tokenResponse);
 const access = await verifyMcpAccessToken(credentials.access_token);
 assert.equal(access.organizationId, workspace.organizationId);
 assert.equal(access.userId, workspace.adminUser.id);
+if (mode === 'no-prompt') {
+  const repeated = await routes.GET(
+    new Request(`${origin}/api/auth/mcp/authorize?${query}`, { headers }),
+  );
+  assert.equal(repeated.status, 302);
+  const repeatedUrl = new URL(repeated.headers.get('location') ?? '', origin);
+  assert.equal(repeatedUrl.pathname, '/oauth/authorize');
+  assert.equal((await db.select().from(schema.oauthAccessToken)).length, 1);
+  for (const prompt of ['none', 'login consent', 'consent unknown']) {
+    const unsupported = new URLSearchParams(query);
+    unsupported.set('prompt', prompt);
+    const rejected = await routes.GET(
+      new Request(`${origin}/api/auth/mcp/authorize?${unsupported}`, { headers }),
+    );
+    assert.equal(rejected.status, 400);
+  }
+}
+if (mode === 'access-revoke' || mode === 'legacy-space-basic' || mode === 'legacy-plus-basic') {
+  function revokeAccess(
+    clientId: string,
+    secret: string | undefined,
+    spaces = false,
+    credential = credentials.access_token,
+  ) {
+    const revocationHeaders = new Headers(headers);
+    revocationHeaders.set('content-type', 'application/x-www-form-urlencoded');
+    if (secret !== undefined)
+      revocationHeaders.set(
+        'authorization',
+        spaces
+          ? encodeBasicCredentials(clientId, secret).replace(/^Basic /, 'Basic  ')
+          : encodeBasicCredentials(clientId, secret),
+      );
+    return routes.POST(
+      new Request(`${origin}/api/auth/oauth2/revoke`, {
+        method: 'POST',
+        headers: revocationHeaders,
+        body: new URLSearchParams({
+          client_id: clientId,
+          token: credential,
+          token_type_hint: 'access_token',
+        }),
+      }),
+    );
+  }
+  const wrongSecret = await revokeAccess(registered.client_id, 'wrong-local-secret');
+  assert.equal(wrongSecret.status, 401);
+  await verifyMcpAccessToken(credentials.access_token);
+  const { bindMcpCredential } = await import('@orbit/core');
+  const unknownBound = bindMcpCredential(
+    'local-unrecognized-opaque-credential',
+    access.grantId,
+    process.env['BETTER_AUTH_SECRET'] ?? '',
+  );
+  for (const unknown of ['local-random-opaque-credential', unknownBound]) {
+    const unknownResponse = await revokeAccess(registered.client_id, clientSecret, false, unknown);
+    const unknownResult = z
+      .object({ error: z.string() })
+      .parse(await unknownResponse.clone().json());
+    assert.equal(unknownResponse.status, 400);
+    assert.equal(unknownResult.error, 'invalid_request');
+    await verifyMcpAccessToken(credentials.access_token);
+  }
+  const otherRegistration = await routes.POST(
+    new Request(`${origin}/api/auth/mcp/register`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        client_name: 'Another local client',
+        redirect_uris: [callbackUri],
+        token_endpoint_auth_method: 'none',
+      }),
+    }),
+  );
+  assert.equal(otherRegistration.status, 201);
+  const other = z.object({ client_id: z.string() }).parse(await otherRegistration.json());
+  assert.equal((await revokeAccess(other.client_id, undefined)).status, 200);
+  await verifyMcpAccessToken(credentials.access_token);
+  assert.equal((await revokeAccess(registered.client_id, clientSecret, true)).status, 200);
+  await assert.rejects(verifyMcpAccessToken(credentials.access_token));
+  assert.equal((await revokeAccess(registered.client_id, clientSecret)).status, 200);
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
+if (mode === 'private-key-revoke') {
+  const pair = await generateKeyPair('ES256');
+  const jwk = await exportJWK(pair.publicKey);
+  await db
+    .update(schema.oauthProviderClient)
+    .set({
+      tokenEndpointAuthMethod: 'private_key_jwt',
+      jwks: JSON.stringify({ keys: [{ ...jwk, kid: 'local-assertion-key', alg: 'ES256' }] }),
+    })
+    .where(eq(schema.oauthProviderClient.clientId, registered.client_id));
+  function assertion(key = pair.privateKey) {
+    return new SignJWT({})
+      .setProtectedHeader({ alg: 'ES256', kid: 'local-assertion-key' })
+      .setIssuer(registered.client_id)
+      .setSubject(registered.client_id)
+      .setAudience(`${origin}/api/auth/oauth2/revoke`)
+      .setJti(randomUUID())
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(key);
+  }
+  function revokeWithAssertion(value: string, emptyHint = false) {
+    const revocationHeaders = new Headers(headers);
+    revocationHeaders.set('content-type', 'application/x-www-form-urlencoded');
+    return routes.POST(
+      new Request(`${origin}/api/auth/oauth2/revoke`, {
+        method: 'POST',
+        headers: revocationHeaders,
+        body: new URLSearchParams({
+          token: credentials.access_token,
+          token_type_hint: 'access_token',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          client_assertion: value,
+          ...(emptyHint ? { client_id: '' } : {}),
+        }),
+      }),
+    );
+  }
+  const wrong = await generateKeyPair('ES256');
+  assert.equal((await revokeWithAssertion(await assertion(wrong.privateKey))).status, 401);
+  await verifyMcpAccessToken(credentials.access_token);
+  const valid = await assertion();
+  assert.equal((await revokeWithAssertion(valid, true)).status, 200);
+  await assert.rejects(verifyMcpAccessToken(credentials.access_token));
+  const replayedAssertion = await revokeWithAssertion(valid);
+  assert.equal(replayedAssertion.status, 400);
+  assert.equal((await replayedAssertion.json()).error, 'invalid_client');
+  assert.equal((await revokeWithAssertion(await assertion())).status, 200);
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode === 'deleted-client' || mode === 'legacy-deleted-client') {
   const [copied] = await db
     .select()

@@ -203,6 +203,33 @@ export async function validateMcpGrant(
   };
 }
 
+async function verifyMcpAccessOnlyRegistry(
+  tx: Transaction,
+  token: typeof schema.oauthAccessToken.$inferSelect,
+  grantId: string,
+  now: Date,
+): Promise<void> {
+  const hash = createHash('sha256').update(token.accessToken).digest('base64url');
+  const [access] = await tx
+    .select()
+    .from(schema.oauthProviderAccessToken)
+    .where(eq(schema.oauthProviderAccessToken.token, hash))
+    .limit(1)
+    .for('share');
+  if (
+    access === undefined ||
+    access.revoked !== null ||
+    access.expiresAt <= now ||
+    access.clientId !== token.clientId ||
+    access.userId !== token.userId ||
+    access.sessionId !== token.sessionId ||
+    access.referenceId !== grantId ||
+    [...access.scopes].sort().join(' ') !==
+      token.scopes.split(/\s+/).filter(Boolean).sort().join(' ')
+  )
+    throw unauthorized('That access token is not valid.');
+}
+
 export async function verifyMcpTokenBinding(
   tx: Transaction,
   token: typeof schema.oauthAccessToken.$inferSelect,
@@ -239,6 +266,8 @@ export async function verifyMcpTokenBinding(
         refresh.referenceId !== grantId
       )
         throw invalid;
+    } else {
+      await verifyMcpAccessOnlyRegistry(tx, token, grantId, now);
     }
   }
   const [grant] = await tx
