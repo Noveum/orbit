@@ -77,7 +77,7 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
       <PropertyMenu
         title="Assignee"
         options={[
-          { id: 'none', label: 'No assignee', disabled: hasAgentAssignee },
+          { id: 'none', label: 'No assignee' },
           ...members.map((member) => ({ id: member.id, label: member.name })),
         ]}
         selected={
@@ -86,7 +86,6 @@ export function BulkEditBar({ states, issues, onClear }: BulkEditBarProps) {
             : sharedValue((issue) => resolveIssueActor(issue, 'assignee')?.id ?? null)
         }
         onSelect={(value) => {
-          if (hasAgentAssignee && value === 'none') return;
           applyToAll({ assigneeId: value === 'none' ? null : value });
         }}
       >

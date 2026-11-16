@@ -229,13 +229,15 @@ describe('issues', () => {
     await db
       .update(schema.issue)
       .set({
+        creatorId: null,
         creatorUserId: null,
         creatorAgentId: id,
+        assigneeId: null,
         assigneeUserId: null,
         assigneeAgentId: id,
-        ownerUserId: null,
       })
       .where(eq(schema.issue.id, created.id));
+    await db.update(schema.issue).set({ ownerUserId: null }).where(eq(schema.issue.id, created.id));
     const fetched = issueOf(await admin.result('get_issue', { issue: created.identifier }));
     const expected = {
       type: 'agent',
@@ -1040,7 +1042,7 @@ describe('what a token is allowed to do', () => {
       expect(names).not.toContain('invite_member');
 
       for (const tool of tools) {
-        expect(tool.annotations?.readOnlyHint).toBe(true);
+        expect(tool.annotations?.readOnlyHint).toBe(tool.name !== 'list_inbox_conversations');
       }
     } finally {
       await readOnly.close();

@@ -135,7 +135,7 @@ describe('agent board assignment display', () => {
     expect(planDrop(groups, rows, 'third', 'second', 'assignee', undefined, false)).toBeNull();
   });
 
-  it('preserves human reassignment while rejecting agent assignment and unsupported clearing', () => {
+  it('allows clearing and human reassignment while rejecting new agent assignments', () => {
     const agentIssue = issue({
       id: 'agent_issue',
       assignee: { type: 'agent', id: 'agent_1', name: 'Build bot', avatar: null, deleted: false },
@@ -155,7 +155,12 @@ describe('agent board assignment display', () => {
 
     expect(planDrop(groups, rows, humanIssue.id, 'agent:agent_1', 'assignee')).toBeNull();
     expect(planDrop(groups, rows, agentIssue.id, otherAgentIssue.id, 'assignee')).toBeNull();
-    expect(planDrop(groups, rows, agentIssue.id, 'none', 'assignee')).toBeNull();
+    expect(planDrop(groups, rows, agentIssue.id, 'none', 'assignee')).toMatchObject({
+      assigneeId: null,
+    });
+    expect(
+      planDrop(groups, rows, agentIssue.id, 'none', 'assignee', undefined, false),
+    ).toMatchObject({ assigneeId: null });
     expect(planDrop(groups, rows, agentIssue.id, humanIssue.id, 'assignee')).toMatchObject({
       assigneeId: 'member_1',
     });

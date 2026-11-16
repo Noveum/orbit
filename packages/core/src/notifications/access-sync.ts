@@ -15,6 +15,15 @@ export async function lockNotificationPolicyMutation(
   );
 }
 
+export async function lockNotificationPolicyRead(
+  tx: Transaction,
+  organizationId: string,
+): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock_shared(hashtextextended(${`notification-policy:${organizationId}`}, 0))`,
+  );
+}
+
 export async function synchronizeNotificationAccess(
   tx: Transaction,
   organizationId: string,
