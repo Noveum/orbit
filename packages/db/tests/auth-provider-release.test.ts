@@ -21,15 +21,12 @@ const authSchemaIndex = migrations.findIndex((migration) =>
 const authSchemaMigration = migrations[authSchemaIndex];
 if (authSchemaMigration === undefined) throw new Error('The auth schema migration is missing.');
 if (clientMigration === undefined) throw new Error('The auth client migration is missing.');
-if (
-  !(
-    ['127.0.0.1', 'localhost', '[::1]'].includes(configured.hostname) &&
-    configured.pathname.includes('test')
-  )
-)
+if (!['127.0.0.1', 'localhost', '[::1]'].includes(configured.hostname))
   throw new Error('A loopback test connection is required.');
 
 async function connection<T>(database: string, run: (sql: postgres.Sql) => Promise<T>): Promise<T> {
+  if (database !== 'postgres' && database !== scratch)
+    throw new Error('The requested database is outside this test scope.');
   const target = new URL(configured);
   target.pathname = `/${database}`;
   const sql = postgres(target.toString(), { max: 1, prepare: false, onnotice: () => undefined });

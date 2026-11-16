@@ -4,8 +4,7 @@ import { safeNextPath } from '@/lib/next-path.ts';
 import { pageMetadata } from '@/lib/page-metadata.ts';
 
 export function safeCallback(value: string | string[] | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  return /^\/(?!\/)/.test(value) ? value : undefined;
+  return safeNextPath(value) ?? undefined;
 }
 
 const MCP_AUTHORIZE_PARAMS = [

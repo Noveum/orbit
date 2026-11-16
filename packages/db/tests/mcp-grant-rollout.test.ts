@@ -31,7 +31,7 @@ async function legacyRows(sql: postgres.Sql): Promise<Record<string, unknown>[]>
   return [
     ...(await sql<Record<string, unknown>[]>`
     select 'grant' as kind, to_jsonb(mcp_grant) as payload from mcp_grant
-    union all select 'token', to_jsonb(oauth_access_token) from oauth_access_token
+    union all select 'token', to_jsonb(oauth_access_token) - 'session_id' from oauth_access_token
     union all select 'consent', to_jsonb(oauth_consent) from oauth_consent
     union all select 'identity', to_jsonb(agent_identity) from agent_identity
     order by kind
@@ -107,11 +107,12 @@ describe('MCP agent grant binding rollout', () => {
         revoked_at: null,
       });
       const [token] =
-        await sql`select access_token, refresh_token, mcp_grant_id from oauth_access_token`;
+        await sql`select access_token, refresh_token, mcp_grant_id, session_id from oauth_access_token`;
       expect(token).toMatchObject({
         access_token: 'old-access',
         refresh_token: 'old-refresh',
         mcp_grant_id: null,
+        session_id: null,
       });
       await sql`
         insert into mcp_grant (id, client_id, user_id, organization_id, scopes)

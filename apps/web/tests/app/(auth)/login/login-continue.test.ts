@@ -72,6 +72,24 @@ describe('mcpContinueUrl', () => {
 });
 
 describe('safeCallback', () => {
+  it('keeps callback destinations on the application origin', () => {
+    const origin = 'https://orbit.example.test';
+    for (const value of [
+      '/\\callback.example.test',
+      '/\n/callback.example.test',
+      '/settings\u0000',
+      `/${'a'.repeat(2048)}`,
+    ]) {
+      const callback = safeCallback(value);
+      expect(callback === undefined || new URL(callback, origin).origin === origin).toBe(true);
+      expect(callback).toBeUndefined();
+    }
+    for (const value of ['/', '/settings?panel=security', '/issue/ENG-1#comments']) {
+      expect(safeCallback(value)).toBe(value);
+      expect(new URL(safeCallback(value) ?? '', origin).origin).toBe(origin);
+    }
+  });
+
   it('accepts a same-origin path and rejects an absolute URL', () => {
     expect(safeCallback('/settings')).toBe('/settings');
     expect(safeCallback('https://evil.example')).toBeUndefined();
