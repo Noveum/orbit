@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { eq, schema } from '@orbit/db';
+import { db, eq, schema, sql } from '@orbit/db';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
   bindGithubInstallation,
@@ -231,5 +231,63 @@ describe('populated GitHub installation removal', () => {
         }),
       ).rejects.toThrow();
     });
+  });
+});
+
+describe('direct database installation removal', () => {
+  it('rolls back the whole removal when integration deletion fails', async () => {
+    const fixture = await db.transaction(async (tx) => checkedInstallation(tx));
+    const trigger = `test_remove_${randomUUIDv7().replaceAll('-', '')}`;
+    const functionName = `${trigger}_fn`;
+    try {
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql.raw(
+            `create function "${functionName}"() returns trigger language plpgsql as $$ begin raise exception 'integration removal failure fixture'; end $$`,
+          ),
+        );
+        await tx.execute(
+          sql.raw(
+            `create trigger "${trigger}" before delete on integration for each row when (old.id = '${fixture.integrationId}') execute function "${functionName}"()`,
+          ),
+        );
+      });
+      await expect(removeGithubInstallation(db, fixture)).rejects.toMatchObject({
+        cause: { message: 'integration removal failure fixture' },
+      });
+      expect(
+        await db
+          .select()
+          .from(schema.githubInstallation)
+          .where(eq(schema.githubInstallation.installationId, fixture.installationId)),
+      ).toHaveLength(1);
+      expect(
+        await db
+          .select()
+          .from(schema.githubCheckActivity)
+          .where(eq(schema.githubCheckActivity.id, fixture.activityId)),
+      ).toHaveLength(1);
+      expect(
+        await db
+          .select()
+          .from(schema.githubCheckHeadContext)
+          .where(eq(schema.githubCheckHeadContext.repositorySyncId, fixture.repositorySyncId)),
+      ).toHaveLength(1);
+      expect(
+        await db
+          .select()
+          .from(schema.githubPullRequestCheckContext)
+          .where(
+            eq(schema.githubPullRequestCheckContext.repositorySyncId, fixture.repositorySyncId),
+          ),
+      ).toHaveLength(1);
+    } finally {
+      await db.execute(sql.raw(`drop trigger if exists "${trigger}" on integration`));
+      await db.execute(sql.raw(`drop function if exists "${functionName}"()`));
+      await db
+        .delete(schema.organization)
+        .where(eq(schema.organization.id, fixture.organizationId));
+      await db.delete(schema.user).where(eq(schema.user.id, fixture.userId));
+    }
   });
 });
