@@ -1,5 +1,6 @@
 import postgres from 'postgres';
 import { databasesToDrop, laneDropTarget } from './test-lane-drop.ts';
+import { databaseTlsOptions } from './tls-policy.ts';
 
 const target = laneDropTarget(process.argv.slice(2), process.env['ORBIT_TEST_LANE']);
 
@@ -11,14 +12,14 @@ if (target.mode === 'refused') {
 const connectionString =
   process.env['DATABASE_URL'] ?? 'postgres://orbit:orbit@localhost:5434/orbit';
 
-const admin = postgres(
-  (() => {
-    const parsed = new URL(connectionString);
-    parsed.pathname = '/postgres';
-    return parsed.toString();
-  })(),
-  { max: 1, idle_timeout: 5 },
-);
+const parsed = new URL(connectionString);
+parsed.pathname = '/postgres';
+const maintenanceUrl = parsed.toString();
+const admin = postgres(maintenanceUrl, {
+  max: 1,
+  idle_timeout: 5,
+  ...databaseTlsOptions(maintenanceUrl),
+});
 
 try {
   const rows = await admin<{ datname: string }[]>`

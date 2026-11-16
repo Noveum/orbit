@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
+import { databaseTlsOptions } from './tls-policy.ts';
 
 const CATCHUP_DIR = fileURLToPath(new URL('../catchup/', import.meta.url));
 
@@ -25,7 +26,12 @@ export function targetName(url: string): string {
 
 export async function applyCatchup(url: string, named: string): Promise<void> {
   const body = await readFile(catchupPath(named), 'utf8');
-  const sql = postgres(url, { max: 1, prepare: false, idle_timeout: 10 });
+  const sql = postgres(url, {
+    max: 1,
+    prepare: false,
+    idle_timeout: 10,
+    ...databaseTlsOptions(url),
+  });
   try {
     await sql.unsafe(body).simple();
   } finally {

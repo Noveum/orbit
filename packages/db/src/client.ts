@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from './schema/index.ts';
+import { resolveDatabaseTls } from './tls-policy.ts';
 
 const connectionString = process.env['DATABASE_URL'];
 
@@ -56,8 +57,13 @@ export function resolvePreparedStatements(url: string, configured: string | unde
   return parsed.data === 'true';
 }
 
-export function poolCacheKey(url: string, max: number, prepare: boolean): string {
-  return JSON.stringify([url, max, prepare]);
+export function poolCacheKey(
+  url: string,
+  max: number,
+  prepare: boolean,
+  tls?: ReturnType<typeof resolveDatabaseTls>,
+): string {
+  return JSON.stringify([url, max, prepare, tls]);
 }
 
 type Pool = ReturnType<typeof postgres>;
@@ -73,7 +79,8 @@ const prepareStatements = resolvePreparedStatements(
   connectionString,
   process.env['DATABASE_PREPARED_STATEMENTS'],
 );
-const cacheKey = poolCacheKey(connectionString, poolMax.data, prepareStatements);
+const ssl = resolveDatabaseTls(connectionString, process.env);
+const cacheKey = poolCacheKey(connectionString, poolMax.data, prepareStatements, ssl);
 const cached = globalForDb.orbitPool;
 
 export const pool =
@@ -83,6 +90,7 @@ export const pool =
         max: poolMax.data,
         idle_timeout: 30,
         prepare: prepareStatements,
+        ...(ssl === undefined ? {} : { ssl }),
       });
 
 globalForDb.orbitPool = { key: cacheKey, sql: pool };
