@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/bun": "1.4.4",
-    "postgres": "^4.1.1",
+    "postgres": "^3.4.9",
     "typescript": "5.9.3"
   }
 }
