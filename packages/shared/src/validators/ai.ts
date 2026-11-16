@@ -215,6 +215,7 @@ function isValidProviderUrl(urlString: string): boolean {
   try {
     const url = new URL(urlString);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.username.length > 0 || url.password.length > 0) return false;
     if (url.search.length > 0 || url.hash.length > 0) return false;
 
     const allowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] === 'true';

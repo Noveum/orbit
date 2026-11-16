@@ -11,6 +11,15 @@ import {
 const originalAllowPrivate = process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
 
 describe('AI endpoint IP parsing and private guard', () => {
+  it('rejects endpoint credentials that the checked transport does not send', () => {
+    for (const endpoint of [
+      'https://user:password@provider.example/v1',
+      'https://user@provider.example/v1',
+    ]) {
+      expect(aiBaseUrlSchema.safeParse(endpoint).success).toBe(false);
+    }
+  });
+
   afterEach(() => {
     if (originalAllowPrivate === undefined) {
       delete process.env['ALLOW_PRIVATE_AI_ENDPOINTS'];
