@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { and, db, eq, schema, sql, type Transaction } from '@orbit/db';
+import type { SyncAction } from '@orbit/shared/events';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import {
@@ -166,6 +167,224 @@ async function cycle(target = workspace) {
   if (created === undefined) throw new Error('Missing cycle.');
   return created;
 }
+
+async function expectResponsibilityFailure(
+  operation: () => Promise<{ actions: SyncAction[] }>,
+  expected = {
+    code: 'validation_failed',
+    status: 422,
+    message: 'The responsible person cannot access issues on that team.',
+  },
+) {
+  const issues = await db.select().from(schema.issue);
+  const activities = await db.select().from(schema.issueActivity);
+  const notifications = await db.select().from(schema.notification);
+  const aliases = await db.select().from(schema.issueIdentifierAlias);
+  const actions: SyncAction[] = [];
+  await expect(operation().then((result) => actions.push(...result.actions))).rejects.toMatchObject(
+    expected,
+  );
+  expect(await db.select().from(schema.issue)).toEqual(issues);
+  expect(await db.select().from(schema.issueActivity)).toEqual(activities);
+  expect(await db.select().from(schema.notification)).toEqual(notifications);
+  expect(await db.select().from(schema.issueIdentifierAlias)).toEqual(aliases);
+  expect(actions).toEqual([]);
+}
+
+async function restrictedDestination() {
+  const destination = await createTeam(workspace.admin, { name: 'Restricted', key: 'RST' });
+  const state = destination.states[0];
+  if (state === undefined) throw new Error('Missing destination state.');
+  return { teamId: destination.team.id, stateId: state.id };
+}
+
+describe('Responsible person access errors', () => {
+  it.each(['create', 'update'] as const)(
+    'reports invalid responsibility for an authorized Human %s',
+    async (operation) => {
+      const inaccessible = await addMember(workspace, 'member', { teamIds: [] });
+      const row = operation === 'update' ? await humanIssue() : undefined;
+      await expectResponsibilityFailure(() =>
+        row === undefined
+          ? createIssue(workspace.admin, {
+              teamId: workspace.teamId,
+              title: 'Invalid assignment',
+              assigneeId: inaccessible.user.id,
+            })
+          : updateIssue(workspace.admin, row.id, { assigneeId: inaccessible.user.id }),
+      );
+    },
+  );
+
+  it.each(['assigned', 'historical Owner'] as const)(
+    'reports invalid responsibility when moving a Human %s to an unreadable Team',
+    async (assignment) => {
+      const destination = await restrictedDestination();
+      const row = await humanIssue();
+      await updateIssue(workspace.admin, row.id, { assigneeId: owner.user.id });
+      if (assignment === 'historical Owner') {
+        const cleared = await updateIssue(workspace.admin, row.id, { assigneeId: null });
+        expect(cleared.issue).toMatchObject({
+          assigneeId: null,
+          assigneeAgentId: null,
+          ownerUserId: owner.user.id,
+        });
+      }
+      await expectResponsibilityFailure(() => moveIssue(workspace.admin, row.id, destination));
+    },
+  );
+
+  it('reports invalid responsibility when a Personal Agent Owner lost Team access after resolving the caller', async () => {
+    const agent = await connection();
+    const row = await humanIssue();
+    await db
+      .delete(schema.teamMember)
+      .where(
+        and(
+          eq(schema.teamMember.teamId, workspace.teamId),
+          eq(schema.teamMember.userId, owner.user.id),
+        ),
+      );
+    await expectResponsibilityFailure(() =>
+      updateIssue(owner.principal, row.id, { assigneeAgentId: agent.context.identityId }),
+    );
+  });
+
+  it.each(['Human', 'Agent'] as const)(
+    'preserves forbidden for an unauthorized %s caller independently of responsibility',
+    async (identity) => {
+      const inaccessible = await addMember(workspace, 'member', { teamIds: [] });
+      const agent =
+        identity === 'Agent'
+          ? await connection('orbit.read orbit.write', inaccessible.principal)
+          : undefined;
+      const row = await humanIssue();
+      await expectResponsibilityFailure(
+        () =>
+          updateIssue(
+            inaccessible.principal,
+            row.id,
+            { assigneeId: owner.user.id },
+            db,
+            agent?.context,
+          ),
+        {
+          code: 'forbidden',
+          status: 403,
+          message: 'You are not a member of that team.',
+        },
+      );
+    },
+  );
+});
+
+describe('Issue deletion lifecycle', () => {
+  it.each(['default', 'unassigned'] as const)(
+    'rejects a stale Human %s create explicitly after workspace deletion starts',
+    async (assignment) => {
+      await db
+        .update(schema.organization)
+        .set({ deletionRequestedAt: new Date() })
+        .where(eq(schema.organization.id, workspace.organizationId));
+      const actions: SyncAction[] = [];
+      const creating = createIssue(workspace.admin, {
+        teamId: workspace.teamId,
+        title: 'After deletion',
+        ...(assignment === 'unassigned' ? { assigneeId: null } : {}),
+      }).then((result) => actions.push(...result.actions));
+      await expect(creating).rejects.toMatchObject({
+        code: 'conflict',
+        status: 409,
+        message: 'Workspace deletion is in progress.',
+      });
+      expect(await db.select().from(schema.issue)).toHaveLength(0);
+      expect(await db.select().from(schema.issueActivity)).toHaveLength(0);
+      expect(actions).toEqual([]);
+    },
+  );
+
+  for (const identity of ['Human', 'Agent'] as const) {
+    it.each(['update', 'move'] as const)(
+      `rejects a stale ${identity} %s without changing Issue state or activity`,
+      async (operation) => {
+        const agent = identity === 'Agent' ? await connection() : undefined;
+        const principal = agent?.principal ?? workspace.admin;
+        const issue = await humanIssue();
+        const before = await db.select().from(schema.issue);
+        const activities = await db.select().from(schema.issueActivity);
+        await db
+          .update(schema.organization)
+          .set({ deletionRequestedAt: new Date() })
+          .where(eq(schema.organization.id, workspace.organizationId));
+        const actions: SyncAction[] = [];
+        const changing =
+          operation === 'update'
+            ? updateIssue(
+                principal,
+                issue.id,
+                { title: 'Changed after deletion' },
+                db,
+                agent?.context,
+              )
+            : moveIssue(
+                principal,
+                issue.id,
+                { stateId: stateNamed(workspace, 'Done').id },
+                agent?.context,
+              );
+        await expect(
+          changing.then((result) => actions.push(...result.actions)),
+        ).rejects.toMatchObject({
+          code: 'conflict',
+          status: 409,
+          message: 'Workspace deletion is in progress.',
+        });
+        expect(await db.select().from(schema.issue)).toEqual(before);
+        expect(await db.select().from(schema.issueActivity)).toEqual(activities);
+        expect(actions).toEqual([]);
+      },
+    );
+
+    it(`waits for a concurrent deletion mark before admitting a ${identity} Issue update`, async () => {
+      const agent = identity === 'Agent' ? await connection() : undefined;
+      const principal = agent?.principal ?? workspace.admin;
+      const issue = await humanIssue();
+      const before = await db.select().from(schema.issue);
+      const activities = await db.select().from(schema.issueActivity);
+      const writer = parallelDatabase();
+      let writing: Promise<unknown> | undefined;
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.organization)
+          .set({ deletionRequestedAt: new Date() })
+          .where(eq(schema.organization.id, workspace.organizationId));
+        writing = updateIssue(
+          principal,
+          issue.id,
+          { title: 'Raced deletion' },
+          writer,
+          agent?.context,
+        ).then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+        expect(await waitForBlockedTransaction(tx)).toBe(true);
+      });
+      if (writing === undefined) throw new Error('The competing writer did not start.');
+      const result = await writing;
+      expect(result).toMatchObject({
+        error: {
+          code: 'conflict',
+          status: 409,
+          message: 'Workspace deletion is in progress.',
+        },
+      });
+      expect(result).not.toHaveProperty('result');
+      expect(await db.select().from(schema.issue)).toEqual(before);
+      expect(await db.select().from(schema.issueActivity)).toEqual(activities);
+    });
+  }
+});
 
 describe('Agent Issue write boundary', () => {
   it('keeps Human defaults and Agent reads while the independent write gate is off', async () => {
@@ -711,15 +930,8 @@ describe('Issue Actor and Human responsibility', () => {
     const agent = await connection();
     const row = await humanIssue();
     await updateIssue(owner.principal, row.id, { assigneeAgentId: agent.context.identityId });
-    const teamId = randomUUID();
-    await db.insert(schema.team).values({
-      id: teamId,
-      organizationId: workspace.organizationId,
-      name: 'Restricted',
-      key: 'RST',
-    });
-    const result = moveIssue(workspace.admin, row.id, { teamId });
-    await expect(result).rejects.toThrow();
+    const destination = await restrictedDestination();
+    await expectResponsibilityFailure(() => moveIssue(workspace.admin, row.id, destination));
     expect((await getIssue(workspace.admin, row.id)).teamId).toBe(workspace.teamId);
   });
 
@@ -727,9 +939,9 @@ describe('Issue Actor and Human responsibility', () => {
     const inaccessible = await addMember(workspace, 'member', { teamIds: [] });
     const agent = await connection();
     const row = await humanIssue();
-    await expect(
+    await expectResponsibilityFailure(() =>
       updateIssue(owner.principal, row.id, { assigneeId: inaccessible.user.id }, db, agent.context),
-    ).rejects.toThrow();
+    );
     expect((await getIssue(workspace.admin, row.id)).assigneeId).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import {
   listOrganizationsForUser,
   userHasPasskey,
 } from '@orbit/core';
+import { isDomainError } from '@orbit/shared/errors';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -67,7 +68,10 @@ export default async function AuthorizePage({
   let consent: Awaited<ReturnType<typeof getMcpConsentRequest>>;
   try {
     consent = await getMcpConsentRequest(session.user.id, consentCode);
-  } catch {
+  } catch (error) {
+    if (!isDomainError(error) || (error.code !== 'unauthorized' && error.code !== 'forbidden')) {
+      throw error;
+    }
     return (
       <ConsentShell>
         <p className="text-center text-muted text-sm">

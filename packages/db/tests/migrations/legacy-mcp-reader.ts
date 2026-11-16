@@ -58,7 +58,7 @@ export async function verifyLegacyMcpAccessToken(token: string, now = new Date()
   const [record] = await db.execute<{
     user_id: string | null;
     client_id: string;
-    access_token_expires_at: Date;
+    access_token_expires_at: Date | string;
     scopes: string;
     grant_id: string | null;
     organization_id: string | null;
@@ -72,7 +72,9 @@ export async function verifyLegacyMcpAccessToken(token: string, now = new Date()
     where token.access_token = ${binding.credential} limit 1
   `);
   if (record === undefined || record.user_id === null) throw invalid;
-  if (record.access_token_expires_at <= now) throw unauthorized('That access token has expired.');
+  if (new Date(record.access_token_expires_at).getTime() <= now.getTime()) {
+    throw unauthorized('That access token has expired.');
+  }
   if (
     record.grant_id === null ||
     record.organization_id === null ||

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 import { useHotkeyRegistry } from './provider.tsx';
 import { HOTKEY_PRIORITY, type HotkeyScope, type HotkeySection } from './registry.ts';
 
@@ -35,14 +35,14 @@ export function useHotkey(
     aliases = [],
   } = options;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     handlerRef.current = handler;
   }, [handler]);
 
   const id = useId();
   const aliasKey = aliases.join(' ');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const bindings = [binding, ...aliasKey.split(' ').filter((entry) => entry.length > 0)];
     const disposers = bindings.map((entry, index) =>
       registry.register({

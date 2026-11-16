@@ -53,6 +53,28 @@ describe('AI endpoint IP parsing and private guard', () => {
     expect(parseIpv6('invalid::ipv6::address')).toBeNull();
   });
 
+  it('preserves compression before an embedded IPv4 suffix', () => {
+    expect(parseIpv6('::127.0.0.1')).toEqual([0, 0, 0, 0, 0, 0, 0x7f00, 1]);
+    expect(parseIpv6('2001:db8::192.0.2.1')).toEqual([0x2001, 0xdb8, 0, 0, 0, 0, 0xc000, 0x0201]);
+    expect(parseIpv6(':::127.0.0.1')).toBeNull();
+  });
+
+  it('classifies IPv4-compatible IPv6 using its embedded destination', () => {
+    for (const address of [
+      '::127.0.0.1',
+      '::7f00:1',
+      '::10.0.0.1',
+      '::192.168.1.1',
+      '::169.254.169.254',
+    ]) {
+      expect(isPrivateIpv6(address)).toBe(true);
+      expect(isPrivateOrLoopbackHost(`[${address}]`)).toBe(true);
+      expect(aiBaseUrlSchema.safeParse(`https://[${address}]/v1`).success).toBe(false);
+    }
+    expect(isPrivateIpv6('::8.8.8.8')).toBe(false);
+    expect(isPrivateIpv6('::808:808')).toBe(false);
+  });
+
   it('identifies private, loopback, ULA, and IPv4-mapped IPv6 addresses', () => {
     expect(isPrivateIpv6('::1')).toBe(true);
     expect(isPrivateIpv6('::')).toBe(true);

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHmac, randomUUID } from 'node:crypto';
 import { db, eq, schema } from '@orbit/db';
 import { mcpConsentValueSchema } from '@orbit/shared/validators';
@@ -27,6 +27,7 @@ import {
 
 const SCOPES = 'openid profile email orbit.read orbit.write';
 const MCP_SECRET = 'mcp-binding-test-secret-0123456789abcdef';
+const originalSecret = process.env['BETTER_AUTH_SECRET'];
 
 let workspace: Workspace;
 
@@ -124,6 +125,11 @@ beforeEach(async () => {
   process.env['BETTER_AUTH_SECRET'] = MCP_SECRET;
   await resetDatabase();
   workspace = await createWorkspace('Nova');
+});
+
+afterEach(() => {
+  if (originalSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = originalSecret;
 });
 
 describe('recordMcpGrant', () => {

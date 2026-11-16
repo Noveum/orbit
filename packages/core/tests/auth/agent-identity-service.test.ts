@@ -19,6 +19,8 @@ import { createWorkspace, resetDatabase, type Workspace } from '../../src/test-s
 const SECRET = 'agent-consent-binding-test-secret';
 const SCOPES = 'openid profile offline_access orbit.read orbit.write';
 const originalWriteGate = process.env['ORBIT_AGENT_ISSUE_WRITE'];
+const originalGate = process.env['ORBIT_AGENT_MCP'];
+const originalSecret = process.env['BETTER_AUTH_SECRET'];
 let workspace: Workspace;
 let clientId: string;
 
@@ -41,6 +43,10 @@ beforeEach(async () => {
 afterEach(() => {
   if (originalWriteGate === undefined) delete process.env['ORBIT_AGENT_ISSUE_WRITE'];
   else process.env['ORBIT_AGENT_ISSUE_WRITE'] = originalWriteGate;
+  if (originalGate === undefined) delete process.env['ORBIT_AGENT_MCP'];
+  else process.env['ORBIT_AGENT_MCP'] = originalGate;
+  if (originalSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+  else process.env['BETTER_AUTH_SECRET'] = originalSecret;
 });
 
 async function request(scopes = SCOPES, client = clientId): Promise<string> {

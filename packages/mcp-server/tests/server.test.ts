@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createIssue } from '@orbit/core';
+import { db, schema } from '@orbit/db';
 import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { resolveUserId } from '../src/resolve.ts';
 import { createOrbitMcpServer } from '../src/server.ts';
@@ -130,11 +131,50 @@ describe('explicit agent connections', () => {
   });
 
   it('requires a read scope even for explicit agent identity', async () => {
-    const { client } = await connected(workspace.admin, agentIdentity, 'orbit.write');
-    await expect(client.listTools()).rejects.toThrow('Method not found');
-    await expect(client.callTool({ name: 'get_agent_identity', arguments: {} })).rejects.toThrow(
-      'Method not found',
-    );
+    const { client, server } = await connected(workspace.admin, agentIdentity, 'orbit.write');
+    const legacy = await connected(workspace.admin);
+    const names = new Set([
+      ...(await legacy.client.listTools()).tools.map((tool) => tool.name),
+      'get_agent_identity',
+      'test_denied_read',
+      'test_denied_write',
+    ]);
+    let effects = 0;
+    for (const [name, readOnly] of [
+      ['test_denied_read', true],
+      ['test_denied_write', false],
+    ] as const) {
+      defineTool(
+        server,
+        {
+          name,
+          title: name,
+          description: name,
+          readOnly,
+          agentWrite: !readOnly,
+          inputSchema: {},
+        },
+        () => {
+          effects += 1;
+          return Promise.resolve({ executed: true });
+        },
+      );
+    }
+    const before = (await db.select({ id: schema.issue.id }).from(schema.issue))
+      .map((row) => row.id)
+      .sort();
+    expect((await client.listTools()).tools).toEqual([]);
+    for (const name of names) {
+      const result = (await client.callTool({ name, arguments: {} })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      if (name === 'get_agent_identity') {
+        expect(JSON.stringify(result.content)).toContain('Tool get_agent_identity not found');
+      }
+    }
+    expect(effects).toBe(0);
+    expect(
+      (await db.select({ id: schema.issue.id }).from(schema.issue)).map((row) => row.id).sort(),
+    ).toEqual(before);
   });
 
   it('rechecks the connection policy inside every registered callback', async () => {

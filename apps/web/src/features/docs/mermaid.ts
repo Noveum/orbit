@@ -393,6 +393,25 @@ async function drawOne(
   }
 }
 
+let renderQueue: Promise<void> = Promise.resolve();
+
+function drawConfigured(
+  mermaid: MermaidRenderer,
+  source: string,
+  theme: string,
+  document: Document,
+): Promise<string | null> {
+  const rendered = renderQueue.then(() => {
+    configure(mermaid, theme, document);
+    return drawOne(mermaid, source, document);
+  });
+  renderQueue = rendered.then(
+    () => undefined,
+    () => undefined,
+  );
+  return rendered;
+}
+
 export async function renderDiagram(
   source: string,
   theme: string,
@@ -402,11 +421,10 @@ export async function renderDiagram(
   const text = source.trim();
   if (text.length === 0) return null;
   const mermaid = await renderer();
-  configure(mermaid, theme, document);
-  return drawOne(mermaid, text, document);
+  return drawConfigured(mermaid, text, theme, document);
 }
 
-let pass = 0;
+const passes = new WeakMap<HTMLElement, number>();
 
 export async function drawDiagrams(
   root: HTMLElement,
@@ -419,24 +437,23 @@ export async function drawDiagrams(
   if (blocks.length === 0) return;
   for (const block of blocks) block.setAttribute('data-mermaid-drawn', theme);
 
-  pass += 1;
-  const mine = pass;
+  const mine = (passes.get(root) ?? 0) + 1;
+  passes.set(root, mine);
   const document = root.ownerDocument;
 
   let mermaid: MermaidRenderer;
   try {
     mermaid = await renderer();
   } catch {
-    if (mine === pass) for (const block of blocks) failInto(block, DIAGRAM_UNAVAILABLE);
+    if (mine === passes.get(root)) for (const block of blocks) failInto(block, DIAGRAM_UNAVAILABLE);
     return;
   }
-  if (mine !== pass) return;
-  configure(mermaid, theme, document);
+  if (mine !== passes.get(root)) return;
 
   for (const block of blocks) {
     const source = sourceOf(block).trim();
-    const svg = source.length === 0 ? null : await drawOne(mermaid, source, document);
-    if (mine !== pass) return;
+    const svg = source.length === 0 ? null : await drawConfigured(mermaid, source, theme, document);
+    if (mine !== passes.get(root)) return;
     if (svg === null) {
       failInto(block);
       continue;

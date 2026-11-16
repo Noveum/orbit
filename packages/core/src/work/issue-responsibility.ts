@@ -1,7 +1,7 @@
 import { and, eq, schema } from '@orbit/db';
 import { validationFailed } from '@orbit/shared/errors';
 import type { Actor } from '@orbit/shared/events';
-import { assertInTeam, assertPersonalAgentAssignment, type Principal } from '@orbit/shared/policy';
+import { assertPersonalAgentAssignment, isInTeam, type Principal } from '@orbit/shared/policy';
 import type { Executor } from '../internal.ts';
 import { findPrincipal } from '../org/member-service.ts';
 import { attachIssueActors } from './issue-actor-view.ts';
@@ -35,7 +35,8 @@ async function requireHumanReader(
   const human = await findPrincipal(userId, organizationId, executor);
   if (human === null)
     throw validationFailed('The responsible person is not a member of this workspace.');
-  assertInTeam(human, { id: teamId, organizationId });
+  if (!isInTeam(human, { id: teamId, organizationId }))
+    throw validationFailed('The responsible person cannot access issues on that team.');
 }
 
 export async function issueAssignmentValues(

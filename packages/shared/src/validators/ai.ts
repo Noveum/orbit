@@ -99,7 +99,9 @@ export function parseIpv6(ip: string): number[] | null {
   const suffix = clean.slice(lastColon + 1);
   const v4Groups = parseEmbeddedIpv4(suffix);
   if (suffix.includes('.') && v4Groups === null) return null;
-  const v6Prefix = v4Groups === null ? clean : clean.slice(0, lastColon);
+  const prefix = clean.slice(0, lastColon);
+  const embeddedPrefix = prefix.endsWith(':') ? `${prefix}:` : prefix;
+  const v6Prefix = v4Groups === null ? clean : embeddedPrefix;
 
   const doubleColon = v6Prefix.indexOf('::');
   if (doubleColon !== -1 && v6Prefix.indexOf('::', doubleColon + 2) !== -1) {
@@ -120,6 +122,12 @@ export function parseIpv6(ip: string): number[] | null {
 
 function extractEmbeddedIpv4(gA: number, gB: number): [number, number, number, number] {
   return [(gA >> 8) & 0xff, gA & 0xff, (gB >> 8) & 0xff, gB & 0xff];
+}
+
+function hasIpv4CompatiblePrefix(groups: readonly number[]): boolean {
+  return (
+    groups.slice(0, 5).every((group) => group === 0) && (groups[5] === 0 || groups[5] === 0xffff)
+  );
 }
 
 export function isPrivateIpv6Groups(groups: readonly number[]): boolean {
@@ -147,7 +155,7 @@ export function isPrivateIpv6Groups(groups: readonly number[]): boolean {
   ) {
     return true;
   }
-  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
+  if (hasIpv4CompatiblePrefix(groups)) {
     return isPrivateIpv4Octets(extractEmbeddedIpv4(g6, g7));
   }
   if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) {

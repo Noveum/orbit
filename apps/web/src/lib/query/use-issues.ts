@@ -663,7 +663,7 @@ async function settleIssueOccurrences(client: QueryClient, issue: Issue): Promis
     .getQueryCache()
     .findAll()
     .flatMap((query) => {
-      if (query.state.fetchStatus !== 'fetching') return [];
+      if (query.state.fetchStatus === 'idle') return [];
       if (query.queryKey[0] === ISSUE_ROOT) {
         const detail = query.state.data as IssueDetail | undefined;
         const related =
@@ -676,7 +676,11 @@ async function settleIssueOccurrences(client: QueryClient, issue: Issue): Promis
       return relations?.some((relation) => relation.issue.id === issue.id) ? [query.queryKey] : [];
     });
   await Promise.allSettled(
-    fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
+    fetchingKeys.map((key) =>
+      key[0] === ISSUE_ROOT
+        ? cancelIssueQueries(client, { queryKey: key, exact: true })
+        : client.cancelQueries({ queryKey: key, exact: true }),
+    ),
   );
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
     if (detail === undefined) continue;
@@ -727,6 +731,64 @@ function addToLists(client: QueryClient, next: Issue): void {
 function refreshCounts(client: QueryClient): void {
   client.invalidateQueries({ queryKey: [ISSUE_SUMMARY_ROOT] }).catch(() => undefined);
   staleBoardPages(client);
+}
+
+interface IssueListMutations {
+  pending: number;
+  readonly canceledFetches: Map<string, QueryKey>;
+}
+
+const issueListMutations = new WeakMap<QueryClient, IssueListMutations>();
+
+async function beginIssueListMutation(client: QueryClient): Promise<void> {
+  const mutations = issueListMutations.get(client) ?? { pending: 0, canceledFetches: new Map() };
+  mutations.pending += 1;
+  issueListMutations.set(client, mutations);
+  await cancelIssueListFetches(client);
+}
+
+async function cancelIssueListFetches(client: QueryClient): Promise<void> {
+  const fetching = client
+    .getQueryCache()
+    .findAll({ queryKey: [ISSUES_ROOT] })
+    .filter((query) => query.state.fetchStatus !== 'idle');
+  const mutations = issueListMutations.get(client);
+  for (const query of fetching) {
+    mutations?.canceledFetches.set(query.queryHash, query.queryKey);
+  }
+  await cancelIssueQueries(client, { queryKey: [ISSUES_ROOT] });
+}
+
+async function cancelIssueQueries(
+  client: QueryClient,
+  filters: { readonly queryKey: QueryKey; readonly exact?: boolean },
+): Promise<void> {
+  const fetching = client
+    .getQueryCache()
+    .findAll(filters)
+    .filter((query) => query.state.fetchStatus !== 'idle');
+  const invalidated = fetching.filter((query) => query.state.isInvalidated);
+  for (const query of fetching) {
+    if (query.state.data === undefined || query.state.status !== 'success') continue;
+    const { data, dataUpdatedAt, isInvalidated } = query.state;
+    client.setQueryData(query.queryKey, data, { updatedAt: dataUpdatedAt });
+    if (isInvalidated) query.invalidate();
+  }
+  const cancellation = client.cancelQueries(filters);
+  for (const query of invalidated) query.invalidate();
+  await Promise.allSettled([cancellation]);
+}
+
+async function finishIssueListMutation(client: QueryClient): Promise<void> {
+  await cancelIssueListFetches(client);
+  const mutations = issueListMutations.get(client);
+  if (mutations === undefined) return;
+  mutations.pending -= 1;
+  if (mutations.pending > 0) return;
+  issueListMutations.delete(client);
+  for (const key of mutations.canceledFetches.values()) {
+    client.invalidateQueries({ queryKey: key, exact: true }).catch(() => undefined);
+  }
 }
 
 async function invalidateIssueCaches(client: QueryClient): Promise<void> {
@@ -1161,8 +1223,8 @@ export function useUpdateIssue() {
 
       const detailKey = queryKeys.issue(input.issue.identifier);
       await Promise.allSettled([
-        client.cancelQueries({ queryKey: [ISSUES_ROOT] }),
-        client.cancelQueries({ queryKey: detailKey, exact: true }),
+        beginIssueListMutation(client),
+        cancelIssueQueries(client, { queryKey: detailKey, exact: true }),
       ]);
       const previousDetail = client.getQueryData<IssueDetail>(detailKey);
 
@@ -1259,7 +1321,7 @@ export function useUpdateIssue() {
           : { ...current, issue },
       );
     },
-    onSettled: (_issue, _error, input, context) => {
+    onSettled: async (_issue, _error, input, context) => {
       const tracker = mutationTrackers.get(input.issue.id);
 
       if (tracker !== undefined && context !== undefined) {
@@ -1274,6 +1336,7 @@ export function useUpdateIssue() {
         }
       }
 
+      await finishIssueListMutation(client);
       if (input.patch.parentId === undefined) return;
 
       client.invalidateQueries({ queryKey: [ISSUE_ROOT] }).catch(() => undefined);
@@ -1458,7 +1521,7 @@ export function useMoveIssue() {
     },
     onMutate: async (input) => {
       moveDeletionGenerations.set(input, issueDeletionGeneration(client, input.issue.id));
-      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+      await beginIssueListMutation(client);
       const before = client.getQueriesData<IssuePages>({ queryKey: [ISSUES_ROOT] });
       const optimistic: Issue = {
         ...input.issue,
@@ -1505,7 +1568,8 @@ export function useMoveIssue() {
         dropFromIssueLists(client, new Set([input.issue.id]));
       }
     },
-    onSettled: (_moved, _error, input) => {
+    onSettled: async (_moved, _error, input) => {
+      await finishIssueListMutation(client);
       resortTeamIssueLists(client, input.issue.teamId);
       refreshCounts(client);
     },
@@ -1590,9 +1654,9 @@ async function dropFromIssueDetails(
   const fetchingKeys = client
     .getQueryCache()
     .findAll({ queryKey: [ISSUE_ROOT] })
-    .flatMap((query) => (query.state.fetchStatus === 'fetching' ? [query.queryKey] : []));
+    .flatMap((query) => (query.state.fetchStatus === 'idle' ? [] : [query.queryKey]));
   await Promise.allSettled(
-    fetchingKeys.map((key) => client.cancelQueries({ queryKey: key, exact: true })),
+    fetchingKeys.map((key) => cancelIssueQueries(client, { queryKey: key, exact: true })),
   );
   for (const [key, detail] of client.getQueriesData<IssueDetail>({ queryKey: [ISSUE_ROOT] })) {
     if (detail === undefined) continue;
@@ -1737,7 +1801,7 @@ export function useDeleteIssues() {
   return useMutation({
     mutationFn: deleteEach,
     onMutate: async (issues) => {
-      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+      await beginIssueListMutation(client);
       const before = client.getQueriesData<IssuePages>({
         queryKey: [ISSUES_ROOT],
       });
@@ -1764,7 +1828,7 @@ export function useDeleteIssues() {
       if (partiallyDeleted) {
         recordIssueDeletions(client, error.gone);
         recordIssueListRevisions(client, issueListKeys(client));
-        await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+        await cancelIssueListFetches(client);
       }
       const resetChanged =
         context?.lists.some((snapshot) =>
@@ -1785,11 +1849,12 @@ export function useDeleteIssues() {
         issues.map((issue) => issue.id),
       );
       recordIssueListRevisions(client, issueListKeys(client));
-      await Promise.allSettled([client.cancelQueries({ queryKey: [ISSUES_ROOT] })]);
+      await cancelIssueListFetches(client);
       dropFromIssueLists(client, removed);
       await dropFromIssueDetails(client, removed);
     },
-    onSettled: () => {
+    onSettled: async () => {
+      await finishIssueListMutation(client);
       refreshCounts(client);
       client.invalidateQueries({ queryKey: [ISSUE_FACETS_ROOT] }).catch(() => undefined);
     },

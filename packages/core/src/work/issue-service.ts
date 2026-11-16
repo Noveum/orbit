@@ -1450,7 +1450,10 @@ async function applyIssueUpdates(
   issueIds: readonly string[],
   parsed: ReturnType<typeof issueUpdateSchema.parse>,
 ): Promise<UpdatedIssue[]> {
-  const loaded = await loadIssues(tx, principal.organizationId, issueIds);
+  const lockIds = parsed.parentId == null ? issueIds : [...issueIds, parsed.parentId];
+  const locked = await loadIssues(tx, principal.organizationId, lockIds);
+  const targetIds = new Set(issueIds);
+  const loaded = new Map([...locked].filter(([id]) => targetIds.has(id)));
   if (parsed.expected !== undefined) {
     await assertExpectedUpdates(tx, loaded, issueIds, parsed.expected);
   }
@@ -2265,6 +2268,36 @@ export async function unarchiveIssue(
   return await setArchived(principal, issueId, null, writeContext);
 }
 
+async function childIssueIds(
+  tx: Executor,
+  organizationId: string,
+  parentId: string,
+): Promise<string[]> {
+  const children = await tx
+    .select({ id: schema.issue.id })
+    .from(schema.issue)
+    .where(
+      and(eq(schema.issue.organizationId, organizationId), eq(schema.issue.parentId, parentId)),
+    );
+  return children.map((child) => child.id);
+}
+
+async function lockHumanIssueDeletion(
+  tx: Executor,
+  principal: Principal,
+  issueId: string,
+): Promise<IssueRow> {
+  const children = await childIssueIds(tx, principal.organizationId, issueId);
+  const locked = await loadIssues(tx, principal.organizationId, [issueId, ...children]);
+  const current = requireRow(locked.get(issueId), 'That issue does not exist.');
+  if (!isInTeam(principal, teamScope(current))) throw notFound('That issue does not exist.');
+  const currentChildren = await childIssueIds(tx, principal.organizationId, issueId);
+  if (currentChildren.some((id) => !locked.has(id))) {
+    throw conflict('The affected issues changed. Retry the operation.');
+  }
+  return current;
+}
+
 export async function deleteIssue(
   principal: Principal,
   issueId: string,
@@ -2277,7 +2310,7 @@ export async function deleteIssue(
   return await transact(async (tx, principal) => {
     const current =
       writeContext === undefined
-        ? await loadIssueForUpdate(tx, principal, issueId)
+        ? await lockHumanIssueDeletion(tx, principal, issueId)
         : requireRow(
             (await lockAffectedIssues(tx, principal, issueId, 'delete')).get(issueId),
             'That issue does not exist.',

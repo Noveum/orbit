@@ -174,13 +174,6 @@ Runtime tests exercise old credentials, scopes, mode isolation, exact grant
 revocation, membership removal and refresh races. No production database or
 deployment gate is changed by these tests.
 
-The existing document import test polls the button's boolean disabled state
-before retaining its original accessibility assertion. A failed assertion on
-the busy Happy DOM element otherwise formats tens of megabytes of accumulated
-document state and can exhaust the unchanged test timeout. All original
-assertions remain, with an additional check that an oversized file is rejected
-before its contents are read. No document import behavior changes.
-
 Stage 3b tests cover several identities for one client/user across workspaces,
 explicit names, client takeover rejection, nullable owner/client rejection,
 selected identity reauthorization and preserved snapshots. The real provider
