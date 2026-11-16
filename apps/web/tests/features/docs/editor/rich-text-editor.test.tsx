@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Editor } from '@tiptap/core';
 import { useState } from 'react';
@@ -402,6 +402,7 @@ describe('bubble placement inside the editor box', () => {
 
 describe('selection bubble in a narrow drawer', () => {
   const original = Element.prototype.getBoundingClientRect;
+  let drawerWidth = 397;
 
   function drawerBox(width: number, height: number): DOMRect {
     return {
@@ -418,9 +419,10 @@ describe('selection bubble in a narrow drawer', () => {
   }
 
   beforeEach(() => {
+    drawerWidth = 397;
     Element.prototype.getBoundingClientRect = function (this: Element) {
       const id = this instanceof HTMLElement ? this.dataset['testid'] : undefined;
-      if (id === 'rich') return drawerBox(397, 560);
+      if (id === 'rich') return drawerBox(drawerWidth, 560);
       if (id === 'rich-bubble') return drawerBox(196, 40);
       return original.call(this);
     };
@@ -453,6 +455,63 @@ describe('selection bubble in a narrow drawer', () => {
     const bubble = await screen.findByTestId('rich-bubble');
     await waitFor(() => expect(bubble.style.top).toBe('92px'));
     expect(bubble.style.left).toBe('8px');
+  });
+
+  it('repositions a retained selection when its editor container shrinks', async () => {
+    const originalObserver = globalThis.ResizeObserver;
+    let resized: (() => void) | undefined;
+    globalThis.ResizeObserver = class implements ResizeObserver {
+      readonly observe: ResizeObserver['observe'];
+      readonly unobserve = mock();
+      readonly disconnect = mock();
+
+      constructor(callback: ResizeObserverCallback) {
+        this.observe = (target) => {
+          if (!(target instanceof HTMLElement) || target.dataset['testid'] !== 'rich') return;
+          resized = () =>
+            callback(
+              [
+                {
+                  target,
+                  contentRect: drawerBox(drawerWidth, 560),
+                  borderBoxSize: [],
+                  contentBoxSize: [],
+                  devicePixelContentBoxSize: [],
+                },
+              ],
+              this,
+            );
+        };
+      }
+    };
+    try {
+      const editor = await mountEditor();
+      editor.view.coordsAtPos = (position) => {
+        const first = drawerWidth === 397 ? 350 : 150;
+        const last = drawerWidth === 397 ? 390 : 220;
+        return { left: position === 35 ? first : last, right: last, top: 100, bottom: 116 };
+      };
+      editor
+        .chain()
+        .focus()
+        .insertContent('A selection near the right edge of this narrow editor')
+        .run();
+      editor.commands.setTextSelection({ from: 35, to: 54 });
+      const bubble = await screen.findByTestId('rich-bubble');
+      await waitFor(() => expect(bubble.style.left).toBe('193px'));
+
+      act(() => {
+        drawerWidth = 250;
+        resized?.();
+        window.dispatchEvent(new Event('resize'));
+      });
+
+      await waitFor(() => expect(bubble.style.left).toBe('46px'));
+      expect(editor.state.selection.from).toBe(35);
+      expect(editor.state.selection.to).toBe(54);
+    } finally {
+      globalThis.ResizeObserver = originalObserver;
+    }
   });
 
   it('flips the popover below the first line when there is no room above it', async () => {

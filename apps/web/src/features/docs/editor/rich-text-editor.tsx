@@ -301,7 +301,11 @@ export function RichTextEditor({
 
     editor.on('selectionUpdate', sync);
     editor.on('update', sync);
+    const observer = new ResizeObserver(sync);
+    const container = containerRef.current;
+    if (container !== null) observer.observe(container);
     return () => {
+      observer.disconnect();
       editor.off('selectionUpdate', sync);
       editor.off('update', sync);
     };
