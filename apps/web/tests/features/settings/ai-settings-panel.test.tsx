@@ -64,6 +64,34 @@ afterEach(() => {
 });
 
 describe('AiSettingsPanel', () => {
+  for (const action of ['Save settings', 'Disconnect']) {
+    it(`locks provider inputs while ${action} is pending`, async () => {
+      const user = userEvent.setup();
+      let finish: ((response: Response) => void) | undefined;
+      fetchResponder = () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      render(<AiSettingsPanel settings={INITIAL_SETTINGS} canManage={true} />);
+      await user.type(screen.getByLabelText('API Key'), 'submitted-key');
+      await user.click(screen.getByRole('button', { name: action }));
+      await waitFor(() => expect(lastFetchRequest?.url).toBe('/api/settings/ai'));
+      for (const label of [
+        'Provider shape',
+        'Base URL',
+        'Model identifier',
+        'API Key',
+        'Enable AI capabilities for this workspace',
+      ]) {
+        expect(screen.getByLabelText(label).hasAttribute('disabled')).toBe(true);
+      }
+      finish?.(Response.json({ ok: true }));
+      await waitFor(() =>
+        expect(screen.getByLabelText('API Key').hasAttribute('disabled')).toBe(false),
+      );
+    });
+  }
+
   for (const label of ['Base URL', 'Model identifier', 'API Key']) {
     it(`clears connection feedback when ${label} changes`, async () => {
       const user = userEvent.setup();

@@ -273,14 +273,12 @@ export const openAiCompletionResponseSchema = z.object({
   choices: z
     .array(
       z.object({
-        message: z
-          .object({
-            content: z.string().optional().nullable(),
-          })
-          .optional(),
+        message: z.object({
+          content: z.string().nullable(),
+        }),
       }),
     )
-    .optional(),
+    .min(1),
   usage: z
     .object({
       prompt_tokens: z.number().int().nonnegative().optional(),
@@ -299,7 +297,7 @@ export const anthropicMessagesResponseSchema = z.object({
         text: z.string().optional(),
       }),
     )
-    .optional(),
+    .min(1),
   usage: z
     .object({
       input_tokens: z.number().int().nonnegative().optional(),

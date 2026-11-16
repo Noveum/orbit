@@ -285,7 +285,12 @@ async function callOpenAiCompatible(
       : {
           promptTokens: parsed.data.usage.prompt_tokens,
           completionTokens: parsed.data.usage.completion_tokens,
-          totalTokens: parsed.data.usage.total_tokens,
+          totalTokens:
+            parsed.data.usage.total_tokens ??
+            (parsed.data.usage.prompt_tokens === undefined ||
+            parsed.data.usage.completion_tokens === undefined
+              ? undefined
+              : parsed.data.usage.prompt_tokens + parsed.data.usage.completion_tokens),
         };
 
   return { text, usage };
