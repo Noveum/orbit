@@ -13,7 +13,7 @@ import {
 import { notifyMany } from '@orbit/services/notifications';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import { z } from 'zod';
-import { publish } from '@/lib/api/handler.ts';
+import { publish } from '@/lib/api/publish.ts';
 import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
 
 const SIGNATURE_HEADER = 'x-hub-signature-256';

@@ -10,7 +10,7 @@ import {
   reconcilePendingGithubWork,
   wakeDueNotificationConversations,
 } from '@orbit/services';
-import { publish } from '@/lib/api/handler.ts';
+import { publish } from '@/lib/api/publish.ts';
 import { githubAppConfig } from '@/lib/env.ts';
 import { slackIntegrationEnabled } from '@/lib/integrations/slack-capability.ts';
 
