@@ -44,12 +44,11 @@ export function listAgentIdentitiesForConsent(userId: string, clientId: string) 
     );
 }
 
-export async function prepareAgentMcpGrant(
+export async function validateAgentMcpGrant(
   tx: Transaction,
   input: RecordMcpGrantInput,
   selection: AgentConsentSelection,
-  now: Date,
-): Promise<string> {
+) {
   if (!isAgentMcpEnabled()) throw forbidden('Agent connections are not enabled.');
   const parsed = agentConsentSelectionSchema.parse(selection);
   const scopes = agentConsentScopes(input.scopes.split(/\s+/).filter(Boolean), parsed.write);
@@ -87,7 +86,31 @@ export async function prepareAgentMcpGrant(
       .where(eq(schema.agentIdentity.id, parsed.identityId))
       .limit(1)
       .for('share');
-  } else {
+    if (identity === undefined || identity.deletedAt !== null)
+      throw forbidden('Choose an available identity.');
+    assertAgentIdentityOwner(principal, identity, input.clientId);
+  }
+  return { parsed, scopes, principal, member, client, owner, identity };
+}
+
+export async function writePreparedAgentMcpGrant(
+  tx: Transaction,
+  input: RecordMcpGrantInput,
+  selection: AgentConsentSelection,
+  now: Date,
+  grantId: string,
+): Promise<string> {
+  const {
+    parsed,
+    scopes,
+    principal,
+    member,
+    client,
+    owner,
+    identity: selectedIdentity,
+  } = await validateAgentMcpGrant(tx, input, selection);
+  let identity = selectedIdentity;
+  if (!('identityId' in parsed)) {
     [identity] = await tx
       .insert(schema.agentIdentity)
       .values({
@@ -117,7 +140,6 @@ export async function prepareAgentMcpGrant(
       ),
     );
   for (const grant of previous) await invalidateMcpGrant(tx, grant, now);
-  const grantId = newId();
   await tx.insert(schema.mcpGrant).values({
     id: grantId,
     clientId: input.clientId,
@@ -130,4 +152,13 @@ export async function prepareAgentMcpGrant(
     createdAt: now,
   });
   return grantId;
+}
+
+export function prepareAgentMcpGrant(
+  tx: Transaction,
+  input: RecordMcpGrantInput,
+  selection: AgentConsentSelection,
+  now: Date,
+): Promise<string> {
+  return writePreparedAgentMcpGrant(tx, input, selection, now, newId());
 }

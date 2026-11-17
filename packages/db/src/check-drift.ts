@@ -778,7 +778,11 @@ export async function liveCatalog(url: string): Promise<Catalog> {
       select
         table_name,
         column_name,
-        case when data_type = 'USER-DEFINED' then udt_name else data_type end as column_type,
+        case
+          when data_type = 'USER-DEFINED' then udt_name
+          when data_type = 'ARRAY' then format_type((quote_ident(udt_schema) || '.' || quote_ident(udt_name))::regtype, null)
+          else data_type
+        end as column_type,
         is_nullable = 'NO' as not_null,
         column_default as default_expression,
         generation_expression as generated_expression

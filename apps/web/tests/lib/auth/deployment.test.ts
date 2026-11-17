@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { mcp } from '@better-auth/mcp';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { symmetricDecrypt } from 'better-auth/crypto';
-import { mcp } from 'better-auth/plugins';
+import { jwt } from 'better-auth/plugins';
 import { deploymentAuthOptions } from '@/lib/auth/deployment';
 import { nativeFetchGlobals } from '../../../tests-preload';
 
@@ -60,57 +60,73 @@ describe('deployment authentication', () => {
     expect(cancelled.headers.get('location')).toBe(`${preview}/login?error=access_denied`);
   });
 
-  it('creates a session on the preview after the production callback and rejects replay', async () => {
-    const previewAuth = createAuth();
-    const productionAuth = createAuth('production-session-secret-different-from-preview');
-    const productionContext = await productionAuth.$context;
-    const provider = productionContext.socialProviders.find((item) => item.id === 'google');
-    if (!provider) throw new Error('Missing Google provider');
-    provider.validateAuthorizationCode = () => Promise.resolve({ accessToken: 'test-token' });
-    provider.getUserInfo = () =>
-      Promise.resolve({
-        user: {
-          id: 'provider-user',
-          name: 'Preview Tester',
-          email: 'tester@example.com',
-          emailVerified: true,
-        },
-        data: {},
+  it.each(['google', 'github'])(
+    'creates a preview session after the canonical %s exchange and rejects replay',
+    async (providerName) => {
+      const previewAuth = createAuth();
+      const productionAuth = createAuth('production-session-secret-different-from-preview');
+      const productionContext = await productionAuth.$context;
+      const provider = productionContext.socialProviders.find((item) => item.id === providerName);
+      if (!provider) throw new Error('Missing social provider');
+      const expectedCallback = `${canonical}/api/auth/callback/${providerName}`;
+      const exchangeCallbacks: string[] = [];
+      provider.validateAuthorizationCode = (parameters) => {
+        exchangeCallbacks.push(parameters.redirectURI);
+        return Promise.resolve(
+          parameters.redirectURI === expectedCallback ? { accessToken: 'test-token' } : null,
+        );
+      };
+      expect(
+        await provider.validateAuthorizationCode({
+          code: 'wrong-callback-control',
+          redirectURI: `${preview}/api/auth/callback/${providerName}`,
+        }),
+      ).toBeNull();
+      provider.getUserInfo = () =>
+        Promise.resolve({
+          user: {
+            name: 'Preview Tester',
+            email: 'tester@example.com',
+            emailVerified: true,
+          },
+          data: { sub: 'provider-user', id: 'provider-user' },
+        });
+      const signIn = await previewAuth.handler(
+        new nativeFetchGlobals.Request(`${preview}/api/auth/sign-in/social`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: preview },
+          body: JSON.stringify({ provider: providerName, callbackURL: `${preview}/inbox` }),
+        }),
+      );
+      const authorization = new URL((await signIn.json()).url);
+      const callback = new URL(expectedCallback);
+      callback.searchParams.set('code', 'test-code');
+      callback.searchParams.set('state', authorization.searchParams.get('state') ?? '');
+      const exchange = await productionAuth.handler(new nativeFetchGlobals.Request(callback));
+      expect(exchangeCallbacks.at(-1)).toBe(expectedCallback);
+      expect(exchange.status).toBe(302);
+      const location = exchange.headers.get('location') ?? '';
+      expect(new URL(location).origin).toBe(preview);
+      const login = await previewAuth.handler(new nativeFetchGlobals.Request(location));
+      expect(login.status).toBe(302);
+      expect(login.headers.get('location')).toBe(`${preview}/inbox`);
+      const cookies = login.headers.getSetCookie();
+      expect(cookies.some((cookie) => cookie.includes('session_token='))).toBe(true);
+      expect(cookies.join(';')).not.toContain('Domain=');
+      const session = await previewAuth.api.getSession({
+        headers: new Headers({
+          host: new URL(preview).host,
+          cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '),
+        }),
       });
-    const signIn = await previewAuth.handler(
-      new nativeFetchGlobals.Request(`${preview}/api/auth/sign-in/social`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: preview },
-        body: JSON.stringify({ provider: 'google', callbackURL: `${preview}/inbox` }),
-      }),
-    );
-    const authorization = new URL((await signIn.json()).url);
-    const callback = new URL(`${canonical}/api/auth/callback/google`);
-    callback.searchParams.set('code', 'test-code');
-    callback.searchParams.set('state', authorization.searchParams.get('state') ?? '');
-    const exchange = await productionAuth.handler(new nativeFetchGlobals.Request(callback));
-    expect(exchange.status).toBe(302);
-    const location = exchange.headers.get('location') ?? '';
-    expect(new URL(location).origin).toBe(preview);
-    const login = await previewAuth.handler(new nativeFetchGlobals.Request(location));
-    expect(login.status).toBe(302);
-    expect(login.headers.get('location')).toBe(`${preview}/inbox`);
-    const cookies = login.headers.getSetCookie();
-    expect(cookies.some((cookie) => cookie.includes('session_token='))).toBe(true);
-    expect(cookies.join(';')).not.toContain('Domain=');
-    const session = await previewAuth.api.getSession({
-      headers: new Headers({
-        host: new URL(preview).host,
-        cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '),
-      }),
-    });
-    expect(session?.user.email).toBe('tester@example.com');
-    expect(
-      await productionContext.internalAdapter.findUserByEmail('tester@example.com'),
-    ).toBeNull();
-    const replay = await previewAuth.handler(new nativeFetchGlobals.Request(location));
-    expect(replay.headers.get('location')).toContain('state_mismatch');
-  });
+      expect(session?.user.email).toBe('tester@example.com');
+      expect(
+        await productionContext.internalAdapter.findUserByEmail('tester@example.com'),
+      ).toBeNull();
+      const replay = await previewAuth.handler(new nativeFetchGlobals.Request(location));
+      expect(replay.headers.get('location')).toContain('state_mismatch');
+    },
+  );
 
   it('includes the exact deployment and branch aliases', () => {
     const options = deploymentAuthOptions({
@@ -144,20 +160,31 @@ describe('deployment authentication', () => {
     });
     const auth = betterAuth({
       ...deployment,
-      database: memoryAdapter({ user: [], account: [], session: [], verification: [] }),
+      database: memoryAdapter({
+        user: [],
+        account: [],
+        session: [],
+        verification: [],
+        jwks: [],
+        oauthResource: [],
+      }),
       secret: 'preview-session-secret-at-least-32-characters',
-      plugins: [...deployment.plugins, mcp({ loginPage: '/login', resource: `${canonical}/mcp` })],
+      plugins: [
+        ...deployment.plugins,
+        jwt({ jwt: { issuer: canonical } }),
+        mcp({ loginPage: '/login', consentPage: '/oauth/authorize', resource: `${canonical}/mcp` }),
+      ],
     });
 
-    const withoutRequest = await auth.api.getMcpOAuthConfig();
+    const withoutRequest = await auth.api.getOAuthServerConfig();
     expect(withoutRequest?.issuer).toBe(canonical);
 
-    const previewHost = await auth.api.getMcpOAuthConfig({
+    const previewHost = await auth.api.getOAuthServerConfig({
       headers: new Headers({ host: new URL(preview).host }),
     });
-    expect(previewHost?.issuer).toBe(preview);
+    expect(previewHost?.issuer).toBe(canonical);
 
-    const unknownHost = await auth.api.getMcpOAuthConfig({
+    const unknownHost = await auth.api.getOAuthServerConfig({
       headers: new Headers({ host: 'attacker.example' }),
     });
     expect(unknownHost?.issuer).toBe(canonical);
@@ -184,19 +211,6 @@ describe('deployment authentication', () => {
         `${canonical}/api/auth/callback/${provider}`,
       );
       expect(url.searchParams.get('state')).toBeTruthy();
-      const state = JSON.parse(
-        await symmetricDecrypt({
-          key: 'dedicated-proxy-secret-at-least-32-characters',
-          data: url.searchParams.get('state') ?? '',
-        }),
-      );
-      const payload = JSON.parse(
-        await symmetricDecrypt({
-          key: 'dedicated-proxy-secret-at-least-32-characters',
-          data: state.stateCookie,
-        }),
-      );
-      expect(new URL(payload.callbackURL).origin).toBe(preview);
     },
   );
 

@@ -1,3 +1,5 @@
+import { decodeBasicCredentials } from '@better-auth/core/oauth2';
+import { oauthProviderResourceClient } from '@better-auth/oauth-provider/resource-client';
 import {
   bindAgentMcpCredential,
   bindMcpCredential,
@@ -7,25 +9,169 @@ import {
   validateMcpGrant,
   verifyMcpTokenBinding,
 } from '@orbit/core';
-import { db, eq, schema, type Transaction } from '@orbit/db';
+import { and, db, eq, gt, isNotNull, isNull, schema, type Transaction } from '@orbit/db';
 import { isDomainError } from '@orbit/shared/errors';
+import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
   type McpTokenRequest,
   mcpAuthorizationCodeSchema,
   mcpCodeChallengeSchema,
   mcpCodeVerifierSchema,
+  mcpProviderAuthorizationCodeSchema,
+  mcpRevocationRequestSchema,
   mcpTokenRequestSchema,
   mcpTokenResponseSchema,
+  mcpUnknownRevocationSchema,
+  mcpUnsupportedRevocationSchema,
 } from '@orbit/shared/validators';
 import { toNextJsHandler } from 'better-auth/next-js';
+import { decodeJwt } from 'jose';
+import { providerClientRequest } from '@/lib/auth/mcp-client-auth.ts';
+import { providerTokenHash } from '@/lib/auth/mcp-provider.ts';
+import { isSafeMcpRedirectUri } from '@/lib/auth/mcp-redirect-uri.ts';
 import { auth, MCP_TOKEN_RATE_LIMIT_PROBE_HEADER } from '@/lib/auth/server.ts';
 import { withSocketRevocation } from '@/lib/auth/sign-out.ts';
-import { serverEnv } from '@/lib/env.ts';
+import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 
 const handlers = toNextJsHandler(auth.handler);
+const providerResource = oauthProviderResourceClient(auth).getActions();
 
 const MCP_AUTHORIZE_PATH = '/api/auth/mcp/authorize';
 const MCP_TOKEN_PATH = '/api/auth/mcp/token';
+
+function invalidMcpRedirect(): Response {
+  const url = new URL('/api/auth/error', serverEnv().BETTER_AUTH_URL);
+  url.searchParams.set('error', 'invalid_redirect_uri');
+  return Response.redirect(url, 302);
+}
+
+async function providerAuthorizationResponse(request: Request): Promise<Response> {
+  const response = await handlers.GET(request);
+  const location = response.headers.get('location');
+  if (location !== null && !isSafeMcpRedirectUri(new URL(location, request.url).toString()))
+    return invalidMcpRedirect();
+  return response;
+}
+
+function revocationClientId(request: Request, body: Record<string, unknown>): string | null {
+  const authorization = request.headers.get('authorization');
+  try {
+    if (authorization !== null) return decodeBasicCredentials(authorization).clientId;
+    if (typeof body['client_id'] === 'string' && body['client_id'].length > 0)
+      return body['client_id'];
+    if (typeof body['client_assertion'] !== 'string') return null;
+    const assertion = decodeJwt(body['client_assertion']);
+    return assertion.sub ?? assertion.iss ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function revokeBoundAccessToken(
+  credential: string,
+  grantId: string,
+  clientId: string,
+): Promise<void> {
+  const [token] = await db
+    .select()
+    .from(schema.oauthAccessToken)
+    .where(eq(schema.oauthAccessToken.accessToken, credential))
+    .limit(1);
+  if (
+    token === undefined ||
+    token.userId === null ||
+    token.clientId !== clientId ||
+    token.mcpGrantId !== grantId
+  )
+    return;
+  const userId = token.userId;
+  await db.transaction(async (tx) => {
+    await lockMcpOwner(tx, userId);
+    await tx
+      .delete(schema.oauthAccessToken)
+      .where(
+        and(
+          eq(schema.oauthAccessToken.id, token.id),
+          eq(schema.oauthAccessToken.accessToken, credential),
+          eq(schema.oauthAccessToken.clientId, clientId),
+          eq(schema.oauthAccessToken.mcpGrantId, grantId),
+        ),
+      );
+    await tx
+      .delete(schema.oauthProviderAccessToken)
+      .where(
+        and(
+          eq(schema.oauthProviderAccessToken.token, providerTokenHash(credential)),
+          eq(schema.oauthProviderAccessToken.clientId, clientId),
+          eq(schema.oauthProviderAccessToken.referenceId, grantId),
+        ),
+      );
+  });
+}
+
+function emptyRevocationResponse(): Response {
+  return new Response(null, {
+    status: 200,
+    headers: { 'cache-control': 'no-store', pragma: 'no-cache' },
+  });
+}
+
+async function normalizeRevocationResponse(response: Response): Promise<Response> {
+  if (response.status !== 400) return response;
+  const payload: unknown = await response
+    .clone()
+    .json()
+    .catch(() => null);
+  return mcpUnknownRevocationSchema.safeParse(payload).success
+    ? emptyRevocationResponse()
+    : response;
+}
+
+async function revokeMcpCredential(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  url.pathname = '/api/auth/oauth2/revoke';
+  const original = new Request(url, request.clone());
+  if (
+    request.headers.get('content-type')?.split(';')[0]?.trim() !==
+    'application/x-www-form-urlencoded'
+  ) {
+    return normalizeRevocationResponse(await handlers.POST(original));
+  }
+  const parameters = new URLSearchParams(await request.clone().text());
+  if ([...new Set(parameters.keys())].some((key) => parameters.getAll(key).length !== 1)) {
+    return mcpTokenError('invalid_request', 'The revocation request is invalid.', 400);
+  }
+  const parsed = mcpRevocationRequestSchema.safeParse(Object.fromEntries(parameters));
+  if (!parsed.success) return normalizeRevocationResponse(await handlers.POST(original));
+  const secret = serverEnv().BETTER_AUTH_SECRET;
+  const binding =
+    unbindAgentMcpCredential(parsed.data.token, secret) ??
+    unbindMcpCredential(parsed.data.token, secret);
+  if (binding === null) return normalizeRevocationResponse(await handlers.POST(original));
+  const prepared = await providerClientRequest(request, {
+    ...parsed.data,
+    token: binding.credential,
+  });
+  const response = await auth.api.oauth2Revoke({
+    request: prepared.request,
+    headers: prepared.request.headers,
+    body: { ...prepared.body, token: binding.credential },
+    asResponse: true,
+  });
+  if (response.status !== 400) return response;
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    return response;
+  }
+  if (!mcpUnsupportedRevocationSchema.safeParse(payload).success)
+    return normalizeRevocationResponse(response);
+  const clientId = revocationClientId(prepared.request, prepared.body);
+  if (clientId === null) return response;
+  await revokeBoundAccessToken(binding.credential, binding.grantId, clientId);
+  return emptyRevocationResponse();
+}
 interface ParsedMcpTokenRequest {
   readonly body: McpTokenRequest;
   readonly format: 'form' | 'json';
@@ -38,6 +184,13 @@ interface McpTokenExchange {
   readonly clientId: string;
   readonly scopes: string;
   readonly sourceRefreshToken: string | null;
+  readonly authorizationCodeId: string | null;
+  readonly pendingTokenHash: string;
+  readonly refreshId: string | null;
+}
+
+function pendingMcpTokenHash(authorizationCodeId: string): string {
+  return providerTokenHash(`orbit-pending-code:${authorizationCodeId}`);
 }
 
 function mcpTokenError(
@@ -91,8 +244,23 @@ async function applyMcpTokenRateLimit(request: Request): Promise<Response | null
   return response.status === 204 ? null : response;
 }
 
-function issueMcpToken(request: Request, body: Record<string, unknown>): Promise<Response> {
-  return auth.api.mcpOAuthToken({ request, headers: request.headers, body, asResponse: true });
+async function issueMcpToken(
+  request: Request,
+  body: { grant_type: string; [key: string]: unknown },
+): Promise<Response> {
+  const prepared = await providerClientRequest(request, {
+    ...body,
+    resource: body['resource'] ?? mcpServerUrl(),
+  });
+  const response = await authorizedBinding(() =>
+    auth.api.oauth2Token({
+      request: prepared.request,
+      headers: prepared.request.headers,
+      body: { ...prepared.body, grant_type: body.grant_type },
+      asResponse: true,
+    }),
+  );
+  return response ?? mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
 }
 
 function scopesMatch(left: string, right: string): boolean {
@@ -119,20 +287,34 @@ async function authorizedBinding<T>(operation: () => Promise<T>): Promise<T | nu
   }
 }
 
-async function authorizationCodeExchange(code: string): Promise<McpTokenExchange | null> {
+async function authorizationCodeExchange(
+  code: string,
+): Promise<McpTokenExchange | null | undefined> {
   const [record] = await db
     .select()
     .from(schema.verification)
-    .where(eq(schema.verification.identifier, code))
+    .where(eq(schema.verification.identifier, providerTokenHash(code)))
     .limit(1);
-  if (record === undefined || record.expiresAt.getTime() <= Date.now()) return null;
+  if (record === undefined) return undefined;
+  if (record.expiresAt.getTime() <= Date.now()) return null;
   let raw: unknown;
   try {
     raw = JSON.parse(record.value) as unknown;
   } catch {
     return null;
   }
-  const parsed = mcpAuthorizationCodeSchema.safeParse(raw);
+  const provider = mcpProviderAuthorizationCodeSchema.safeParse(raw);
+  if (!provider.success) return null;
+  const parsed = mcpAuthorizationCodeSchema.safeParse({
+    clientId: provider.data.query.client_id,
+    redirectURI: provider.data.query.redirect_uri,
+    scope: provider.data.query.scope.split(/\s+/).filter(Boolean),
+    userId: provider.data.userId,
+    requireConsent: false,
+    mcpGrantId: provider.data.referenceId,
+    codeChallenge: provider.data.query.code_challenge,
+    codeChallengeMethod: provider.data.query.code_challenge_method,
+  });
   if (!parsed.success) return null;
   const value = parsed.data;
   return authorizedBinding(() =>
@@ -153,6 +335,25 @@ async function authorizationCodeExchange(code: string): Promise<McpTokenExchange
         return null;
       }
       await validateMcpGrant(tx, grant, grant.identityKind);
+      const authorizationCodeId = providerTokenHash(code);
+      const pendingTokenHash = pendingMcpTokenHash(authorizationCodeId);
+      await tx
+        .insert(schema.oauthProviderAccessToken)
+        .values({
+          id: randomUUIDv7(),
+          token: pendingTokenHash,
+          clientId: value.clientId,
+          userId: value.userId,
+          sessionId: provider.data.sessionId,
+          referenceId: grant.id,
+          authorizationCodeId,
+          resources: [mcpServerUrl()],
+          scopes: value.scope,
+          expiresAt: record.expiresAt,
+          createdAt: new Date(),
+          revoked: new Date(),
+        })
+        .onConflictDoNothing({ target: schema.oauthProviderAccessToken.token });
       return {
         grantId: grant.id,
         kind: grant.identityKind,
@@ -160,6 +361,9 @@ async function authorizationCodeExchange(code: string): Promise<McpTokenExchange
         clientId: grant.clientId,
         scopes: value.scope.join(' '),
         sourceRefreshToken: null,
+        authorizationCodeId,
+        pendingTokenHash,
+        refreshId: null,
       };
     }),
   );
@@ -186,6 +390,44 @@ async function refreshExchange(
       await lockMcpOwner(tx, userId);
       await verifyMcpTokenBinding(tx, source, binding.grantId, kind);
       if (source.refreshTokenExpiresAt.getTime() <= Date.now()) return null;
+      const [family] = await tx
+        .select()
+        .from(schema.oauthProviderRefreshToken)
+        .where(eq(schema.oauthProviderRefreshToken.token, providerTokenHash(binding.credential)))
+        .limit(1)
+        .for('share');
+      if (
+        family === undefined ||
+        family.revoked !== null ||
+        family.rotatedAt !== null ||
+        family.expiresAt <= new Date() ||
+        family.sessionId === null ||
+        family.sessionId !== source.sessionId ||
+        family.clientId !== source.clientId ||
+        family.userId !== userId ||
+        family.referenceId !== binding.grantId ||
+        !scopesMatch(family.scopes.join(' '), source.scopes)
+      )
+        return null;
+      const pendingTokenHash = providerTokenHash(`orbit-pending-refresh:${family.token}`);
+      await tx
+        .insert(schema.oauthProviderAccessToken)
+        .values({
+          id: randomUUIDv7(),
+          token: pendingTokenHash,
+          clientId: family.clientId,
+          userId,
+          sessionId: family.sessionId,
+          referenceId: binding.grantId,
+          authorizationCodeId: family.authorizationCodeId,
+          refreshId: family.id,
+          resources: [mcpServerUrl()],
+          scopes: family.scopes,
+          expiresAt: family.expiresAt,
+          createdAt: new Date(),
+          revoked: new Date(),
+        })
+        .onConflictDoNothing({ target: schema.oauthProviderAccessToken.token });
       return {
         grantId: binding.grantId,
         kind,
@@ -193,9 +435,114 @@ async function refreshExchange(
         clientId: source.clientId,
         scopes: source.scopes,
         sourceRefreshToken: binding.credential,
+        authorizationCodeId: family.authorizationCodeId,
+        pendingTokenHash,
+        refreshId: family.id,
       };
     }),
   );
+}
+
+async function issuedProviderState(
+  tx: Transaction,
+  exchange: McpTokenExchange,
+  sessionId: string,
+  refreshToken: string | undefined,
+) {
+  const [session] = await tx
+    .select()
+    .from(schema.session)
+    .where(eq(schema.session.id, sessionId))
+    .limit(1)
+    .for('share');
+  if (
+    session === undefined ||
+    session.userId !== exchange.userId ||
+    session.expiresAt <= new Date()
+  )
+    return null;
+  const [refresh] =
+    refreshToken === undefined
+      ? []
+      : await tx
+          .select()
+          .from(schema.oauthProviderRefreshToken)
+          .where(eq(schema.oauthProviderRefreshToken.token, providerTokenHash(refreshToken)))
+          .limit(1)
+          .for('share');
+  if (
+    refreshToken !== undefined &&
+    (refresh === undefined ||
+      refresh.revoked !== null ||
+      refresh.rotatedAt !== null ||
+      refresh.expiresAt <= new Date() ||
+      refresh.userId !== exchange.userId ||
+      refresh.clientId !== exchange.clientId ||
+      refresh.referenceId !== exchange.grantId ||
+      refresh.sessionId !== session.id)
+  )
+    return null;
+
+  return { session, refresh };
+}
+
+async function persistIssuedMcpToken(
+  tx: Transaction,
+  exchange: McpTokenExchange,
+  accessToken: string,
+  refreshToken: string | undefined,
+  payload: Awaited<ReturnType<typeof providerResource.verifyBearerToken>>,
+  { session, refresh }: NonNullable<Awaited<ReturnType<typeof issuedProviderState>>>,
+) {
+  const pending = and(
+    eq(schema.oauthProviderAccessToken.token, exchange.pendingTokenHash),
+    exchange.authorizationCodeId === null
+      ? isNull(schema.oauthProviderAccessToken.authorizationCodeId)
+      : eq(schema.oauthProviderAccessToken.authorizationCodeId, exchange.authorizationCodeId),
+    exchange.refreshId === null
+      ? isNull(schema.oauthProviderAccessToken.refreshId)
+      : eq(schema.oauthProviderAccessToken.refreshId, exchange.refreshId),
+    eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
+    eq(schema.oauthProviderAccessToken.userId, exchange.userId),
+    eq(schema.oauthProviderAccessToken.sessionId, session.id),
+    eq(schema.oauthProviderAccessToken.referenceId, exchange.grantId),
+    isNotNull(schema.oauthProviderAccessToken.revoked),
+    gt(schema.oauthProviderAccessToken.expiresAt, new Date()),
+  );
+  if (refreshToken === undefined) {
+    const tracked = await tx
+      .update(schema.oauthProviderAccessToken)
+      .set({
+        token: providerTokenHash(accessToken),
+        expiresAt: new Date((payload.exp ?? 0) * 1000),
+        scopes: String(payload['scope']).split(/\s+/).filter(Boolean),
+        revoked: null,
+      })
+      .where(pending)
+      .returning({ id: schema.oauthProviderAccessToken.id });
+    if (tracked.length !== 1) return [];
+  } else {
+    const consumed = await tx
+      .delete(schema.oauthProviderAccessToken)
+      .where(pending)
+      .returning({ id: schema.oauthProviderAccessToken.id });
+    if (consumed.length !== 1) return [];
+  }
+  return tx
+    .insert(schema.oauthAccessToken)
+    .values({
+      id: randomUUIDv7(),
+      accessToken,
+      refreshToken: refreshToken ?? randomUUIDv7(),
+      clientId: exchange.clientId,
+      userId: exchange.userId,
+      mcpGrantId: exchange.grantId,
+      sessionId: session.id,
+      scopes: String(payload['scope']),
+      accessTokenExpiresAt: new Date((payload.exp ?? 0) * 1000),
+      refreshTokenExpiresAt: refresh?.expiresAt ?? new Date(),
+    })
+    .returning();
 }
 
 async function acceptIssuedMcpToken(
@@ -204,6 +551,24 @@ async function acceptIssuedMcpToken(
   refreshToken: string | undefined,
   responseScopes: string | undefined,
 ): Promise<string | null> {
+  const payload = await providerResource
+    .verifyBearerToken(accessToken, {
+      verifyOptions: {
+        issuer: new URL(serverEnv().BETTER_AUTH_URL).origin,
+        audience: mcpServerUrl(),
+      },
+    })
+    .catch(() => null);
+  if (
+    payload === null ||
+    payload.sub !== exchange.userId ||
+    payload['client_id'] !== exchange.clientId ||
+    payload['orbit_grant_id'] !== exchange.grantId ||
+    typeof payload['sid'] !== 'string' ||
+    typeof payload['scope'] !== 'string' ||
+    typeof payload.exp !== 'number'
+  )
+    return null;
   return await db.transaction(async (tx) => {
     await lockMcpOwner(tx, exchange.userId);
     const accepted = await authorizedBinding(async () => {
@@ -214,22 +579,22 @@ async function acceptIssuedMcpToken(
         .limit(1);
       if (grant === undefined) return null;
       await validateMcpGrant(tx, grant, exchange.kind);
-      const source = await lockedRefreshSource(tx, exchange);
+      const source = await lockedRefreshSourceAfterRotation(tx, exchange);
       if (exchange.sourceRefreshToken !== null && source === null) return null;
-      const [issued] = await tx
-        .select()
-        .from(schema.oauthAccessToken)
-        .where(eq(schema.oauthAccessToken.accessToken, accessToken))
-        .limit(1)
-        .for('update');
-      if (
-        issued === undefined ||
-        !issuedTokenMatches(issued, exchange, refreshToken, responseScopes)
-      ) {
+      const state = await issuedProviderState(tx, exchange, String(payload['sid']), refreshToken);
+      if (state === null) return null;
+      const [issued] = await persistIssuedMcpToken(
+        tx,
+        exchange,
+        accessToken,
+        refreshToken,
+        payload,
+        state,
+      );
+      if (!issuedTokenMatches(issued, exchange, refreshToken, responseScopes)) {
         return null;
       }
       const scopes = issued.scopes;
-      if (exchange.kind === 'agent' && !scopes.split(' ').includes('orbit.read')) return null;
       await tx
         .update(schema.oauthAccessToken)
         .set({ mcpGrantId: exchange.grantId })
@@ -249,17 +614,28 @@ async function acceptIssuedMcpToken(
     await tx
       .delete(schema.oauthAccessToken)
       .where(eq(schema.oauthAccessToken.accessToken, accessToken));
+    await tx
+      .delete(schema.oauthProviderAccessToken)
+      .where(
+        and(
+          eq(schema.oauthProviderAccessToken.token, providerTokenHash(accessToken)),
+          eq(schema.oauthProviderAccessToken.clientId, exchange.clientId),
+          eq(schema.oauthProviderAccessToken.referenceId, exchange.grantId),
+        ),
+      );
     return null;
   });
 }
 
 function issuedTokenMatches(
-  issued: typeof schema.oauthAccessToken.$inferSelect,
+  issued: typeof schema.oauthAccessToken.$inferSelect | undefined,
   exchange: McpTokenExchange,
   refreshToken: string | undefined,
   responseScopes: string | undefined,
-): boolean {
+): issued is typeof schema.oauthAccessToken.$inferSelect {
   return (
+    issued !== undefined &&
+    (exchange.kind !== 'agent' || issued.scopes.split(' ').includes('orbit.read')) &&
     issued.clientId === exchange.clientId &&
     issued.userId === exchange.userId &&
     scopesWithin(issued.scopes, exchange.scopes) &&
@@ -270,7 +646,7 @@ function issuedTokenMatches(
   );
 }
 
-async function lockedRefreshSource(tx: Transaction, exchange: McpTokenExchange) {
+async function lockedRefreshSourceAfterRotation(tx: Transaction, exchange: McpTokenExchange) {
   if (exchange.sourceRefreshToken === null) return null;
   const [source] = await tx
     .select()
@@ -282,12 +658,13 @@ async function lockedRefreshSource(tx: Transaction, exchange: McpTokenExchange) 
     source === undefined ||
     source.userId !== exchange.userId ||
     source.clientId !== exchange.clientId ||
+    (source.mcpGrantId !== exchange.grantId &&
+      !(exchange.kind === 'legacy' && source.mcpGrantId === null)) ||
     !scopesMatch(source.scopes, exchange.scopes) ||
     source.refreshTokenExpiresAt.getTime() <= Date.now()
   ) {
     return null;
   }
-  await verifyMcpTokenBinding(tx, source, exchange.grantId, exchange.kind);
   return source;
 }
 
@@ -357,7 +734,8 @@ async function handleMcpTokenRequest(request: Request): Promise<Response> {
       return mcpTokenError('invalid_request', 'The PKCE code verifier is invalid.', 400);
     }
     const exchange = await authorizationCodeExchange(parsed.body.code);
-    if (exchange === null) {
+    if (exchange === null || exchange === undefined) {
+      if (exchange === undefined) await issueMcpToken(request, parsed.body);
       return mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
     }
     return secureMcpTokenResponse(await issueMcpToken(request, parsed.body), exchange, secret);
@@ -378,9 +756,18 @@ async function handleMcpTokenRequest(request: Request): Promise<Response> {
 
 export function GET(request: Request): Promise<Response> | Response {
   const url = new URL(request.url);
-  if (url.pathname === MCP_AUTHORIZE_PATH) {
+  if (url.pathname === MCP_AUTHORIZE_PATH || url.pathname === '/api/auth/oauth2/authorize') {
+    const callbacks = url.searchParams.getAll('redirect_uri');
+    if (
+      callbacks.length > 1 ||
+      (callbacks[0] !== undefined && !isSafeMcpRedirectUri(callbacks[0])) ||
+      url.searchParams.getAll('client_id').length > 1
+    )
+      return invalidMcpRedirect();
     const prompts = url.searchParams.getAll('prompt');
-    if (prompts.length !== 1 || prompts[0] !== 'consent') {
+    if (prompts.length === 0 && !url.searchParams.has('sig')) {
+      url.searchParams.set('prompt', 'consent');
+    } else if (prompts.length !== 1 || prompts[0] !== 'consent') {
       return Response.json(
         { error: 'invalid_request', error_description: 'Explicit consent is required.' },
         { status: 400, headers: { 'cache-control': 'no-store' } },
@@ -397,10 +784,26 @@ export function GET(request: Request): Promise<Response> | Response {
       );
     }
   }
-  return handlers.GET(request);
+  if (url.pathname.startsWith('/api/auth/mcp/')) {
+    url.pathname = url.pathname.replace('/api/auth/mcp/', '/api/auth/oauth2/');
+    return providerAuthorizationResponse(new Request(url, request));
+  }
+  if (url.pathname === '/api/auth/oauth2/authorize')
+    return providerAuthorizationResponse(new Request(url, request));
+  return handlers.GET(new Request(url, request));
 }
 
 export function POST(request: Request): Promise<Response> {
-  if (new URL(request.url).pathname === MCP_TOKEN_PATH) return handleMcpTokenRequest(request);
+  const url = new URL(request.url);
+  if (url.pathname === '/api/auth/oauth2/revoke' || url.pathname === '/api/auth/mcp/revoke') {
+    return revokeMcpCredential(request);
+  }
+  if (url.pathname === MCP_TOKEN_PATH || url.pathname === '/api/auth/oauth2/token') {
+    return handleMcpTokenRequest(request);
+  }
+  if (url.pathname.startsWith('/api/auth/mcp/')) {
+    url.pathname = url.pathname.replace('/api/auth/mcp/', '/api/auth/oauth2/');
+    return withSocketRevocation(new Request(url, request), handlers.POST);
+  }
   return withSocketRevocation(request, handlers.POST);
 }

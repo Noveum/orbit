@@ -148,7 +148,7 @@ async function readBusinessState(sql: postgres.Sql): Promise<BusinessState> {
       as payload from mcp_grant order by id
   `;
   const tokens = await sql<PayloadRow[]>`
-    select to_jsonb(oauth_access_token) - 'mcp_grant_id' as payload from oauth_access_token order by id
+    select to_jsonb(oauth_access_token) - 'mcp_grant_id' - 'session_id' as payload from oauth_access_token order by id
   `;
   const consents = await sql<PayloadRow[]>`
     select to_jsonb(oauth_consent) as payload from oauth_consent order by id
@@ -345,6 +345,9 @@ describe('actor schema expansion compatibility', () => {
     expect(initialState?.activities).toHaveLength(1);
     expect(initialState?.notifications).toHaveLength(1);
     expect(initialState?.tokens).toHaveLength(1);
+    expect([...(await run((sql) => sql`select session_id from oauth_access_token`))]).toEqual([
+      { session_id: null },
+    ]);
     expect(await run(readBusinessState)).toEqual(legacyBusinessState());
     await runLegacyHelper(['--existing-credential']);
     expect(await run(readBusinessState)).toEqual(legacyBusinessState());

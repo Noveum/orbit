@@ -3,6 +3,7 @@ import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import migrationJournal from '../drizzle/meta/_journal.json';
 import {
   type Catalog,
   catalogDriftBetween,
@@ -28,6 +29,9 @@ export interface ReleaseResult {
 
 const LOCK_KEY = 4_611_358_438_132_153;
 const HUMAN_ACTOR_MIGRATION = 1791120831827;
+const AUTH_PROVIDER_CLIENT_MIGRATION = migrationJournal.entries.find((entry) =>
+  /^\d+_auth_provider_clients$/.test(entry.tag),
+)?.when;
 const RECONCILED_LEGACY_DATA_MIGRATIONS = new Set([
   1786217938315,
   1786623194883,
@@ -61,7 +65,8 @@ function verifyLegacyDataReconciliation(migrations: readonly MigrationMeta[]): v
   const missing = migrations.filter(
     (migration) =>
       containsDataChange(migration) &&
-      !RECONCILED_LEGACY_DATA_MIGRATIONS.has(migration.folderMillis),
+      !RECONCILED_LEGACY_DATA_MIGRATIONS.has(migration.folderMillis) &&
+      migration.folderMillis !== AUTH_PROVIDER_CLIENT_MIGRATION,
   );
   if (missing.length > 0) {
     throw new Error(
@@ -333,6 +338,17 @@ async function reconcileNotificationChecks(
   }
 }
 
+async function reconcileAuthProviderClients(
+  tx: postgres.TransactionSql,
+  pendingMigrations: readonly MigrationMeta[],
+): Promise<void> {
+  const authClients = pendingMigrations.find(
+    (migration) => migration.folderMillis === AUTH_PROVIDER_CLIENT_MIGRATION,
+  );
+  if (authClients !== undefined)
+    for (const statement of authClients.sql) await tx.unsafe(statement);
+}
+
 async function baselineLedger(
   sql: postgres.Sql,
   migrations: readonly MigrationMeta[],
@@ -341,6 +357,7 @@ async function baselineLedger(
   const pendingMigrations = migrations.slice(appliedCount);
   verifyLegacyDataReconciliation(pendingMigrations);
   await sql.begin(async (tx) => {
+    await reconcileAuthProviderClients(tx, pendingMigrations);
     await reconcileMcpGrantContract(tx, migrations);
     await reconcileHumanActorBaseline(tx, migrations, pendingMigrations);
     const notificationAuditMigration = migrations.find(
