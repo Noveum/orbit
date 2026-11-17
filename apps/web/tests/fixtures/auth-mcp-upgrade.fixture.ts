@@ -69,6 +69,13 @@ const mode = z
     'refresh-access-parent-deleted',
     'code-refresh-reservation-race',
     'refresh-rotation-reservation-race',
+    'consent-provider-reject',
+    'consent-expiry-boundary',
+    'consent-single-pool',
+    'consent-concurrent',
+    'consent-core-reject',
+    'consent-agent-reject',
+    'public-unknown-revoke',
   ])
   .parse(process.argv[2] ?? 'grant');
 const accessOnlyMode = [
@@ -874,6 +881,272 @@ const credentials = tokenSchema.parse(tokenResponse);
 const access = await verifyMcpAccessToken(credentials.access_token);
 assert.equal(access.organizationId, workspace.organizationId);
 assert.equal(access.userId, workspace.adminUser.id);
+if (mode === 'public-unknown-revoke') {
+  function revokePublic(tokenValue: string, clientId: string | undefined, hint = 'access_token') {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.delete('cookie');
+    requestHeaders.set('content-type', 'application/x-www-form-urlencoded');
+    return routes.POST(
+      new Request(`${origin}/api/auth/oauth2/revoke`, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: new URLSearchParams({
+          token: tokenValue,
+          token_type_hint: hint,
+          ...(clientId === undefined ? {} : { client_id: clientId }),
+        }),
+      }),
+    );
+  }
+  for (const hint of ['access_token', 'refresh_token', 'unrecognized-hint']) {
+    const response = await revokePublic('local-unknown-public-token', registered.client_id, hint);
+    assert.equal(
+      response.status,
+      200,
+      JSON.stringify(
+        await response
+          .clone()
+          .json()
+          .catch(() => null),
+      ),
+    );
+    await verifyMcpAccessToken(credentials.access_token);
+  }
+  assert.equal((await revokePublic('local-unknown-public-token', undefined)).status, 401);
+  const invalidClient = await revokePublic(
+    'local-unknown-public-token',
+    'local-unregistered-client',
+  );
+  assert.equal(invalidClient.status, 400);
+  assert.equal(
+    z.object({ error: z.string() }).parse(await invalidClient.json()).error,
+    'invalid_client',
+  );
+  assert.equal((await revokePublic('', registered.client_id)).status, 400);
+  await verifyMcpAccessToken(credentials.access_token);
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
+if (mode.startsWith('consent-')) {
+  const { auth } = await import('../../src/lib/auth/server.ts');
+  const { createProviderConsent, finalizeProviderConsent } = await import(
+    '../../src/lib/auth/mcp-consent.ts'
+  );
+  const { getMcpConsentRequest } = await import('@orbit/core');
+  async function nextConsent() {
+    const nextQuery = new URLSearchParams(query);
+    nextQuery.set('state', randomUUID());
+    const response = await routes.GET(
+      new Request(`${origin}/api/auth/mcp/authorize?${nextQuery}`, { headers }),
+    );
+    assert.equal(response.status, 302);
+    const location = new URL(response.headers.get('location') ?? '', origin);
+    assert.equal(location.pathname, '/oauth/authorize');
+    return createProviderConsent(workspace.adminUser.id, location.search.slice(1));
+  }
+  const nextCode = await nextConsent();
+  const selection = {
+    userId: workspace.adminUser.id,
+    consentCode: nextCode,
+    accept: true as const,
+    organizationId: workspace.organizationId,
+  };
+  const [oldGrant] = await db
+    .select()
+    .from(schema.mcpGrant)
+    .where(eq(schema.mcpGrant.id, access.grantId));
+  assert.ok(oldGrant);
+  const checkPrevious = async () => {
+    assert.equal((await verifyMcpAccessToken(credentials.access_token)).grantId, oldGrant.id);
+    const [stored] = await db
+      .select()
+      .from(schema.mcpGrant)
+      .where(eq(schema.mcpGrant.id, oldGrant.id));
+    assert.ok(stored);
+    assert.equal(stored.revokedAt, null);
+    assert.equal(
+      (
+        await db
+          .select()
+          .from(schema.verification)
+          .where(eq(schema.verification.identifier, nextCode))
+      ).length,
+      1,
+    );
+  };
+  if (mode === 'consent-provider-reject') {
+    const rejected: Parameters<typeof finalizeProviderConsent>[1] = {
+      oauth2Consent: () => Promise.reject(new Error('controlled consent provider failure')),
+    };
+    await assert.rejects(finalizeProviderConsent(selection, rejected, headers));
+    await checkPrevious();
+    await getMcpConsentRequest(workspace.adminUser.id, nextCode);
+    const approved = await finalizeProviderConsent(selection, auth.api, headers);
+    const approvedCode = new URL(approved.redirectUri).searchParams.get('code');
+    assert.ok(approvedCode);
+    assert.equal((await token({ ...authorizationExchange, code: approvedCode })).status, 200);
+  } else if (mode === 'consent-core-reject') {
+    const capturedCodes: string[] = [];
+    const changed: Parameters<typeof finalizeProviderConsent>[1] = {
+      oauth2Consent: async (input) => {
+        const result = await auth.api.oauth2Consent(input);
+        const capturedCode = new URL(result.url).searchParams.get('code');
+        assert.ok(capturedCode);
+        capturedCodes.push(capturedCode);
+        await db
+          .update(schema.oauthApplication)
+          .set({ disabled: true })
+          .where(eq(schema.oauthApplication.clientId, registered.client_id));
+        return result;
+      },
+    };
+    try {
+      await assert.rejects(finalizeProviderConsent(selection, changed, headers));
+    } finally {
+      await db
+        .update(schema.oauthApplication)
+        .set({ disabled: false })
+        .where(eq(schema.oauthApplication.clientId, registered.client_id));
+    }
+    await checkPrevious();
+    const capturedCode = capturedCodes[0];
+    assert.ok(capturedCode);
+    const [record] = await db
+      .select()
+      .from(schema.verification)
+      .where(
+        eq(
+          schema.verification.identifier,
+          createHash('sha256').update(capturedCode).digest('base64url'),
+        ),
+      );
+    assert.ok(record);
+    assert.ok(record.expiresAt.getTime() > Date.now());
+    const stored = z.object({ referenceId: z.string() }).parse(JSON.parse(record.value));
+    assert.notEqual(stored.referenceId, oldGrant.id);
+    assert.equal(
+      (await db.select().from(schema.mcpGrant).where(eq(schema.mcpGrant.id, stored.referenceId)))
+        .length,
+      0,
+    );
+    assert.equal((await token({ ...authorizationExchange, code: capturedCode })).status, 400);
+    await checkPrevious();
+  } else if (mode === 'consent-agent-reject') {
+    process.env['ORBIT_AGENT_MCP'] = 'true';
+    const agentSelection = { ...selection, agent: { name: 'Local consent identity' } };
+    const rejected: Parameters<typeof finalizeProviderConsent>[1] = {
+      oauth2Consent: () => Promise.reject(new Error('controlled Agent provider failure')),
+    };
+    await assert.rejects(finalizeProviderConsent(agentSelection, rejected, headers));
+    await checkPrevious();
+    assert.equal((await db.select().from(schema.agentIdentity)).length, 0);
+    const approved = await finalizeProviderConsent(agentSelection, auth.api, headers);
+    const approvedCode = new URL(approved.redirectUri).searchParams.get('code');
+    assert.ok(approvedCode);
+    const issued = await token({ ...authorizationExchange, code: approvedCode });
+    assert.equal(issued.status, 200);
+    const result = z.object({ access_token: z.string() }).parse(await issued.json());
+    assert.equal((await verifyMcpAccessToken(result.access_token)).identity.kind, 'agent');
+    assert.equal((await db.select().from(schema.agentIdentity)).length, 1);
+  } else if (mode === 'consent-expiry-boundary') {
+    const pending = await getMcpConsentRequest(workspace.adminUser.id, nextCode);
+    assert.ok(pending.oauthQuery);
+    const exp = Number(new URLSearchParams(pending.oauthQuery).get('exp'));
+    assert.ok(Number.isFinite(exp));
+    const realDate = Date;
+    const future = (exp + 1) * 1000;
+    const shiftedDate = new Proxy(realDate, {
+      construct(target, args, newTarget) {
+        return Reflect.construct(target, args.length === 0 ? [future] : args, newTarget);
+      },
+      get(target, property, receiver) {
+        return property === 'now' ? () => future : Reflect.get(target, property, receiver);
+      },
+    });
+    const expired: Parameters<typeof finalizeProviderConsent>[1] = {
+      oauth2Consent: async (input) => {
+        Reflect.set(globalThis, 'Date', shiftedDate);
+        return await auth.api.oauth2Consent(input);
+      },
+    };
+    try {
+      await assert.rejects(finalizeProviderConsent(selection, expired, headers));
+      await checkPrevious();
+      await assert.rejects(getMcpConsentRequest(workspace.adminUser.id, nextCode));
+      const freshCode = await nextConsent();
+      const approved = await finalizeProviderConsent(
+        { ...selection, consentCode: freshCode },
+        auth.api,
+        headers,
+      );
+      const approvedCode = new URL(approved.redirectUri).searchParams.get('code');
+      assert.ok(approvedCode);
+      assert.equal((await token({ ...authorizationExchange, code: approvedCode })).status, 200);
+    } finally {
+      Reflect.set(globalThis, 'Date', realDate);
+    }
+  } else if (mode === 'consent-concurrent') {
+    let arrivals = 0;
+    let release: () => void = () => undefined;
+    const arrived = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Consent callback barrier timed out')), 5000);
+    });
+    const captured: string[] = [];
+    const simultaneous: Parameters<typeof finalizeProviderConsent>[1] = {
+      oauth2Consent: async (input) => {
+        arrivals += 1;
+        if (arrivals === 2) release();
+        await Promise.race([arrived, deadline]);
+        const result = await auth.api.oauth2Consent(input);
+        const code = new URL(result.url).searchParams.get('code');
+        assert.ok(code);
+        captured.push(code);
+        return result;
+      },
+    };
+    let responses: PromiseSettledResult<Awaited<ReturnType<typeof finalizeProviderConsent>>>[];
+    try {
+      responses = await Promise.allSettled([
+        finalizeProviderConsent(selection, simultaneous, headers),
+        finalizeProviderConsent(selection, simultaneous, headers),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    assert.equal(pool.options.max, 2);
+    assert.equal(arrivals, 2);
+    assert.equal(captured.length, 2);
+    assert.equal(responses.filter((response) => response.status === 'fulfilled').length, 1);
+    assert.equal(responses.filter((response) => response.status === 'rejected').length, 1);
+    for (const response of responses) {
+      if (response.status !== 'fulfilled') continue;
+      const code = new URL(response.value.redirectUri).searchParams.get('code');
+      assert.ok(code);
+      const issued = await token({ ...authorizationExchange, code });
+      assert.equal(issued.status, 200);
+      const value = z.object({ access_token: z.string() }).parse(await issued.json());
+      for (const discardedCode of captured.filter((candidate) => candidate !== code)) {
+        assert.equal((await token({ ...authorizationExchange, code: discardedCode })).status, 400);
+      }
+      await verifyMcpAccessToken(value.access_token);
+    }
+  } else {
+    assert.equal(process.env['DATABASE_POOL_MAX'], '1');
+    assert.equal(pool.options.max, 1);
+    const approved = await finalizeProviderConsent(selection, auth.api, headers);
+    const approvedCode = new URL(approved.redirectUri).searchParams.get('code');
+    assert.ok(approvedCode);
+    assert.equal((await token({ ...authorizationExchange, code: approvedCode })).status, 200);
+  }
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
 if (mode.startsWith('refresh-access-') || mode === 'refresh-rotation-reservation-race') {
   const { auth } = await import('../../src/lib/auth/server.ts');
   const { unbindMcpCredential } = await import('@orbit/core');
@@ -1055,13 +1328,51 @@ if (mode === 'access-revoke' || mode === 'legacy-space-basic' || mode === 'legac
   );
   for (const unknown of ['local-random-opaque-credential', unknownBound]) {
     const unknownResponse = await revokeAccess(registered.client_id, clientSecret, false, unknown);
-    const unknownResult = z
-      .object({ error: z.string() })
-      .parse(await unknownResponse.clone().json());
-    assert.equal(unknownResponse.status, 400);
-    assert.equal(unknownResult.error, 'invalid_request');
+    assert.equal(
+      unknownResponse.status,
+      200,
+      JSON.stringify(
+        await unknownResponse
+          .clone()
+          .json()
+          .catch(() => null),
+      ),
+    );
     await verifyMcpAccessToken(credentials.access_token);
   }
+  assert.equal(
+    (
+      await revokeAccess(
+        registered.client_id,
+        'wrong-local-secret',
+        false,
+        'local-random-opaque-credential',
+      )
+    ).status,
+    401,
+  );
+  const malformedHeaders = new Headers(headers);
+  malformedHeaders.set('content-type', 'application/x-www-form-urlencoded');
+  malformedHeaders.set(
+    'authorization',
+    encodeBasicCredentials(registered.client_id, clientSecret ?? ''),
+  );
+  const malformedBody = new URLSearchParams({
+    client_id: registered.client_id,
+    token: 'local-unknown-opaque',
+    token_type_hint: 'access_token',
+  });
+  malformedBody.append('token', credentials.access_token);
+  const malformed = await routes.POST(
+    new Request(`${origin}/api/auth/oauth2/revoke`, {
+      method: 'POST',
+      headers: malformedHeaders,
+      body: malformedBody,
+    }),
+  );
+  assert.equal(malformed.status, 400);
+  assert.equal((await malformed.json()).error, 'invalid_request');
+  await verifyMcpAccessToken(credentials.access_token);
   const otherRegistration = await routes.POST(
     new Request(`${origin}/api/auth/mcp/register`, {
       method: 'POST',
@@ -1105,7 +1416,11 @@ if (mode === 'private-key-revoke') {
       .setExpirationTime('5m')
       .sign(key);
   }
-  function revokeWithAssertion(value: string, emptyHint = false) {
+  function revokeWithAssertion(
+    value: string,
+    emptyHint = false,
+    credential = credentials.access_token,
+  ) {
     const revocationHeaders = new Headers(headers);
     revocationHeaders.set('content-type', 'application/x-www-form-urlencoded');
     return routes.POST(
@@ -1113,7 +1428,7 @@ if (mode === 'private-key-revoke') {
         method: 'POST',
         headers: revocationHeaders,
         body: new URLSearchParams({
-          token: credentials.access_token,
+          token: credential,
           token_type_hint: 'access_token',
           client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
           client_assertion: value,
@@ -1124,6 +1439,39 @@ if (mode === 'private-key-revoke') {
   }
   const wrong = await generateKeyPair('ES256');
   assert.equal((await revokeWithAssertion(await assertion(wrong.privateKey))).status, 401);
+  assert.equal(
+    (
+      await revokeWithAssertion(
+        await assertion(wrong.privateKey),
+        false,
+        'local-unknown-private-token',
+      )
+    ).status,
+    401,
+  );
+  const unknownAssertion = await assertion();
+  const unknownResponse = await revokeWithAssertion(
+    unknownAssertion,
+    false,
+    'local-unknown-private-token',
+  );
+  assert.equal(
+    unknownResponse.status,
+    200,
+    JSON.stringify(
+      await unknownResponse
+        .clone()
+        .json()
+        .catch(() => null),
+    ),
+  );
+  const unknownReplay = await revokeWithAssertion(
+    unknownAssertion,
+    false,
+    'local-unknown-private-token',
+  );
+  assert.equal(unknownReplay.status, 400);
+  assert.equal((await unknownReplay.json()).error, 'invalid_client');
   await verifyMcpAccessToken(credentials.access_token);
   const valid = await assertion();
   assert.equal((await revokeWithAssertion(valid, true)).status, 200);
