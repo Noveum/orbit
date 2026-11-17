@@ -76,6 +76,9 @@ const mode = z
     'consent-core-reject',
     'consent-agent-reject',
     'public-unknown-revoke',
+    'refresh-claims-revoke-form',
+    'refresh-claims-revoke-json',
+    'token-sdk-infrastructure-failure',
   ])
   .parse(process.argv[2] ?? 'grant');
 const accessOnlyMode = [
@@ -924,6 +927,62 @@ if (mode === 'public-unknown-revoke') {
   );
   assert.equal((await revokePublic('', registered.client_id)).status, 400);
   await verifyMcpAccessToken(credentials.access_token);
+  console.log(JSON.stringify({ completed: true, mode }));
+  await pool.end();
+  process.exit(0);
+}
+if (mode.startsWith('refresh-claims-revoke-') || mode === 'token-sdk-infrastructure-failure') {
+  const { auth } = await import('../../src/lib/auth/server.ts');
+  function refreshRequest(clientId = registered.client_id): Request {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.delete('cookie');
+    const form = mode.endsWith('-form');
+    requestHeaders.set(
+      'content-type',
+      form ? 'application/x-www-form-urlencoded' : 'application/json',
+    );
+    const body = {
+      grant_type: 'refresh_token',
+      refresh_token: credentials.refresh_token,
+      resource: `${origin}/mcp`,
+      client_id: clientId,
+    };
+    return new Request(`${origin}/api/auth/mcp/token`, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: form ? new URLSearchParams(body) : JSON.stringify(body),
+    });
+  }
+  const invalidClient = await routes.POST(refreshRequest('local-unregistered-client'));
+  assert.equal(invalidClient.status, 400);
+  assert.equal(
+    z.object({ error: z.string() }).parse(await invalidClient.json()).error,
+    'invalid_client',
+  );
+  await verifyMcpAccessToken(credentials.access_token);
+  const issue = auth.api.oauth2Token;
+  const failure = new Error('controlled SDK infrastructure failure');
+  let invocations = 0;
+  Reflect.set(auth.api, 'oauth2Token', async (input: Parameters<typeof issue>[0]) => {
+    invocations += 1;
+    if (mode === 'token-sdk-infrastructure-failure') throw failure;
+    await revokeMcpGrant(access.grantId, workspace.adminUser.id);
+    return issue(input);
+  });
+  if (mode === 'token-sdk-infrastructure-failure') {
+    await assert.rejects(routes.POST(refreshRequest()), (error) => error === failure);
+    await verifyMcpAccessToken(credentials.access_token);
+  } else {
+    const response = await routes.POST(refreshRequest());
+    assert.equal(response.status, 400);
+    const body = z.record(z.string(), z.unknown()).parse(await response.json());
+    assert.equal(body['error'], 'invalid_grant');
+    for (const field of ['access_token', 'refresh_token', 'id_token'])
+      assert.equal(Object.hasOwn(body, field), false);
+    await assert.rejects(verifyMcpAccessToken(credentials.access_token));
+    assert.equal((await db.select().from(schema.oauthAccessToken)).length, 0);
+  }
+  assert.equal(invocations, 1);
   console.log(JSON.stringify({ completed: true, mode }));
   await pool.end();
   process.exit(0);

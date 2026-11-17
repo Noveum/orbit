@@ -252,12 +252,15 @@ async function issueMcpToken(
     ...body,
     resource: body['resource'] ?? mcpServerUrl(),
   });
-  return auth.api.oauth2Token({
-    request: prepared.request,
-    headers: prepared.request.headers,
-    body: { ...prepared.body, grant_type: body.grant_type },
-    asResponse: true,
-  });
+  const response = await authorizedBinding(() =>
+    auth.api.oauth2Token({
+      request: prepared.request,
+      headers: prepared.request.headers,
+      body: { ...prepared.body, grant_type: body.grant_type },
+      asResponse: true,
+    }),
+  );
+  return response ?? mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
 }
 
 function scopesMatch(left: string, right: string): boolean {
