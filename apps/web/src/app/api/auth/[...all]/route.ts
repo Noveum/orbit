@@ -21,6 +21,7 @@ import {
   mcpRevocationRequestSchema,
   mcpTokenRequestSchema,
   mcpTokenResponseSchema,
+  mcpUnknownRevocationSchema,
   mcpUnsupportedRevocationSchema,
 } from '@orbit/shared/validators';
 import { toNextJsHandler } from 'better-auth/next-js';
@@ -108,6 +109,24 @@ async function revokeBoundAccessToken(
   });
 }
 
+function emptyRevocationResponse(): Response {
+  return new Response(null, {
+    status: 200,
+    headers: { 'cache-control': 'no-store', pragma: 'no-cache' },
+  });
+}
+
+async function normalizeRevocationResponse(response: Response): Promise<Response> {
+  if (response.status !== 400) return response;
+  const payload: unknown = await response
+    .clone()
+    .json()
+    .catch(() => null);
+  return mcpUnknownRevocationSchema.safeParse(payload).success
+    ? emptyRevocationResponse()
+    : response;
+}
+
 async function revokeMcpCredential(request: Request): Promise<Response> {
   const url = new URL(request.url);
   url.pathname = '/api/auth/oauth2/revoke';
@@ -116,19 +135,19 @@ async function revokeMcpCredential(request: Request): Promise<Response> {
     request.headers.get('content-type')?.split(';')[0]?.trim() !==
     'application/x-www-form-urlencoded'
   ) {
-    return handlers.POST(original);
+    return normalizeRevocationResponse(await handlers.POST(original));
   }
   const parameters = new URLSearchParams(await request.clone().text());
   if ([...new Set(parameters.keys())].some((key) => parameters.getAll(key).length !== 1)) {
     return mcpTokenError('invalid_request', 'The revocation request is invalid.', 400);
   }
   const parsed = mcpRevocationRequestSchema.safeParse(Object.fromEntries(parameters));
-  if (!parsed.success) return handlers.POST(original);
+  if (!parsed.success) return normalizeRevocationResponse(await handlers.POST(original));
   const secret = serverEnv().BETTER_AUTH_SECRET;
   const binding =
     unbindAgentMcpCredential(parsed.data.token, secret) ??
     unbindMcpCredential(parsed.data.token, secret);
-  if (binding === null) return handlers.POST(original);
+  if (binding === null) return normalizeRevocationResponse(await handlers.POST(original));
   const prepared = await providerClientRequest(request, {
     ...parsed.data,
     token: binding.credential,
@@ -146,14 +165,12 @@ async function revokeMcpCredential(request: Request): Promise<Response> {
   } catch {
     return response;
   }
-  if (!mcpUnsupportedRevocationSchema.safeParse(payload).success) return response;
+  if (!mcpUnsupportedRevocationSchema.safeParse(payload).success)
+    return normalizeRevocationResponse(response);
   const clientId = revocationClientId(prepared.request, prepared.body);
   if (clientId === null) return response;
   await revokeBoundAccessToken(binding.credential, binding.grantId, clientId);
-  return new Response(null, {
-    status: 200,
-    headers: { 'cache-control': 'no-store', pragma: 'no-cache' },
-  });
+  return emptyRevocationResponse();
 }
 interface ParsedMcpTokenRequest {
   readonly body: McpTokenRequest;

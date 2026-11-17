@@ -61,6 +61,13 @@ describe('patched MCP OAuth integration', () => {
     'refresh-access-parent-deleted',
     'code-refresh-reservation-race',
     'refresh-rotation-reservation-race',
+    'consent-provider-reject',
+    'consent-expiry-boundary',
+    'consent-single-pool',
+    'consent-concurrent',
+    'consent-core-reject',
+    'consent-agent-reject',
+    'public-unknown-revoke',
   ] as const) {
     it(`keeps workspace-bound credentials safe through ${mode}`, () => {
       const databaseUrl = process.env['DATABASE_URL'] ?? '';
@@ -76,6 +83,7 @@ describe('patched MCP OAuth integration', () => {
       const child = Bun.spawnSync(
         [
           process.execPath,
+          '--no-env-file',
           fileURLToPath(new URL('../../fixtures/auth-mcp-upgrade.fixture.ts', import.meta.url)),
           mode,
         ],
@@ -84,9 +92,10 @@ describe('patched MCP OAuth integration', () => {
           env: {
             PATH: process.env['PATH'] ?? '',
             NODE_ENV: 'test',
+            BUN_OPTIONS: '--no-env-file',
             CI: 'true',
             DATABASE_URL: databaseUrl,
-            DATABASE_POOL_MAX: '2',
+            DATABASE_POOL_MAX: mode === 'consent-single-pool' ? '1' : '2',
             BETTER_AUTH_SECRET: 'local-auth-integration-secret-20261116',
             BETTER_AUTH_URL: 'http://localhost:3000',
             NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
