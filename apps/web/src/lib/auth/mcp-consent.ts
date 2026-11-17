@@ -1,22 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
-import {
-  type FinalizeMcpConsentInput,
-  finalizeMcpConsent,
-  getMcpClient,
-  getMcpConsentRequest,
-} from '@orbit/core';
+import { type FinalizeMcpConsentInput, finalizeMcpConsent, getMcpClient } from '@orbit/core';
 import { and, db, eq, isNull, schema } from '@orbit/db';
 import { unauthorized } from '@orbit/shared/errors';
 import { randomUUIDv7 } from '@orbit/shared/utils';
 import {
-  mcpAuthorizationCodeSchema,
   mcpProviderConsentQuerySchema,
   mcpResourceSelectionSchema,
 } from '@orbit/shared/validators';
 import { ensureLegacyMcpClient } from '@/lib/auth/mcp-legacy-client.ts';
 import { withMcpConsentGrant } from '@/lib/auth/mcp-provider.ts';
-import type { auth } from '@/lib/auth/server.ts';
 import { serverEnv } from '@/lib/env.ts';
 
 export async function linkMigratedMcpResource(query: unknown, resource: string): Promise<void> {
@@ -147,37 +140,31 @@ export async function createProviderConsent(userId: string, oauthQuery: string):
   return consentCode;
 }
 
+interface ConsentProvider {
+  oauth2Consent(input: {
+    headers: Headers;
+    body: { accept: boolean; scope?: string; oauth_query: string };
+  }): Promise<{ url: string }>;
+}
+
 export async function finalizeProviderConsent(
   input: FinalizeMcpConsentInput,
-  provider: Pick<typeof auth.api, 'oauth2Consent'>,
+  provider: ConsentProvider,
   headers: Headers,
 ) {
-  const consent = await getMcpConsentRequest(input.userId, input.consentCode);
-  const finalized = await finalizeMcpConsent(input);
-  if (consent.oauthQuery === undefined) return finalized;
-  if (!input.accept) {
-    const result = await provider.oauth2Consent({
-      headers,
-      body: { accept: false, oauth_query: consent.oauthQuery },
-    });
-    return { ...finalized, redirectUri: result.url };
-  }
-  const code = new URL(finalized.redirectUri).searchParams.get('code') ?? '';
-  const [record] = await db
-    .select()
-    .from(schema.verification)
-    .where(eq(schema.verification.identifier, code))
-    .limit(1);
-  const value = mcpAuthorizationCodeSchema.parse(JSON.parse(record?.value ?? 'null'));
-  try {
-    const result = await withMcpConsentGrant(value.mcpGrantId, () =>
+  return await finalizeMcpConsent(input, undefined, async (approval) => {
+    const operation = () =>
       provider.oauth2Consent({
         headers,
-        body: { accept: true, scope: finalized.scope, oauth_query: consent.oauthQuery },
-      }),
-    );
-    return { ...finalized, redirectUri: result.url };
-  } finally {
-    await db.delete(schema.verification).where(eq(schema.verification.identifier, code));
-  }
+        body: {
+          accept: approval.accept,
+          ...(approval.accept ? { scope: approval.scope } : {}),
+          oauth_query: approval.oauthQuery,
+        },
+      });
+    const result = approval.accept
+      ? await withMcpConsentGrant(approval.mcpGrantId, operation)
+      : await operation();
+    return result.url;
+  });
 }

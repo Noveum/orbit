@@ -4,7 +4,7 @@ This release moves Better Auth, passkeys, and the standalone MCP OAuth provider 
 
 ## Compatibility boundary
 
-Ordinary signed-in browser sessions remain valid when the authentication secret is unchanged. Cached session data is checked against its actual session token. Passkey registration and sign-in retain their existing ceremony and update the verification timestamp only after a successful assertion. Mailbox verification for an unverified account intentionally removes unproven linked credentials and old sessions; a removed password must be reset through password recovery.
+Ordinary signed-in browser sessions remain valid when the authentication secret is unchanged. Session authorization reads current database state with cookie session caching disabled, adding database reads compared with the former cached path. Passkey registration and sign-in retain their existing ceremony and update the verification timestamp only after a successful assertion. Mailbox verification for an unverified account intentionally removes unproven linked credentials and old sessions; a removed password must be reset through password recovery.
 
 Existing MCP access credentials remain usable until their original access expiry while their current client, workspace grant and principal remain authorized. This release does not extend that expiry. Existing refresh credentials from the old in-core MCP provider cannot refresh after the new release takes over. Their holders must reconnect and approve the workspace again. A refresh row is not a count of distinct users. Disclose this reconnect requirement before promotion.
 
@@ -32,6 +32,8 @@ Do not leave a previous vulnerable auth deployment reachable through a backend h
 The schema expansion is additive. Keep both new and legacy tables and the applied migration ledger when rolling application code back. Do not reverse or delete the client-data migration, signing keys, grants, sessions, or token rows as part of an application rollback.
 
 The old application does not understand newly registered provider clients or provider refresh tokens. Credentials created under the new release therefore have no guaranteed refresh continuity after a rollback and may require another reconnect. A rollback also restores the upstream security risks addressed by this update. Prefer a forward fix; if a rollback is necessary, make its security exposure and reconnect impact explicit, verify the exact public alias, and retain the backend-host retirement rules.
+
+Coordinate every participating OAuth Proxy environment onto compatible versions when rolling back, including the production coordinator and preview or development participants. Mixed old and new versions cannot exchange state or protected proxy payloads. Restart pending sign-in and account-linking flows after the coordinated rollback and keep the shared secrets unchanged.
 
 ## Upstream references
 

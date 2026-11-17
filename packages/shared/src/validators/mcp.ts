@@ -3,6 +3,10 @@ import { z } from 'zod';
 export const mcpRevocationRequestSchema = z
   .object({ token: z.string().min(1) })
   .catchall(z.string());
+export const mcpUnknownRevocationSchema = z.object({
+  error: z.literal('invalid_request'),
+  error_description: z.enum(['Invalid access token', 'token not found', 'refresh token revoked']),
+});
 export const mcpUnsupportedRevocationSchema = z.object({
   error: z.literal('unsupported_token_type'),
 });

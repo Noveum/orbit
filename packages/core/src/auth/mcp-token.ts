@@ -9,7 +9,11 @@ import {
 } from '@orbit/shared/validators';
 import { type Executor, newId } from '../internal.ts';
 import { resolvePrincipal } from '../org/member-service.ts';
-import { agentConsentScopes, prepareAgentMcpGrant } from './agent-identity-service.ts';
+import {
+  agentConsentScopes,
+  validateAgentMcpGrant,
+  writePreparedAgentMcpGrant,
+} from './agent-identity-service.ts';
 
 const MCP_CREDENTIAL_PREFIX = 'orbit-mcp-v1';
 const AGENT_CREDENTIAL_PREFIX = 'orbit-mcp-agent-v2';
@@ -419,6 +423,7 @@ async function writeMcpGrant(
   executor: Transaction,
   input: RecordMcpGrantInput,
   now: Date = new Date(),
+  grantId: string = newId(),
 ): Promise<string> {
   await lockMcpOwner(executor, input.userId);
   await resolvePrincipal(input.userId, input.organizationId, executor);
@@ -433,7 +438,6 @@ async function writeMcpGrant(
       ),
     )
     .limit(1);
-  const grantId = newId();
   await executor
     .delete(schema.oauthAccessToken)
     .where(
@@ -622,46 +626,129 @@ function consentScopes(
   return agentConsentScopes(value.scope, agent.write === true);
 }
 
-export async function finalizeMcpConsent(
+interface FinalizedMcpConsent {
+  readonly redirectUri: string;
+  readonly clientId: string;
+  readonly scope: string;
+}
+
+export type McpProviderConsentApproval = {
+  readonly clientId: string;
+  readonly scope: string;
+  readonly oauthQuery: string;
+} & (
+  | { readonly accept: true; readonly mcpGrantId: string }
+  | { readonly accept: false; readonly mcpGrantId: null }
+);
+
+interface PreparedMcpProviderConsent {
+  readonly value: Awaited<ReturnType<typeof getMcpConsentRequest>>;
+  readonly mcpGrantId: string | null;
+  readonly scope: string;
+  readonly redirectUri: string;
+}
+
+async function prevalidateMcpConsent(
+  tx: Transaction,
   input: FinalizeMcpConsentInput,
-  now: Date = new Date(),
-): Promise<{ redirectUri: string; clientId: string; scope: string }> {
-  return await db.transaction(async (tx) => {
-    await lockMcpOwner(tx, input.userId);
-    const invalid = unauthorized('This authorization request is invalid or has expired.');
-    const value = await getMcpConsentRequest(input.userId, input.consentCode, now, tx);
+  value: Awaited<ReturnType<typeof getMcpConsentRequest>>,
+): Promise<string> {
+  if (!input.accept) return value.scope.join(' ');
+  if (typeof input.organizationId !== 'string' || input.organizationId.length === 0)
+    throw validationFailed('Choose a workspace before approving this connection.');
+  await assertMcpClientActive(tx, value.clientId);
+  const scope = consentScopes(value, input.agent);
+  const grantInput = {
+    clientId: value.clientId,
+    userId: input.userId,
+    organizationId: input.organizationId,
+    scopes: scope,
+  };
+  if (input.agent === undefined) await resolvePrincipal(input.userId, input.organizationId, tx);
+  else await validateAgentMcpGrant(tx, grantInput, input.agent);
+  return scope;
+}
 
-    const redirect = new URL(value.redirectURI);
-    if (!input.accept) {
-      await tx
-        .delete(schema.verification)
-        .where(eq(schema.verification.identifier, input.consentCode));
-      redirect.searchParams.set('error', 'access_denied');
-      redirect.searchParams.set('error_description', 'User denied access');
-      if (value.state != null) redirect.searchParams.set('state', value.state);
-      return {
-        redirectUri: redirect.toString(),
-        clientId: value.clientId,
-        scope: value.scope.join(' '),
-      };
-    }
+async function commitMcpConsent(
+  tx: Transaction,
+  input: FinalizeMcpConsentInput,
+  now: Date,
+  prepared?: PreparedMcpProviderConsent,
+): Promise<FinalizedMcpConsent> {
+  await lockMcpOwner(tx, input.userId);
+  const invalid = unauthorized('This authorization request is invalid or has expired.');
+  const value = await getMcpConsentRequest(input.userId, input.consentCode, now, tx);
+  if (prepared !== undefined && JSON.stringify(prepared.value) !== JSON.stringify(value))
+    throw invalid;
 
-    if (typeof input.organizationId !== 'string' || input.organizationId.length === 0) {
-      throw validationFailed('Choose a workspace before approving this connection.');
-    }
-
-    const scope = consentScopes(value, input.agent);
-    const grantInput = {
+  const redirect = new URL(value.redirectURI);
+  if (!input.accept) {
+    await tx
+      .delete(schema.verification)
+      .where(eq(schema.verification.identifier, input.consentCode));
+    redirect.searchParams.set('error', 'access_denied');
+    redirect.searchParams.set('error_description', 'User denied access');
+    if (value.state != null) redirect.searchParams.set('state', value.state);
+    return {
+      redirectUri: prepared?.redirectUri ?? redirect.toString(),
       clientId: value.clientId,
-      userId: input.userId,
-      organizationId: input.organizationId,
-      scopes: scope,
+      scope: value.scope.join(' '),
     };
+  }
+
+  if (typeof input.organizationId !== 'string' || input.organizationId.length === 0) {
+    throw validationFailed('Choose a workspace before approving this connection.');
+  }
+
+  const scope = consentScopes(value, input.agent);
+  if (prepared !== undefined && scope !== prepared.scope) throw invalid;
+  await assertMcpClientActive(tx, value.clientId);
+  const grantInput = {
+    clientId: value.clientId,
+    userId: input.userId,
+    organizationId: input.organizationId,
+    scopes: scope,
+  };
+  const allocatedGrantId = prepared === undefined ? newId() : prepared.mcpGrantId;
+  if (allocatedGrantId === null) throw invalid;
+  const mcpGrantId =
+    input.agent === undefined
+      ? await writeMcpGrant(tx, grantInput, now, allocatedGrantId)
+      : await writePreparedAgentMcpGrant(tx, grantInput, input.agent, now, allocatedGrantId);
+  if (mcpGrantId !== allocatedGrantId) throw invalid;
+  const redirectUri = await consumeAcceptedMcpConsent(
+    tx,
+    input.consentCode,
+    value,
+    scope,
+    mcpGrantId,
+    now,
+    prepared?.redirectUri,
+  );
+  await tx.insert(schema.oauthConsent).values({
+    id: newId(),
+    clientId: value.clientId,
+    userId: input.userId,
+    scopes: scope,
+    consentGiven: true,
+  });
+
+  return { redirectUri, clientId: value.clientId, scope };
+}
+
+async function consumeAcceptedMcpConsent(
+  tx: Transaction,
+  consentCode: string,
+  value: Awaited<ReturnType<typeof getMcpConsentRequest>>,
+  scope: string,
+  mcpGrantId: string,
+  now: Date,
+  providerRedirect?: string,
+): Promise<string> {
+  const invalid = unauthorized('This authorization request is invalid or has expired.');
+  const redirect = new URL(value.redirectURI);
+  if (providerRedirect === undefined) {
     const code = authorizationCode();
-    const mcpGrantId =
-      input.agent === undefined
-        ? await writeMcpGrant(tx, grantInput, now)
-        : await prepareAgentMcpGrant(tx, grantInput, input.agent, now);
     const [updated] = await tx
       .update(schema.verification)
       .set({
@@ -674,23 +761,52 @@ export async function finalizeMcpConsent(
         }),
         expiresAt: new Date(now.getTime() + CONSENT_CODE_TTL_MS),
       })
-      .where(eq(schema.verification.identifier, input.consentCode))
+      .where(eq(schema.verification.identifier, consentCode))
       .returning({ id: schema.verification.id });
     if (updated === undefined) throw invalid;
-    await tx.insert(schema.oauthConsent).values({
-      id: newId(),
-      clientId: value.clientId,
-      userId: input.userId,
-      scopes: scope,
-      consentGiven: true,
-    });
-
     redirect.searchParams.set('code', code);
-    if (value.state != null) redirect.searchParams.set('state', value.state);
-    return {
-      redirectUri: redirect.toString(),
-      clientId: value.clientId,
-      scope,
-    };
+  } else {
+    const consumed = await tx
+      .delete(schema.verification)
+      .where(eq(schema.verification.identifier, consentCode))
+      .returning({ id: schema.verification.id });
+    if (consumed.length !== 1) throw invalid;
+  }
+  if (value.state != null) redirect.searchParams.set('state', value.state);
+  return providerRedirect ?? redirect.toString();
+}
+
+export async function finalizeMcpConsent(
+  input: FinalizeMcpConsentInput,
+  now?: Date,
+  provider?: (approval: McpProviderConsentApproval) => Promise<string>,
+): Promise<FinalizedMcpConsent> {
+  if (provider === undefined)
+    return db.transaction((tx) => commitMcpConsent(tx, input, now ?? new Date()));
+  const plan = await db.transaction(async (tx) => {
+    await lockMcpOwner(tx, input.userId);
+    const value = await getMcpConsentRequest(
+      input.userId,
+      input.consentCode,
+      now ?? new Date(),
+      tx,
+    );
+    const scope = await prevalidateMcpConsent(tx, input, value);
+    return { value, scope, mcpGrantId: input.accept ? newId() : null };
   });
+  const oauthQuery = plan.value.oauthQuery;
+  if (oauthQuery === undefined)
+    return db.transaction((tx) => commitMcpConsent(tx, input, now ?? new Date()));
+  const common = { clientId: plan.value.clientId, scope: plan.scope, oauthQuery };
+  let redirectUri: string;
+  if (input.accept) {
+    if (plan.mcpGrantId === null) throw unauthorized('This authorization request is invalid.');
+    redirectUri = await provider({ ...common, accept: true, mcpGrantId: plan.mcpGrantId });
+  } else {
+    redirectUri = await provider({ ...common, accept: false, mcpGrantId: null });
+  }
+  new URL(redirectUri);
+  return db.transaction((tx) =>
+    commitMcpConsent(tx, input, now ?? new Date(), { ...plan, redirectUri }),
+  );
 }
