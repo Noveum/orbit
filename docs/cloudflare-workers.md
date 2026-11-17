@@ -20,6 +20,7 @@ deploy it, and what to check before pointing a domain at it.
 | Postgres | one pool per process | one pool per request, through Hyperdrive when bound |
 | Password hashing | `@node-rs/argon2` (native) | `@noble/hashes` argon2id (pure JavaScript) |
 | AI provider calls | Node sockets with a pinned DNS lookup | `fetch` |
+| Email templates | `react-dom/server` loaded by Node | a Vite plugin resolves the email modules to the client React build |
 | Client address | `x-forwarded-for` set by the platform | `cf-connecting-ip`, copied over `x-forwarded-for` at the entry |
 
 ### Realtime
@@ -50,6 +51,15 @@ One object carries every workspace. That is the right size for a deployment
 with hundreds of concurrent sockets. Sharding by organization is the path if it
 ever is not: the ticket already names the organization, so the entry would need
 it in the socket URL to route before the upgrade.
+
+### Email
+
+Route handlers on vinext are bundled under React's server component condition,
+where `react-dom/server` refuses to load. `apps/web/vite.config.ts` therefore
+resolves `react`, `react/jsx-runtime` and `react-dom/server` to their client
+builds for `@react-email/*` and `packages/services/src/email`. Keep email
+templates free of imports from the app's own components, or they would mix the
+two builds.
 
 ### Postgres
 
@@ -116,6 +126,9 @@ cd apps/web
 bun run build:workers
 bun run deploy:workers
 ```
+
+`wrangler.jsonc` names no account. Set `CLOUDFLARE_ACCOUNT_ID` in the shell or
+the build settings when the login can reach more than one.
 
 For Workers Builds, set the root directory to `apps/web`, the build command to
 `bun run build:workers`, the deploy command to

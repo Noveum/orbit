@@ -102,13 +102,16 @@ function openPool(idleSeconds: number = PROCESS_IDLE_SECONDS): Pool {
   });
 }
 
-let privateProxyUrl: string | undefined;
+export type PrivateProxyUrlResolver = () => string | undefined;
 
-export function registerPrivateDatabaseProxy(url: string | undefined): void {
-  privateProxyUrl = url;
+let resolvePrivateProxyUrl: PrivateProxyUrlResolver | undefined;
+
+export function registerPrivateDatabaseProxy(resolve: PrivateProxyUrlResolver | undefined): void {
+  resolvePrivateProxyUrl = resolve;
 }
 
 function openScopedPool(): Pool {
+  const privateProxyUrl = resolvePrivateProxyUrl?.();
   if (privateProxyUrl === undefined) return openPool(SCOPED_IDLE_SECONDS);
   return postgres(privateProxyUrl, {
     max: maxConnections,

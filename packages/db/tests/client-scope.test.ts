@@ -68,12 +68,20 @@ describe('a request scoped database', () => {
     expect(result.within).toBe(result.own);
   });
 
-  it('connects scoped requests through a registered private proxy only', async () => {
+  it('asks for the private proxy when a scoped request connects, never before', async () => {
     const proxied = new URL(process.env['DATABASE_URL'] ?? '');
     proxied.searchParams.set('application_name', 'orbit-private-proxy');
-    registerPrivateDatabaseProxy(proxied.toString());
+    let resolved = 0;
+    registerPrivateDatabaseProxy(() => {
+      resolved += 1;
+      return proxied.toString();
+    });
+    expect(resolved).toBe(0);
     expect((await withRequestScopedDatabase(session)).application).toBe('orbit-private-proxy');
+    expect(resolved).toBe(1);
     expect((await session()).application).not.toBe('orbit-private-proxy');
+    registerPrivateDatabaseProxy(() => undefined);
+    expect((await withRequestScopedDatabase(session)).application).not.toBe('orbit-private-proxy');
     registerPrivateDatabaseProxy(undefined);
     expect((await withRequestScopedDatabase(session)).application).not.toBe('orbit-private-proxy');
   });

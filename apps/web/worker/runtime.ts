@@ -34,8 +34,7 @@ async function askRateLimiter(operation: string, body: unknown): Promise<unknown
 }
 
 export function connectWorkerRuntime(): void {
-  const hyperdrive = bindings().HYPERDRIVE;
-  if (hyperdrive !== undefined) registerPrivateDatabaseProxy(hyperdrive.connectionString);
+  registerPrivateDatabaseProxy(() => bindings().HYPERDRIVE?.connectionString);
 
   registerRealtimeTransport({
     async publish(channel: string, message: string): Promise<void> {
