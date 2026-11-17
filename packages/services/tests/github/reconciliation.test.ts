@@ -25,7 +25,11 @@ import {
   githubCheckFailureTransitionEvents,
   notifyGithubCheckFailureTransitions,
 } from '../../src/github/notifications.ts';
-import { reconcileNextGithubCheckHead } from '../../src/github/reconciliation.ts';
+import {
+  type GithubCheckFailureTransition,
+  type GithubReconciliationDatabase,
+  reconcileNextGithubCheckHead,
+} from '../../src/github/reconciliation.ts';
 import { type TestTransaction, withRollback } from '../../src/test-database.ts';
 
 const HEAD_SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -939,4 +943,257 @@ describe('reconcileNextGithubCheckHead', () => {
       expect(head?.latestSnapshot).toEqual([]);
     });
   });
+});
+
+describe('manual recovery notification boundaries', () => {
+  it('projects a manual recovery failure without creating catch-up notifications for any shared-head consumer', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedReconciliation(tx, { withPull: true });
+      await tx
+        .update(githubCheckHeadReconciliation)
+        .set({ triggerKind: 'manual_recovery', triggerIdentity: 'recovery:version-1' })
+        .where(eq(githubCheckHeadReconciliation.id, fixture.reconciliationId));
+      for (const [number, state, merged] of [
+        [8, 'closed', false],
+        [9, 'merged', true],
+        [10, 'draft', false],
+      ] as const) {
+        await tx.insert(githubPullRequest).values({
+          id: randomUUIDv7(),
+          organizationId: fixture.organizationId,
+          repositorySyncId: fixture.repositorySyncId,
+          repositoryId: '99',
+          repositoryName: 'acme/web',
+          number,
+          title: 'Shared historical head',
+          url: `https://github.com/acme/web/pull/${number}`,
+          headSha: HEAD_SHA,
+          headEpoch: 2,
+          checkStatus: 'pending',
+          authorLogin: 'octocat',
+          authorId: '500',
+          state,
+          merged,
+        });
+      }
+      const result = await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => snapshot([{ id: '901', name: 'verify', state: 'failure' }]),
+        acceptFailureTransitions: async (database, transitions) => {
+          await notifyGithubCheckFailureTransitions(database, transitions, {
+            now: NOW,
+            slackEnabled: false,
+          });
+        },
+      });
+      expect(result.status).toBe('accepted');
+      const pulls = await tx
+        .select()
+        .from(githubPullRequest)
+        .where(eq(githubPullRequest.organizationId, fixture.organizationId));
+      expect(pulls).toHaveLength(4);
+      expect(pulls.every((pull) => pull.checkStatus === 'failure')).toBe(true);
+      const sources = await tx
+        .select()
+        .from(notificationSourceEvent)
+        .where(eq(notificationSourceEvent.organizationId, fixture.organizationId));
+      expect(sources).toHaveLength(0);
+      const recipients = await tx
+        .select()
+        .from(notification)
+        .where(eq(notification.organizationId, fixture.organizationId));
+      expect(recipients).toHaveLength(0);
+      const fetches = await tx
+        .select()
+        .from(githubCheckReconciliationFetch)
+        .where(eq(githubCheckReconciliationFetch.headReconciliationId, fixture.reconciliationId));
+      expect(fetches).toHaveLength(1);
+      expect(fetches[0]?.disposition).toBe('accepted');
+    });
+  });
+
+  it('does not create an ordinary reconciled failure notification for a closed pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedReconciliation(tx, { withPull: true });
+      if (fixture.pullRequestId === null) throw new Error('pull request fixture is missing');
+      await tx
+        .update(githubPullRequest)
+        .set({ state: 'closed' })
+        .where(eq(githubPullRequest.id, fixture.pullRequestId));
+      await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => snapshot([{ id: '902', name: 'verify', state: 'failure' }]),
+        acceptFailureTransitions: async (database, transitions) => {
+          await notifyGithubCheckFailureTransitions(database, transitions, {
+            now: NOW,
+            slackEnabled: false,
+          });
+        },
+      });
+      expect(
+        await tx
+          .select()
+          .from(notificationSourceEvent)
+          .where(eq(notificationSourceEvent.organizationId, fixture.organizationId)),
+      ).toHaveLength(0);
+    });
+  });
+
+  it('does not create a direct-check failure notification for a merged pull request', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedReconciliation(tx, { withPull: true });
+      if (fixture.pullRequestId === null) throw new Error('pull request fixture is missing');
+      await tx
+        .update(githubPullRequest)
+        .set({ state: 'merged', merged: true })
+        .where(eq(githubPullRequest.id, fixture.pullRequestId));
+      const result = await applyDirectCheck(tx, fixture.organizationId, {
+        id: 903,
+        state: 'failure',
+        updatedAt: '2026-09-01T00:00:02.000Z',
+      });
+      expect(result.notificationEvents).toHaveLength(0);
+    });
+  });
+});
+
+describe('manual recovery generation handoff', () => {
+  it('keeps genuine later failure notification behavior after a silent manual catch-up', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedReconciliation(tx, { withPull: true });
+      await tx
+        .update(githubCheckHeadReconciliation)
+        .set({ triggerKind: 'manual_recovery', triggerIdentity: 'recovery:version-1' })
+        .where(eq(githubCheckHeadReconciliation.id, fixture.reconciliationId));
+      const acceptFailureTransitions = async (
+        database: GithubReconciliationDatabase,
+        transitions: readonly GithubCheckFailureTransition[],
+      ) => {
+        await notifyGithubCheckFailureTransitions(database, transitions, {
+          now: NOW,
+          slackEnabled: false,
+        });
+      };
+      const caughtUp = await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => snapshot([{ id: '904', name: 'verify', state: 'failure' }]),
+        acceptFailureTransitions,
+      });
+      expect(caughtUp.status).toBe('accepted');
+      expect(caughtUp.failureTransitions).toHaveLength(0);
+      expect(
+        await tx
+          .select()
+          .from(notificationSourceEvent)
+          .where(eq(notificationSourceEvent.organizationId, fixture.organizationId)),
+      ).toHaveLength(0);
+      await applySuiteTrigger(tx, fixture.organizationId, 1001);
+      await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => snapshot([{ id: '905', name: 'verify', state: 'success' }]),
+        acceptFailureTransitions,
+      });
+      await applySuiteTrigger(tx, fixture.organizationId, 1002);
+      const laterFailure = await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => snapshot([{ id: '906', name: 'verify', state: 'failure' }]),
+        acceptFailureTransitions,
+      });
+      expect(laterFailure.status).toBe('accepted');
+      expect(laterFailure.failureTransitions).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(notificationSourceEvent)
+          .where(eq(notificationSourceEvent.organizationId, fixture.organizationId)),
+      ).toHaveLength(1);
+    });
+  });
+
+  it('does not suppress a genuine generation that supersedes an in-flight manual recovery', async () => {
+    await withRollback(async (tx) => {
+      const fixture = await seedReconciliation(tx, { withPull: true });
+      await tx
+        .update(githubCheckHeadReconciliation)
+        .set({ triggerKind: 'manual_recovery', triggerIdentity: 'recovery:version-1' })
+        .where(eq(githubCheckHeadReconciliation.id, fixture.reconciliationId));
+      const first = await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: NOW,
+        fetchSnapshot: async () => {
+          await applySuiteTrigger(tx, fixture.organizationId, 1003);
+          return snapshot([{ id: '907', name: 'verify', state: 'failure' }]);
+        },
+        acceptFailureTransitions: async (database, transitions) => {
+          await notifyGithubCheckFailureTransitions(database, transitions, {
+            now: NOW,
+            slackEnabled: false,
+          });
+        },
+      });
+      expect(first.status).toBe('invalidated');
+      const next = await reconcileNextGithubCheckHead(tx, {
+        appId: 'app',
+        privateKey: 'private-key',
+        now: new Date(NOW.getTime() + 1_000),
+        fetchSnapshot: async () => snapshot([{ id: '908', name: 'verify', state: 'failure' }]),
+        acceptFailureTransitions: async (database, transitions) => {
+          await notifyGithubCheckFailureTransitions(database, transitions, {
+            now: NOW,
+            slackEnabled: false,
+          });
+        },
+      });
+      expect(next.status).toBe('accepted');
+      expect(next.failureTransitions).toHaveLength(1);
+      expect(
+        await tx
+          .select()
+          .from(notificationSourceEvent)
+          .where(eq(notificationSourceEvent.organizationId, fixture.organizationId)),
+      ).toHaveLength(1);
+    });
+  });
+});
+
+describe('claimed manual recovery token policy', () => {
+  it.each([
+    { triggerKind: 'manual_recovery', fresh: true },
+    { triggerKind: 'check_suite', fresh: undefined },
+  ])(
+    'derives token freshness only from the immutable claimed trigger: $triggerKind',
+    async ({ triggerKind, fresh }) => {
+      await withRollback(async (tx) => {
+        const fixture = await seedReconciliation(tx);
+        await tx
+          .update(githubCheckHeadReconciliation)
+          .set({ triggerKind })
+          .where(eq(githubCheckHeadReconciliation.id, fixture.reconciliationId));
+        let observed: unknown = 'not-called';
+        const result = await reconcileNextGithubCheckHead(tx, {
+          appId: 'app',
+          privateKey: 'fixture-key',
+          now: NOW,
+          organizationId: fixture.organizationId,
+          fetchSnapshot: (request) => {
+            observed = Reflect.get(request, 'freshInstallationToken');
+            return Promise.resolve(snapshot([{ id: '900', name: 'verify', state: 'success' }]));
+          },
+        });
+        expect(result.status).toBe('accepted');
+        expect(observed).toBe(fresh);
+      });
+    },
+  );
 });

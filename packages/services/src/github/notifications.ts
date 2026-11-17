@@ -14,6 +14,7 @@ import { isInOrganization, isInTeam, type Principal, policyRole } from '@orbit/s
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { type NotificationEvent, notifyMany } from '../notifications/index.ts';
 import { githubFailureDetails } from './failure-details.ts';
+import { isActiveGithubPullRequest } from './pull-state.ts';
 import type { GithubCheckFailureTransition } from './reconciliation.ts';
 
 type GithubNotificationDatabase = Database | Transaction;
@@ -235,7 +236,7 @@ export async function githubCheckFailureTransitionEvents(
         ),
       )
       .limit(1);
-    if (pull === undefined) continue;
+    if (pull === undefined || !isActiveGithubPullRequest(pull)) continue;
     const [repository] = await database
       .select()
       .from(githubRepositorySync)

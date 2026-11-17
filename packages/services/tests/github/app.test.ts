@@ -1299,3 +1299,113 @@ describe('exchangeGithubUserCode', () => {
     ).rejects.toThrow(/bad_verification_code/);
   });
 });
+
+describe('structured GitHub provider failures', () => {
+  it('distinguishes an unavailable installation without exposing the provider response', async () => {
+    await expect(
+      fetchGithubInstallation({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        fetch: jsonFetch(
+          () =>
+            new Response(JSON.stringify({ message: 'private-provider-sentinel' }), { status: 404 }),
+        ),
+      }),
+    ).rejects.toMatchObject({
+      code: 'internal',
+      details: { reason: 'github_provider_http_error', operation: 'installation', httpStatus: 404 },
+    });
+  });
+
+  it('distinguishes app authentication failure from a missing installation', async () => {
+    await expect(
+      githubInstallationToken({
+        appId: '123456',
+        privateKey,
+        installationId: '9001',
+        fetch: jsonFetch(
+          () =>
+            new Response(JSON.stringify({ message: 'private-provider-sentinel' }), { status: 401 }),
+        ),
+      }),
+    ).rejects.toMatchObject({
+      code: 'internal',
+      details: {
+        reason: 'github_provider_http_error',
+        operation: 'installation token',
+        httpStatus: 401,
+      },
+    });
+  });
+});
+
+describe('GitHub provider error redaction', () => {
+  it('keeps provider response bodies and credential-shaped values out of serialized failures', async () => {
+    const caught = await fetchGithubInstallation({
+      appId: '123456',
+      privateKey,
+      installationId: '9001',
+      fetch: jsonFetch(
+        () =>
+          new Response(
+            JSON.stringify({
+              message: 'private-provider-sentinel',
+              token: 'fixture-token-do-not-return',
+            }),
+            { status: 404 },
+          ),
+      ),
+    }).catch((error: unknown) => error);
+    expect(JSON.stringify(caught)).not.toContain('private-provider-sentinel');
+    expect(JSON.stringify(caught)).not.toContain('fixture-token-do-not-return');
+    expect(JSON.stringify(caught)).not.toContain(privateKey);
+  });
+});
+
+describe('manual recovery snapshot token freshness', () => {
+  it('mints fresh ordinary tokens instead of a same-key cached old repository scope and leaves normal cache behavior unchanged', async () => {
+    let minted = 0;
+    const tokenBodies: unknown[] = [];
+    const metadataTokens: string[] = [];
+    const headSha = '0123456789abcdef0123456789abcdef01234567';
+    const fetch = jsonFetch((url, init) => {
+      if (url.includes('/access_tokens')) {
+        minted += 1;
+        tokenBodies.push(init?.body);
+        return Response.json(
+          {
+            token: minted === 1 ? 'cached-old-repository-scope' : `fresh-ordinary-${minted}`,
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+          { status: 201 },
+        );
+      }
+      const authorization = new Headers(init?.headers).get('authorization') ?? '';
+      metadataTokens.push(authorization);
+      if (!authorization.startsWith('Bearer fresh-ordinary-'))
+        return Response.json({}, { status: 403 });
+      return Response.json(url.includes('/check-runs') ? { total_count: 0, check_runs: [] } : []);
+    });
+    const ordinary = { appId: '123456', privateKey, installationId: '9001', fetch };
+    expect(await githubInstallationToken(ordinary)).toBe('cached-old-repository-scope');
+    const manual = {
+      ...ordinary,
+      repository: 'fixture-owner/restored-repo',
+      headSha,
+      freshInstallationToken: true,
+    };
+    await fetchGithubCheckHeadSnapshot(manual);
+    await fetchGithubCheckHeadSnapshot(manual);
+    expect(minted).toBe(3);
+    expect(tokenBodies).toEqual([undefined, undefined, undefined]);
+    expect(metadataTokens).toEqual([
+      'Bearer fresh-ordinary-2',
+      'Bearer fresh-ordinary-2',
+      'Bearer fresh-ordinary-3',
+      'Bearer fresh-ordinary-3',
+    ]);
+    expect(await githubInstallationToken(ordinary)).toBe('cached-old-repository-scope');
+    expect(minted).toBe(3);
+  });
+});
