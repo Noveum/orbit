@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { htmlToMarkdown } from '../packages/db/src/import/markdown.ts';
 
 interface Page<T> {
   results: T[];
@@ -174,37 +175,6 @@ async function writeJson(directory: string, name: string, value: unknown): Promi
 
 async function writeText(directory: string, name: string, value: string): Promise<void> {
   await Bun.write(resolve(directory, name), value);
-}
-
-function htmlToMarkdown(html: string | null | undefined): string {
-  if (typeof html !== 'string' || html.length === 0) return '';
-  return html
-    .replace(
-      /<a [^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi,
-      (_m: string, href: string, text: string) =>
-        text.trim().length === 0 ? href : `[${text.trim()}](${href})`,
-    )
-    .replace(/<h1[^>]*>/gi, '\n# ')
-    .replace(/<h2[^>]*>/gi, '\n## ')
-    .replace(/<h3[^>]*>/gi, '\n### ')
-    .replace(/<li[^>]*>/gi, '- ')
-    .replace(/<(strong|b)>/gi, '**')
-    .replace(/<\/(strong|b)>/gi, '**')
-    .replace(/<(em|i)>/gi, '_')
-    .replace(/<\/(em|i)>/gi, '_')
-    .replace(/<code[^>]*>/gi, '`')
-    .replace(/<\/code>/gi, '`')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|pre)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 function slugify(value: string): string {
