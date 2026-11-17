@@ -155,8 +155,12 @@ need a new migration tag.
 
 ```
 npx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
-npx wrangler hyperdrive create orbit-database --connection-string="postgres://USER:PASSWORD@HOST:5432/DATABASE" --ca-certificate-id <ID FROM THE FIRST COMMAND> --sslmode verify-full
+npx wrangler hyperdrive create orbit-database --connection-string="postgres://USER:PASSWORD@HOST:5432/DATABASE" --ca-certificate-id <ID FROM THE FIRST COMMAND> --sslmode verify-full --caching-disabled
 ```
+
+`--caching-disabled` is not optional. Hyperdrive caches the result of read
+queries by default, and Orbit reads rows straight after writing them and
+pushes changes over the socket, so a cached read shows stale data.
 
 Use the session mode port, not a transaction pooler, because Hyperdrive pools
 for you. Then add the binding to `wrangler.jsonc`:
@@ -164,6 +168,23 @@ for you. Then add the binding to `wrangler.jsonc`:
 ```
 "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<ID FROM THE SECOND COMMAND>" }]
 ```
+
+### Hyperdrive for a database on a private address
+
+A database with no public address is reached through a Cloudflare Tunnel run
+next to it, a Workers VPC service that names the database behind the tunnel,
+and a Hyperdrive config that points at the service. No DNS record is involved.
+
+```
+npx wrangler tunnel create orbit-database
+npx wrangler tunnel run orbit-database
+npx wrangler vpc service create orbit-database --type tcp --app-protocol postgresql --tunnel-id <TUNNEL ID> --ipv4 <DATABASE ADDRESS> --tcp-port 5432
+npx wrangler hyperdrive create orbit-database --service-id <SERVICE ID> --database <DATABASE> --origin-user <USER> --origin-password <PASSWORD> --caching-disabled
+```
+
+Run the tunnel as a service on a host inside the private network. These
+commands are taken from Wrangler 4.164 and have not been run for Orbit, whose
+hosted database has a public address.
 
 The CA file must hold a single certificate. Hyperdrive opens up to about 100
 origin connections on the paid plan, so check that against the database's own
