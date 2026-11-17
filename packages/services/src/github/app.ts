@@ -1,5 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
-import { internal } from '@orbit/shared';
+import { DomainError, internal } from '@orbit/shared';
 import { z } from 'zod';
 import {
   githubContextKey,
@@ -316,7 +316,15 @@ async function githubJson<T extends z.ZodTypeAny>(
     headers: { ...GITHUB_HEADERS, ...(init.headers ?? {}) },
     signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
   });
-  if (!response.ok) throw internal(`GitHub ${label} returned HTTP ${response.status}.`);
+  if (!response.ok) {
+    throw new DomainError('internal', `GitHub ${label} returned HTTP ${response.status}.`, {
+      details: {
+        reason: 'github_provider_http_error',
+        operation: label,
+        httpStatus: response.status,
+      },
+    });
+  }
   const parsed = schema.safeParse(await response.json().catch(() => null));
   if (!parsed.success) throw internal(`GitHub ${label} returned an unexpected payload.`);
   return parsed.data;
@@ -385,11 +393,15 @@ export function forgetGithubInstallationTokens(): void {
   installationTokens.clear();
 }
 
-export async function githubInstallationToken(input: GithubAppRequest): Promise<string> {
+export async function githubInstallationToken(
+  input: GithubAppRequest,
+  options: { readonly fresh?: boolean } = {},
+): Promise<string> {
   const now = Date.now();
   const key = tokenCacheKey(input);
   const cached = installationTokens.get(key);
-  if (cached !== undefined && cached.usableUntil > now) return cached.token;
+  if (options.fresh !== true && cached !== undefined && cached.usableUntil > now)
+    return cached.token;
 
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const base = input.apiBase ?? GITHUB_API_BASE;
@@ -401,10 +413,12 @@ export async function githubInstallationToken(input: GithubAppRequest): Promise<
     installationTokenSchema,
     'installation token',
   );
-  installationTokens.set(key, {
-    token: body.token,
-    usableUntil: usableUntil(body.expires_at, now),
-  });
+  if (options.fresh !== true) {
+    installationTokens.set(key, {
+      token: body.token,
+      usableUntil: usableUntil(body.expires_at, now),
+    });
+  }
   return body.token;
 }
 
@@ -767,11 +781,17 @@ async function fetchGithubCommitStatusesForHead(input: {
 }
 
 export async function fetchGithubCheckHeadSnapshot(
-  input: GithubAppRequest & { readonly repository: string; readonly headSha: string },
+  input: GithubAppRequest & {
+    readonly repository: string;
+    readonly headSha: string;
+    readonly freshInstallationToken?: boolean;
+  },
 ): Promise<GithubCheckHeadSnapshot> {
   const parsedHeadSha = githubCommitShaSchema.safeParse(input.headSha);
   if (!parsedHeadSha.success) throw internal('GitHub head check snapshot requires a commit SHA.');
-  const token = await githubInstallationToken(input);
+  const token = await githubInstallationToken(input, {
+    fresh: input.freshInstallationToken === true,
+  });
   const fetchImpl = input.fetch ?? globalThis.fetch;
   const base = input.apiBase ?? GITHUB_API_BASE;
   const repository = input.repository

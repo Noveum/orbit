@@ -34,6 +34,7 @@ import { and, asc, eq, getTableColumns, inArray, lte, or, sql } from 'drizzle-or
 import type { NotificationEvent } from '../notifications/index.ts';
 import type { GithubPullRequestHistoryEntry } from './app.ts';
 import { githubFailureDetails } from './failure-details.ts';
+import { enqueueHeadReconciliation, lockedHeadReconciliation } from './head-queue.ts';
 import {
   canAdvance,
   type NormalizedGithubCheckContext,
@@ -45,6 +46,7 @@ import {
   pullRequestState,
   targetCategoryFor,
 } from './index.ts';
+import { isActiveGithubPullRequest } from './pull-state.ts';
 
 export type GithubDatabase = Database | Transaction;
 export type GitLinkRow = typeof gitLink.$inferSelect;
@@ -385,8 +387,9 @@ async function githubCheckFailureNotifications(
     readonly defaultTeamIds: readonly string[];
   },
 ): Promise<NotificationEvent[]> {
-  const pulls = context.pullRequests.filter((pull) =>
-    context.failedTransitionPullRequestIds.has(pull.id),
+  const pulls = context.pullRequests.filter(
+    (pull) =>
+      context.failedTransitionPullRequestIds.has(pull.id) && isActiveGithubPullRequest(pull),
   );
   if (pulls.length === 0) return [];
   const issueIds = context.issues.map((entry) => entry.id);
@@ -735,84 +738,6 @@ function aggregateCheckStates(states: readonly string[]): string {
   if (states.includes('pending')) return 'pending';
   if (states.length > 0 && states.every((state) => state === 'success')) return 'success';
   return 'unknown';
-}
-
-async function lockedHeadReconciliation(
-  database: GithubDatabase,
-  context: {
-    readonly repo: RepositorySync;
-    readonly headSha: string;
-    readonly triggerKind: string;
-    readonly triggerIdentity: string;
-    readonly now: Date;
-  },
-) {
-  await database
-    .insert(githubCheckHeadReconciliation)
-    .values({
-      id: randomUUIDv7(),
-      organizationId: context.repo.organizationId,
-      repositorySyncId: context.repo.id,
-      headSha: context.headSha,
-      status: 'completed',
-      triggerKind: context.triggerKind,
-      triggerIdentity: context.triggerIdentity,
-      availableAt: context.now,
-      updatedAt: context.now,
-    })
-    .onConflictDoNothing();
-  const [head] = await database
-    .select()
-    .from(githubCheckHeadReconciliation)
-    .where(
-      and(
-        eq(githubCheckHeadReconciliation.organizationId, context.repo.organizationId),
-        eq(githubCheckHeadReconciliation.repositorySyncId, context.repo.id),
-        eq(githubCheckHeadReconciliation.headSha, context.headSha),
-      ),
-    )
-    .limit(1)
-    .for('update');
-  if (head === undefined) throw new Error('GitHub head reconciliation row was not created.');
-  return head;
-}
-
-async function enqueueHeadReconciliation(
-  database: GithubDatabase,
-  context: {
-    readonly repo: RepositorySync;
-    readonly headSha: string;
-    readonly triggerKind: string;
-    readonly triggerIdentity: string;
-    readonly now: Date;
-  },
-): Promise<void> {
-  const head = await lockedHeadReconciliation(database, context);
-  const processing = head.status === 'processing';
-  await database
-    .update(githubCheckHeadReconciliation)
-    .set({
-      status: processing ? 'processing' : 'pending',
-      jobVersion: head.jobVersion + 1,
-      triggerKind: context.triggerKind,
-      triggerIdentity: context.triggerIdentity,
-      attempts: 0,
-      availableAt: context.now,
-      settleDeadline: null,
-      rerunRequired: processing,
-      lastError: null,
-      ...(processing
-        ? {}
-        : {
-            claimToken: null,
-            claimedAt: null,
-            leaseExpiresAt: null,
-            claimedJobVersion: null,
-            claimedContextGeneration: null,
-          }),
-      updatedAt: context.now,
-    })
-    .where(eq(githubCheckHeadReconciliation.id, head.id));
 }
 
 function directCheckProviderDate(check: NormalizedGithubCheckContext, now: Date): Date {
@@ -2038,6 +1963,7 @@ function unlinkedPullRequestNotification(context: {
   readonly userIds: readonly string[];
 }): NotificationEvent | null {
   const { repo, event, pull, actor, userIds } = context;
+  if (event.checks !== null) return null;
   const base = {
     organizationId: repo.organizationId,
     actor,

@@ -18,6 +18,7 @@ import {
   type GithubCheckHeadSnapshot,
   type GithubCheckHeadSnapshotActivity,
 } from './app.ts';
+import { GITHUB_MANUAL_RECOVERY_TRIGGER } from './recovery-trigger.ts';
 
 export type GithubReconciliationDatabase = Database | Transaction;
 
@@ -39,7 +40,11 @@ export interface GithubCheckHeadReconciliationResult {
 }
 
 export type GithubCheckHeadSnapshotFetcher = (
-  input: GithubAppRequest & { readonly repository: string; readonly headSha: string },
+  input: GithubAppRequest & {
+    readonly repository: string;
+    readonly headSha: string;
+    readonly freshInstallationToken?: boolean;
+  },
 ) => Promise<GithubCheckHeadSnapshot>;
 
 export interface ReconcileNextGithubCheckHeadInput {
@@ -74,6 +79,7 @@ interface ClaimedHead {
   readonly attemptNumber: number;
   readonly fetchAttemptId: string;
   readonly settleDeadline: Date;
+  readonly freshInstallationToken: boolean;
 }
 
 const DEFAULT_LEASE_MS = 180_000;
@@ -248,6 +254,7 @@ async function claimNextHead(
     attemptNumber,
     fetchAttemptId,
     settleDeadline,
+    freshInstallationToken: head.triggerKind === GITHUB_MANUAL_RECOVERY_TRIGGER,
   };
 }
 
@@ -813,13 +820,15 @@ async function acceptFetchedSnapshot(
     return invalidatedResult(claim, 'invalidated');
   }
   const acceptedContexts = await replaceHeadContexts(database, claim, prepared, now);
-  const failureTransitions = await projectAcceptedContexts(
+  const projectedFailureTransitions = await projectAcceptedContexts(
     database,
     claim,
     acceptedContexts,
     prepared.contextKeys,
     now,
   );
+  const failureTransitions =
+    head.triggerKind === GITHUB_MANUAL_RECOVERY_TRIGGER ? [] : projectedFailureTransitions;
   if (input.acceptFailureTransitions !== undefined) {
     await input.acceptFailureTransitions(database, failureTransitions);
   }
@@ -872,6 +881,7 @@ export async function reconcileNextGithubCheckHead(
       installationId: claim.installationId,
       repository: claim.repositoryName,
       headSha: claim.headSha,
+      ...(claim.freshInstallationToken ? { freshInstallationToken: true } : {}),
       ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
       ...(input.apiBase === undefined ? {} : { apiBase: input.apiBase }),
     });
