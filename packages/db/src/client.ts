@@ -104,7 +104,7 @@ function openPool(idleSeconds: number = PROCESS_IDLE_SECONDS): Pool {
 
 let privateProxyUrl: string | undefined;
 
-export function registerPrivateDatabaseProxy(url: string): void {
+export function registerPrivateDatabaseProxy(url: string | undefined): void {
   privateProxyUrl = url;
 }
 

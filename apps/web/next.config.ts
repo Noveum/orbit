@@ -19,8 +19,10 @@ const workspacePackages = [
 
 const devServerOnlyBundledPackages = ['@react-email/render', '@react-email/components', 'prettier'];
 
-function standaloneOutputUnlessVercelTracesItItself(): Pick<NextConfig, 'output'> {
-  return process.env['VERCEL'] === '1' ? {} : { output: 'standalone' };
+function standaloneOutputUnlessThePlatformPackagesItItself(): Pick<NextConfig, 'output'> {
+  const platformPackages =
+    process.env['VERCEL'] === '1' || process.env['ORBIT_WORKERS_BUILD'] === '1';
+  return platformPackages ? {} : { output: 'standalone' };
 }
 
 export default function config(phase: string): NextConfig {
@@ -41,7 +43,7 @@ export default function config(phase: string): NextConfig {
   return {
     reactStrictMode: true,
     reactCompiler: true,
-    ...standaloneOutputUnlessVercelTracesItItself(),
+    ...standaloneOutputUnlessThePlatformPackagesItItself(),
     outputFileTracingRoot: workspaceRoot,
     turbopack: {
       root: workspaceRoot,

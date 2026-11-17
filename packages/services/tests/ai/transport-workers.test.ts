@@ -1,0 +1,72 @@
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { safeFetch } from '../../src/ai/transport.ts';
+
+const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+
+function runAs(userAgent: string): void {
+  Object.defineProperty(globalThis, 'navigator', { value: { userAgent }, configurable: true });
+}
+
+afterEach(() => {
+  if (navigatorDescriptor === undefined) Reflect.deleteProperty(globalThis, 'navigator');
+  else Object.defineProperty(globalThis, 'navigator', navigatorDescriptor);
+});
+
+describe('safeFetch on the Workers runtime', () => {
+  it('sends the request through fetch without following redirects', async () => {
+    runAs('Cloudflare-Workers');
+    const upstream = spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({ ok: true }, { status: 201 }),
+    );
+    try {
+      const response = await safeFetch('https://api.provider.example/v1/chat', {
+        method: 'POST',
+        headers: { authorization: 'Bearer key' },
+        body: '{"prompt":"hi"}',
+      });
+      expect(response.status).toBe(201);
+      expect(upstream).toHaveBeenCalledTimes(1);
+      expect(upstream.mock.calls[0]).toEqual([
+        'https://api.provider.example/v1/chat',
+        {
+          redirect: 'manual',
+          method: 'POST',
+          headers: { authorization: 'Bearer key' },
+          body: '{"prompt":"hi"}',
+        },
+      ]);
+    } finally {
+      upstream.mockRestore();
+    }
+  });
+
+  it('still refuses a literal private destination before any request', async () => {
+    runAs('Cloudflare-Workers');
+    const upstream = spyOn(globalThis, 'fetch');
+    try {
+      await expect(safeFetch('http://169.254.169.254/latest/meta-data')).rejects.toThrow(
+        'Blocked connection to private destination',
+      );
+      expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      upstream.mockRestore();
+    }
+  });
+
+  it('keeps the pinned socket transport on every other runtime', async () => {
+    runAs('Node.js/24');
+    const upstream = spyOn(globalThis, 'fetch');
+    try {
+      await expect(
+        safeFetch('https://api.provider.example/v1/chat', {
+          dnsLookup: (_host, _options, callback) => {
+            callback(new Error('lookup reached'), '', 4);
+          },
+        }),
+      ).rejects.toThrow('lookup reached');
+      expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      upstream.mockRestore();
+    }
+  });
+});

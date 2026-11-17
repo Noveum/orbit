@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-const SHIPPED_ROOTS = ['packages/', 'apps/web/src/'] as const;
+const SHIPPED_ROOTS = ['packages/', 'apps/web/src/', 'apps/web/worker/'] as const;
 
 const RUNS_ONLY_UNDER_BUN = ['apps/realtime/', 'scripts/'] as const;
 

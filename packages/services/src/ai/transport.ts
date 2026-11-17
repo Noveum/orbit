@@ -243,6 +243,13 @@ function buildWebResponse(
   });
 }
 
+const WORKERS_USER_AGENT = 'Cloudflare-Workers';
+
+function socketlessRuntimeFetch(): SafeFetchOptions['fetchFn'] {
+  if (globalThis.navigator?.userAgent !== WORKERS_USER_AGENT) return undefined;
+  return (url, init) => fetch(url, init);
+}
+
 export async function safeFetch(url: string, options: SafeFetchOptions = {}): Promise<Response> {
   const parsed = new URL(url);
   const allowPrivate = options.allowPrivate ?? process.env['ALLOW_PRIVATE_AI_ENDPOINTS'] === 'true';
@@ -251,13 +258,14 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     throw new Error(`Blocked connection to private destination: ${parsed.hostname}`);
   }
 
-  if (options.fetchFn !== undefined) {
+  const fetchFn = options.fetchFn ?? socketlessRuntimeFetch();
+  if (fetchFn !== undefined) {
     const init: RequestInit = { redirect: 'manual' };
     if (options.method !== undefined) init.method = options.method;
     if (options.headers !== undefined) init.headers = options.headers;
     if (options.body !== undefined) init.body = options.body;
     if (options.signal !== undefined) init.signal = options.signal;
-    return await options.fetchFn(url, init);
+    return await fetchFn(url, init);
   }
 
   const cleanHost =
