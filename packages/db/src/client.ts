@@ -90,10 +90,13 @@ const ssl = resolveDatabaseTls(connectionString, process.env);
 const cacheKey = poolCacheKey(connectionString, maxConnections, prepareStatements, ssl);
 const cached = globalForDb.orbitPool;
 
-function openPool(): Pool {
+const PROCESS_IDLE_SECONDS = 30;
+const SCOPED_IDLE_SECONDS = 5;
+
+function openPool(idleSeconds: number = PROCESS_IDLE_SECONDS): Pool {
   return postgres(connectionString, {
     max: maxConnections,
-    idle_timeout: 30,
+    idle_timeout: idleSeconds,
     prepare: prepareStatements,
     ...(ssl === undefined ? {} : { ssl }),
   });
@@ -106,10 +109,10 @@ export function registerPrivateDatabaseProxy(url: string): void {
 }
 
 function openScopedPool(): Pool {
-  if (privateProxyUrl === undefined) return openPool();
+  if (privateProxyUrl === undefined) return openPool(SCOPED_IDLE_SECONDS);
   return postgres(privateProxyUrl, {
     max: maxConnections,
-    idle_timeout: 30,
+    idle_timeout: SCOPED_IDLE_SECONDS,
     prepare: prepareStatements,
   });
 }

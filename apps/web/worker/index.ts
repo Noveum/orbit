@@ -1,6 +1,7 @@
 import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types/index.ts';
 import { withRequestScopedDatabase } from '@orbit/db';
 import app from 'vinext/server/fetch-handler';
+import { withEdgeClientAddress } from '../src/lib/cloudflare/client-address.ts';
 import { runCronJobs } from '../src/lib/cloudflare/cron-schedule.ts';
 import { realtimeHub, type WorkerBindings } from './bindings.ts';
 import { connectWorkerRuntime } from './runtime.ts';
@@ -38,7 +39,7 @@ export default {
       });
       return upgraded as unknown as Response;
     }
-    return await serve(request, bindings, context);
+    return await serve(withEdgeClientAddress(request), bindings, context);
   },
 
   async scheduled(

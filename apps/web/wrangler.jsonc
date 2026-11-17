@@ -10,6 +10,7 @@
   "placement": { "mode": "smart" },
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
+  "vars": { "NODE_ENV": "production" },
   "assets": {
     "directory": "dist/client",
     "html_handling": "none",
