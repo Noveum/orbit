@@ -230,8 +230,8 @@ describe('markdown conversion', () => {
     );
   });
 
-  it('decodes entities and strips remaining markup', () => {
-    expect(htmlToMarkdown('<p>Tom &amp; Jerry &lt;b&gt;</p>')).toBe('Tom & Jerry <b>');
+  it('keeps encoded markup literal in Markdown', () => {
+    expect(htmlToMarkdown('<p>Tom &amp; Jerry &lt;b&gt;</p>')).toBe('Tom &amp; Jerry &lt;b&gt;');
   });
 
   it('returns an empty string for missing content', () => {
