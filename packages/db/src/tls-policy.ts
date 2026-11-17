@@ -1,11 +1,7 @@
 import { X509Certificate } from 'node:crypto';
 import { isIP } from 'node:net';
-import {
-  type ConnectionOptions,
-  checkServerIdentity,
-  getCACertificates,
-  rootCertificates,
-} from 'node:tls';
+import type { ConnectionOptions } from 'node:tls';
+import * as tls from 'node:tls';
 import { databaseTlsEnvironmentSchema } from '@orbit/shared/validators';
 
 const INVALID_TLS =
@@ -42,7 +38,8 @@ export function resolveDatabaseTls(
   const hostname = url.hostname.replace(/^\[|\]$/gu, '');
   const identity: ConnectionOptions = isIP(hostname)
     ? {
-        checkServerIdentity: (_hostname, certificate) => checkServerIdentity(hostname, certificate),
+        checkServerIdentity: (_hostname, certificate) =>
+          tls.checkServerIdentity(hostname, certificate),
       }
     : {};
   const pem = parsed.data.DATABASE_TLS_CA_PEM;
@@ -60,6 +57,8 @@ export function resolveDatabaseTls(
     throw new Error(INVALID_TLS);
   }
   const standardRoots =
-    typeof getCACertificates === 'function' ? getCACertificates('default') : rootCertificates;
+    typeof tls.getCACertificates === 'function'
+      ? tls.getCACertificates('default')
+      : tls.rootCertificates;
   return { rejectUnauthorized: true, ...identity, ca: [...standardRoots, ...certificates] };
 }

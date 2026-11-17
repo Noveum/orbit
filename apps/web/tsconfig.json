@@ -19,6 +19,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "worker/**/*.ts",
     "bench/**/*.ts",
     "e2e/**/*.ts",
     "tests-preload.ts",

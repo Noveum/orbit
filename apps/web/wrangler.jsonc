@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orbit",
+  "account_id": "21a4f31138ea80e81e2213f4de31a47b",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-11-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "placement": { "mode": "smart" },
+  "limits": { "cpu_ms": 300000 },
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "dist/client",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "binding": "ASSETS",
+    "run_worker_first": ["/*", "!/_next/static/*", "!/*/_next/static/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "REALTIME_HUB", "class_name": "RealtimeHubObject" },
+      { "name": "AUTH_RATE_LIMITER", "class_name": "AuthRateLimiterObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RealtimeHubObject", "AuthRateLimiterObject"] }
+  ],
+  "triggers": {
+    "crons": ["* * * * *", "0 * * * *", "0 */6 * * *", "0 9 * * *"]
+  }
+}

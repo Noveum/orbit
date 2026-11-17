@@ -26,6 +26,10 @@ export class PresenceStore {
 
   constructor(private readonly ttlMs: number) {}
 
+  get size(): number {
+    return this.byScope.size + this.boundaries.size;
+  }
+
   record(message: PresenceMessage, audience: PresenceAudience | null, now = Date.now()): boolean {
     const expiresAt = Date.parse(message.at) + this.ttlMs;
     if (!Number.isFinite(expiresAt) || expiresAt <= now) return false;

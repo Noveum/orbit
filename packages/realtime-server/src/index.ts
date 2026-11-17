@@ -8,7 +8,13 @@ export {
   readTicketFrame,
   sessionStillValid,
 } from './auth.ts';
-export { Connection, type ConnectionLimits, type SocketState } from './connection.ts';
+export { type BusDelivery, createLoopbackBus, type RealtimeBus } from './bus.ts';
+export {
+  Connection,
+  type ConnectionLimits,
+  type ConnectionSnapshot,
+  type SocketState,
+} from './connection.ts';
 export {
   AUTH_TIMEOUT_MS,
   createRealtimeHub,
@@ -20,6 +26,7 @@ export {
   type RealtimeHubOptions,
   type RealtimeSession,
   type RealtimeStats,
+  SESSION_SWEEP_INTERVAL_MS,
 } from './hub.ts';
 export { errorFields, logger } from './logger.ts';
 export { PresenceStore } from './presence.ts';

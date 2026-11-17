@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { request } from 'node:http';
-import type { RealtimeHub } from '@orbit/realtime-server';
+import type { RealtimeHub, RealtimeSession } from '@orbit/realtime-server';
 import { WebSocket } from 'ws';
 import { createNodeRealtimeServer } from '@/lib/realtime/node-server.ts';
 
@@ -10,19 +10,24 @@ let redis = 'ready';
 let accepted = 0;
 let closed = 0;
 const messages: string[] = [];
+function session(): RealtimeSession {
+  accepted += 1;
+  return {
+    message: (message) => {
+      messages.push(message);
+    },
+    closed: () => {
+      closed += 1;
+    },
+    pong: () => undefined,
+  };
+}
 const hub: RealtimeHub = {
-  accept: () => {
-    accepted += 1;
-    return {
-      message: (message) => {
-        messages.push(message);
-      },
-      closed: () => {
-        closed += 1;
-      },
-      pong: () => undefined,
-    };
-  },
+  accept: session,
+  restore: session,
+  heartbeat: () => undefined,
+  sweep: () => false,
+  sweepSessions: () => Promise.resolve(),
   stats: () => ({ connections: 0, subscriptions: 0, redis }),
   close: () => Promise.resolve(),
 };

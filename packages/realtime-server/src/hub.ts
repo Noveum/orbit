@@ -18,7 +18,6 @@ import {
   syncActionSchema,
   UNAUTHORIZED_CLOSE_CODE,
 } from '@orbit/shared/events';
-import { Redis } from 'ioredis';
 import { z } from 'zod';
 import {
   authenticateTicket,
@@ -34,11 +33,13 @@ import {
   refreshedPrincipal,
   sessionStillValid,
 } from './auth.ts';
-import { Connection, type SocketState } from './connection.ts';
+import type { RealtimeBus } from './bus.ts';
+import { Connection, type ConnectionSnapshot, type SocketState } from './connection.ts';
 import { IssueTeamBoundaries, type IssueTeamBoundary } from './issue-team-boundaries.ts';
 import { errorFields, logger } from './logger.ts';
 import { PresenceStore } from './presence.ts';
 import { type RealtimeSocket, SOCKET_OPEN } from './socket.ts';
+import { detach } from './timers.ts';
 
 export const MAX_SUBSCRIPTIONS_PER_CONNECTION = 256;
 export const MAX_BUFFERED_BYTES = 1_048_576;
@@ -50,6 +51,9 @@ export const ISSUE_TEAM_BOUNDARY_TTL_MS = 300_000;
 export const MAX_ISSUE_TEAM_BOUNDARIES = 10_000;
 
 export interface RealtimeHubOptions {
+  bus?: RealtimeBus;
+  scheduling?: 'intervals' | 'manual';
+  onConnectionChange?: (snapshot: ConnectionSnapshot) => void;
   redisUrl?: string;
   ticketSecret?: string;
   authTimeoutMs?: number;
@@ -80,6 +84,10 @@ export interface RealtimeSession {
 
 export interface RealtimeHub {
   accept(socket: RealtimeSocket): RealtimeSession;
+  restore(socket: RealtimeSocket, snapshot: ConnectionSnapshot): RealtimeSession;
+  heartbeat(): void;
+  sweep(): boolean;
+  sweepSessions(): Promise<void>;
   stats(): RealtimeStats;
   close(): Promise<void>;
 }
@@ -285,8 +293,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     issueTeamBoundaryTtlMs,
     maxIssueTeamBoundaries,
   );
-  const subscriber = new Redis(redisUrl, { maxRetriesPerRequest: null });
-  const publisher = new Redis(redisUrl, { maxRetriesPerRequest: 3 });
+  const bus = options.bus ?? (await import('./redis-bus.ts')).createRedisBus(redisUrl);
 
   function stats(): RealtimeStats {
     let subscriptions = 0;
@@ -294,7 +301,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     return {
       connections: connections.size,
       subscriptions,
-      redis: subscriber.status === 'ready' ? 'ready' : subscriber.status,
+      redis: bus.status(),
     };
   }
 
@@ -1007,7 +1014,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     kind: PresenceKind,
     issueTeamId: string | null,
   ): Promise<void> {
-    await publisher.publish(
+    await bus.publish(
       REDIS_PRESENCE_CHANNEL,
       JSON.stringify({
         organizationId: connection.organizationId,
@@ -1109,9 +1116,15 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
       return;
     }
     clearAuthTimer(state);
-    const connection = new Connection(randomUUID(), socket, authenticated.principal, limits);
+    const connection = new Connection(
+      socket.id ?? randomUUID(),
+      socket,
+      authenticated.principal,
+      limits,
+    );
     state.connection = connection;
     connections.set(connection.id, connection);
+    observe(connection);
     connection.send({
       type: 'ready',
       connectionId: connection.id,
@@ -1126,14 +1139,34 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     });
   }
 
+  function observe(connection: Connection): void {
+    const notify = options.onConnectionChange;
+    if (notify === undefined) return;
+    connection.observe(() => notify(connection.snapshot()));
+    notify(connection.snapshot());
+  }
+
   function accept(socket: RealtimeSocket): RealtimeSession {
     const state: SocketState = { connection: null, authenticating: false, authTimer: undefined };
-    state.authTimer = setTimeout(() => {
-      state.authTimer = undefined;
-      if (state.connection === null) socket.close(UNAUTHORIZED_CLOSE_CODE, 'auth_timeout');
-    }, authTimeoutMs);
-    state.authTimer.unref();
+    state.authTimer = detach(
+      setTimeout(() => {
+        state.authTimer = undefined;
+        if (state.connection === null) socket.close(UNAUTHORIZED_CLOSE_CODE, 'auth_timeout');
+      }, authTimeoutMs),
+    );
+    return session(socket, state);
+  }
 
+  function restore(socket: RealtimeSocket, snapshot: ConnectionSnapshot): RealtimeSession {
+    const connection = new Connection(snapshot.id, socket, snapshot.principal, limits);
+    connection.addScopes(snapshot.scopes);
+    connection.advanceWatermark(snapshot.watermark);
+    connections.set(connection.id, connection);
+    observe(connection);
+    return session(socket, { connection, authenticating: false, authTimer: undefined });
+  }
+
+  function session(socket: RealtimeSocket, state: SocketState): RealtimeSession {
     return {
       message(raw: string): void {
         const connection = state.connection;
@@ -1165,10 +1198,9 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     };
   }
 
-  let closing = false;
   let orderedDelivery = Promise.resolve();
 
-  subscriber.on('message', (channel: string, message: string) => {
+  await bus.start((channel: string, message: string) => {
     if (channel === REDIS_DELTA_CHANNEL || channel === REDIS_PRESENCE_CHANNEL) {
       orderedDelivery = orderedDelivery
         .then(async () => {
@@ -1182,16 +1214,8 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     }
     if (channel === REDIS_CONTROL_CHANNEL) deliverControl(message);
   });
-  await subscriber.subscribe(REDIS_DELTA_CHANNEL, REDIS_PRESENCE_CHANNEL, REDIS_CONTROL_CHANNEL);
 
-  subscriber.on('error', (error: Error): void => {
-    if (!closing) logger.error('redis subscriber error', errorFields(error));
-  });
-  publisher.on('error', (error: Error): void => {
-    if (!closing) logger.error('redis publisher error', errorFields(error));
-  });
-
-  const heartbeat = setInterval(() => {
+  function heartbeat(): void {
     const now = Date.now();
     for (const connection of connections.values()) {
       if (now - connection.lastSeenAt > heartbeatTimeoutMs) {
@@ -1202,36 +1226,35 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
       }
       connection.ping();
     }
-  }, heartbeatIntervalMs);
-  heartbeat.unref();
+  }
 
-  const sweeper = setInterval(
-    () => {
-      presence.sweep();
-      issueTeamBoundaries.sweep();
-    },
-    Math.max(1_000, Math.min(presenceTtlMs, issueTeamBoundaryTtlMs) / 3),
-  );
-  sweeper.unref();
+  function sweep(): boolean {
+    presence.sweep();
+    issueTeamBoundaries.sweep();
+    return presence.size > 0 || issueTeamBoundaries.size > 0;
+  }
 
-  const sessionSweeper = setInterval(() => {
-    sweepSessions().catch((error: unknown) => {
-      logger.error('session sweep failed', errorFields(error));
-    });
-  }, sessionSweepIntervalMs);
-  sessionSweeper.unref();
+  const intervals =
+    options.scheduling === 'manual'
+      ? []
+      : [
+          setInterval(heartbeat, heartbeatIntervalMs),
+          setInterval(sweep, Math.max(1_000, Math.min(presenceTtlMs, issueTeamBoundaryTtlMs) / 3)),
+          setInterval(() => {
+            sweepSessions().catch((error: unknown) => {
+              logger.error('session sweep failed', errorFields(error));
+            });
+          }, sessionSweepIntervalMs),
+        ];
+  for (const interval of intervals) detach(interval);
 
   async function close(): Promise<void> {
-    closing = true;
-    clearInterval(heartbeat);
-    clearInterval(sweeper);
-    clearInterval(sessionSweeper);
+    for (const interval of intervals) clearInterval(interval);
     for (const connection of connections.values()) connection.close(1001, 'server shutting down');
     connections.clear();
-    subscriber.disconnect();
-    publisher.disconnect();
+    bus.close();
     await orderedDelivery;
   }
 
-  return { accept, stats, close };
+  return { accept, restore, heartbeat, sweep, sweepSessions, stats, close };
 }

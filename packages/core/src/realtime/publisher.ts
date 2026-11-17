@@ -36,6 +36,16 @@ export function buildSyncAction(input: BuildSyncActionInput): SyncAction {
   };
 }
 
+export interface RealtimeTransport {
+  publish(channel: string, message: string): Promise<void>;
+}
+
+let transport: RealtimeTransport | null = null;
+
+export function registerRealtimeTransport(next: RealtimeTransport | null): void {
+  transport = next;
+}
+
 let client: Redis | null = null;
 
 function connection(): Redis | null {
@@ -52,25 +62,29 @@ function connection(): Redis | null {
   return client;
 }
 
-export async function publishDeltas(actions: SyncAction[]): Promise<void> {
-  if (actions.length === 0) return;
+async function publish(channel: string, message: string): Promise<void> {
+  if (transport !== null) {
+    await transport.publish(channel, message);
+    return;
+  }
   const redis = connection();
   if (redis === null) return;
-  await redis.publish(REDIS_DELTA_CHANNEL, JSON.stringify(actions));
+  await redis.publish(channel, message);
+}
+
+export async function publishDeltas(actions: SyncAction[]): Promise<void> {
+  if (actions.length === 0) return;
+  await publish(REDIS_DELTA_CHANNEL, JSON.stringify(actions));
 }
 
 export async function publishSessionRevoked(userId: string): Promise<void> {
-  const redis = connection();
-  if (redis === null) return;
   const message: ControlMessage = { type: 'session_revoked', userId };
-  await redis.publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
+  await publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
 }
 
 export async function publishOrganizationDeleted(organizationId: string): Promise<void> {
-  const redis = connection();
-  if (redis === null) return;
   const message: ControlMessage = { type: 'organization_deleted', organizationId };
-  await redis.publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
+  await publish(REDIS_CONTROL_CHANNEL, JSON.stringify(message));
 }
 
 export function closeRealtime(): Promise<void> {
