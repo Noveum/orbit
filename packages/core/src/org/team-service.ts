@@ -118,6 +118,7 @@ export async function bootstrapTeam(
     name: string;
     key: string;
     description?: string;
+    instructions?: string;
     icon?: string;
     color?: string;
     syncId: number;
@@ -132,6 +133,7 @@ export async function bootstrapTeam(
       name: params.name,
       key,
       description: params.description ?? '',
+      instructions: params.instructions ?? '',
       ...(params.icon === undefined ? {} : { icon: params.icon }),
       ...(params.color === undefined ? {} : { color: params.color }),
       syncId: params.syncId,
@@ -178,6 +180,7 @@ export async function createTeam(
       name: parsed.name,
       key: parsed.key,
       ...(parsed.description === undefined ? {} : { description: parsed.description }),
+      ...(parsed.instructions === undefined ? {} : { instructions: parsed.instructions }),
       ...(parsed.icon === undefined ? {} : { icon: parsed.icon }),
       ...(parsed.color === undefined ? {} : { color: parsed.color }),
       syncId,
@@ -213,6 +216,7 @@ export async function updateTeam(
     const values: Partial<typeof schema.team.$inferInsert> = { updatedAt: new Date() };
     if (parsed.name !== undefined) values.name = parsed.name;
     if (parsed.description !== undefined) values.description = parsed.description;
+    if (parsed.instructions !== undefined) values.instructions = parsed.instructions;
     if (parsed.icon !== undefined) values.icon = parsed.icon;
     if (parsed.color !== undefined) values.color = parsed.color;
 

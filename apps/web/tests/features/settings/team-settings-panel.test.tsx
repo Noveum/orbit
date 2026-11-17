@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { MemberView, TeamDetail } from '@/features/settings/data.ts';
 import { TeamSettingsPanel } from '../../../src/features/settings/team-settings-panel.tsx';
@@ -31,12 +31,15 @@ function team(overrides: Partial<TeamDetail> = {}): TeamDetail {
 
 const originalFetch = globalThis.fetch;
 const requests: { url: string; method: string }[] = [];
+const bodies: Record<string, unknown>[] = [];
 const user = userEvent.setup({ pointerEventsCheck: 0 });
 
 beforeEach(() => {
   requests.length = 0;
+  bodies.length = 0;
   globalThis.fetch = mock((input: string | URL | Request, init?: RequestInit) => {
     requests.push({ url: String(input), method: init?.method ?? 'GET' });
+    if (typeof init?.body === 'string') bodies.push(JSON.parse(init.body));
     return Promise.resolve(Response.json({ team: {} }));
   }) as unknown as typeof fetch;
 });
@@ -46,6 +49,56 @@ afterEach(() => {
 });
 
 describe('TeamSettingsPanel', () => {
+  it('stops resending instructions after a successful instruction save', async () => {
+    render(
+      <TeamSettingsPanel
+        team={team({ instructions: 'Old guidance' })}
+        members={members}
+        canManage
+      />,
+    );
+    await user.type(screen.getByRole('textbox', { name: /Agent instructions/ }), ' updated');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Saving' })).toBeNull());
+    await user.type(screen.getByLabelText('Name'), ' updated');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(bodies[0]).toHaveProperty('instructions', 'Old guidance updated');
+    expect(bodies[1]).not.toHaveProperty('instructions');
+  });
+
+  it('omits untouched instructions when saving another field from a stale form', async () => {
+    const view = render(
+      <TeamSettingsPanel
+        team={team({ instructions: 'Old guidance' })}
+        members={members}
+        canManage
+      />,
+    );
+    view.rerender(
+      <TeamSettingsPanel
+        team={team({ instructions: 'Concurrent guidance' })}
+        members={members}
+        canManage
+      />,
+    );
+    await user.type(screen.getByLabelText('Name'), ' updated');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(bodies[0]).not.toHaveProperty('instructions');
+  });
+
+  it('sends an explicit empty value when instructions are cleared', async () => {
+    render(
+      <TeamSettingsPanel
+        team={team({ instructions: 'Old guidance' })}
+        members={members}
+        canManage
+      />,
+    );
+    await user.clear(screen.getByRole('textbox', { name: /Agent instructions/ }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(bodies[0]).toHaveProperty('instructions', '');
+  });
+
   it('asks before archiving, and archives only once confirmed', async () => {
     render(<TeamSettingsPanel team={team()} members={members} canManage />);
 

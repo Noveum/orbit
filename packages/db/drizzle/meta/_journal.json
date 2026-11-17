@@ -288,6 +288,13 @@
       "when": 1794862298822,
       "tag": "0040_marvelous_purifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794862574373,
+      "tag": "0041_friendly_toad_men",
+      "breakpoints": true
     }
   ]
 }

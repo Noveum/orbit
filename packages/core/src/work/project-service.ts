@@ -208,6 +208,7 @@ export async function createProject(
         slug,
         summary: parsed.summary,
         description: parsed.description,
+        instructions: parsed.instructions,
         status: parsed.status,
         health: parsed.health,
         leadId: parsed.leadId,
@@ -252,6 +253,7 @@ function projectUpdateValues(
   if (parsed.name !== undefined) values.name = parsed.name;
   if (parsed.summary !== undefined) values.summary = parsed.summary;
   if (parsed.description !== undefined) values.description = parsed.description;
+  if (parsed.instructions !== undefined) values.instructions = parsed.instructions;
   if (parsed.status !== undefined) values.status = parsed.status;
   if (parsed.health !== undefined) values.health = parsed.health;
   if (parsed.leadId !== undefined) values.leadId = parsed.leadId;
@@ -1030,6 +1032,7 @@ export async function duplicateProject(
         name,
         summary: sourceProject.summary,
         description: sourceProject.description,
+        instructions: sourceProject.instructions,
         status: sourceProject.status,
         health: 'no_update',
         leadId: sourceProject.leadId,

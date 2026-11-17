@@ -31,9 +31,10 @@ import {
   STATE_CATEGORIES,
 } from '@orbit/shared/constants';
 import { DomainError, notFound, validationFailed } from '@orbit/shared/errors';
-import type { Principal } from '@orbit/shared/policy';
+import type { McpIdentity, Principal } from '@orbit/shared/policy';
 import { branchName, issueCommentUrl, issueUrl } from '@orbit/shared/utils';
 import { z } from 'zod';
+import { resolveIssueInstructions } from '../instructions.ts';
 import {
   resolveCycle,
   resolveLabelIds,
@@ -659,7 +660,12 @@ async function buildIssuePatch(
   return patch;
 }
 
-function registerGetIssue(server: McpServer, principal: Principal, appUrl: string): void {
+function registerGetIssue(
+  server: McpServer,
+  principal: Principal,
+  appUrl: string,
+  identity: McpIdentity,
+): void {
   defineTool(
     server,
     {
@@ -672,6 +678,8 @@ function registerGetIssue(server: McpServer, principal: Principal, appUrl: strin
     },
     async (args) => {
       const issue = await getIssue(principal, args.issue);
+      const instructions =
+        identity.kind === 'agent' ? await resolveIssueInstructions(principal, issue) : undefined;
       return {
         issue: {
           ...(await describeIssue(principal, appUrl, issue)),
@@ -679,7 +687,9 @@ function registerGetIssue(server: McpServer, principal: Principal, appUrl: strin
           labels: await issueLabelNames(principal, issue.id),
           relations: await issueRelationViews(principal, appUrl, issue.id),
           attachments: (await listIssueAttachments(principal, issue.id)).map(describeAttachment),
+          ...(instructions === undefined ? {} : { instructions }),
         },
+        ...(instructions === undefined ? {} : { instructions }),
       };
     },
   );
@@ -1272,12 +1282,17 @@ function registerCopyBranchName(server: McpServer, principal: Principal, appUrl:
   );
 }
 
-export function registerIssueTools(server: McpServer, principal: Principal, appUrl: string): void {
+export function registerIssueTools(
+  server: McpServer,
+  principal: Principal,
+  appUrl: string,
+  identity: McpIdentity,
+): void {
   registerCreateIssue(server, principal, appUrl);
   registerCreateSubIssues(server, principal, appUrl);
   registerUpdateIssue(server, principal, appUrl);
   registerBulkUpdateIssues(server, principal, appUrl);
-  registerGetIssue(server, principal, appUrl);
+  registerGetIssue(server, principal, appUrl, identity);
   registerSearchIssues(server, principal, appUrl);
   registerListMyIssues(server, principal, appUrl);
   registerMoveIssue(server, principal, appUrl);

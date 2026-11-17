@@ -149,6 +149,7 @@ export interface ProjectUpdateView {
 export interface ProjectDetail {
   readonly summary: ProjectSummary;
   readonly description: string;
+  readonly instructions: string;
   readonly startDate: string | null;
   readonly teams: { id: string; key: string; name: string }[];
   readonly progress: ProjectProgress;
@@ -205,6 +206,7 @@ export async function getProjectDetail(principal: Principal, slug: string): Prom
       staleDays: staleDaysFor(updates[0]?.createdAt ?? null, windowDays, new Date()),
     },
     description: renderPlainText(project.description),
+    instructions: project.instructions,
     startDate: project.startDate,
     teams,
     progress,

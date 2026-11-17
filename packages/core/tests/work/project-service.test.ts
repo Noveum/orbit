@@ -1285,3 +1285,39 @@ describe('duplicateProject', () => {
     expect(copy.slug).toMatch(/^platform-copy/);
   });
 });
+
+describe('project agent instructions', () => {
+  it('creates and updates a project with instructions', async () => {
+    const { project } = await createProject(workspace.admin, {
+      name: 'Agent Project Instructions',
+      instructions: 'Deliver MVP with full test coverage.',
+    });
+    expect(project.instructions).toBe('Deliver MVP with full test coverage.');
+
+    const updated = await updateProject(workspace.admin, project.id, {
+      instructions: 'Follow release checklist before shipping.',
+    });
+    expect(updated.project.instructions).toBe('Follow release checklist before shipping.');
+  });
+  it('preserves project instructions in the duplicate, stored row, and realtime action', async () => {
+    const instructions = 'Run the release checks.\nKeep the deployment checklist current.';
+    const { project: source } = await createProject(workspace.admin, {
+      name: 'Project with copy instructions',
+      instructions,
+    });
+    const { project: copy, actions } = await duplicateProject(workspace.admin, source.id, {
+      includeIssues: false,
+    });
+
+    expect(copy.instructions).toBe(instructions);
+    const [stored] = await db
+      .select({ instructions: schema.project.instructions })
+      .from(schema.project)
+      .where(eq(schema.project.id, copy.id));
+    expect(stored?.instructions).toBe(instructions);
+    const inserted = actions.find(
+      (action) => action.model === 'project' && action.modelId === copy.id,
+    );
+    expect(inserted?.data['instructions']).toBe(instructions);
+  });
+});

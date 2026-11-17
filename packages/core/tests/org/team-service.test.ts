@@ -9,6 +9,7 @@ import {
   listTeams,
   removeTeamMember,
   restoreTeam,
+  updateTeam,
 } from '../../src/org/team-service.ts';
 import {
   addMember,
@@ -135,5 +136,21 @@ describe('archiving and restoring a team', () => {
     await expect(restoreTeam(member.principal, nova.teamId)).rejects.toMatchObject({
       code: 'forbidden',
     });
+  });
+});
+
+describe('team agent instructions', () => {
+  it('creates and updates a team with instructions', async () => {
+    const { team } = await createTeam(nova.admin, {
+      name: 'Frontend',
+      key: 'FE',
+      instructions: 'Always write tests in Bun.',
+    });
+    expect(team.instructions).toBe('Always write tests in Bun.');
+
+    const updated = await updateTeam(nova.admin, team.id, {
+      instructions: 'Follow React and Bun conventions.',
+    });
+    expect(updated.team.instructions).toBe('Follow React and Bun conventions.');
   });
 });

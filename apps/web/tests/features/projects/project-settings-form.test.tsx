@@ -29,7 +29,7 @@ const TEAMS = [
   { id: 'team_dsg', key: 'DSGN', name: 'Design' },
 ];
 
-function renderForm(canManage = true) {
+function renderForm(canManage = true, instructions = 'Old guidance') {
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -38,6 +38,7 @@ function renderForm(canManage = true) {
           slug="atlas"
           name="Atlas"
           summary="The rebuild"
+          instructions={instructions}
           status="in_progress"
           health="on_track"
           startDate="2026-01-01T00:00:00.000Z"
@@ -64,6 +65,43 @@ afterAll(() => {
 });
 
 describe('ProjectSettingsForm', () => {
+  it('stops resending instructions after a successful instruction save', async () => {
+    renderForm();
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId('project-instructions'), ' updated');
+    await user.click(screen.getByTestId('project-save'));
+    await waitFor(() => expect(screen.getByTestId('project-save')).toBeEnabled());
+    await user.type(screen.getByTestId('project-summary'), ' updated');
+    await user.click(screen.getByTestId('project-save'));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    const first = JSON.parse(String((calls[0]?.init as RequestInit | undefined)?.body));
+    const second = JSON.parse(String((calls[1]?.init as RequestInit | undefined)?.body));
+    expect(first).toHaveProperty('instructions', 'Old guidance updated');
+    expect(second).not.toHaveProperty('instructions');
+  });
+
+  it('omits untouched instructions when another field is saved', async () => {
+    renderForm();
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId('project-summary'), ' updated');
+    await user.click(screen.getByTestId('project-save'));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const request = calls[0]?.init as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body));
+    expect(body).not.toHaveProperty('instructions');
+  });
+
+  it('sends an explicit empty value when instructions are cleared', async () => {
+    renderForm();
+    const user = userEvent.setup();
+    await user.clear(screen.getByTestId('project-instructions'));
+    await user.click(screen.getByTestId('project-save'));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const request = calls[0]?.init as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body));
+    expect(body).toHaveProperty('instructions', '');
+  });
+
   it('shows the project as it stands', () => {
     renderForm();
 
