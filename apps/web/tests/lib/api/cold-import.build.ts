@@ -3,7 +3,16 @@ import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 
 const root = resolve(import.meta.dir, '../../../../..');
-const route = z.enum(['webhooks/github', 'cron/notifications']).parse(process.argv[2]);
+const route = z
+  .enum([
+    'webhooks/github',
+    'cron/notifications',
+    'cron/project-staleness',
+    'cron/analytics-snapshots',
+    'cron/sprint-rollover',
+    'cron/prune',
+  ])
+  .parse(process.argv[2]);
 const directory = z
   .string()
   .startsWith(join(root, 'node_modules/.cache/orbit-cold-import-'))

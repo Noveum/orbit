@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { writeCycleSnapshots } from '@orbit/core';
-import { publish } from '@/lib/api/handler.ts';
+import { publish } from '@/lib/api/publish.ts';
 
 function presented(request: Request): string {
   const header = request.headers.get('authorization') ?? '';

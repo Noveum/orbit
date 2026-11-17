@@ -13,7 +13,14 @@ const resultSchema = z.object({
   startupSeedErrors: z.number(),
 });
 
-for (const route of ['webhooks/github', 'cron/notifications']) {
+for (const route of [
+  'webhooks/github',
+  'cron/notifications',
+  'cron/project-staleness',
+  'cron/analytics-snapshots',
+  'cron/sprint-rollover',
+  'cron/prune',
+]) {
   test(`${route} cold import starts no session auth or OAuth database work under Node`, async () => {
     await mkdir(join(root, 'node_modules/.cache'), { recursive: true });
     const directory = await mkdtemp(join(root, 'node_modules/.cache/orbit-cold-import-'));
