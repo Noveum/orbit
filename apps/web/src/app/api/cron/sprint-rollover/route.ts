@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { rolloverExpiredCycles } from '@orbit/core';
 import { cronAuthorizationSchema } from '@orbit/shared/validators';
-import { publish } from '@/lib/api/handler.ts';
+import { publish } from '@/lib/api/publish.ts';
 
 function presented(request: Request): string | null {
   const parsed = cronAuthorizationSchema.safeParse(request.headers.get('authorization'));

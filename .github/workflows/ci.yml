@@ -81,6 +81,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
       - run: bun install --frozen-lockfile
       - name: Mint a throwaway signing key for the GitHub connect tests
         run: |

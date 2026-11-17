@@ -8,12 +8,13 @@ around in. It takes about five minutes, most of which is Docker pulling images.
 | Tool | Version | Why |
 | --- | --- | --- |
 | [Bun](https://bun.sh) | 1.3 or newer | Installs packages, runs scripts, runs TypeScript, runs tests |
+| [Node.js](https://nodejs.org) | 24.x | Fresh server-runtime import checks in tests and `bun run verify` |
 | Docker | Any recent version | Postgres, Redis and object storage |
 | Git | Any | Obviously |
 
-That is the whole list. Bun replaces npm, pnpm, yarn, ts-node, jest and turbo,
-so do not install any of those. If you already have Node installed it will not
-get in the way, and Orbit will not use it.
+Bun replaces npm, pnpm, yarn, ts-node, jest and turbo, so do not install any
+of those. Keep Node 24.x on your PATH for the runtime checks; Bun remains the
+package manager and test runner.
 
 Install Bun if you do not have it:
 
