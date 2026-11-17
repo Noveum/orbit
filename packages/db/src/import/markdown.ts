@@ -10,7 +10,7 @@ function escapedText(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/\\/g, '\\\\')
-    .replace(/([*`[\]_~#()+|=-])/g, '\\$1');
+    .replace(/([!*`[\]_~#()+|=-])/g, '\\$1');
 }
 
 function destination(value: string): string {
@@ -28,23 +28,10 @@ function backtickRun(text: string, minimum: number): string {
 }
 
 function inlineCode(text: string): string {
-  const value = text.replace(/[\r\n]/g, ' ');
-  const fence = backtickRun(value, 1);
-  const padding =
-    value.startsWith('`') ||
-    value.endsWith('`') ||
-    (value.startsWith(' ') && value.endsWith(' ') && value.trim().length > 0)
-      ? ' '
-      : '';
-  return fence + padding + value + padding + fence;
-}
-
-function markedText(text: string, marker: string): string {
-  const value = text.trim();
-  if (value.length === 0) return text;
-  const leading = text.slice(0, text.indexOf(value));
-  const trailing = text.slice(text.indexOf(value) + value.length);
-  return leading + marker + value + marker + trailing;
+  const value = text
+    .replace(/[\r\n]/g, ' ')
+    .replace(/[!-/:-@[-`{-~]/g, (character) => `&#${character.charCodeAt(0)};`);
+  return `<code>${value}</code>`;
 }
 
 function childrenMarkdown(parent: Node & ParentNode): string {
@@ -63,14 +50,16 @@ function contentMarkdown(element: Element, tag: string): string {
     case 'a': {
       const href = element.getAttribute('href') ?? '';
       const label = content.trim();
-      return label.length === 0 ? escapedText(href) : `[${label}](${destination(href)})`;
+      if (label.length === 0) return escapedText(href);
+      const start = content.indexOf(label);
+      return `${content.slice(0, start)}[${label}](${destination(href)})${content.slice(start + label.length)}`;
     }
     case 'strong':
     case 'b':
-      return markedText(content, '**');
+      return `<strong>${content}</strong>`;
     case 'em':
     case 'i':
-      return markedText(content, '_');
+      return `<em>${content}</em>`;
     case 'li':
       return `- ${content.trim().replace(/\n/g, '\n  ')}\n`;
     case 'ul':
@@ -112,7 +101,7 @@ function nodeMarkdown(node: ChildNode): string {
     case 'code':
       return inlineCode(element.textContent ?? '');
     case 'br':
-      return '  \n';
+      return '<br>';
     case 'img': {
       const alt = escapedText(element.getAttribute('alt') ?? '');
       return `![${alt}](${destination(element.getAttribute('src') ?? '')})`;
