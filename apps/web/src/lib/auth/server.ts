@@ -34,6 +34,7 @@ import { organizationSessionPlugin } from '@/lib/auth/organization.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 import { uniqueHandleFor } from './handle.ts';
 import { hashPassword, verifyPassword } from './password.ts';
+import { withOAuthResourceConnectionRetry } from './resource-adapter.ts';
 import { SESSION_COOKIE_CACHE_POLICY } from './session-policy.ts';
 
 export const MCP_SCOPES = [
@@ -203,7 +204,10 @@ export const auth = betterAuth({
   appName: 'Orbit',
   baseURL: deployment.baseURL,
   secret: serverEnv().BETTER_AUTH_SECRET,
-  database: drizzleAdapter(db, { provider: 'pg', schema }),
+  database: withOAuthResourceConnectionRetry(
+    drizzleAdapter(db, { provider: 'pg', schema }),
+    mcpServerUrl(),
+  ),
   emailAndPassword: emailAndPassword(),
   rateLimit: authRateLimit(),
   socialProviders: socialProviders(),
