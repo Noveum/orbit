@@ -21,8 +21,14 @@ function packageFile(name: string, file: string): string {
 
 const SERVER_COMPONENT_ENVIRONMENT = 'rsc';
 
-const EMAIL_RENDERING_IMPORTERS =
-  /\/node_modules\/@react-email\/|\/packages\/services\/src\/email\/|\/node_modules\/react-dom\/(?:index\.js|server\.edge\.js|cjs\/react-dom\.(?:production|development)\.js|cjs\/react-dom-server[^/]*\.js)$/;
+const EMAIL_SOURCES = /\/(?:node_modules\/@react-email|packages\/services\/src\/email)\//;
+
+const REACT_DOM_SERVER_FILES =
+  /\/node_modules\/react-dom\/(?:index|server\.edge|cjs\/react-dom\.(?:production|development)|cjs\/react-dom-server[^/]*)\.js$/;
+
+function rendersEmail(importer: string): boolean {
+  return EMAIL_SOURCES.test(importer) || REACT_DOM_SERVER_FILES.test(importer);
+}
 
 const CLIENT_REACT_BUILDS: Readonly<Record<string, string>> = {
   react: packageFile('react', 'index.js'),
@@ -39,7 +45,7 @@ function emailsRenderWithClientReact(): Plugin {
     enforce: 'pre',
     resolveId(source, importer) {
       if (this.environment.name !== SERVER_COMPONENT_ENVIRONMENT) return null;
-      if (importer === undefined || !EMAIL_RENDERING_IMPORTERS.test(importer)) return null;
+      if (importer === undefined || !rendersEmail(importer)) return null;
       return CLIENT_REACT_BUILDS[source] ?? null;
     },
   };
