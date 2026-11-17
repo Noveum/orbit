@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Avatar } from '@/components/ui/avatar.tsx';
 import { useToast } from '@/components/ui/toast.tsx';
 import type { DevUser } from '@/lib/api/dev-users.ts';
+import { useHydrated } from '@/lib/use-hydrated.ts';
 
 export interface DevSignInProps {
   readonly users: readonly DevUser[];
@@ -12,6 +13,7 @@ export interface DevSignInProps {
 }
 
 export function DevSignIn({ users, callbackUrl = '/my-issues' }: DevSignInProps) {
+  const hydrated = useHydrated();
   const { toast } = useToast();
   const [pending, setPending] = useState<string | null>(null);
 
@@ -46,7 +48,7 @@ export function DevSignIn({ users, callbackUrl = '/my-issues' }: DevSignInProps)
             <button
               type="button"
               data-testid={`dev-sign-in-${user.email}`}
-              disabled={pending !== null}
+              disabled={!hydrated || pending !== null}
               onClick={() => {
                 signIn(user.email);
               }}
