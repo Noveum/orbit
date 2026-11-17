@@ -26,6 +26,7 @@
     "tests-support.ts",
     "playwright.config.ts",
     "next.config.ts",
+    "vite.config.ts",
     ".next/types/**/*.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx"
