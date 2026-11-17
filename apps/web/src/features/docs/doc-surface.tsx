@@ -10,11 +10,13 @@ import { Check, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import { Button } from '@/components/ui/button.tsx';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -31,6 +33,7 @@ import {
   useDocs,
   useDuplicateDoc,
   useRecordDocVisit,
+  useRefreshDoc,
   useToggleDocFavorite,
   useUpdateDoc,
 } from '@/lib/query/use-docs.ts';
@@ -50,6 +53,7 @@ import type { DocAnchorTarget, DocCommenting } from './use-doc-anchors.ts';
 import { READING_WIDTH_CLASS, useDocPreferences } from './use-doc-preferences.ts';
 import { useDocsTree } from './use-docs-tree.ts';
 import { useEditorOutline } from './use-editor-outline.ts';
+import { useRevisionedSave } from './use-revisioned-save.ts';
 
 const STATUS_LABEL = {
   saved: 'Saved',
@@ -482,7 +486,7 @@ function EditSession({
   footer,
 }: {
   readonly doc: Doc;
-  readonly save: (patch: DocPatch) => Promise<unknown>;
+  readonly save: (patch: DocPatch) => Promise<{ readonly doc: Doc; readonly contentHtml: string }>;
   readonly onStatusChange: (status: SaveStatus) => void;
   readonly commenting: DocCommenting;
   readonly footer?: React.ReactNode;
@@ -491,9 +495,13 @@ function EditSession({
   const [title, setTitle] = useState(doc.title);
   const [content, setContent] = useState(doc.content);
   const draft = useMemo(() => ({ title, content }), [title, content]);
+  const revisioned = useRevisionedSave<DocDraft, { doc: Doc; contentHtml: string }>({
+    save: (next, baseRevision) => save({ ...next, baseRevision }),
+    initialRevision: doc.revision,
+  });
   const autosave = useAutosave({
     value: draft,
-    save,
+    save: revisioned.save,
     canSave: (next) => next.content.length <= DOC_CONTENT_LIMIT,
   });
   const flush = autosave.saveNow;
@@ -511,9 +519,51 @@ function EditSession({
     const incoming = { title: doc.title, content: doc.content };
     if (!adoptsRemoteEdit(settled, server.current, incoming)) return;
     server.current = incoming;
+    revisioned.adoptRevision(doc.revision);
     setTitle(incoming.title);
     setContent(incoming.content);
-  }, [doc.title, doc.content, settled]);
+  }, [doc.title, doc.content, doc.revision, settled, revisioned.adoptRevision]);
+
+  const refreshDoc = useRefreshDoc(doc.id);
+  const [theirVersion, setTheirVersion] = useState<Doc | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const refreshSequence = useRef(0);
+
+  const retryRefreshDoc = useCallback(() => {
+    const sequence = ++refreshSequence.current;
+    setTheirVersion(null);
+    setRefreshFailed(false);
+    refreshDoc()
+      .then((detail) => {
+        if (sequence === refreshSequence.current) setTheirVersion(detail.doc);
+      })
+      .catch(() => {
+        if (sequence === refreshSequence.current) setRefreshFailed(true);
+      });
+  }, [refreshDoc]);
+
+  useEffect(() => {
+    if (!revisioned.stale) {
+      setTheirVersion(null);
+      return;
+    }
+    retryRefreshDoc();
+    return () => {
+      refreshSequence.current += 1;
+    };
+  }, [revisioned.stale, retryRefreshDoc]);
+
+  const versionLabel = theirVersion === null ? 'Fetching their version' : 'Load their version';
+
+  const loadTheirVersion = () => {
+    if (theirVersion === null) return;
+    const incoming = { title: theirVersion.title, content: theirVersion.content };
+    server.current = incoming;
+    revisioned.adoptRevision(theirVersion.revision);
+    setTitle(incoming.title);
+    setContent(incoming.content);
+    setTheirVersion(null);
+  };
 
   const titleControl = (
     <Input
@@ -536,6 +586,25 @@ function EditSession({
           {titleControl}
         </div>
       )}
+      {revisioned.stale ? (
+        <div
+          data-testid="doc-save-conflict"
+          className="flex shrink-0 flex-wrap items-center gap-3 border-border border-t px-6 py-2 text-2xs"
+        >
+          <span className="text-danger">
+            Someone else saved this doc while you were editing. Your draft is still here.
+          </span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={theirVersion === null && !refreshFailed}
+            onClick={refreshFailed ? retryRefreshDoc : loadTheirVersion}
+          >
+            {refreshFailed ? 'Retry fetching their version' : versionLabel}
+          </Button>
+        </div>
+      ) : null}
       {isHtmlDoc(doc.kind) ? (
         <HtmlDocEditor
           title={title}

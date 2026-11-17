@@ -208,6 +208,103 @@ describe('updateDoc', () => {
   });
 });
 
+describe('a save carries the revision its draft was built on', () => {
+  it('advances the revision when the body changes and refuses a save built on the older one', async () => {
+    const doc = await newDoc('Runbook', 'first');
+    expect(doc.revision).toBe(1);
+
+    const landed = await updateDoc(workspace.admin, doc.id, {
+      content: 'second',
+      baseRevision: doc.revision,
+    });
+    expect(landed.doc.revision).toBe(2);
+
+    await expect(
+      updateDoc(workspace.admin, doc.id, {
+        content: 'stale overwrite',
+        baseRevision: doc.revision,
+      }),
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      details: { reason: 'stale_revision', revision: 2 },
+    });
+
+    const stored = await getDoc(workspace.admin, doc.id);
+    expect(stored.doc.content).toBe('second');
+    expect(stored.doc.revision).toBe(2);
+  });
+
+  it('lets two clients race from the same revision and only the first body survives', async () => {
+    const doc = await newDoc('Race', 'base');
+
+    const first = await updateDoc(workspace.admin, doc.id, {
+      content: 'first writer',
+      baseRevision: doc.revision,
+    });
+    await expect(
+      updateDoc(workspace.admin, doc.id, { content: 'second writer', baseRevision: doc.revision }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    const stored = await getDoc(workspace.admin, doc.id);
+    expect(stored.doc.content).toBe('first writer');
+    expect(stored.doc.revision).toBe(first.doc.revision);
+  });
+
+  it('accepts the retry once the client comes back with the current revision', async () => {
+    const doc = await newDoc();
+    const first = await updateDoc(workspace.admin, doc.id, {
+      content: 'one',
+      baseRevision: doc.revision,
+    });
+    const second = await updateDoc(workspace.admin, doc.id, {
+      content: 'two',
+      baseRevision: first.doc.revision,
+    });
+
+    expect(second.doc.content).toBe('two');
+    expect(second.doc.revision).toBe(first.doc.revision + 1);
+  });
+
+  it('does not advance the revision for a rename, so an in-flight body save still lands', async () => {
+    const doc = await newDoc('Rename me', 'body');
+    const renamed = await updateDoc(workspace.admin, doc.id, { title: 'Renamed' });
+    expect(renamed.doc.revision).toBe(doc.revision);
+
+    const saved = await updateDoc(workspace.admin, doc.id, {
+      content: 'typed while renamed',
+      baseRevision: doc.revision,
+    });
+    expect(saved.doc.content).toBe('typed while renamed');
+  });
+
+  it('keeps saves without a base revision working', async () => {
+    const doc = await newDoc();
+    const saved = await updateDoc(workspace.admin, doc.id, { content: 'no base' });
+    expect(saved.doc.content).toBe('no base');
+  });
+
+  it('advances the revision when a version is restored, so a draft from before the restore still loses', async () => {
+    const doc = await newDoc('History', 'v1');
+    const edited = await updateDoc(workspace.admin, doc.id, {
+      content: 'v2',
+      baseRevision: doc.revision,
+    });
+    const history = await listDocVersions(workspace.admin, doc.id);
+    const oldest = history.at(-1);
+    if (oldest === undefined) throw new Error('expected a version');
+
+    const restored = await restoreDocVersion(workspace.admin, doc.id, oldest.id);
+    expect(restored.doc.revision).toBe(edited.doc.revision + 1);
+
+    await expect(
+      updateDoc(workspace.admin, doc.id, {
+        content: 'stale draft',
+        baseRevision: edited.doc.revision,
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+});
+
 describe('archiveDoc', () => {
   it('archives and restores, emitting the matching action', async () => {
     const doc = await newDoc();

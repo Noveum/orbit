@@ -16,6 +16,7 @@ function doc(id: string, title: string): DocSummary {
     slug: id,
     kind: 'markdown',
     content: '',
+    revision: 1,
     sortOrder: 0,
     visibility: 'workspace',
     publishToken: null,
