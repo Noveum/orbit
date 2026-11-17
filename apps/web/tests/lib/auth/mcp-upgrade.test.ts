@@ -68,6 +68,9 @@ describe('patched MCP OAuth integration', () => {
     'consent-core-reject',
     'consent-agent-reject',
     'public-unknown-revoke',
+    'refresh-claims-revoke-form',
+    'refresh-claims-revoke-json',
+    'token-sdk-infrastructure-failure',
   ] as const) {
     it(`keeps workspace-bound credentials safe through ${mode}`, () => {
       const databaseUrl = process.env['DATABASE_URL'] ?? '';
