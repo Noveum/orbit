@@ -396,7 +396,10 @@ async function runCase(): Promise<void> {
       [pull, ...others].map((row) => row.id).sort(),
     );
     for (const entry of candidates) {
-      const expected = [pull, ...others].find((row) => row.id === entry.selector.pullRequestId);
+      const expected: typeof schema.githubPullRequest.$inferSelect | undefined = [
+        pull,
+        ...others,
+      ].find((row) => row.id === entry.selector.pullRequestId);
       assert.ok(expected);
       assert.deepEqual(entry.selector, {
         ...target.selector,
