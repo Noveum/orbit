@@ -10,6 +10,7 @@ export interface WorkerBindings {
   readonly ASSETS: Fetcher;
   readonly REALTIME_HUB: DurableObjectNamespace;
   readonly AUTH_RATE_LIMITER: DurableObjectNamespace;
+  readonly DEFERRED_WORK: DurableObjectNamespace;
   readonly HYPERDRIVE?: Hyperdrive;
 }
 
@@ -28,4 +29,9 @@ export function realtimeHub(): DurableObjectStub {
 export function authRateLimiter(): DurableObjectStub {
   const namespace = bindings().AUTH_RATE_LIMITER;
   return namespace.get(namespace.idFromName(SINGLETON), { locationHint: NEAR_THE_DATABASE });
+}
+
+export function deferredWork(key: string): DurableObjectStub {
+  const namespace = bindings().DEFERRED_WORK;
+  return namespace.get(namespace.idFromName(key), { locationHint: NEAR_THE_DATABASE });
 }

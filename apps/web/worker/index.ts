@@ -7,6 +7,7 @@ import { realtimeHub, type WorkerBindings } from './bindings.ts';
 import { connectWorkerRuntime } from './runtime.ts';
 
 export { AuthRateLimiterObject } from './auth-rate-limiter.ts';
+export { DeferredWorkObject } from './deferred-work.ts';
 export { RealtimeHubObject } from './realtime-hub.ts';
 
 const REALTIME_PATH = '/api/ws';

@@ -17,6 +17,7 @@ deploy it, and what to check before pointing a domain at it.
 | Publishing deltas | `PUBLISH` to Redis | `fetch` to the Durable Object |
 | Auth rate limits | Redis with a Lua script | `AuthRateLimiterObject` Durable Object with SQLite storage |
 | Crons | `vercel.json` crons, or the Docker scheduler | Cron Triggers calling the same `/api/cron/*` routes |
+| Long background work | `after()`, up to the function's `maxDuration` | an alarm on the `DeferredWorkObject` Durable Object |
 | Postgres | one pool per process | one pool per request, through Hyperdrive when bound |
 | Password hashing | `@node-rs/argon2` (native) | `@noble/hashes` argon2id (pure JavaScript) |
 | AI provider calls | Node sockets with a pinned DNS lookup | `fetch` |
@@ -51,6 +52,30 @@ One object carries every workspace. That is the right size for a deployment
 with hundreds of concurrent sockets. Sharding by organization is the path if it
 ever is not: the ticket already names the organization, so the entry would need
 it in the socket URL to route before the upgrade.
+
+### Background work
+
+A Worker may keep running `waitUntil` work for 30 seconds after the response is
+sent, and `after()` is `waitUntil` here. Two pieces of work can take longer, so
+they do not run that way on Workers:
+
+- the pull request backfill that `/pulls` starts, which walks every open pull
+  request of up to five repositories and only marks a repository done when it
+  reaches the end. Measured at about 20 ms and 15 database round trips for each
+  pull request, a repository with several hundred open pull requests would be
+  cut off at the same point on every visit and never finish.
+- the history refresh that a pull request page starts, which reads every
+  comment, review and check from GitHub.
+
+`deferWork` in `apps/web/src/lib/background/defer.ts` hands both to a
+`DeferredWorkObject`, one object for each workspace or pull request. The object
+stores the work and sets an alarm for now, and the alarm handler runs it. An
+alarm may run for 15 minutes and Cloudflare runs it again if the invocation is
+interrupted. On Node nothing is registered, so the same call runs under
+`after()` as before.
+
+The Slack link unfurl stays on `after()`. It is five queries and one Slack call
+with a 10 second timeout, so it cannot reach the limit.
 
 ### Email
 
@@ -146,10 +171,11 @@ Declared in `apps/web/wrangler.jsonc`:
 | `ASSETS` | static assets | client bundles under `/_next/static` |
 | `REALTIME_HUB` | Durable Object, `RealtimeHubObject` | websocket hub |
 | `AUTH_RATE_LIMITER` | Durable Object, `AuthRateLimiterObject` | auth rate limits |
+| `DEFERRED_WORK` | Durable Object, `DeferredWorkObject` | background work that outlives a response |
 | `HYPERDRIVE` | Hyperdrive, add it yourself | Postgres through a verified, pooled connection |
 
-Migration `v1` creates both classes with SQLite storage. Later class changes
-need a new migration tag.
+Migration `v1` creates the first two classes with SQLite storage and `v2` adds
+`DeferredWorkObject`. Later class changes need a new migration tag.
 
 ### Hyperdrive for a database behind a private CA
 
@@ -253,9 +279,9 @@ switch the five variables and resume writes on R2. Keys stay the same.
 
 - Password sign-in costs about 1.8 seconds of CPU per attempt, against about
   40 ms natively. It only applies when `ORBIT_PASSWORD_AUTH=true`.
-- `after()` work runs under `waitUntil`, which Workers end 30 seconds after
-  the response. The pull request backfill on `/pulls` and the Slack event
-  handler were allowed up to 5 minutes and 60 seconds on Vercel.
+- A failed cron run is not retried. The next run happens on schedule. Failed
+  runs are listed under the Worker's Settings, Trigger Events, View events, and
+  in Workers Logs. Cloudflare sends no alert for one unless you set one up.
 - AI requests use HTTPS on `api.openai.com` and `api.anthropic.com`. Custom
   provider origins require a deployment that pins the resolved address, or an
   operator who has explicitly enabled `ALLOW_PRIVATE_AI_ENDPOINTS`. The latter

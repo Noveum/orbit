@@ -7,7 +7,7 @@ export const GITHUB_HISTORY_REFRESH_MS = 5 * 60_000;
 export const GITHUB_HISTORY_REFRESH_LEASE_MS = 2 * 60_000;
 
 export async function refreshPullRequestHistory(input: {
-  readonly principal: Principal;
+  readonly principal: Pick<Principal, 'organizationId' | 'userId'>;
   readonly pullRequestId: string;
   readonly config: GithubAppConfig;
   readonly fetch?: typeof globalThis.fetch;

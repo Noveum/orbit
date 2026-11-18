@@ -20,11 +20,13 @@
   "durable_objects": {
     "bindings": [
       { "name": "REALTIME_HUB", "class_name": "RealtimeHubObject" },
-      { "name": "AUTH_RATE_LIMITER", "class_name": "AuthRateLimiterObject" }
+      { "name": "AUTH_RATE_LIMITER", "class_name": "AuthRateLimiterObject" },
+      { "name": "DEFERRED_WORK", "class_name": "DeferredWorkObject" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["RealtimeHubObject", "AuthRateLimiterObject"] }
+    { "tag": "v1", "new_sqlite_classes": ["RealtimeHubObject", "AuthRateLimiterObject"] },
+    { "tag": "v2", "new_sqlite_classes": ["DeferredWorkObject"] }
   ],
   "triggers": {
     "crons": ["* * * * *", "0 * * * *", "0 */6 * * *", "0 9 * * *"]

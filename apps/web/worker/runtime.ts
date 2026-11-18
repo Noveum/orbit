@@ -7,8 +7,10 @@ import {
 } from '@orbit/core';
 import { registerPrivateDatabaseProxy } from '@orbit/db';
 import { z } from 'zod';
+import { registerDurableWork } from '../src/lib/background/defer.ts';
+import { deferredWorkKey } from '../src/lib/background/work.ts';
 import { registerHostedRealtime } from '../src/lib/realtime/hub.ts';
-import { authRateLimiter, bindings, realtimeHub } from './bindings.ts';
+import { authRateLimiter, bindings, deferredWork, realtimeHub } from './bindings.ts';
 
 const INTERNAL_ORIGIN = 'https://durable-object.internal';
 
@@ -52,6 +54,14 @@ export function connectWorkerRuntime(): void {
     const response = await realtimeHub().fetch(`${INTERNAL_ORIGIN}/stats`);
     if (!response.ok) throw new Error(`The realtime hub answered ${response.status}.`);
     return statsSchema.parse(await response.json());
+  });
+
+  registerDurableWork(async (work) => {
+    const response = await deferredWork(deferredWorkKey(work)).fetch(
+      `${INTERNAL_ORIGIN}/schedule`,
+      { method: 'POST', body: JSON.stringify(work) },
+    );
+    if (!response.ok) throw new Error(`Background work was not accepted: ${response.status}.`);
   });
 
   registerAuthRateLimitStorage({
