@@ -8,6 +8,7 @@ const cases = [
   ['non-manager', 'rejects a non-manager before any provider operation'],
   ['foreign-workspace', 'does not accept a target belonging to another workspace'],
   ['scope-overrides', 'refuses scope overrides and client token-freshness flags'],
+  ['list', 'lists only eligible heads in the active workspace and rejects a stale selection'],
   ['queued', 'queues one verified current head and returns only an idempotent finite status'],
   ['closed', 'does not queue a live closed pull request'],
   [

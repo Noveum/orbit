@@ -1,5 +1,5 @@
 import { db } from '@orbit/db';
-import { requestGithubCheckRecovery } from '@orbit/services';
+import { listGithubCheckRecoveryCandidates, requestGithubCheckRecovery } from '@orbit/services';
 import { conflict } from '@orbit/shared/errors';
 import { assertCan } from '@orbit/shared/policy';
 import { githubRecoveryRequestSchema } from '@orbit/shared/validators';
@@ -7,6 +7,16 @@ import { apiContext, handleRoute, readJson } from '@/lib/api/handler.ts';
 import { githubAppConfig } from '@/lib/env.ts';
 
 export const maxDuration = 60;
+
+export async function GET(): Promise<Response> {
+  return await handleRoute(async () => {
+    const { principal } = await apiContext();
+    assertCan(principal, 'integration:manage');
+    return Response.json(await listGithubCheckRecoveryCandidates(db, principal), {
+      headers: { 'cache-control': 'private, no-store' },
+    });
+  });
+}
 
 export async function POST(request: Request): Promise<Response> {
   return await handleRoute(async () => {

@@ -19,6 +19,7 @@ const mode = z
     'non-manager',
     'foreign-workspace',
     'scope-overrides',
+    'list',
     'queued',
     'closed',
     'unavailable',
@@ -108,7 +109,7 @@ mock.module(new URL('../../src/lib/auth/session.ts', import.meta.url).pathname, 
   getSession: () => Promise.resolve(session),
   requireSession: () => Promise.resolve(session),
 }));
-const { POST } = await import('../../src/app/api/integrations/github/check-recovery/route.ts');
+const { GET, POST } = await import('../../src/app/api/integrations/github/check-recovery/route.ts');
 
 const HEAD = '0123456789abcdef0123456789abcdef01234567';
 const TOKEN = 'fixture-recovery-scoped-token';
@@ -322,6 +323,7 @@ async function storedHead() {
 async function runCase(): Promise<void> {
   if (mode === 'unauthenticated') {
     session = null;
+    assert.equal((await GET()).status, 401);
     assert.equal((await recover()).status, 401);
     assert.equal(providerCalls.length, 0);
     assert.equal((await storedHead())?.attempts, 8);
@@ -335,6 +337,7 @@ async function runCase(): Promise<void> {
           eq(schema.member.userId, target.userId),
         ),
       );
+    assert.equal((await GET()).status, 403);
     assert.equal((await recover()).status, 403);
     assert.equal(providerCalls.length, 0);
     assert.equal((await storedHead())?.attempts, 8);
@@ -351,6 +354,39 @@ async function runCase(): Promise<void> {
     ])
       assert.equal((await recover({ ...target.selector, ...extra })).status, 422);
     assert.equal(providerCalls.length, 0);
+  } else if (mode === 'list') {
+    await createTarget();
+    const [pull] = await db
+      .select()
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.id, target.selector.pullRequestId));
+    assert.ok(pull);
+    const duplicateId = randomUUIDv7();
+    await db
+      .insert(schema.githubPullRequest)
+      .values({ ...pull, id: duplicateId, number: pull.number + 1 });
+    const listed = await GET();
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), [
+      {
+        repositoryName: 'fixture-owner/old-name',
+        pullRequestNumber: 7,
+        selector: target.selector,
+      },
+    ]);
+    assert.equal((await storedHead())?.attempts, 8);
+    await db
+      .update(schema.githubPullRequest)
+      .set({ headEpoch: 3 })
+      .where(eq(schema.githubPullRequest.id, target.selector.pullRequestId));
+    assert.deepEqual(await (await recover()).json(), { status: 'superseded' });
+    await db
+      .update(schema.githubPullRequest)
+      .set({ state: 'closed' })
+      .where(inArray(schema.githubPullRequest.id, [target.selector.pullRequestId, duplicateId]));
+    assert.deepEqual(await (await GET()).json(), []);
+    assert.equal(providerCalls.length, 0);
+    assert.equal((await storedHead())?.attempts, 8);
   } else if (mode === 'queued') {
     const response = await recover();
     assert.equal(response.status, 200);
@@ -366,6 +402,8 @@ async function runCase(): Promise<void> {
     assert.equal(head?.jobVersion, 4);
     assert.equal(head?.attempts, 0);
     assert.equal(head?.triggerKind, 'manual_recovery');
+    assert.deepEqual(await (await GET()).json(), []);
+    assert.equal(providerCalls.length, 4);
   } else if (mode === 'closed') {
     remoteState = 'closed';
     assert.deepEqual(await (await recover()).json(), { status: 'not_active' });
