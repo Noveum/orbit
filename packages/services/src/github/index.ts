@@ -20,6 +20,7 @@ export * from './pull-reconciliation.ts';
 export * from './quarantine.ts';
 export * from './reconciliation.ts';
 export * from './recovery.ts';
+export * from './recovery-list.ts';
 export * from './watched.ts';
 export * from './webhook-events.ts';
 export * from './worker.ts';

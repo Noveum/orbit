@@ -8,12 +8,17 @@ import {
   integration,
 } from '@orbit/db/schema';
 import { notFound } from '@orbit/shared/errors';
-import { type GithubRecoveryRequest, githubRecoveryRequestSchema } from '@orbit/shared/validators';
+import {
+  type GithubRecoveryRequest,
+  type GithubRecoveryResult,
+  type GithubRecoveryStatus,
+  githubRecoveryRequestSchema,
+} from '@orbit/shared/validators';
 import { and, eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { enqueueHeadReconciliation } from './head-queue.ts';
 import { assertGithubIntegrationManager } from './installations.ts';
-import { isActiveGithubPullRequest } from './pull-state.ts';
+import { isActiveGithubPullRequest, RECOVERABLE_PULL_STATES } from './pull-state.ts';
 import {
   GithubRecoveryProviderError,
   type GithubRecoveryProviderInput,
@@ -22,22 +27,7 @@ import {
 } from './recovery-provider.ts';
 import { GITHUB_MANUAL_RECOVERY_TRIGGER } from './recovery-trigger.ts';
 
-export type GithubRecoveryStatus =
-  | 'queued'
-  | 'already_queued'
-  | 'already_attempted'
-  | 'busy'
-  | 'superseded'
-  | 'not_active'
-  | 'head_changed'
-  | 'installation_unavailable'
-  | 'installation_suspended'
-  | 'repository_unavailable'
-  | 'pull_request_unavailable'
-  | 'repository_access_required'
-  | 'provider_authentication_failed'
-  | 'provider_temporarily_unavailable'
-  | 'expired';
+export type { GithubRecoveryResult, GithubRecoveryStatus } from '@orbit/shared/validators';
 
 export interface GithubRecoveryInput {
   readonly organizationId: string;
@@ -51,10 +41,6 @@ export interface GithubRecoveryInput {
   readonly verifyProvider?: (
     input: GithubRecoveryProviderInput,
   ) => Promise<GithubRecoveryProviderSnapshot>;
-}
-
-export interface GithubRecoveryResult {
-  readonly status: GithubRecoveryStatus;
 }
 
 interface RecoveryTarget {
@@ -151,10 +137,7 @@ function eligibility(
   )
     return 'superseded';
   if (
-    !(
-      isActiveGithubPullRequest(target.pull) &&
-      ['open', 'draft', 'approved', 'changes_requested'].includes(target.pull.state)
-    )
+    !(isActiveGithubPullRequest(target.pull) && RECOVERABLE_PULL_STATES.includes(target.pull.state))
   )
     return 'not_active';
   if (

@@ -6,6 +6,7 @@ import net from 'node:net';
 import { and, db, eq, inArray, pool, schema } from '@orbit/db';
 import { linkGithubRepository } from '@orbit/services';
 import { randomUUIDv7 } from '@orbit/shared/utils';
+import { type GithubRecoveryCursor, githubRecoveryPageSchema } from '@orbit/shared/validators';
 import { z } from 'zod';
 import {
   bindGithubInstallation,
@@ -19,6 +20,7 @@ const mode = z
     'non-manager',
     'foreign-workspace',
     'scope-overrides',
+    'list',
     'queued',
     'closed',
     'unavailable',
@@ -108,7 +110,7 @@ mock.module(new URL('../../src/lib/auth/session.ts', import.meta.url).pathname, 
   getSession: () => Promise.resolve(session),
   requireSession: () => Promise.resolve(session),
 }));
-const { POST } = await import('../../src/app/api/integrations/github/check-recovery/route.ts');
+const { GET, POST } = await import('../../src/app/api/integrations/github/check-recovery/route.ts');
 
 const HEAD = '0123456789abcdef0123456789abcdef01234567';
 const TOKEN = 'fixture-recovery-scoped-token';
@@ -301,6 +303,12 @@ async function cleanup() {
     await db.delete(schema.user).where(inArray(schema.user.id, ownedUsers));
 }
 
+function listPage(cursor?: GithubRecoveryCursor): Promise<Response> {
+  const url = new URL('https://orbit.local/api/integrations/github/check-recovery');
+  if (cursor) url.search = new URLSearchParams(cursor).toString();
+  return GET(new Request(url));
+}
+
 async function recover(body: unknown = target.selector): Promise<Response> {
   return await POST(
     new Request('https://orbit.local/api/integrations/github/check-recovery', {
@@ -322,6 +330,7 @@ async function storedHead() {
 async function runCase(): Promise<void> {
   if (mode === 'unauthenticated') {
     session = null;
+    assert.equal((await listPage()).status, 401);
     assert.equal((await recover()).status, 401);
     assert.equal(providerCalls.length, 0);
     assert.equal((await storedHead())?.attempts, 8);
@@ -335,6 +344,7 @@ async function runCase(): Promise<void> {
           eq(schema.member.userId, target.userId),
         ),
       );
+    assert.equal((await listPage()).status, 403);
     assert.equal((await recover()).status, 403);
     assert.equal(providerCalls.length, 0);
     assert.equal((await storedHead())?.attempts, 8);
@@ -351,6 +361,79 @@ async function runCase(): Promise<void> {
     ])
       assert.equal((await recover({ ...target.selector, ...extra })).status, 422);
     assert.equal(providerCalls.length, 0);
+  } else if (mode === 'list') {
+    const rival = await createTarget();
+    const [pull] = await db
+      .select()
+      .from(schema.githubPullRequest)
+      .where(eq(schema.githubPullRequest.id, target.selector.pullRequestId));
+    assert.ok(pull);
+    const initialHead = await storedHead();
+    assert.ok(initialHead);
+    const extraHeads = Array.from({ length: 20 }, (_, index) => ({
+      ...initialHead,
+      id: randomUUIDv7(),
+      headSha: (index + 1).toString(16).padStart(40, '0'),
+    }));
+    await db.insert(schema.githubCheckHeadReconciliation).values(extraHeads);
+    const headsBySha = new Map([initialHead, ...extraHeads].map((head) => [head.headSha, head.id]));
+    const others = Array.from({ length: 21 }, (_, index) => ({
+      ...pull,
+      id: randomUUIDv7(),
+      number: pull.number + index + 1,
+      headSha: extraHeads[index - 1]?.headSha ?? initialHead.headSha,
+    }));
+    await db.insert(schema.githubPullRequest).values(others);
+    const first = githubRecoveryPageSchema.parse(await (await listPage()).json());
+    assert.equal(first.candidates.length, 20);
+    assert.ok(first.nextCursor);
+    const second = githubRecoveryPageSchema.parse(await (await listPage(first.nextCursor)).json());
+    assert.equal(second.candidates.length, 2);
+    assert.equal(second.nextCursor, null);
+    const candidates = [...first.candidates, ...second.candidates];
+    assert.deepEqual(
+      candidates.map((row) => row.selector.pullRequestId),
+      [pull, ...others].map((row) => row.id).sort(),
+    );
+    for (const entry of candidates) {
+      const expected: typeof schema.githubPullRequest.$inferSelect | undefined = [
+        pull,
+        ...others,
+      ].find((row) => row.id === entry.selector.pullRequestId);
+      assert.ok(expected);
+      assert.deepEqual(entry.selector, {
+        ...target.selector,
+        reconciliationId: headsBySha.get(expected.headSha),
+        expectedHeadSha: expected.headSha,
+        pullRequestId: expected.id,
+      });
+      assert.equal(entry.repositoryName, 'fixture-owner/old-name');
+    }
+    assert.equal(
+      (await listPage({ ...first.nextCursor, workspace: rival.organizationId })).status,
+      422,
+    );
+    const incomplete = new Request(
+      'https://orbit.local/api/integrations/github/check-recovery?after=only',
+    );
+    assert.equal((await GET(incomplete)).status, 422);
+    assert.equal((await storedHead())?.attempts, 8);
+    await db
+      .update(schema.githubPullRequest)
+      .set({ headEpoch: 3 })
+      .where(eq(schema.githubPullRequest.id, target.selector.pullRequestId));
+    assert.deepEqual(await (await recover()).json(), { status: 'superseded' });
+    await db
+      .update(schema.githubPullRequest)
+      .set({ state: 'closed' })
+      .where(eq(schema.githubPullRequest.repositorySyncId, pull.repositorySyncId));
+    assert.deepEqual(await (await listPage()).json(), {
+      workspace: target.organizationId,
+      candidates: [],
+      nextCursor: null,
+    });
+    assert.equal(providerCalls.length, 0);
+    assert.equal((await storedHead())?.attempts, 8);
   } else if (mode === 'queued') {
     const response = await recover();
     assert.equal(response.status, 200);
@@ -366,6 +449,12 @@ async function runCase(): Promise<void> {
     assert.equal(head?.jobVersion, 4);
     assert.equal(head?.attempts, 0);
     assert.equal(head?.triggerKind, 'manual_recovery');
+    assert.deepEqual(await (await listPage()).json(), {
+      workspace: target.organizationId,
+      candidates: [],
+      nextCursor: null,
+    });
+    assert.equal(providerCalls.length, 4);
   } else if (mode === 'closed') {
     remoteState = 'closed';
     assert.deepEqual(await (await recover()).json(), { status: 'not_active' });
