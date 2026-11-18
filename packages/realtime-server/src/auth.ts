@@ -1,4 +1,15 @@
-import { and, db, eq, gt, inArray, isNull, or, schema, sql } from '@orbit/db';
+import {
+  and,
+  db,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  or,
+  retryInitialDatabaseConnection,
+  schema,
+  sql,
+} from '@orbit/db';
 import { ORG_ROLES, type OrgRole } from '@orbit/shared/constants';
 import { authMessageSchema } from '@orbit/shared/events';
 import { type RealtimeTicketPayload, verifyRealtimeTicket } from '@orbit/shared/events/ticket';
@@ -136,10 +147,14 @@ export const memberDeleteSchema = z.object({ userId: z.string().min(1) });
 export async function liveSessionIds(sessionIds: readonly string[]): Promise<Set<string>> {
   const wanted = [...new Set(sessionIds)];
   if (wanted.length === 0) return new Set();
-  const rows = await db
-    .select({ id: schema.session.id })
-    .from(schema.session)
-    .where(and(inArray(schema.session.id, wanted), gt(schema.session.expiresAt, new Date())));
+  const rows = await retryInitialDatabaseConnection(
+    async () =>
+      db
+        .select({ id: schema.session.id })
+        .from(schema.session)
+        .where(and(inArray(schema.session.id, wanted), gt(schema.session.expiresAt, new Date()))),
+    () => true,
+  );
   return new Set(rows.map((row) => row.id));
 }
 
