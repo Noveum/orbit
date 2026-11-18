@@ -15,7 +15,7 @@ export interface WorkerBindings {
 }
 
 const SINGLETON = 'global';
-const NEAR_THE_DATABASE = 'apac';
+const NEAR_THE_DATABASE = 'apac-ne';
 
 export function bindings(): WorkerBindings {
   return env as unknown as WorkerBindings;
