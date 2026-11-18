@@ -70,12 +70,13 @@ they do not run that way on Workers:
 `deferWork` in `apps/web/src/lib/background/defer.ts` hands both to a
 `DeferredWorkObject`, one object for each workspace or pull request. The object
 stores the work and sets an alarm for now, and the alarm handler runs it. An
-alarm may run for 15 minutes and Cloudflare runs it again if the invocation is
-interrupted. On Node nothing is registered, so the same call runs under
-`after()` as before.
+alarm may run for 15 minutes. If the invocation is interrupted or the work
+throws, the work stays stored and Cloudflare runs the alarm again, up to six
+times with a growing delay. On Node nothing is registered, so the same call
+runs under `after()` as before.
 
-The Slack link unfurl stays on `after()`. It is five queries and one Slack call
-with a 10 second timeout, so it cannot reach the limit.
+The Slack link unfurl stays on `after()`. It is a few queries and one Slack
+call with a 10 second timeout, so it cannot reach the limit.
 
 ### Email
 
