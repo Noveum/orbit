@@ -58,8 +58,9 @@ export default async function IntegrationsSettingsPage({
       />
       {provider === 'github' && canManage && settings.github.connected ? (
         <GithubCheckRecovery
-          key={principal.organizationId}
+          key={`${principal.organizationId}:${principal.userId}`}
           organizationId={principal.organizationId}
+          userId={principal.userId}
         />
       ) : null}
       {provider === 'github' ? <GithubDeliveries deliveries={deliveries} /> : null}

@@ -7,18 +7,22 @@ import {
   githubPullRequest as pull,
   githubRepositorySync as watch,
 } from '@orbit/db/schema';
-import type { GithubRecoveryCandidate } from '@orbit/shared/validators';
-import { and, asc, desc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+import { validationFailed } from '@orbit/shared/errors';
+import type { GithubRecoveryCursor, GithubRecoveryPage } from '@orbit/shared/validators';
+import { and, asc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 import { assertGithubIntegrationManager } from './installations.ts';
 import { RECOVERABLE_PULL_STATES } from './pull-state.ts';
 
 export async function listGithubCheckRecoveryCandidates(
   database: Database,
   manager: { readonly organizationId: string; readonly userId: string },
-): Promise<GithubRecoveryCandidate[]> {
+  cursor: GithubRecoveryCursor | null,
+): Promise<GithubRecoveryPage> {
   await assertGithubIntegrationManager(database, manager);
-  return await database
-    .selectDistinctOn([head.updatedAt, head.id], {
+  if (cursor !== null && cursor.workspace !== manager.organizationId)
+    throw validationFailed('This page belongs to another workspace.');
+  const rows = await database
+    .select({
       repositoryName: watch.repositoryName,
       pullRequestNumber: pull.number,
       selector: {
@@ -72,6 +76,7 @@ export async function listGithubCheckRecoveryCandidates(
     .where(
       and(
         eq(head.organizationId, manager.organizationId),
+        cursor === null ? undefined : gt(pull.id, cursor.after),
         eq(head.status, 'failed'),
         gt(head.jobVersion, 0),
         sql`${head.headSha} ~ '^[0-9a-f]{40}$'`,
@@ -82,6 +87,16 @@ export async function listGithubCheckRecoveryCandidates(
         eq(pull.merged, false),
       ),
     )
-    .orderBy(desc(head.updatedAt), asc(head.id), asc(pull.number), asc(pull.id))
-    .limit(20);
+    .orderBy(asc(pull.id))
+    .limit(21);
+  const candidates = rows.slice(0, 20);
+  const last = candidates.at(-1);
+  return {
+    workspace: manager.organizationId,
+    candidates,
+    nextCursor:
+      rows.length > 20 && last !== undefined
+        ? { workspace: manager.organizationId, after: last.selector.pullRequestId }
+        : null,
+  };
 }

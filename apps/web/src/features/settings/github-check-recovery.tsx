@@ -2,11 +2,13 @@
 
 import {
   type GithubRecoveryCandidate,
+  type GithubRecoveryCursor,
   type GithubRecoveryStatus,
-  githubRecoveryCandidateSchema,
+  githubRecoveryPageSchema,
   githubRecoveryResultSchema,
 } from '@orbit/shared/validators';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { apiRequest, messageOf } from '@/lib/api/client.ts';
 
@@ -34,11 +36,27 @@ function pullLabel(candidate: GithubRecoveryCandidate): string {
   return `${candidate.repositoryName}#${candidate.pullRequestNumber}`;
 }
 
-export function GithubCheckRecovery({ organizationId }: { organizationId: string }) {
+export function GithubCheckRecovery({
+  organizationId,
+  userId,
+}: {
+  organizationId: string;
+  userId: string;
+}) {
+  const [pages, setPages] = useState<GithubRecoveryCursor[]>([]);
+  const cursor = pages.at(-1);
+  const queryKey = ['github-check-recovery', organizationId, userId];
+  const queryClient = useQueryClient();
   const list = useQuery({
-    queryKey: ['github-check-recovery', organizationId],
-    queryFn: async () =>
-      githubRecoveryCandidateSchema.array().parse(await apiRequest<unknown>(path)),
+    queryKey: [...queryKey, cursor ?? null],
+    queryFn: async () => {
+      const page = githubRecoveryPageSchema.parse(
+        await apiRequest<unknown>(cursor ? `${path}?${new URLSearchParams(cursor)}` : path),
+      );
+      if (page.workspace !== organizationId)
+        throw new Error('The active workspace changed. Reload settings.');
+      return page;
+    },
     retry: false,
   });
   const recovery = useMutation({
@@ -46,26 +64,30 @@ export function GithubCheckRecovery({ organizationId }: { organizationId: string
       githubRecoveryResultSchema.parse(
         await apiRequest<unknown>(path, { method: 'POST', body: candidate.selector }),
       ),
-    onSettled: () => list.refetch(),
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
     retry: false,
   });
-  if (list.isError)
-    return (
-      <p role="alert" className="text-danger text-xs">
-        Could not load failed GitHub check updates.{' '}
-        <Button variant="ghost" size="sm" onClick={() => list.refetch()}>
-          Reload checks
-        </Button>
-      </p>
-    );
-  const candidates = list.data ?? [];
-  if (candidates.length === 0 && recovery.isIdle) return null;
+  const candidates = list.isError ? [] : (list.data?.candidates ?? []);
+  const next = list.isError ? null : list.data?.nextCursor;
+  if (candidates.length === 0 && recovery.isIdle && cursor === undefined && !list.isError)
+    return null;
   return (
     <section
       aria-label="Failed GitHub check updates"
       className="flex flex-col gap-2 rounded-lg border border-border p-4"
     >
       <h3 className="font-medium text-dense text-text">Failed GitHub check updates</h3>
+      {list.isError ? (
+        <p role="alert" className="text-danger text-xs">
+          Could not load failed GitHub check updates.{' '}
+          <Button variant="ghost" size="sm" onClick={() => list.refetch()}>
+            Reload checks
+          </Button>
+        </p>
+      ) : null}
+      {cursor && !list.isFetching && !list.isError && candidates.length === 0 ? (
+        <p className="text-muted text-xs">There are no more check updates to retry.</p>
+      ) : null}
       {recovery.isError ? (
         <p role="alert" className="text-danger text-xs">
           {messageOf(recovery.error)}
@@ -84,7 +106,7 @@ export function GithubCheckRecovery({ organizationId }: { organizationId: string
           <ul className="flex flex-col divide-y divide-border">
             {candidates.map((candidate) => (
               <li
-                key={candidate.selector.reconciliationId}
+                key={candidate.selector.pullRequestId}
                 className="flex items-center justify-between gap-2 py-2"
               >
                 <span className="min-w-0 truncate text-dense text-text">
@@ -101,8 +123,7 @@ export function GithubCheckRecovery({ organizationId }: { organizationId: string
                   onClick={() => recovery.mutate(candidate)}
                 >
                   {recovery.isPending &&
-                  recovery.variables.selector.reconciliationId ===
-                    candidate.selector.reconciliationId
+                  recovery.variables.selector.pullRequestId === candidate.selector.pullRequestId
                     ? 'Verifying…'
                     : 'Retry sync'}
                 </Button>
@@ -110,6 +131,34 @@ export function GithubCheckRecovery({ organizationId }: { organizationId: string
             ))}
           </ul>
         </>
+      ) : null}
+      {cursor || next ? (
+        <nav aria-label="Failed check pages" className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!cursor || recovery.isPending}
+            onClick={() => {
+              recovery.reset();
+              setPages((previous) => previous.slice(0, -1));
+            }}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!next || recovery.isPending}
+            onClick={() => {
+              if (next) {
+                recovery.reset();
+                setPages((previous) => [...previous, next]);
+              }
+            }}
+          >
+            Next
+          </Button>
+        </nav>
       ) : null}
     </section>
   );

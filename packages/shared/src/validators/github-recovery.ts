@@ -24,6 +24,22 @@ export const githubRecoveryCandidateSchema = z.strictObject({
 });
 export type GithubRecoveryCandidate = z.infer<typeof githubRecoveryCandidateSchema>;
 
+export const githubRecoveryCursorSchema = z.strictObject({
+  workspace: idSchema,
+  after: idSchema,
+});
+export type GithubRecoveryCursor = z.infer<typeof githubRecoveryCursorSchema>;
+export const githubRecoveryQuerySchema = z.union([
+  githubRecoveryCursorSchema,
+  z.strictObject({}).transform(() => null),
+]);
+export const githubRecoveryPageSchema = z.strictObject({
+  workspace: idSchema,
+  candidates: githubRecoveryCandidateSchema.array().max(20),
+  nextCursor: githubRecoveryCursorSchema.nullable(),
+});
+export type GithubRecoveryPage = z.infer<typeof githubRecoveryPageSchema>;
+
 export const githubRecoveryResultSchema = z.strictObject({
   status: z.enum([
     'queued',
