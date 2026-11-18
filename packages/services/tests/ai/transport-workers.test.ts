@@ -19,7 +19,7 @@ describe('safeFetch on the Workers runtime', () => {
       Response.json({ ok: true }, { status: 201 }),
     );
     try {
-      const response = await safeFetch('https://api.provider.example/v1/chat', {
+      const response = await safeFetch('https://api.openai.com/v1/chat', {
         method: 'POST',
         headers: { authorization: 'Bearer key' },
         body: '{"prompt":"hi"}',
@@ -27,7 +27,7 @@ describe('safeFetch on the Workers runtime', () => {
       expect(response.status).toBe(201);
       expect(upstream).toHaveBeenCalledTimes(1);
       expect(upstream.mock.calls[0]).toEqual([
-        'https://api.provider.example/v1/chat',
+        'https://api.openai.com/v1/chat',
         {
           redirect: 'manual',
           method: 'POST',
@@ -48,6 +48,20 @@ describe('safeFetch on the Workers runtime', () => {
         'Blocked connection to private destination',
       );
       expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      upstream.mockRestore();
+    }
+  });
+
+  it('requires a verified transport for a custom provider unless explicitly allowed', async () => {
+    runAs('Cloudflare-Workers');
+    const upstream = spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ ok: true }));
+    try {
+      const url = 'https://custom-provider.example/v1/chat';
+      await expect(safeFetch(url, { allowPrivate: false })).rejects.toThrow('validates DNS');
+      expect(upstream).not.toHaveBeenCalled();
+      expect((await safeFetch(url, { allowPrivate: true })).ok).toBe(true);
+      expect(upstream).toHaveBeenCalledTimes(1);
     } finally {
       upstream.mockRestore();
     }

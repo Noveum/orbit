@@ -164,4 +164,38 @@ describe('a hub on the loopback bus', () => {
     hub.restore(new FakeSocket(), snapshot('socket-7', []));
     expect(changes).toEqual(['socket-7']);
   });
+
+  it('waits for prior deltas before completing a presence publication', async () => {
+    const bus = createLoopbackBus();
+    hub = await createRealtimeHub({ bus, scheduling: 'manual', ticketSecret: 'x'.repeat(32) });
+    const scope = `org:${ORGANIZATION}`;
+    hub.restore(new FakeSocket(), snapshot('reader', [scope]));
+    const delta = bus.publish(REDIS_DELTA_CHANNEL, JSON.stringify([labelUpdate(11)]));
+    await bus.publish(
+      REDIS_PRESENCE_CHANNEL,
+      JSON.stringify({
+        organizationId: ORGANIZATION,
+        scope,
+        kind: 'viewing',
+        userId: 'other',
+        name: 'Other Reader',
+        image: null,
+        at: new Date().toISOString(),
+      }),
+    );
+    expect(hub.sweep()).toBe(true);
+    await delta;
+  });
+
+  it('retains presence by the time the originating socket event completes', async () => {
+    hub = await createRealtimeHub({
+      bus: createLoopbackBus(),
+      scheduling: 'manual',
+      ticketSecret: 'x'.repeat(32),
+    });
+    const scope = `org:${ORGANIZATION}`;
+    const session = hub.restore(new FakeSocket(), snapshot('sender', [scope]));
+    await session.message(JSON.stringify({ type: 'presence', scope, kind: 'viewing' }));
+    expect(hub.sweep()).toBe(true);
+  });
 });

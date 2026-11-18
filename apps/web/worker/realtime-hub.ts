@@ -75,7 +75,7 @@ export class RealtimeHubObject extends DurableObject<WorkerBindings> {
     const session = id === null ? undefined : this.sessions.get(id);
     if (session === undefined) return;
     const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
-    this.withDatabase(() => session.message(raw));
+    await this.withDatabase(() => session.message(raw));
     this.holdWhileEphemeralStateRemains();
   }
 

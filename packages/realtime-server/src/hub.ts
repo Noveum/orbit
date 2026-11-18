@@ -77,7 +77,7 @@ export interface RealtimeStats {
 }
 
 export interface RealtimeSession {
-  message(raw: string): void;
+  message(raw: string): Promise<void>;
   pong(): void;
   closed(): void;
 }
@@ -358,16 +358,20 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     }
   }
 
-  function revalidateSessionsFor(userId: string): void {
+  async function revalidateSessionsFor(userId: string): Promise<void> {
+    const pending: Promise<void>[] = [];
     for (const connection of connections.values()) {
       if (connection.principal.userId !== userId) continue;
-      revalidateSession(connection).catch((error: unknown) => {
-        logger.error('session revalidation failed', {
-          connectionId: connection.id,
-          ...errorFields(error),
-        });
-      });
+      pending.push(
+        revalidateSession(connection).catch((error: unknown) => {
+          logger.error('session revalidation failed', {
+            connectionId: connection.id,
+            ...errorFields(error),
+          });
+        }),
+      );
     }
+    await Promise.all(pending);
   }
 
   function closeOrganizationConnections(organizationId: string): void {
@@ -378,14 +382,14 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     }
   }
 
-  function deliverControl(payload: string): void {
+  async function deliverControl(payload: string): Promise<void> {
     const parsed = controlMessageSchema.safeParse(parseJson(payload));
     if (!parsed.success) {
       logger.warn('discarded malformed control message', { channel: REDIS_CONTROL_CHANNEL });
       return;
     }
     if (parsed.data.type === 'session_revoked') {
-      revalidateSessionsFor(parsed.data.userId);
+      await revalidateSessionsFor(parsed.data.userId);
       return;
     }
     closeOrganizationConnections(parsed.data.organizationId);
@@ -1168,10 +1172,10 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
 
   function session(socket: RealtimeSocket, state: SocketState): RealtimeSession {
     return {
-      message(raw: string): void {
+      async message(raw: string): Promise<void> {
         const connection = state.connection;
         if (connection === null) {
-          authenticate(socket, state, raw).catch((error: unknown) => {
+          await authenticate(socket, state, raw).catch((error: unknown) => {
             logger.error('authentication failed', errorFields(error));
             if (socket.readyState === SOCKET_OPEN) {
               socket.close(UNAUTHORIZED_CLOSE_CODE, 'unauthorized');
@@ -1179,7 +1183,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
           });
           return;
         }
-        handleMessage(connection, raw).catch((error: unknown) => {
+        await handleMessage(connection, raw).catch((error: unknown) => {
           logger.error('message handling failed', {
             connectionId: connection.id,
             ...errorFields(error),
@@ -1200,7 +1204,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
 
   let orderedDelivery = Promise.resolve();
 
-  await bus.start((channel: string, message: string) => {
+  await bus.start(async (channel: string, message: string): Promise<void> => {
     if (channel === REDIS_DELTA_CHANNEL || channel === REDIS_PRESENCE_CHANNEL) {
       orderedDelivery = orderedDelivery
         .then(async () => {
@@ -1210,9 +1214,10 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
         .catch((error: unknown) => {
           logger.error('ordered realtime delivery failed', errorFields(error));
         });
+      await orderedDelivery;
       return;
     }
-    if (channel === REDIS_CONTROL_CHANNEL) deliverControl(message);
+    if (channel === REDIS_CONTROL_CHANNEL) await deliverControl(message);
   });
 
   function heartbeat(): void {

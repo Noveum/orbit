@@ -1,4 +1,4 @@
-export type BusDelivery = (channel: string, message: string) => void;
+export type BusDelivery = (channel: string, message: string) => void | Promise<void>;
 
 export interface RealtimeBus {
   start(deliver: BusDelivery): Promise<void>;
@@ -14,9 +14,8 @@ export function createLoopbackBus(): RealtimeBus {
       deliver = next;
       return Promise.resolve();
     },
-    publish(channel: string, message: string): Promise<void> {
-      deliver?.(channel, message);
-      return Promise.resolve();
+    async publish(channel: string, message: string): Promise<void> {
+      await deliver?.(channel, message);
     },
     status: () => (deliver === undefined ? 'closed' : 'ready'),
     close(): void {

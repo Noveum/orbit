@@ -244,10 +244,18 @@ function buildWebResponse(
 }
 
 const WORKERS_USER_AGENT = 'Cloudflare-Workers';
+const WORKERS_PROVIDER_ORIGINS = new Set(['https://api.openai.com', 'https://api.anthropic.com']);
 
-function socketlessRuntimeFetch(): SafeFetchOptions['fetchFn'] {
-  if (globalThis.navigator?.userAgent !== WORKERS_USER_AGENT) return undefined;
-  return (url, init) => fetch(url, init);
+function providerFetch(
+  url: URL,
+  allowPrivate: boolean,
+  fetchFn: SafeFetchOptions['fetchFn'],
+): SafeFetchOptions['fetchFn'] {
+  if (globalThis.navigator?.userAgent !== WORKERS_USER_AGENT) return fetchFn;
+  if (allowPrivate || WORKERS_PROVIDER_ORIGINS.has(url.origin)) {
+    return fetchFn ?? ((destination, init) => fetch(destination, init));
+  }
+  throw new Error('Custom AI provider origins require a transport that validates DNS addresses.');
 }
 
 export async function safeFetch(url: string, options: SafeFetchOptions = {}): Promise<Response> {
@@ -258,7 +266,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     throw new Error(`Blocked connection to private destination: ${parsed.hostname}`);
   }
 
-  const fetchFn = options.fetchFn ?? socketlessRuntimeFetch();
+  const fetchFn = providerFetch(parsed, allowPrivate, options.fetchFn);
   if (fetchFn !== undefined) {
     const init: RequestInit = { redirect: 'manual' };
     if (options.method !== undefined) init.method = options.method;

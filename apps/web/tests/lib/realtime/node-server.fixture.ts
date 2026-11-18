@@ -15,6 +15,7 @@ function session(): RealtimeSession {
   return {
     message: (message) => {
       messages.push(message);
+      return Promise.resolve();
     },
     closed: () => {
       closed += 1;

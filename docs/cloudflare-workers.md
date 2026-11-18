@@ -173,14 +173,15 @@ for you. Then add the binding to `wrangler.jsonc`:
 
 A database with no public address is reached through a Cloudflare Tunnel run
 next to it, a Workers VPC service that names the database behind the tunnel,
-and a Hyperdrive config that points at the service. No DNS record is involved.
+and a Hyperdrive config that points at the service. Use the database hostname
+from its TLS certificate. The tunnel host must resolve it to the private address.
 
 ```
-npx wrangler tunnel create orbit-database
-npx wrangler tunnel run orbit-database
-npx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
-npx wrangler vpc service create orbit-database --type tcp --app-protocol postgresql --tunnel-id <TUNNEL ID> --ipv4 <DATABASE ADDRESS> --tcp-port 5432 --cert-verification-mode verify_full --certificate-authority <CA ID>
-npx wrangler hyperdrive create orbit-database --service-id <SERVICE ID> --database <DATABASE> --origin-user <USER> --origin-password <PASSWORD> --caching-disabled
+bunx wrangler tunnel create orbit-database
+bunx wrangler tunnel run orbit-database
+bunx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
+bunx wrangler vpc service create orbit-database --type tcp --app-protocol postgresql --tunnel-id <TUNNEL ID> --hostname <DATABASE HOSTNAME> --tcp-port 5432 --cert-verification-mode verify_full --certificate-authority <CA ID>
+bunx wrangler hyperdrive create orbit-database --service-id <SERVICE ID> --database <DATABASE> --origin-user <USER> --origin-password <PASSWORD> --caching-disabled
 ```
 
 Run the tunnel as a service on a host inside the private network. Two things
@@ -232,10 +233,10 @@ S3_SECRET_ACCESS_KEY=<R2 token secret>
 
 Give the bucket the CORS policy from [object storage](object-storage.md), with
 the app's origin, or browser uploads fail. To move an existing bucket, copy it
-with the dashboard's R2 data migration or with `rclone sync` from the old
-remote to the R2 remote, switch the five variables, then run the copy once more
-to pick up objects written in between. Keys do not change, so no database rows
-need rewriting.
+from the old remote into a dedicated, empty R2 bucket. Pause object writes
+and deletions on the old deployment and let outstanding uploads finish. Run
+the final `rclone sync` from the old remote to R2, verify the result, then
+switch the five variables and resume writes on R2. Keys stay the same.
 
 ## Before pointing a domain at it
 
@@ -255,8 +256,10 @@ need rewriting.
 - `after()` work runs under `waitUntil`, which Workers end 30 seconds after
   the response. The pull request backfill on `/pulls` and the Slack event
   handler were allowed up to 5 minutes and 60 seconds on Vercel.
-- The AI provider transport does not pin the resolved address. Literal private
-  hosts are still refused and redirects are not followed.
+- AI requests use HTTPS on `api.openai.com` and `api.anthropic.com`. Custom
+  provider origins require a deployment that pins the resolved address, or an
+  operator who has explicitly enabled `ALLOW_PRIVATE_AI_ENDPOINTS`. The latter
+  also permits private destinations. Redirects are disabled.
 - `/api/realtime/health` reports `redisConfigured: true` for a healthy hub. The
   field now means that a fan-out transport is configured.
 - Preview deployments per pull request are not set up.
