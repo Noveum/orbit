@@ -1,4 +1,3 @@
-import { spyOn } from 'bun:test';
 import type { Database } from '@orbit/db';
 import { replacementBarrier } from './github-replacement-fixture.ts';
 
@@ -63,13 +62,32 @@ function replacementReadContinuation(matches: (query: QueryIdentity) => boolean)
   };
 }
 
+export function replaceDatabaseMethod<K extends 'select' | 'selectDistinct' | 'transaction'>(
+  database: Pick<Database, K>,
+  property: K,
+  replacement: Database[K],
+): () => void {
+  const previous = Object.getOwnPropertyDescriptor(database, property);
+  Object.defineProperty(database, property, {
+    configurable: true,
+    writable: true,
+    value: replacement,
+  });
+  return () => {
+    if (previous === undefined) Reflect.deleteProperty(database, property);
+    else Object.defineProperty(database, property, previous);
+  };
+}
+
 export function pauseReplacementRead(
   database: Pick<Database, 'select'>,
   matches: (query: QueryIdentity) => boolean,
 ) {
   const continuation = replacementReadContinuation(matches);
   const original = database.select;
-  const spy = spyOn(database, 'select').mockImplementation(
+  const restore = replaceDatabaseMethod(
+    database,
+    'select',
     new Proxy(original, {
       apply(target, receiver, args: unknown[]) {
         return continuation.wrap(Reflect.apply(target, receiver, args));
@@ -84,7 +102,7 @@ export function pauseReplacementRead(
     },
     restore() {
       continuation.release();
-      spy.mockRestore();
+      restore();
     },
   };
 }
@@ -95,7 +113,9 @@ export function pauseReplacementDistinctRead(
 ) {
   const continuation = replacementReadContinuation(matches);
   const original = database.selectDistinct;
-  const spy = spyOn(database, 'selectDistinct').mockImplementation(
+  const restore = replaceDatabaseMethod(
+    database,
+    'selectDistinct',
     new Proxy(original, {
       apply(target, receiver, args: unknown[]) {
         return continuation.wrap(Reflect.apply(target, receiver, args));
@@ -110,7 +130,7 @@ export function pauseReplacementDistinctRead(
     },
     restore() {
       continuation.release();
-      spy.mockRestore();
+      restore();
     },
   };
 }

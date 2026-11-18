@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import { db, eq, schema } from '@orbit/db';
 import type { GithubRecoveryInput } from '@orbit/services';
 import { requestGithubCheckRecovery } from '@orbit/services';
@@ -11,6 +11,8 @@ import {
   replacementBarrier,
   replacementConfig,
 } from './github-replacement-fixture.ts';
+
+import { replaceDatabaseMethod } from './github-replacement-read-barrier.ts';
 
 async function recoveryTarget(fixture: ReplacementFixture) {
   const id = randomUUIDv7();
@@ -156,7 +158,9 @@ function pauseRecoveryParent(integrationId: string) {
     });
   }
   const original = db.transaction;
-  const spy = spyOn(db, 'transaction').mockImplementation(
+  const restore = replaceDatabaseMethod(
+    db,
+    'transaction',
     new Proxy(original, {
       apply(method, receiver, args: unknown[]) {
         const [callback, ...options] = args;
@@ -195,7 +199,7 @@ function pauseRecoveryParent(integrationId: string) {
     },
     restore() {
       barrier.release();
-      spy.mockRestore();
+      restore();
     },
   };
 }
