@@ -46,6 +46,8 @@ import {
   pullRequestState,
   targetCategoryFor,
 } from './index.ts';
+import { lockGithubInstallationSnapshot } from './installation-binding.ts';
+import { findGithubInstallation, type GithubInstallationRow } from './installations.ts';
 import { isActiveGithubPullRequest } from './pull-state.ts';
 
 export type GithubDatabase = Database | Transaction;
@@ -113,6 +115,7 @@ export async function applyGithubEvent(
     readonly eventName: string;
     readonly body: unknown;
     readonly organizationId?: string | null;
+    readonly expectedInstallationId?: string;
     readonly webhookDeliveryId?: string;
     readonly now?: Date;
   },
@@ -123,6 +126,9 @@ export async function applyGithubEvent(
   return await applyNormalizedGithubEvent(database, {
     event,
     ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
+    ...(input.expectedInstallationId === undefined
+      ? {}
+      : { expectedInstallationId: input.expectedInstallationId }),
     ...(input.webhookDeliveryId === undefined
       ? {}
       : { webhookDeliveryId: input.webhookDeliveryId }),
@@ -130,11 +136,52 @@ export async function applyGithubEvent(
   });
 }
 
+async function repositoryForGithubEvent(
+  database: Transaction,
+  repositoryId: string,
+  input: { readonly organizationId?: string | null; readonly expectedInstallationId?: string },
+): Promise<RepositorySync | undefined> {
+  if (input.organizationId === null) return undefined;
+  let expectedInstallation: GithubInstallationRow | null = null;
+  if (input.expectedInstallationId !== undefined) {
+    if (input.organizationId === undefined || input.organizationId === null) return undefined;
+    const captured = await findGithubInstallation(database, {
+      organizationId: input.organizationId,
+      installationId: input.expectedInstallationId,
+    });
+    if (captured === null) return undefined;
+    expectedInstallation = await lockGithubInstallationSnapshot(database, captured);
+    if (expectedInstallation === null) return undefined;
+  }
+
+  const [repo] = await database
+    .select()
+    .from(githubRepositorySync)
+    .where(
+      and(
+        eq(githubRepositorySync.repositoryId, repositoryId),
+        expectedInstallation === null
+          ? undefined
+          : eq(githubRepositorySync.installationId, expectedInstallation.installationId),
+        expectedInstallation === null
+          ? undefined
+          : eq(githubRepositorySync.integrationId, expectedInstallation.integrationId),
+        input.organizationId === undefined
+          ? undefined
+          : eq(githubRepositorySync.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1)
+    .for('update');
+  return repo;
+}
+
 export async function applyNormalizedGithubEvent(
   database: GithubDatabase,
   input: {
     readonly event: NormalizedGithubEvent;
     readonly organizationId?: string | null;
+    readonly expectedInstallationId?: string;
     readonly webhookDeliveryId?: string;
     readonly now?: Date;
   },
@@ -147,19 +194,7 @@ export async function applyNormalizedGithubEvent(
     return { ...EMPTY, ignoredReason: 'repository_not_connected' };
   }
 
-  const [repo] = await database
-    .select()
-    .from(githubRepositorySync)
-    .where(
-      and(
-        eq(githubRepositorySync.repositoryId, event.repository.externalId),
-        input.organizationId === undefined
-          ? undefined
-          : eq(githubRepositorySync.organizationId, input.organizationId),
-      ),
-    )
-    .limit(1)
-    .for('update');
+  const repo = await repositoryForGithubEvent(database, event.repository.externalId, input);
   if (repo === undefined) return { ...EMPTY, ignoredReason: 'repository_not_connected' };
   if (!repo.enabled) return { ...EMPTY, ignoredReason: 'repository_disabled' };
 

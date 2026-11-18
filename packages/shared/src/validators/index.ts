@@ -11,6 +11,8 @@ export * from './cron.ts';
 export * from './cycle.ts';
 export * from './database.ts';
 export * from './doc.ts';
+export * from './github-installation-replacement.ts';
+export * from './github-recovery.ts';
 export * from './github-release.ts';
 export * from './inbox.ts';
 export * from './integration.ts';
