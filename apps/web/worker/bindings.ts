@@ -12,6 +12,7 @@ export interface WorkerBindings {
   readonly AUTH_RATE_LIMITER: DurableObjectNamespace;
   readonly DEFERRED_WORK: DurableObjectNamespace;
   readonly HYPERDRIVE?: Hyperdrive;
+  readonly SELF?: Fetcher;
 }
 
 const SINGLETON = 'global';
