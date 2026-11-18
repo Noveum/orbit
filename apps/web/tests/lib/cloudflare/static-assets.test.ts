@@ -1,5 +1,6 @@
 import { expect, it } from 'bun:test';
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const wranglerSchema = z.object({
@@ -15,12 +16,14 @@ it('serves every public file from the edge instead of through the placed Worker'
       .filter((rule) => rule.startsWith('!'))
       .map((rule) => rule.slice(1)),
   );
-  const publicFiles = await readdir(new URL('../../../public', import.meta.url), {
-    withFileTypes: true,
+  const publicDirectory = fileURLToPath(new URL('../../../public/', import.meta.url));
+  const publicFiles = new Bun.Glob('**/*').scanSync({
+    cwd: publicDirectory,
+    dot: true,
+    onlyFiles: true,
   });
-  const missing = publicFiles
-    .filter((entry) => entry.isFile())
-    .map((entry) => `/${entry.name}`)
-    .filter((path) => !servedAtTheEdge.has(path));
+  const missing = Array.from(publicFiles, (file) => `/${file.replaceAll('\\', '/')}`).filter(
+    (path) => !servedAtTheEdge.has(path),
+  );
   expect(missing).toEqual([]);
 });

@@ -15,7 +15,14 @@
     "html_handling": "none",
     "not_found_handling": "none",
     "binding": "ASSETS",
-    "run_worker_first": ["/*", "!/_next/static/*", "!/*/_next/static/*", "!/logo.png", "!/og.png"]
+    "run_worker_first": [
+      "/*",
+      "!/_next/static/*",
+      "!/*/_next/static/*",
+      "!/logo.png",
+      "!/og.png",
+      "!/.well-known/mcp/server-card.json"
+    ]
   },
   "durable_objects": {
     "bindings": [
