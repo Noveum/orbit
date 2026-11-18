@@ -26,17 +26,18 @@ beforeEach(async () => {
 
 async function installation(status: 'active' | 'suspended'): Promise<string> {
   const integrationId = `int_${randomUUIDv7()}`;
+  const installationId = `inst-${randomUUIDv7()}`;
   await db.insert(schema.integration).values({
     id: integrationId,
     organizationId: workspace.organizationId,
     provider: 'github',
-    externalId: `install-${randomUUIDv7()}`,
+    externalId: installationId,
     connectedById: workspace.adminUser.id,
   });
   await db.insert(schema.githubInstallation).values({
     id: `ghi_${randomUUIDv7()}`,
     organizationId: workspace.organizationId,
-    installationId: `inst-${randomUUIDv7()}`,
+    installationId,
     integrationId,
     accountLogin: 'noveum',
     accountId: '1',
@@ -53,10 +54,16 @@ async function repository(
   enabled = true,
   repositoryId = `${Math.floor(Math.random() * 100000)}`,
 ): Promise<string> {
+  const [installation] = await db
+    .select({ installationId: schema.githubInstallation.installationId })
+    .from(schema.githubInstallation)
+    .where(eq(schema.githubInstallation.integrationId, integrationId))
+    .limit(1);
   await db.insert(schema.githubRepositorySync).values({
     id: `repo_${randomUUIDv7()}`,
     organizationId: workspace.organizationId,
     integrationId,
+    installationId: installation?.installationId ?? '',
     teamId: workspace.teamId,
     repositoryId,
     repositoryName: 'noveum/orbit',
@@ -382,15 +389,26 @@ describe('loadPullRequests', () => {
 });
 
 describe('refreshPullRequestHistory', () => {
-  it('lets only one concurrent request fetch GitHub history', async () => {
-    const integrationId = await installation('active');
-    const repositoryId = await repository(integrationId);
-    const pullRequestId = await mirroredPull(integrationId, repositoryId, 53);
+  function historyConfig() {
     const { privateKey } = generateKeyPairSync('rsa', {
       modulusLength: 2048,
       publicKeyEncoding: { type: 'spki', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
     });
+    return {
+      slug: 'orbit-test',
+      appId: '123',
+      privateKey,
+      clientId: 'client',
+      clientSecret: 'secret',
+    };
+  }
+
+  it('lets only one concurrent request fetch GitHub history', async () => {
+    const integrationId = await installation('active');
+    const repositoryId = await repository(integrationId);
+    const pullRequestId = await mirroredPull(integrationId, repositoryId, 53);
+    const config = historyConfig();
     let tokenCalls = 0;
     let historyCalls = 0;
     const fetchHistory = ((input: string) => {
@@ -409,25 +427,13 @@ describe('refreshPullRequestHistory', () => {
       refreshPullRequestHistory({
         principal: workspace.admin,
         pullRequestId,
-        config: {
-          slug: 'orbit-test',
-          appId: '123',
-          privateKey,
-          clientId: 'client',
-          clientSecret: 'secret',
-        },
+        config,
         fetch: fetchHistory,
       }),
       refreshPullRequestHistory({
         principal: workspace.admin,
         pullRequestId,
-        config: {
-          slug: 'orbit-test',
-          appId: '123',
-          privateKey,
-          clientId: 'client',
-          clientSecret: 'secret',
-        },
+        config,
         fetch: fetchHistory,
       }),
     ]);
@@ -444,4 +450,47 @@ describe('refreshPullRequestHistory', () => {
     expect(pull?.historySyncedAt).not.toBeNull();
     expect(pull?.historyRefreshClaimedAt).toBeNull();
   });
+
+  it.each([
+    ['empty', ''],
+    ['conflicting', 'other-installation'],
+  ] as const)(
+    'skips provider history when the watch installation binding is %s',
+    async (_, installationId) => {
+      const integrationId = await installation('active');
+      const repositoryId = await repository(integrationId);
+      const pullRequestId = await mirroredPull(integrationId, repositoryId, 53);
+      await db
+        .update(schema.githubRepositorySync)
+        .set({ installationId })
+        .where(
+          and(
+            eq(schema.githubRepositorySync.integrationId, integrationId),
+            eq(schema.githubRepositorySync.repositoryId, repositoryId),
+          ),
+        );
+      let requests = 0;
+      const result = await refreshPullRequestHistory({
+        principal: workspace.admin,
+        pullRequestId,
+        config: historyConfig(),
+        fetch: Object.assign(
+          () => {
+            requests++;
+            return Promise.reject(new Error('Unexpected GitHub history request'));
+          },
+          { preconnect: () => undefined },
+        ),
+      });
+      expect({ result, requests }).toEqual({ result: 0, requests: 0 });
+      const [pull] = await db
+        .select({
+          historySyncedAt: schema.githubPullRequest.historySyncedAt,
+          historyRefreshClaimedAt: schema.githubPullRequest.historyRefreshClaimedAt,
+        })
+        .from(schema.githubPullRequest)
+        .where(eq(schema.githubPullRequest.id, pullRequestId));
+      expect(pull).toEqual({ historySyncedAt: null, historyRefreshClaimedAt: null });
+    },
+  );
 });

@@ -1,5 +1,5 @@
 import { githubInstallation } from '@orbit/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { GITHUB_REPOSITORY_SELECTIONS, type GithubInstalledRepository } from './app.ts';
 import type { GithubDatabase } from './apply.ts';
@@ -10,6 +10,7 @@ import {
   removeGithubRepositories,
   setGithubInstallationStatus,
   updateGithubRepositoryFacts,
+  updateGithubRepositoryFactsForInstallation,
   upsertGithubRepositories,
 } from './installations.ts';
 
@@ -131,7 +132,7 @@ async function applyInstallation(
 
   const selection = parsed.data.installation.repository_selection;
   const suspended = typeof parsed.data.installation.suspended_at === 'string';
-  await database
+  const changed = await database
     .update(githubInstallation)
     .set({
       accountLogin: parsed.data.installation.account?.login ?? existing.accountLogin,
@@ -141,7 +142,16 @@ async function applyInstallation(
       status: suspended ? 'suspended' : 'active',
       updatedAt: now,
     })
-    .where(eq(githubInstallation.id, existing.id));
+    .where(
+      and(
+        eq(githubInstallation.id, existing.id),
+        eq(githubInstallation.organizationId, existing.organizationId),
+        eq(githubInstallation.integrationId, existing.integrationId),
+        eq(githubInstallation.installationId, installationId),
+      ),
+    )
+    .returning({ id: githubInstallation.id });
+  if (changed.length !== 1) return IGNORED;
 
   if (parsed.data.repositories !== undefined && parsed.data.repositories.length > 0) {
     await upsertGithubRepositories(database, {
@@ -167,10 +177,19 @@ async function applyInstallationRepositories(
   const selection =
     parsed.data.repository_selection ?? parsed.data.installation.repository_selection;
   if (selection !== undefined && selection !== existing.repositorySelection) {
-    await database
+    const changed = await database
       .update(githubInstallation)
       .set({ repositorySelection: selection, updatedAt: now })
-      .where(eq(githubInstallation.id, existing.id));
+      .where(
+        and(
+          eq(githubInstallation.id, existing.id),
+          eq(githubInstallation.organizationId, existing.organizationId),
+          eq(githubInstallation.integrationId, existing.integrationId),
+          eq(githubInstallation.installationId, installationId),
+        ),
+      )
+      .returning({ id: githubInstallation.id });
+    if (changed.length !== 1) return IGNORED;
   }
 
   if (parsed.data.repositories_removed.length > 0) {
@@ -207,6 +226,33 @@ async function applyRepository(
   const parsed = repositoryEventSchema.safeParse(body);
   if (!parsed.success) return IGNORED;
   const repository = toInstalledRepository(parsed.data.repository);
+
+  if (parsed.data.installation !== undefined) {
+    const installationId = String(parsed.data.installation.id);
+    const current = await findGithubInstallationAnywhere(database, installationId);
+    if (current === null) return IGNORED;
+    if (parsed.data.action === 'deleted') {
+      const removed = await removeGithubRepositories(database, {
+        installationId,
+        repositoryIds: [repository.repositoryId],
+      });
+      return { handled: removed > 0, organizationId: current.organizationId };
+    }
+    if (!REPOSITORY_FACT_ACTIONS.includes(parsed.data.action)) return IGNORED;
+    const updated = await updateGithubRepositoryFactsForInstallation(database, {
+      installation: current,
+      repositoryId: repository.repositoryId,
+      fullName: repository.repositoryName,
+      name: repository.name,
+      ownerLogin: repository.ownerLogin,
+      private: repository.private,
+      archived: repository.archived,
+      defaultBranch: repository.defaultBranch,
+      htmlUrl: repository.htmlUrl,
+      now,
+    });
+    return { handled: updated > 0, organizationId: current.organizationId };
+  }
 
   if (parsed.data.action === 'deleted') {
     const removed = await deleteGithubRepositoryEverywhere(database, repository.repositoryId);
