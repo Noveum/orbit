@@ -288,6 +288,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
   }
 
   const connections = new Map<string, Connection>();
+  let closing = false;
   const presence = new PresenceStore(presenceTtlMs);
   const issueTeamBoundaries = new IssueTeamBoundaries(
     issueTeamBoundaryTtlMs,
@@ -352,7 +353,9 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     const open = [...connections.values()];
     if (open.length === 0) return;
     const live = await liveSessionIds(open.map((connection) => connection.principal.sessionId));
+    if (closing) return;
     for (const connection of open) {
+      if (connections.get(connection.id) !== connection) continue;
       if (live.has(connection.principal.sessionId)) continue;
       closeRevokedSession(connection);
     }
@@ -1241,21 +1244,32 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     return presence.size > 0 || issueTeamBoundaries.size > 0;
   }
 
+  let sessionSweepInFlight = false;
+
+  function sweepSessionsUnlessBusy(): void {
+    if (closing || sessionSweepInFlight) return;
+    sessionSweepInFlight = true;
+    sweepSessions()
+      .catch((error: unknown) => {
+        logger.error('session sweep failed', errorFields(error));
+      })
+      .finally(() => {
+        sessionSweepInFlight = false;
+      });
+  }
+
   const intervals =
     options.scheduling === 'manual'
       ? []
       : [
           setInterval(heartbeat, heartbeatIntervalMs),
           setInterval(sweep, Math.max(1_000, Math.min(presenceTtlMs, issueTeamBoundaryTtlMs) / 3)),
-          setInterval(() => {
-            sweepSessions().catch((error: unknown) => {
-              logger.error('session sweep failed', errorFields(error));
-            });
-          }, sessionSweepIntervalMs),
+          setInterval(sweepSessionsUnlessBusy, sessionSweepIntervalMs),
         ];
   for (const interval of intervals) detach(interval);
 
   async function close(): Promise<void> {
+    closing = true;
     for (const interval of intervals) clearInterval(interval);
     for (const connection of connections.values()) connection.close(1001, 'server shutting down');
     connections.clear();
