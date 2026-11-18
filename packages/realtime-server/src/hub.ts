@@ -345,7 +345,9 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     const open = [...connections.values()];
     if (open.length === 0) return;
     const live = await liveSessionIds(open.map((connection) => connection.principal.sessionId));
+    if (closing) return;
     for (const connection of open) {
+      if (connections.get(connection.id) !== connection) continue;
       if (live.has(connection.principal.sessionId)) continue;
       closeRevokedSession(connection);
     }
@@ -1214,10 +1216,17 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
   );
   sweeper.unref();
 
+  let sessionSweepInFlight = false;
   const sessionSweeper = setInterval(() => {
-    sweepSessions().catch((error: unknown) => {
-      logger.error('session sweep failed', errorFields(error));
-    });
+    if (closing || sessionSweepInFlight) return;
+    sessionSweepInFlight = true;
+    sweepSessions()
+      .catch((error: unknown) => {
+        logger.error('session sweep failed', errorFields(error));
+      })
+      .finally(() => {
+        sessionSweepInFlight = false;
+      });
   }, sessionSweepIntervalMs);
   sessionSweeper.unref();
 
