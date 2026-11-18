@@ -18,6 +18,7 @@ import { z } from 'zod';
 import type { WorkerBindings } from './bindings.ts';
 
 const SNAPSHOT_PREFIX = 'connection:';
+const NEXT_SESSION_SWEEP = 'nextSessionSweepAt';
 const PIN_INTERVAL_MS = 5_000;
 const TERMINATED_CLOSE_CODE = 1011;
 const UNSENDABLE_CLOSE_CODES: readonly number[] = [1005, 1006, 1015];
@@ -55,7 +56,6 @@ export class RealtimeHubObject extends DurableObject<WorkerBindings> {
   private opening: Promise<RealtimeHub> | undefined;
   private hub: RealtimeHub | undefined;
   private pin: ReturnType<typeof setTimeout> | undefined;
-  private sessionsSweptAt = 0;
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -70,12 +70,15 @@ export class RealtimeHubObject extends DurableObject<WorkerBindings> {
   }
 
   async webSocketMessage(socket: WorkerSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== 'string') {
+      socket.close(1003, 'text_frames_required');
+      return;
+    }
     await this.open();
     const id = attachedId(socket);
     const session = id === null ? undefined : this.sessions.get(id);
     if (session === undefined) return;
-    const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
-    await this.withDatabase(() => session.message(raw));
+    await this.withDatabase(() => session.message(message));
     this.holdWhileEphemeralStateRemains();
   }
 
@@ -92,10 +95,11 @@ export class RealtimeHubObject extends DurableObject<WorkerBindings> {
   async alarm(): Promise<void> {
     const hub = await this.open();
     hub.heartbeat();
-    if (Date.now() - this.sessionsSweptAt >= SESSION_SWEEP_INTERVAL_MS) {
-      this.sessionsSweptAt = Date.now();
+    const nextSweep = await this.ctx.storage.get<number>(NEXT_SESSION_SWEEP);
+    if (nextSweep === undefined || Date.now() >= nextSweep) {
       try {
         await this.withDatabase(() => hub.sweepSessions());
+        await this.ctx.storage.put(NEXT_SESSION_SWEEP, Date.now() + SESSION_SWEEP_INTERVAL_MS);
       } catch (error: unknown) {
         logger.error('session sweep failed', errorFields(error));
       }
@@ -173,7 +177,7 @@ export class RealtimeHubObject extends DurableObject<WorkerBindings> {
       get readyState(): number {
         return socket.readyState;
       },
-      bufferedAmount: () => 0,
+      bufferedAmount: () => socket.bufferedAmount,
       send: (data: string): void => {
         socket.send(data);
       },

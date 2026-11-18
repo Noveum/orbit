@@ -1146,7 +1146,9 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
   function observe(connection: Connection): void {
     const notify = options.onConnectionChange;
     if (notify === undefined) return;
-    connection.observe(() => notify(connection.snapshot()));
+    connection.observe(() => {
+      if (connections.get(connection.id) === connection) notify(connection.snapshot());
+    });
     notify(connection.snapshot());
   }
 

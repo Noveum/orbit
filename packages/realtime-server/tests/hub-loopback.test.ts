@@ -1,14 +1,15 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   REDIS_CONTROL_CHANNEL,
   REDIS_DELTA_CHANNEL,
   REDIS_PRESENCE_CHANNEL,
   type SyncAction,
 } from '@orbit/shared/events';
+import * as auth from '../src/auth.ts';
 import { createLoopbackBus } from '../src/bus.ts';
 import type { ConnectionSnapshot } from '../src/connection.ts';
 import { createRealtimeHub, type RealtimeHub } from '../src/hub.ts';
-import { FakeSocket, waitFor } from './fake-socket.ts';
+import { FakeSocket, settle, waitFor } from './fake-socket.ts';
 
 const ORGANIZATION = 'org_loopback';
 
@@ -29,14 +30,14 @@ function snapshot(id: string, scopes: readonly string[]): ConnectionSnapshot {
   };
 }
 
-function labelUpdate(syncId: number): SyncAction {
+function labelUpdate(syncId: number, modelId = 'label_1'): SyncAction {
   return {
     syncId,
     organizationId: ORGANIZATION,
     scopes: [`org:${ORGANIZATION}`],
     action: 'update',
     model: 'label',
-    modelId: 'label_1',
+    modelId,
     data: { name: 'Renamed' },
     actor: { type: 'user', id: 'user_writer' },
     at: new Date().toISOString(),
@@ -44,6 +45,31 @@ function labelUpdate(syncId: number): SyncAction {
 }
 
 let hub: RealtimeHub | undefined;
+
+async function duringMembershipRefresh(
+  bus: ReturnType<typeof createLoopbackBus>,
+  whileBlocked: () => void | Promise<void>,
+): Promise<void> {
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const lookup = spyOn(auth, 'refreshedPrincipal').mockImplementation(async (principal) => {
+    entered.resolve();
+    await release.promise;
+    return principal;
+  });
+  const delta = bus.publish(
+    REDIS_DELTA_CHANNEL,
+    JSON.stringify([{ ...labelUpdate(11), model: 'member', modelId: 'member_reader' }]),
+  );
+  try {
+    await entered.promise;
+    await whileBlocked();
+  } finally {
+    release.resolve();
+    await delta;
+    lookup.mockRestore();
+  }
+}
 
 afterEach(async () => {
   await hub?.close();
@@ -75,7 +101,7 @@ describe('a hub on the loopback bus', () => {
     const socket = new FakeSocket();
     hub.restore(socket, snapshot('restored', [`org:${ORGANIZATION}`]));
 
-    await bus.publish(REDIS_DELTA_CHANNEL, JSON.stringify([labelUpdate(10)]));
+    await bus.publish(REDIS_DELTA_CHANNEL, JSON.stringify([labelUpdate(10, 'stale_label')]));
     await bus.publish(REDIS_DELTA_CHANNEL, JSON.stringify([labelUpdate(12)]));
     await waitFor(() => socket.last('delta') !== undefined, 'the newer delta arrived');
 
@@ -169,22 +195,50 @@ describe('a hub on the loopback bus', () => {
     const bus = createLoopbackBus();
     hub = await createRealtimeHub({ bus, scheduling: 'manual', ticketSecret: 'x'.repeat(32) });
     const scope = `org:${ORGANIZATION}`;
-    hub.restore(new FakeSocket(), snapshot('reader', [scope]));
-    const delta = bus.publish(REDIS_DELTA_CHANNEL, JSON.stringify([labelUpdate(11)]));
-    await bus.publish(
-      REDIS_PRESENCE_CHANNEL,
-      JSON.stringify({
-        organizationId: ORGANIZATION,
-        scope,
-        kind: 'viewing',
-        userId: 'other',
-        name: 'Other Reader',
-        image: null,
-        at: new Date().toISOString(),
-      }),
-    );
-    expect(hub.sweep()).toBe(true);
-    await delta;
+    const socket = new FakeSocket();
+    hub.restore(socket, snapshot('reader', [scope]));
+    let completed = false;
+    let presence: Promise<void> | undefined;
+    await duringMembershipRefresh(bus, async () => {
+      presence = bus
+        .publish(
+          REDIS_PRESENCE_CHANNEL,
+          JSON.stringify({
+            organizationId: ORGANIZATION,
+            scope,
+            kind: 'viewing',
+            userId: 'other',
+            name: 'Other Reader',
+            image: null,
+            at: new Date().toISOString(),
+          }),
+        )
+        .then(() => {
+          completed = true;
+        });
+      await settle(1);
+      expect(completed).toBe(false);
+      expect(socket.frames('presence')).toHaveLength(0);
+    });
+    await presence;
+    expect(completed).toBe(true);
+    expect(socket.frames('presence')).toHaveLength(1);
+  });
+
+  it('stops reporting snapshots when a reader disconnects during a membership refresh', async () => {
+    const bus = createLoopbackBus();
+    const changes: ConnectionSnapshot[] = [];
+    hub = await createRealtimeHub({
+      bus,
+      scheduling: 'manual',
+      ticketSecret: 'x'.repeat(32),
+      onConnectionChange: (value) => changes.push(value),
+    });
+    const session = hub.restore(new FakeSocket(), snapshot('reader', []));
+    await duringMembershipRefresh(bus, () => {
+      session.closed();
+    });
+    expect(changes).toHaveLength(1);
   });
 
   it('retains presence by the time the originating socket event completes', async () => {
