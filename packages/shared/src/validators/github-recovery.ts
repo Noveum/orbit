@@ -17,6 +17,51 @@ export const githubRecoveryRequestSchema = z.strictObject({
 });
 export type GithubRecoveryRequest = z.infer<typeof githubRecoveryRequestSchema>;
 
+export const githubRecoveryCandidateSchema = z.strictObject({
+  repositoryName: z.string(),
+  pullRequestNumber: z.number().int().positive(),
+  selector: githubRecoveryRequestSchema,
+});
+export type GithubRecoveryCandidate = z.infer<typeof githubRecoveryCandidateSchema>;
+
+export const githubRecoveryCursorSchema = z.strictObject({
+  workspace: idSchema,
+  after: idSchema,
+});
+export type GithubRecoveryCursor = z.infer<typeof githubRecoveryCursorSchema>;
+export const githubRecoveryQuerySchema = z.union([
+  githubRecoveryCursorSchema,
+  z.strictObject({}).transform(() => null),
+]);
+export const githubRecoveryPageSchema = z.strictObject({
+  workspace: idSchema,
+  candidates: githubRecoveryCandidateSchema.array().max(20),
+  nextCursor: githubRecoveryCursorSchema.nullable(),
+});
+export type GithubRecoveryPage = z.infer<typeof githubRecoveryPageSchema>;
+
+export const githubRecoveryResultSchema = z.strictObject({
+  status: z.enum([
+    'queued',
+    'already_queued',
+    'already_attempted',
+    'busy',
+    'superseded',
+    'not_active',
+    'head_changed',
+    'installation_unavailable',
+    'installation_suspended',
+    'repository_unavailable',
+    'pull_request_unavailable',
+    'repository_access_required',
+    'provider_authentication_failed',
+    'provider_temporarily_unavailable',
+    'expired',
+  ]),
+});
+export type GithubRecoveryResult = z.infer<typeof githubRecoveryResultSchema>;
+export type GithubRecoveryStatus = GithubRecoveryResult['status'];
+
 export const githubRecoveryInstallationSchema = z.object({
   id: providerIdSchema,
   app_id: providerIdSchema,

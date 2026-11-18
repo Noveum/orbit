@@ -1,4 +1,5 @@
 import { can } from '@orbit/shared/policy';
+import { GithubCheckRecovery } from '@/features/settings/github-check-recovery.tsx';
 import {
   GithubConnectNotice,
   githubConnectStatusOf,
@@ -55,6 +56,13 @@ export default async function IntegrationsSettingsPage({
         mcpUrl={mcpServerUrl()}
         mcpConnections={mcpConnections}
       />
+      {provider === 'github' && canManage && settings.github.connected ? (
+        <GithubCheckRecovery
+          key={`${principal.organizationId}:${principal.userId}`}
+          organizationId={principal.organizationId}
+          userId={principal.userId}
+        />
+      ) : null}
       {provider === 'github' ? <GithubDeliveries deliveries={deliveries} /> : null}
     </section>
   );
