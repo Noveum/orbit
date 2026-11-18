@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import {
   bindAgentMcpCredential,
@@ -326,6 +326,23 @@ describe('MCP authorize consent boundary', () => {
     );
     expect(unsupportedGrant.status).toBe(400);
     expect(await unsupportedGrant.json()).toMatchObject({ error: 'unsupported_grant_type' });
+  });
+
+  it('records a fixed token rejection category without request or credential fields', async () => {
+    using logged = spyOn(console, 'info').mockImplementation(() => undefined);
+    const response = await authPost(
+      new Request(`${APP_ORIGIN}/api/auth/oauth2/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'private-client-value' }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'unsupported_grant_type' });
+    expect(logged.mock.calls).toContainEqual([
+      JSON.stringify({ event: 'oauth.token.rejected', stage: 'unsupported_grant' }),
+    ]);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('private-client-value');
   });
 
   it('rate limits invalid token requests before their database prechecks', async () => {
