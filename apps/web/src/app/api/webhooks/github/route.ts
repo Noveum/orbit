@@ -134,6 +134,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'invalid json' }, { status: 400 });
   }
 
+  const expectedInstallationId = installationBehind(body);
   const organizationId = await workspaceBehind(body);
   if (organizationId !== null) {
     await db
@@ -161,6 +162,7 @@ export async function POST(request: Request): Promise<Response> {
         eventName,
         body,
         organizationId,
+        ...(expectedInstallationId === undefined ? {} : { expectedInstallationId }),
         webhookDeliveryId: claim.id,
       });
       const slackEnabled =
@@ -247,13 +249,15 @@ const installationRefSchema = z.object({
   installation: z.object({ id: z.union([z.number(), z.string()]) }),
 });
 
-async function workspaceBehind(body: unknown): Promise<string | null> {
+function installationBehind(body: unknown): string | undefined {
   const parsed = installationRefSchema.safeParse(body);
-  if (!parsed.success) return null;
-  const installation = await findGithubInstallationAnywhere(
-    db,
-    String(parsed.data.installation.id),
-  );
+  return parsed.success ? String(parsed.data.installation.id) : undefined;
+}
+
+async function workspaceBehind(body: unknown): Promise<string | null> {
+  const id = installationBehind(body);
+  if (id === undefined) return null;
+  const installation = await findGithubInstallationAnywhere(db, id);
   return installation?.organizationId ?? null;
 }
 

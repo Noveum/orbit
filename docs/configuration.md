@@ -231,6 +231,7 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | `GITHUB_APP_SLUG` | The app's URL slug, required along with the other five GitHub App variables before connecting |
 | `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | Exchange the callback code to confirm the installation belongs to the person connecting. Without them the connect flow refuses rather than binding an installation it cannot attribute |
 | `GITHUB_WEBHOOK_SECRET` | Verifies inbound webhooks |
+| `ORBIT_GITHUB_INSTALLATION_REPLACEMENT_ENABLED` | Production installation replacement is off unless this is exactly `true`. Current installation and first connects remain available. Enable only after the [replacement rollout gates](github-app.md#installation-replacement-activation) |
 | `SLACK_CLIENT_ID` | Slack OAuth client ID. It is not secret |
 | `SLACK_APP_ID` | Optional fallback app identity for legacy connections. New OAuth connections store the returned app ID automatically |
 | `SLACK_CLIENT_SECRET` | Slack OAuth client secret. Mark it Sensitive in Vercel |

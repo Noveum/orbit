@@ -15,6 +15,8 @@ import { randomUUIDv7 } from '@orbit/shared/utils';
 import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { GithubInstallationAccount, GithubInstalledRepository } from './app.ts';
 import type { GithubDatabase } from './apply.ts';
+import { lockGithubInstallationSnapshot } from './installation-binding.ts';
+import { withinGithubReplacementBudget } from './installation-replacement-budget.ts';
 import { forgetWatchedRepositories, removeGithubRepositorySyncs } from './watched.ts';
 
 export type GithubInstallationRow = typeof githubInstallation.$inferSelect;
@@ -30,6 +32,10 @@ export interface BindInstallationInput {
   readonly organizationId: string;
   readonly connectedById: string;
   readonly account: GithubInstallationAccount;
+  readonly expectedAccountBindings?: readonly Pick<
+    GithubInstallationRow,
+    'id' | 'installationId' | 'integrationId'
+  >[];
   readonly now?: Date;
 }
 
@@ -109,6 +115,36 @@ export async function bindGithubInstallation(
     organizationId,
     userId: input.connectedById,
   });
+
+  if (input.expectedAccountBindings !== undefined) {
+    const current = await database
+      .select({
+        id: githubInstallation.id,
+        installationId: githubInstallation.installationId,
+        integrationId: githubInstallation.integrationId,
+      })
+      .from(githubInstallation)
+      .where(
+        and(
+          eq(githubInstallation.organizationId, organizationId),
+          eq(githubInstallation.accountId, account.accountId),
+          eq(githubInstallation.accountType, account.accountType),
+        ),
+      );
+    const identity = (
+      rows: readonly Pick<GithubInstallationRow, 'id' | 'installationId' | 'integrationId'>[],
+    ) =>
+      JSON.stringify(
+        rows
+          .map((row) => [row.id, row.installationId, row.integrationId])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      );
+    if (identity(current) !== identity(input.expectedAccountBindings))
+      throw conflict(
+        'The GitHub connection changed. Reconnect again to verify its current state.',
+        { details: { reason: 'github_replacement_conflict' } },
+      );
+  }
 
   const [claimed] = await database
     .select({ organizationId: githubInstallation.organizationId })
@@ -354,46 +390,108 @@ async function propagateGithubRepositoryIdentity(
     );
 }
 
-export async function upsertGithubRepositories(
-  database: GithubDatabase,
-  input: {
-    readonly installation: GithubInstallationRow;
-    readonly repositories: readonly GithubInstalledRepository[];
-    readonly now?: Date;
-  },
+interface GithubCatalogueInput {
+  readonly installation: GithubInstallationRow;
+  readonly repositories: readonly GithubInstalledRepository[];
+  readonly now?: Date;
+  readonly deadline?: number;
+}
+
+async function propagateCurrentGithubRepositoryIdentities(
+  database: Transaction,
+  installation: GithubInstallationRow,
+  repositories: readonly GithubRepositoryRow[],
+  now: Date,
+  deadline: number | undefined,
+): Promise<void> {
+  const facts = sql`jsonb_to_recordset(${JSON.stringify(repositories.map((row) => ({ repository_id: row.repositoryId, full_name: row.fullName, default_branch: row.defaultBranch })))}::jsonb) as incoming(repository_id text, full_name text, default_branch text)`;
+  const watched = await withinGithubReplacementBudget(database, deadline, () =>
+    database
+      .update(githubRepositorySync)
+      .set({
+        repositoryName: sql`incoming.full_name`,
+        defaultBranch: sql`incoming.default_branch`,
+        updatedAt: now,
+      })
+      .from(facts)
+      .where(
+        and(
+          eq(githubRepositorySync.organizationId, installation.organizationId),
+          eq(githubRepositorySync.integrationId, installation.integrationId),
+          eq(githubRepositorySync.installationId, installation.installationId),
+          eq(githubRepositorySync.repositoryId, sql`incoming.repository_id`),
+        ),
+      )
+      .returning({
+        id: githubRepositorySync.id,
+        repositoryId: githubRepositorySync.repositoryId,
+        repositoryName: githubRepositorySync.repositoryName,
+      }),
+  );
+  if (watched.length === 0) return;
+  const ownedFacts = sql`jsonb_to_recordset(${JSON.stringify(watched.map((row) => ({ repository_sync_id: row.id, repository_id: row.repositoryId, full_name: row.repositoryName })))}::jsonb) as incoming(repository_sync_id text, repository_id text, full_name text)`;
+  await withinGithubReplacementBudget(database, deadline, () =>
+    database
+      .update(githubPullRequest)
+      .set({ repositoryName: sql`incoming.full_name` })
+      .from(ownedFacts)
+      .where(
+        and(
+          eq(githubPullRequest.organizationId, installation.organizationId),
+          eq(githubPullRequest.repositorySyncId, sql`incoming.repository_sync_id`),
+          eq(githubPullRequest.repositoryId, sql`incoming.repository_id`),
+        ),
+      ),
+  );
+}
+
+async function persistCurrentGithubRepositories(
+  database: Transaction,
+  input: GithubCatalogueInput,
 ): Promise<GithubRepositoryRow[]> {
   if (input.repositories.length === 0) return [];
   const now = input.now ?? new Date();
-  const rows = await database
-    .insert(githubRepository)
-    .values(input.repositories.map((entry) => repositoryValues(input.installation, entry)))
-    .onConflictDoUpdate({
-      target: [githubRepository.installationRowId, githubRepository.repositoryId],
-      set: { ...REPOSITORY_FACTS, updatedAt: now },
-    })
-    .returning();
-  for (const row of rows) {
-    await propagateGithubRepositoryIdentity(database, {
-      organizationId: row.organizationId,
-      repositoryId: row.repositoryId,
-      repositoryName: row.fullName,
-      defaultBranch: row.defaultBranch,
-      now,
-    });
-  }
+  const rows = await withinGithubReplacementBudget(database, input.deadline, () =>
+    database
+      .insert(githubRepository)
+      .values(input.repositories.map((entry) => repositoryValues(input.installation, entry)))
+      .onConflictDoUpdate({
+        target: [githubRepository.installationRowId, githubRepository.repositoryId],
+        set: { ...REPOSITORY_FACTS, updatedAt: now },
+      })
+      .returning(),
+  );
+  await propagateCurrentGithubRepositoryIdentities(
+    database,
+    input.installation,
+    rows,
+    now,
+    input.deadline,
+  );
   return rows;
+}
+
+export async function upsertGithubRepositories(
+  database: GithubDatabase,
+  input: GithubCatalogueInput,
+): Promise<GithubRepositoryRow[]> {
+  if ('$client' in database)
+    return await database.transaction((tx) => upsertGithubRepositories(tx, input));
+  if ((await lockGithubInstallationSnapshot(database, input.installation, input.deadline)) === null)
+    return [];
+  return await persistCurrentGithubRepositories(database, input);
 }
 
 export async function replaceGithubRepositories(
   database: GithubDatabase,
-  input: {
-    readonly installation: GithubInstallationRow;
-    readonly repositories: readonly GithubInstalledRepository[];
-    readonly now?: Date;
-  },
+  input: GithubCatalogueInput,
 ): Promise<GithubRepositoryRow[]> {
+  if ('$client' in database)
+    return await database.transaction((tx) => replaceGithubRepositories(tx, input));
+  if ((await lockGithubInstallationSnapshot(database, input.installation, input.deadline)) === null)
+    return [];
   const now = input.now ?? new Date();
-  const kept = await upsertGithubRepositories(database, { ...input, now });
+  const kept = await persistCurrentGithubRepositories(database, { ...input, now });
   const keepIds = input.repositories.map((entry) => entry.repositoryId);
   const stale =
     keepIds.length === 0
@@ -402,18 +500,38 @@ export async function replaceGithubRepositories(
           eq(githubRepository.installationRowId, input.installation.id),
           notInArray(githubRepository.repositoryId, keepIds),
         );
-  const dropped = await database
-    .delete(githubRepository)
-    .where(stale)
-    .returning({ repositoryId: githubRepository.repositoryId });
-  await forgetWatchedRepositories(database, {
-    organizationId: input.installation.organizationId,
-    repositoryIds: dropped.map((row) => row.repositoryId),
-  });
-  await database
-    .update(githubInstallation)
-    .set({ repositoriesSyncedAt: now, updatedAt: now })
-    .where(eq(githubInstallation.id, input.installation.id));
+  const dropped = await withinGithubReplacementBudget(database, input.deadline, () =>
+    database
+      .delete(githubRepository)
+      .where(stale)
+      .returning({ repositoryId: githubRepository.repositoryId }),
+  );
+  if (dropped.length !== 0)
+    await removeGithubRepositorySyncs(
+      database,
+      and(
+        eq(githubRepositorySync.organizationId, input.installation.organizationId),
+        eq(githubRepositorySync.integrationId, input.installation.integrationId),
+        eq(githubRepositorySync.installationId, input.installation.installationId),
+        inArray(
+          githubRepositorySync.repositoryId,
+          dropped.map((row) => row.repositoryId),
+        ),
+      ),
+      input.deadline,
+    );
+  await withinGithubReplacementBudget(database, input.deadline, () =>
+    database
+      .update(githubInstallation)
+      .set({ repositoriesSyncedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(githubInstallation.id, input.installation.id),
+          eq(githubInstallation.installationId, input.installation.installationId),
+          eq(githubInstallation.integrationId, input.installation.integrationId),
+        ),
+      ),
+  );
   return kept;
 }
 
@@ -422,26 +540,40 @@ export async function removeGithubRepositories(
   input: { readonly installationId: string; readonly repositoryIds: readonly string[] },
 ): Promise<number> {
   if (input.repositoryIds.length === 0) return 0;
-  const [installation] = await database
-    .select({ id: githubInstallation.id, organizationId: githubInstallation.organizationId })
+  const [captured] = await database
+    .select()
     .from(githubInstallation)
     .where(eq(githubInstallation.installationId, input.installationId))
     .limit(1);
-  if (installation === undefined) return 0;
-  const removed = await database
-    .delete(githubRepository)
-    .where(
-      and(
-        eq(githubRepository.installationRowId, installation.id),
-        inArray(githubRepository.repositoryId, [...input.repositoryIds]),
-      ),
-    )
-    .returning({ repositoryId: githubRepository.repositoryId });
-  await forgetWatchedRepositories(database, {
-    organizationId: installation.organizationId,
-    repositoryIds: removed.map((row) => row.repositoryId),
+  if (captured === undefined) return 0;
+  return await database.transaction(async (tx) => {
+    const current = await lockGithubInstallationSnapshot(tx, captured);
+    if (current === null) return 0;
+    const removed = await tx
+      .delete(githubRepository)
+      .where(
+        and(
+          eq(githubRepository.organizationId, current.organizationId),
+          eq(githubRepository.installationRowId, current.id),
+          inArray(githubRepository.repositoryId, input.repositoryIds),
+        ),
+      )
+      .returning({ repositoryId: githubRepository.repositoryId });
+    if (removed.length !== 0)
+      await removeGithubRepositorySyncs(
+        tx,
+        and(
+          eq(githubRepositorySync.organizationId, current.organizationId),
+          eq(githubRepositorySync.integrationId, current.integrationId),
+          eq(githubRepositorySync.installationId, current.installationId),
+          inArray(
+            githubRepositorySync.repositoryId,
+            removed.map((row) => row.repositoryId),
+          ),
+        ),
+      );
+    return removed.length;
   });
-  return removed.length;
 }
 
 export interface GithubRepositoryFacts {
@@ -453,6 +585,50 @@ export interface GithubRepositoryFacts {
   readonly archived: boolean;
   readonly defaultBranch: string;
   readonly htmlUrl: string;
+}
+
+export async function updateGithubRepositoryFactsForInstallation(
+  database: GithubDatabase,
+  input: GithubRepositoryFacts & {
+    readonly installation: GithubInstallationRow;
+    readonly now?: Date;
+  },
+): Promise<number> {
+  if ('$client' in database)
+    return await database.transaction((tx) =>
+      updateGithubRepositoryFactsForInstallation(tx, input),
+    );
+  if ((await lockGithubInstallationSnapshot(database, input.installation)) === null) return 0;
+  const now = input.now ?? new Date();
+  const rows = await database
+    .update(githubRepository)
+    .set({
+      fullName: input.fullName,
+      name: input.name,
+      ownerLogin: input.ownerLogin,
+      private: input.private,
+      archived: input.archived,
+      defaultBranch: input.defaultBranch,
+      htmlUrl: input.htmlUrl,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(githubRepository.organizationId, input.installation.organizationId),
+        eq(githubRepository.installationRowId, input.installation.id),
+        eq(githubRepository.repositoryId, input.repositoryId),
+      ),
+    )
+    .returning();
+  if (rows.length !== 0)
+    await propagateCurrentGithubRepositoryIdentities(
+      database,
+      input.installation,
+      rows,
+      now,
+      undefined,
+    );
+  return rows.length;
 }
 
 export async function updateGithubRepositoryFacts(

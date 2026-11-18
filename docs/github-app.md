@@ -128,6 +128,33 @@ an environment change to a deployment that already exists, so skipping the
 redeploy leaves every delivery failing signature verification with a `401` while
 GitHub retries. Do it in one sitting.
 
+## Installation replacement activation
+
+Replacing a stored installation with a new installation for the same GitHub
+account is disabled in production by default. Only the literal value `true` for
+`ORBIT_GITHUB_INSTALLATION_REPLACEMENT_ENABLED` enables adoption. First connects
+and connects to the current installation remain available. Development and test
+replacement behavior is unchanged.
+
+Keep the flag off while completing these rollout gates:
+
+1. Serve the same reviewed, fenced source with replacement disabled on all three
+   canonical aliases, and verify the deployment identity behind each alias.
+2. Fence old deployments from stateful `/pulls`, `/pulls/[id]` and their emitted
+   RSC and framework routes, as well as old worker consumers. Authentication,
+   host cookies and deployment protection alone do not fence authorized or bypass
+   access to old writers.
+3. After the last old writer is fenced, wait a fresh 300 seconds, then verify
+   idle reconciliation and history claims. Old page hooks can write for the
+   full page duration, beyond the history claim lease.
+
+Only after these gates pass, set the flag to the plain boolean string `true` in
+the Production environment and rebuild the same reviewed source. Verify all
+three canonical aliases serve that activated deployment. An environment change
+alone does not update existing deployments. Missing, `false` and other values
+return a temporary `409` with reason `github_replacement_disabled` from the
+adoption path before any persisted graph change.
+
 ## Production rollout
 
 Run the committed migrations before directing webhook traffic to a deployment

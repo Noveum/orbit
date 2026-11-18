@@ -1,8 +1,10 @@
 import { and, db, eq, isNull, schema, sql } from '@orbit/db';
 import {
+  adoptGithubInstallationReplacement,
   applyNormalizedGithubEvent,
   assertGithubIntegrationManager,
   bindGithubInstallation,
+  captureGithubReplacementSnapshot,
   exchangeGithubUserCode,
   fetchGithubInstallation,
   fetchGithubOpenPullRequests,
@@ -11,8 +13,9 @@ import {
   listGithubInstallations,
   listUserInstallationIds,
   replaceGithubRepositories,
+  verifyGithubInstallationReplacement,
 } from '@orbit/services';
-import { forbidden, validationFailed } from '@orbit/shared/errors';
+import { conflict, forbidden, validationFailed } from '@orbit/shared/errors';
 import type { GithubAppConfig } from '@/lib/env.ts';
 
 export const GITHUB_REPOSITORY_CACHE_MS = 600_000;
@@ -80,11 +83,49 @@ export async function completeGithubInstall(
     ...fetchOverride(input),
   });
 
+  const existing = await listGithubInstallations(db, input.organizationId);
+  const sameAccount = existing.filter(
+    (row) => row.accountId === account.accountId && row.accountType === account.accountType,
+  );
+  if (
+    !sameAccount.some((row) => row.installationId === input.installationId) &&
+    sameAccount.length !== 0
+  ) {
+    const previous = sameAccount[0];
+    if (
+      sameAccount.length !== 1 ||
+      previous === undefined ||
+      !/^[1-9]\d{0,15}$/.test(account.accountId) ||
+      !['User', 'Organization'].includes(account.accountType)
+    )
+      throw conflict('That GitHub account has an ambiguous existing connection.');
+    if (account.accountType !== 'User' && account.accountType !== 'Organization')
+      throw conflict('That GitHub account type cannot be replaced.');
+    const snapshot = await captureGithubReplacementSnapshot(db, previous);
+    const proof = await verifyGithubInstallationReplacement({
+      appId: input.config.appId,
+      privateKey: input.config.privateKey,
+      installationId: input.installationId,
+      previousInstallationId: previous.installationId,
+      expectedAccountId: previous.accountId,
+      expectedAccountType: account.accountType,
+      watchedRepositoryIds: snapshot.watchedRepositoryIds,
+      ...fetchOverride(input),
+    });
+    return await adoptGithubInstallationReplacement(db, {
+      snapshot,
+      proof,
+      connectedById: input.userId,
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
+  }
+
   const installation = await db.transaction(async (tx) =>
     bindGithubInstallation(tx, {
       organizationId: input.organizationId,
       connectedById: input.userId,
       account,
+      expectedAccountBindings: sameAccount,
       ...(input.now === undefined ? {} : { now: input.now }),
     }),
   );
@@ -140,6 +181,7 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
       and(
         eq(schema.githubRepositorySync.organizationId, input.installation.organizationId),
         eq(schema.githubRepositorySync.installationId, input.installation.installationId),
+        eq(schema.githubRepositorySync.integrationId, input.installation.integrationId),
         eq(schema.githubRepositorySync.enabled, true),
         isNull(schema.githubRepositorySync.pullRequestsBackfilledAt),
       ),
@@ -161,6 +203,7 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
         await db.transaction(async (tx) => {
           await applyNormalizedGithubEvent(tx, {
             organizationId: input.installation.organizationId,
+            expectedInstallationId: input.installation.installationId,
             event: {
               action: 'synchronize',
               repository: {
@@ -207,11 +250,19 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
           });
         });
       }
-      await db
+      const stamped = await db
         .update(schema.githubRepositorySync)
         .set({ pullRequestsBackfilledAt: backfilledAt })
-        .where(eq(schema.githubRepositorySync.id, repository.id));
-      completed += 1;
+        .where(
+          and(
+            eq(schema.githubRepositorySync.id, repository.id),
+            eq(schema.githubRepositorySync.organizationId, input.installation.organizationId),
+            eq(schema.githubRepositorySync.integrationId, input.installation.integrationId),
+            eq(schema.githubRepositorySync.installationId, input.installation.installationId),
+          ),
+        )
+        .returning({ id: schema.githubRepositorySync.id });
+      completed += stamped.length;
     } catch (error) {
       console.error(`Could not backfill ${repository.repositoryName}.`, error);
     }
