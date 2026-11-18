@@ -1,3 +1,10 @@
+export const RECOVERABLE_PULL_STATES: readonly string[] = [
+  'open',
+  'draft',
+  'approved',
+  'changes_requested',
+];
+
 export function isActiveGithubPullRequest(pull: {
   readonly state: string;
   readonly merged: boolean;
