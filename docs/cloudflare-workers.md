@@ -44,12 +44,13 @@ The differences are in what surrounds the hub:
 - Presence and the issue team boundary cache live in memory only. While either
   holds entries the object keeps a timer pending so it is not evicted, then
   lets itself hibernate once they expire.
-- The object is created with the `apac-ne` location hint so it sits near the
-  database. A hint is a preference, not a placement: of the objects created
-  from a Worker placed in Tokyo, about four in five landed in Tokyo (3 ms from
-  the Worker) and the rest in Osaka (10 ms), with or without a hint. An object
-  never moves once created. Change `NEAR_THE_DATABASE` in
-  `apps/web/worker/bindings.ts` if your database is elsewhere.
+- The object is created without a location hint, so it starts next to the
+  placed Worker that first asks for it. A hint is only a preference over a
+  wide area and did worse: from a Worker placed for `aws:us-east-2`, which
+  runs in Chicago, twelve objects without a hint all started in Chicago, while
+  twelve with the `enam` hint started in Chicago, Atlanta, Ashburn and Miami.
+  An object never moves once created, so let a request, not a scheduled run,
+  be the first thing a new deployment serves.
 
 One object carries every workspace. That is the right size for a deployment
 with hundreds of concurrent sockets. Sharding by organization is the path if it

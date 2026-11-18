@@ -7,7 +7,7 @@
       "main": true
     }
   },
-  "regions": ["hnd1"],
+  "regions": ["cle1"],
   "crons": [
     { "path": "/api/cron/analytics-snapshots", "schedule": "0 */6 * * *" },
     { "path": "/api/cron/notifications", "schedule": "* * * * *" },
