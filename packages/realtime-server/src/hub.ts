@@ -289,6 +289,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
 
   const connections = new Map<string, Connection>();
   let closing = false;
+  let activeSessionSweep: Promise<void> | undefined;
   const presence = new PresenceStore(presenceTtlMs);
   const issueTeamBoundaries = new IssueTeamBoundaries(
     issueTeamBoundaryTtlMs,
@@ -349,7 +350,7 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     connection.close(SESSION_REVOKED_CLOSE_CODE, 'session_revoked');
   }
 
-  async function sweepSessions(): Promise<void> {
+  async function checkLiveSessions(): Promise<void> {
     const open = [...connections.values()];
     if (open.length === 0) return;
     const live = await liveSessionIds(open.map((connection) => connection.principal.sessionId));
@@ -359,6 +360,14 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
       if (live.has(connection.principal.sessionId)) continue;
       closeRevokedSession(connection);
     }
+  }
+
+  function sweepSessions(): Promise<void> {
+    if (closing) return Promise.resolve();
+    activeSessionSweep ??= checkLiveSessions().finally(() => {
+      activeSessionSweep = undefined;
+    });
+    return activeSessionSweep;
   }
 
   async function revalidateSessionsFor(userId: string): Promise<void> {
@@ -1244,18 +1253,11 @@ export async function createRealtimeHub(options: RealtimeHubOptions = {}): Promi
     return presence.size > 0 || issueTeamBoundaries.size > 0;
   }
 
-  let sessionSweepInFlight = false;
-
   function sweepSessionsUnlessBusy(): void {
-    if (closing || sessionSweepInFlight) return;
-    sessionSweepInFlight = true;
-    sweepSessions()
-      .catch((error: unknown) => {
-        logger.error('session sweep failed', errorFields(error));
-      })
-      .finally(() => {
-        sessionSweepInFlight = false;
-      });
+    if (closing || activeSessionSweep !== undefined) return;
+    sweepSessions().catch((error: unknown) => {
+      logger.error('session sweep failed', errorFields(error));
+    });
   }
 
   const intervals =

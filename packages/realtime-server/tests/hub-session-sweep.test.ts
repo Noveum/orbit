@@ -2,7 +2,7 @@ import { expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-for (const mode of ['serial', 'close', 'removed', 'terminal'] as const) {
+for (const mode of ['serial', 'manual', 'close', 'removed', 'terminal'] as const) {
   it(`preserves session sweep lifecycle through ${mode}`, () => {
     const child = Bun.spawnSync(
       [
