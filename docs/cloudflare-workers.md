@@ -85,7 +85,7 @@ connections open at once, and storage and provider calls need some of them.
 | Limit | Value | Where Orbit stands |
 | --- | --- | --- |
 | Worker size | 64 MiB uncompressed | about 18 MiB |
-| Startup | 1 second | checked by every deploy |
+| Startup | 1 second | about 0.7 seconds, measured by a deploy |
 | CPU per request | 30 seconds default, 5 minutes with `limits.cpu_ms` | set to 5 minutes |
 | CPU per cron run | 30 seconds for schedules under an hour | the minute crons wait on IO |
 | Wall time per cron run | 15 minutes | Vercel allowed 5 |
@@ -178,13 +178,16 @@ and a Hyperdrive config that points at the service. No DNS record is involved.
 ```
 npx wrangler tunnel create orbit-database
 npx wrangler tunnel run orbit-database
-npx wrangler vpc service create orbit-database --type tcp --app-protocol postgresql --tunnel-id <TUNNEL ID> --ipv4 <DATABASE ADDRESS> --tcp-port 5432
+npx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
+npx wrangler vpc service create orbit-database --type tcp --app-protocol postgresql --tunnel-id <TUNNEL ID> --ipv4 <DATABASE ADDRESS> --tcp-port 5432 --cert-verification-mode verify_full --certificate-authority <CA ID>
 npx wrangler hyperdrive create orbit-database --service-id <SERVICE ID> --database <DATABASE> --origin-user <USER> --origin-password <PASSWORD> --caching-disabled
 ```
 
-Run the tunnel as a service on a host inside the private network. These
-commands are taken from Wrangler 4.164 and have not been run for Orbit, whose
-hosted database has a public address.
+Run the tunnel as a service on a host inside the private network. Two things
+stop the last command if they are missing. The database must accept TLS:
+Hyperdrive refuses an origin that does not. And a certificate from a private CA
+is only trusted once that CA is uploaded and named on the VPC service. The
+upload takes a CA certificate, not the server's own self signed certificate.
 
 The CA file must hold a single certificate. Hyperdrive opens up to about 100
 origin connections on the paid plan, so check that against the database's own
@@ -194,7 +197,13 @@ connection limit.
 
 `NODE_ENV=production` is set in `wrangler.jsonc`, because better-auth only
 rate limits in production and Workers do not set it. Everything else is a
-secret, set with `wrangler secret put NAME` or `wrangler secret bulk`:
+secret.
+
+The first deploy has to carry the required secrets with it, as
+`wrangler deploy --secrets-file <file>`. Cloudflare runs the Worker's startup
+code while it accepts an upload, and the app validates `BETTER_AUTH_SECRET` and
+reads `DATABASE_URL` at startup, so an upload without them is rejected. After
+that, `wrangler secret put NAME` and `wrangler secret bulk` work as usual.
 
 - Required: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
   `NEXT_PUBLIC_APP_URL`, `CRON_SECRET`, `EMAIL_FROM`, `RESEND_API_KEY`.
