@@ -1,8 +1,4 @@
-import type {
-  ExecutionContext,
-  Fetcher,
-  ScheduledController,
-} from '@cloudflare/workers-types/index.ts';
+import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types/index.ts';
 import { withRequestScopedDatabase } from '@orbit/db';
 import app from 'vinext/server/fetch-handler';
 import { withEdgeClientAddress } from '../src/lib/cloudflare/client-address.ts';
@@ -24,11 +20,6 @@ function serve(
   context: ExecutionContext,
 ): Promise<Response> {
   return withRequestScopedDatabase(() => app.fetch(request, bindings, context));
-}
-
-async function nearTheDatabase(placed: Fetcher, request: Request): Promise<Response> {
-  const response = await placed.fetch(request.url, { headers: request.headers });
-  return response as unknown as Response;
 }
 
 function publicOrigin(): string {
@@ -57,14 +48,12 @@ export default {
     bindings: WorkerBindings,
     context: ExecutionContext,
   ): Promise<void> {
-    const placed = bindings.SELF;
     await runCronJobs(
       controller.cron,
       publicOrigin(),
       process.env['CRON_SECRET'] ?? '',
-      placed === undefined
-        ? (request) => serve(request, bindings, context)
-        : (request) => nearTheDatabase(placed, request),
+      (request) => serve(request, bindings, context),
+      bindings.SELF,
     );
   },
 };

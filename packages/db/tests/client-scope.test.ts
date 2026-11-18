@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, TransactionRollbackError } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   createDatabaseScope,
@@ -34,6 +34,7 @@ describe('a request scoped database', () => {
         expect(db.$client).not.toBe(pool);
         expect(typeof db.$client.unsafe).toBe('function');
         expect(db.$client.options.prepare).toBe(true);
+        expect(db.$client.options.fetch_types).toBe(false);
       });
     } finally {
       registerPrivateDatabaseProxy(undefined);
@@ -87,39 +88,40 @@ describe('a request scoped database', () => {
   it('round trips array, json and timestamp columns on a scoped connection, which looks up no types', async () => {
     const id = `scoped-array-${crypto.randomUUID()}`;
     const createdAt = new Date('2026-11-18T12:00:00.000Z');
-    const stored = await withRequestScopedDatabase(async () => {
-      try {
-        await db.insert(schema.oauthProviderClient).values({
-          id,
-          clientId: id,
-          redirectUris: ['https://one.example/callback', 'https://two.example/a,b "quoted"'],
-          scopes: [],
-          metadata: { nested: { values: [1, 'two'] } },
-          createdAt,
-        });
-        const [row] = await db
-          .select({
-            redirectUris: schema.oauthProviderClient.redirectUris,
-            scopes: schema.oauthProviderClient.scopes,
-            clientCredentialsScopes: schema.oauthProviderClient.clientCredentialsScopes,
-            metadata: schema.oauthProviderClient.metadata,
-            createdAt: schema.oauthProviderClient.createdAt,
-            disabled: schema.oauthProviderClient.disabled,
-          })
-          .from(schema.oauthProviderClient)
-          .where(eq(schema.oauthProviderClient.id, id));
-        return row;
-      } finally {
-        await db.delete(schema.oauthProviderClient).where(eq(schema.oauthProviderClient.id, id));
-      }
-    });
-    expect(stored).toEqual({
-      redirectUris: ['https://one.example/callback', 'https://two.example/a,b "quoted"'],
-      scopes: [],
-      clientCredentialsScopes: [],
-      metadata: { nested: { values: [1, 'two'] } },
-      createdAt,
-      disabled: false,
+    await withRequestScopedDatabase(async () => {
+      expect(db.$client.options.fetch_types).toBe(false);
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.insert(schema.oauthProviderClient).values({
+            id,
+            clientId: id,
+            redirectUris: ['https://one.example/callback', 'https://two.example/a,b "quoted"'],
+            scopes: [],
+            metadata: { nested: { values: [1, 'two'] } },
+            createdAt,
+          });
+          const [row] = await tx
+            .select({
+              redirectUris: schema.oauthProviderClient.redirectUris,
+              scopes: schema.oauthProviderClient.scopes,
+              clientCredentialsScopes: schema.oauthProviderClient.clientCredentialsScopes,
+              metadata: schema.oauthProviderClient.metadata,
+              createdAt: schema.oauthProviderClient.createdAt,
+              disabled: schema.oauthProviderClient.disabled,
+            })
+            .from(schema.oauthProviderClient)
+            .where(eq(schema.oauthProviderClient.id, id));
+          expect(row).toEqual({
+            redirectUris: ['https://one.example/callback', 'https://two.example/a,b "quoted"'],
+            scopes: [],
+            clientCredentialsScopes: [],
+            metadata: { nested: { values: [1, 'two'] } },
+            createdAt,
+            disabled: false,
+          });
+          tx.rollback();
+        }),
+      ).rejects.toBeInstanceOf(TransactionRollbackError);
     });
   });
 
