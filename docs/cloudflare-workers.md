@@ -44,13 +44,15 @@ The differences are in what surrounds the hub:
 - Presence and the issue team boundary cache live in memory only. While either
   holds entries the object keeps a timer pending so it is not evicted, then
   lets itself hibernate once they expire.
-- The object is created without a location hint, so it starts next to the
-  placed Worker that first asks for it. A hint is only a preference over a
-  wide area and did worse: from a Worker placed for `aws:us-east-2`, which
-  runs in Chicago, twelve objects without a hint all started in Chicago, while
-  twelve with the `enam` hint started in Chicago, Atlanta, Ashburn and Miami.
-  An object never moves once created, so let a request, not a scheduled run,
-  be the first thing a new deployment serves.
+- Cloudflare chooses the location of a new object when it is first accessed.
+  In one sample, a Worker placed for `aws:us-east-2` ran in Chicago. All
+  twelve new objects requested without a hint started in Chicago. Twelve
+  requested with the `enam` hint started in Chicago, Atlanta, Ashburn and
+  Miami. Have a request from the placed Worker initialize new objects before
+  enabling schedules. Existing named objects retain their location across
+  deployments. When moving regions, check latency to the existing realtime
+  hub and rate limiter as part of the cutover.
+  [Cloudflare data location](https://developers.cloudflare.com/durable-objects/reference/data-location/)
 
 One object carries every workspace. That is the right size for a deployment
 with hundreds of concurrent sockets. Sharding by organization is the path if it
