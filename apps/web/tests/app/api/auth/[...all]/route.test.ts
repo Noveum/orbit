@@ -339,8 +339,8 @@ describe('MCP authorize consent boundary', () => {
     );
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: 'unsupported_grant_type' });
-    expect(logged.mock.calls).toContainEqual([
-      JSON.stringify({ event: 'oauth.token.rejected', stage: 'unsupported_grant' }),
+    expect(logged.mock.calls).toEqual([
+      [JSON.stringify({ event: 'oauth.token.rejected', stage: 'unsupported_grant' })],
     ]);
     expect(JSON.stringify(logged.mock.calls)).not.toContain('private-client-value');
   });
