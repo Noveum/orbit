@@ -295,7 +295,9 @@ has an IPv6 address only, which Hyperdrive reaches. If you must use a pooler,
 use its session mode port, never the transaction one. Each Hyperdrive configuration
 has its own origin connection pool. On a Workers Paid plan you can configure
 up to 1,500 connections per configuration. Pass `--origin-connection-limit`
-with a value that leaves headroom in `max_connections`. [Cloudflare’s November 2026 limits update](https://developers.cloudflare.com/changelog/post/2026-11-11-hyperdrive-raised-limits/).
+for each configuration. These are soft limits. Budget the old and new pools
+together during a cutover, including direct database clients, and leave
+headroom below Postgres `max_connections`. [Cloudflare’s November 2026 limits update](https://developers.cloudflare.com/changelog/post/2026-11-11-hyperdrive-raised-limits/).
 
 Add the binding to `wrangler.jsonc`.
 
