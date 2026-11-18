@@ -105,11 +105,20 @@ function openPool(idleSeconds: number = PROCESS_IDLE_SECONDS): Pool {
 
 function openScopedPool(): Pool {
   const privateProxyUrl = privateDatabaseProxyUrl();
-  if (privateProxyUrl === undefined) return openPool(SCOPED_IDLE_SECONDS);
+  if (privateProxyUrl === undefined) {
+    return postgres(connectionString, {
+      max: maxConnections,
+      idle_timeout: SCOPED_IDLE_SECONDS,
+      prepare: prepareStatements,
+      fetch_types: false,
+      ...(ssl === undefined ? {} : { ssl }),
+    });
+  }
   return postgres(privateProxyUrl, {
     max: maxConnections,
     idle_timeout: SCOPED_IDLE_SECONDS,
     prepare: true,
+    fetch_types: false,
   });
 }
 

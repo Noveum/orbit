@@ -118,6 +118,71 @@ by [Hyperdrive's Postgres.js driver guidance](https://developers.cloudflare.com/
 Keep `DATABASE_POOL_MAX` at 5 or lower. A Worker request may hold six
 connections open at once, and storage and provider calls need some of them.
 
+### Speed
+
+A Worker placed next to the database is still not inside the database's cloud.
+Every query crosses from Cloudflare to the provider and back, so the number of
+round trips decides how fast a request is. Measured from a Worker placed in
+Tokyo against a Supabase database in `ap-northeast-1`:
+
+| What | Time |
+| --- | --- |
+| One query on an open connection, Hyperdrive to the Supabase pooler | 9 ms |
+| One query on an open connection, Hyperdrive straight to Postgres | 4 ms |
+| A fresh connection, then five parameterised queries, as the driver ships | about 120 ms |
+| The same with the two changes below, through the pooler | about 58 ms |
+| The same, straight to Postgres | about 29 ms |
+
+Three things keep the round trips down, and all three matter:
+
+- **Connect Hyperdrive directly to Postgres.** Hyperdrive
+  already pools. In the Tokyo measurement above, a warm query took 4 ms through
+  a direct connection and 9 ms through the pooler. On Supabase the direct host
+  is `db.<project>.supabase.co:5432`. Use the database role configured for
+  Orbit with the privileges its runtime needs.
+- **Request scoped pools do not fetch types.** The driver otherwise spends one
+  round trip on each new connection reading the array types, and a Worker
+  opens a new connection for every request. Drizzle parses and writes array
+  columns itself, so nothing is lost. Raw SQL on a request path must not pass
+  a JavaScript array as a parameter or expect one back.
+- **The Workers build sends a parameterised query in one round trip.** As
+  shipped, the driver first asks the server to describe each statement a
+  connection has not seen, which doubles every query on a fresh connection.
+  `apps/web/vite.config.ts` rewrites that one decision in the driver's Workers
+  build so a pool that does not fetch types also does not describe first. The
+  build checks the installed driver before rewriting it and verifies the
+  resulting condition in the compiled server bundle.
+
+Cron Triggers do not follow placement. Three samples started in Paris and
+Chicago. The default configuration runs each job on the Worker that receives
+the scheduled event. To run jobs in the placed region, deploy the Worker once
+with the schedules disabled, then add a service binding to that deployment's
+Wrangler configuration. This example targets a Worker named `orbit-staging`.
+
+```json
+"services": [{ "binding": "SELF", "service": "orbit-staging" }]
+```
+
+Set the target to the exact Worker name for each environment before rebuilding
+or renaming it. Wrangler's `--name` override changes the deployed Worker name
+and leaves the literal service target intact. The binding receives that
+environment's authenticated cron requests. Keep the schedules disabled until
+the scheduler handoff described below. With the binding enabled, the scheduled
+handler sends each job through the placed fetch handler.
+
+A Durable Object lands where Cloudflare chooses. From a Worker placed in
+Tokyo, about four in five landed in Tokyo and the rest in Osaka, 3 ms and
+10 ms from the Worker.
+
+The first request a new isolate serves is slow, 0.6 to 1.5 seconds in most
+samples and 2.7 seconds in one, because the bundle starts and the route
+loads. Warm requests are what the table above describes.
+
+Where a visitor enters Cloudflare matters as much as any of this. A zone on
+the Free plan is not always served from the nearest data center. Check with
+`curl https://<your host>/cdn-cgi/trace` from where your users are and read
+the `colo` line.
+
 ### Limits that matter
 
 | Limit | Value | Where Orbit stands |
@@ -206,6 +271,7 @@ Declared in `apps/web/wrangler.jsonc`:
 | `AUTH_RATE_LIMITER` | Durable Object, `AuthRateLimiterObject` | auth rate limits |
 | `DEFERRED_WORK` | Durable Object, `DeferredWorkObject` | background work that outlives a response |
 | `HYPERDRIVE` | Hyperdrive, add it yourself | Postgres through a verified, pooled connection |
+| `SELF` | optional service binding to this deployment | scheduled jobs run in the placed location when configured |
 
 Migration `v1` creates the first two classes with SQLite storage and `v2` adds
 `DeferredWorkObject`. Later class changes need a new migration tag.
@@ -221,8 +287,19 @@ bunx wrangler hyperdrive create orbit-database --connection-string="postgres://U
 queries by default, and Orbit reads rows straight after writing them and
 pushes changes over the socket, so a cached read shows stale data.
 
-Use the session mode port, not a transaction pooler, because Hyperdrive pools
-for you. Then add the binding to `wrangler.jsonc`:
+Connect to Postgres itself where the provider allows it, because Hyperdrive
+pools connections. On Supabase use `db.<project>.supabase.co` on port 5432.
+Supabase shows `postgres` as its default role. A dedicated application role
+with the required Orbit permissions also works. The direct host
+has an IPv6 address only, which Hyperdrive reaches. If you must use a pooler,
+use its session mode port, never the transaction one. Each Hyperdrive configuration
+has its own origin connection pool. On a Workers Paid plan you can configure
+up to 1,500 connections per configuration. Pass `--origin-connection-limit`
+for each configuration. These are soft limits. Budget the old and new pools
+together during a cutover, including direct database clients, and leave
+headroom below Postgres `max_connections`. [Cloudflare’s November 2026 limits update](https://developers.cloudflare.com/changelog/post/2026-11-11-hyperdrive-raised-limits/).
+
+Add the binding to `wrangler.jsonc`.
 
 ```
 "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<ID FROM THE SECOND COMMAND>" }]
@@ -259,9 +336,8 @@ Hyperdrive refuses an origin that does not. And a certificate from a private CA
 is only trusted once that CA is uploaded and named on the VPC service. The
 upload takes a CA certificate, not the server's own self signed certificate.
 
-The CA file must hold a single certificate. Hyperdrive opens up to about 100
-origin connections on the paid plan, so check that against the database's own
-connection limit.
+The CA file must hold a single certificate. Set the origin connection limit
+to fit the database's available connection budget.
 
 ### Variables and secrets
 

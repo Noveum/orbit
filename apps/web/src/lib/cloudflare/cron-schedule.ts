@@ -10,7 +10,16 @@ export interface CronOutcome {
   readonly status: number;
 }
 
-export type CronDispatch = (request: Request) => Promise<Response>;
+interface CronResponse {
+  readonly status: number;
+  readonly body: { cancel(): Promise<void> } | null;
+}
+
+export type CronDispatch = (request: Request) => Promise<CronResponse>;
+
+interface CronService {
+  fetch(url: string, init: { headers: Headers; redirect: 'manual' }): Promise<CronResponse>;
+}
 
 export function cronPaths(expression: string): readonly string[] {
   return CRON_SCHEDULE[expression] ?? [];
@@ -21,15 +30,20 @@ export async function runCronJobs(
   origin: string,
   secret: string,
   dispatch: CronDispatch,
+  placed?: CronService,
 ): Promise<CronOutcome[]> {
   const paths = cronPaths(expression);
   if (paths.length === 0) throw new Error(`No cron job is scheduled for "${expression}".`);
   if (secret.length === 0) throw new Error('CRON_SECRET is required to run scheduled jobs.');
   const settled = await Promise.allSettled(
     paths.map(async (path): Promise<CronOutcome> => {
-      const response = await dispatch(
-        new Request(new URL(path, origin), { headers: { authorization: `Bearer ${secret}` } }),
-      );
+      const request = new Request(new URL(path, origin), {
+        headers: { authorization: `Bearer ${secret}` },
+      });
+      const response =
+        placed === undefined
+          ? await dispatch(request)
+          : await placed.fetch(request.url, { headers: request.headers, redirect: 'manual' });
       await response.body?.cancel();
       return { path, status: response.status };
     }),
@@ -43,7 +57,8 @@ export async function runCronJobs(
       return;
     }
     outcomes.push(result.value);
-    if (result.value.status >= 400) failures.push(`${path} answered ${result.value.status}`);
+    if (result.value.status < 200 || result.value.status >= 300)
+      failures.push(`${path} answered ${result.value.status}`);
   });
   if (failures.length > 0) throw new Error(`Scheduled jobs failed: ${failures.join('; ')}`);
   return outcomes;

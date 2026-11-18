@@ -41,6 +41,32 @@ describe('the Workers cron schedule', () => {
 });
 
 describe('running scheduled jobs', () => {
+  it('sends authenticated jobs directly to the placed service and reports a redirect as failure', async () => {
+    const calls: string[] = [];
+    const service = {
+      fetch(url: string, init: RequestInit): Promise<Response> {
+        const request = new Request(url, init);
+        calls.push(new URL(request.url).pathname);
+        expect(request.method).toBe('GET');
+        expect(request.headers.get('authorization')).toBe('Bearer fixture-secret');
+        expect(request.redirect).toBe('manual');
+        return Promise.resolve(Response.redirect('https://orbit.example/sign-in', 302));
+      },
+    };
+    await expect(
+      runCronJobs(
+        '0 * * * *',
+        'https://orbit.example',
+        'fixture-secret',
+        () => {
+          throw new Error('The placed job fell back to the local handler');
+        },
+        service,
+      ),
+    ).rejects.toThrow('/api/cron/prune answered 302');
+    expect(calls).toEqual(['/api/cron/prune']);
+  });
+
   it('calls every path of the expression with the cron bearer token', async () => {
     const seen: { url: string; authorization: string | null }[] = [];
     const outcomes = await runCronJobs(
