@@ -7,5 +7,7 @@ export function registerPrivateDatabaseProxy(resolve: PrivateProxyUrlResolver | 
 }
 
 export function privateDatabaseProxyUrl(): string | undefined {
-  return resolvePrivateProxyUrl?.();
+  const url = resolvePrivateProxyUrl?.();
+  if (url?.trim() === '') throw new Error('The private database proxy has no connection string.');
+  return url;
 }

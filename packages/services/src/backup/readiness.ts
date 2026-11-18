@@ -142,7 +142,7 @@ export async function getRecoveryState(
     max: 1,
     connect_timeout: 5,
     idle_timeout: 5,
-    prepare: false,
+    prepare: transport === 'private-proxy',
     onnotice: (_notice) => undefined,
     ...(transport === 'private-proxy' ? {} : databaseTlsOptions(databaseUrl)),
   });

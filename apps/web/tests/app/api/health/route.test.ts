@@ -149,8 +149,8 @@ describe('/api/health route', () => {
 
     const origUrl = process.env['DATABASE_URL'];
     const origDirectUrl = process.env['DIRECT_URL'];
-    process.env['DATABASE_URL'] = 'postgres://orbit:orbit@localhost:59999/down_db';
-    delete process.env['DIRECT_URL'];
+    process.env['DATABASE_URL'] = reachableUrl;
+    process.env['DIRECT_URL'] = 'postgres://orbit:orbit@localhost:59999/down_db';
 
     try {
       expect((await GET()).status).toBe(503);
@@ -165,7 +165,17 @@ describe('/api/health route', () => {
       } else {
         process.env['DATABASE_URL'] = origUrl;
       }
-      if (origDirectUrl !== undefined) process.env['DIRECT_URL'] = origDirectUrl;
+      if (origDirectUrl === undefined) delete process.env['DIRECT_URL'];
+      else process.env['DIRECT_URL'] = origDirectUrl;
+    }
+  });
+
+  it('reports an invalid private database binding as unready', async () => {
+    registerPrivateDatabaseProxy(() => '');
+    try {
+      expect((await GET()).status).toBe(503);
+    } finally {
+      registerPrivateDatabaseProxy(undefined);
     }
   });
 });

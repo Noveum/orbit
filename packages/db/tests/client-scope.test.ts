@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   createDatabaseScope,
   db,
+  pool,
   registerPrivateDatabaseProxy,
   withRequestScopedDatabase,
 } from '../src/client.ts';
@@ -24,6 +25,20 @@ afterAll(() => {
 });
 
 describe('a request scoped database', () => {
+  it('exposes the callable Postgres.js client and uses prepared queries through Hyperdrive', () => {
+    expect(db.$client).toBe(pool);
+    registerPrivateDatabaseProxy(() => 'postgres://orbit:orbit@localhost:5432/orbit');
+    try {
+      withRequestScopedDatabase(() => {
+        expect(db.$client).not.toBe(pool);
+        expect(typeof db.$client.unsafe).toBe('function');
+        expect(db.$client.options.prepare).toBe(true);
+      });
+    } finally {
+      registerPrivateDatabaseProxy(undefined);
+    }
+  });
+
   it('opens its own connection instead of borrowing the process pool', async () => {
     const outside = await session();
     const inside = await withRequestScopedDatabase(session);

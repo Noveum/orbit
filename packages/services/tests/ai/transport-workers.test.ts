@@ -42,9 +42,9 @@ describe('safeFetch on the Workers runtime', () => {
 
   it('still refuses a literal private destination before any request', async () => {
     runAs('Cloudflare-Workers');
-    const upstream = spyOn(globalThis, 'fetch');
+    const upstream = spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ ok: true }));
     try {
-      await expect(safeFetch('http://169.254.169.254/latest/meta-data')).rejects.toThrow(
+      await expect(safeFetch('http://127.0.0.1', { allowPrivate: false })).rejects.toThrow(
         'Blocked connection to private destination',
       );
       expect(upstream).not.toHaveBeenCalled();

@@ -109,7 +109,7 @@ function openScopedPool(): Pool {
   return postgres(privateProxyUrl, {
     max: maxConnections,
     idle_timeout: SCOPED_IDLE_SECONDS,
-    prepare: prepareStatements,
+    prepare: true,
   });
 }
 
@@ -153,6 +153,7 @@ export function withRequestScopedDatabase<T>(run: () => T): T {
 export const db: Database = new Proxy(processDatabase, {
   get(_process, property) {
     const database = currentDatabase();
+    if (property === '$client') return database.$client;
     const value: unknown = Reflect.get(database, property, database);
     return typeof value === 'function' ? value.bind(database) : value;
   },

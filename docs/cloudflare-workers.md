@@ -94,6 +94,11 @@ run, and the `db` export resolves to the pool of the request it is called in.
 Outside a scope, which is every Node deployment, `db` is the process pool it
 always was.
 
+The realtime Durable Object keeps a lazy pool for the lifetime of its active
+instance. Its socket events and alarms share that pool, idle connections close
+after five seconds, and a new instance after hibernation or eviction starts
+with a fresh scope. See [persistent connections in Durable Objects](https://developers.cloudflare.com/hyperdrive/concepts/connection-lifecycle/#durable-objects-and-persistent-connections).
+
 Workers TCP sockets validate TLS against public roots and take no custom CA.
 A database whose certificate is signed by a private CA, which includes the
 Supabase pooler, therefore needs **Hyperdrive**: it holds the CA, verifies the
@@ -101,6 +106,10 @@ origin, and pools connections near the database. When a `HYPERDRIVE` binding
 exists the Worker connects scoped pools to it and sends no TLS options on that
 hop. Without the binding it connects to `DATABASE_URL` directly, which works
 for a database with a publicly trusted certificate.
+
+The Hyperdrive client and its health probe use prepared statements, as required
+by [Hyperdrive's Postgres.js driver guidance](https://developers.cloudflare.com/hyperdrive/examples/connect-to-postgres/postgres-drivers-and-libraries/postgres-js/).
+`DATABASE_PREPARED_STATEMENTS` controls direct database connections.
 
 Keep `DATABASE_POOL_MAX` at 5 or lower. A Worker request may hold six
 connections open at once, and storage and provider calls need some of them.
@@ -138,6 +147,15 @@ bun run preview:workers
 in the shell that builds, because `NEXT_PUBLIC_*` values are compiled in.
 `REDIS_URL` is not needed.
 
+If the config includes a `HYPERDRIVE` binding, export
+`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` in the shell that
+runs `preview:workers`. Point it at a development database. Wrangler's local
+proxy connects directly to this address for queries and health probes. For a
+remote development database, include `sslmode=verify-full` in that URL and,
+when required, `sslrootcert` with the path to its CA certificate. The local
+proxy obtains TLS settings from its connection string. See
+[local Hyperdrive configuration](https://developers.cloudflare.com/hyperdrive/configuration/local-development/).
+
 Run a cron by hand:
 
 ```
@@ -146,16 +164,27 @@ curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
 
 ## Deploy
 
+When replacing another production scheduler, stage the first Worker with
+`"triggers": { "crons": [] }` in the deployment checkout's
+`apps/web/wrangler.jsonc` before building. Keep this setting for every staged
+build until the scheduler handoff below.
+
+For the first deployment, prepare a secrets file outside the checkout with the
+runtime values listed below and point `WORKER_SECRETS_FILE` at its absolute path.
+
 ```
 cd apps/web
 bun run build:workers
-bun run deploy:workers
+bun run deploy:workers --secrets-file "$WORKER_SECRETS_FILE"
 ```
+
+Subsequent deployments can use `bun run deploy:workers`.
 
 `wrangler.jsonc` names no account. Set `CLOUDFLARE_ACCOUNT_ID` in the shell or
 the build settings when the login can reach more than one.
 
-For Workers Builds, set the root directory to `apps/web`, the build command to
+To use Workers Builds, bootstrap the Worker and its runtime secrets with the
+first deployment above. Then set the root directory to `apps/web`, the build command to
 `bun run build:workers`, the deploy command to
 `bunx wrangler deploy --config dist/server/wrangler.json`, and `NODE_VERSION`
 to `24`. Set `ORBIT_REQUIRE_SCHEMA_GUARD=1` and `DATABASE_URL` as build
@@ -180,8 +209,8 @@ Migration `v1` creates the first two classes with SQLite storage and `v2` adds
 ### Hyperdrive for a database behind a private CA
 
 ```
-npx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
-npx wrangler hyperdrive create orbit-database --connection-string="postgres://USER:PASSWORD@HOST:5432/DATABASE" --ca-certificate-id <ID FROM THE FIRST COMMAND> --sslmode verify-full --caching-disabled
+bunx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
+bunx wrangler hyperdrive create orbit-database --connection-string="postgres://USER:PASSWORD@HOST:5432/DATABASE" --ca-certificate-id <ID FROM THE FIRST COMMAND> --sslmode verify-full --caching-disabled
 ```
 
 `--caching-disabled` is not optional. Hyperdrive caches the result of read
@@ -204,14 +233,24 @@ from its TLS certificate. The tunnel host must resolve it to the private address
 
 ```
 bunx wrangler tunnel create orbit-database
+```
+
+Run the tunnel on a host inside the private network, as a service or in a
+separate terminal. The foreground process must stay running.
+
+```
 bunx wrangler tunnel run orbit-database
+```
+
+Continue configuring the service from the setup terminal.
+
+```
 bunx wrangler cert upload certificate-authority --ca-cert ./database-ca.pem --name orbit-database-ca
 bunx wrangler vpc service create orbit-database --type tcp --app-protocol postgresql --tunnel-id <TUNNEL ID> --hostname <DATABASE HOSTNAME> --tcp-port 5432 --cert-verification-mode verify_full --certificate-authority <CA ID>
 bunx wrangler hyperdrive create orbit-database --service-id <SERVICE ID> --database <DATABASE> --origin-user <USER> --origin-password <PASSWORD> --caching-disabled
 ```
 
-Run the tunnel as a service on a host inside the private network. Two things
-stop the last command if they are missing. The database must accept TLS:
+Two things stop the last command if they are missing. The database must accept TLS:
 Hyperdrive refuses an origin that does not. And a certificate from a private CA
 is only trusted once that CA is uploaded and named on the VPC service. The
 upload takes a CA certificate, not the server's own self signed certificate.
@@ -272,8 +311,12 @@ switch the five variables and resume writes on R2. Keys stay the same.
 3. Sign in, open the same issue in two browsers, rename it in one.
 4. Update the OAuth callback URLs at Google, GitHub and Slack only if the
    hostname changes. Moving the same hostname needs no change.
-5. Remove the crons from the old platform at the moment the Cron Triggers take
-   over, so no job runs twice against the same database.
+5. Disable the old scheduler, record the last completed run of each job, and let
+   active runs finish. Restore the four checked-in schedules in the deployment
+   checkout, rebuild and deploy the Worker. Allow up to 15 minutes for the
+   triggers to propagate. Check the Worker events against the recorded runs
+   and invoke any missed maintenance job once using its authenticated cron
+   route. See [Cron Trigger propagation](https://developers.cloudflare.com/workers/configuration/cron-triggers/).
 
 ## What is different or missing
 
