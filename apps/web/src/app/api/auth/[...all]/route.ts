@@ -193,11 +193,30 @@ function pendingMcpTokenHash(authorizationCodeId: string): string {
   return providerTokenHash(`orbit-pending-code:${authorizationCodeId}`);
 }
 
+type TokenRejectionStage =
+  | 'rate_limit_probe'
+  | 'request_format'
+  | 'unsupported_grant'
+  | 'missing_code'
+  | 'pkce_format'
+  | 'authorization_code'
+  | 'missing_refresh_token'
+  | 'refresh_credential'
+  | 'provider_exchange'
+  | 'issued_token_binding';
+
+function logTokenRejection(stage: TokenRejectionStage, status: number): void {
+  if (status !== 400) return;
+  console.info(JSON.stringify({ event: 'oauth.token.rejected', stage }));
+}
+
 function mcpTokenError(
   error: 'invalid_grant' | 'invalid_request' | 'server_error' | 'unsupported_grant_type',
   errorDescription: string,
   status: number,
+  stage?: TokenRejectionStage,
 ): Response {
+  if (stage !== undefined) logTokenRejection(stage, status);
   return Response.json(
     { error, error_description: errorDescription },
     { status, headers: { 'cache-control': 'no-store', pragma: 'no-cache' } },
@@ -673,7 +692,10 @@ async function secureMcpTokenResponse(
   exchange: McpTokenExchange,
   secret: string,
 ): Promise<Response> {
-  if (!response.ok) return response;
+  if (!response.ok) {
+    logTokenRejection('provider_exchange', response.status);
+    return response;
+  }
   let raw: unknown;
   try {
     raw = (await response.clone().json()) as unknown;
@@ -691,7 +713,12 @@ async function secureMcpTokenResponse(
     token.data.scope,
   );
   if (scopes === null) {
-    return mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
+    return mcpTokenError(
+      'invalid_grant',
+      'Reconnect Orbit to continue.',
+      400,
+      'issued_token_binding',
+    );
   }
   const bind = exchange.kind === 'agent' ? bindAgentMcpCredential : bindMcpCredential;
   const secured = {
@@ -711,10 +738,13 @@ async function secureMcpTokenResponse(
 
 async function handleMcpTokenRequest(request: Request): Promise<Response> {
   const rateLimitResponse = await applyMcpTokenRateLimit(request);
-  if (rateLimitResponse !== null) return rateLimitResponse;
+  if (rateLimitResponse !== null) {
+    logTokenRejection('rate_limit_probe', rateLimitResponse.status);
+    return rateLimitResponse;
+  }
   const parsed = await parsedMcpTokenRequest(request);
   if (parsed === null)
-    return mcpTokenError('invalid_request', 'The token request is invalid.', 400);
+    return mcpTokenError('invalid_request', 'The token request is invalid.', 400, 'request_format');
   if (
     parsed.body.grant_type !== 'authorization_code' &&
     parsed.body.grant_type !== 'refresh_token'
@@ -723,29 +753,55 @@ async function handleMcpTokenRequest(request: Request): Promise<Response> {
       'unsupported_grant_type',
       'The requested grant type is not supported.',
       400,
+      'unsupported_grant',
     );
   }
   const secret = serverEnv().BETTER_AUTH_SECRET;
   if (parsed.body.grant_type === 'authorization_code') {
     if (parsed.body.code === undefined) {
-      return mcpTokenError('invalid_request', 'An authorization code is required.', 400);
+      return mcpTokenError(
+        'invalid_request',
+        'An authorization code is required.',
+        400,
+        'missing_code',
+      );
     }
     if (!mcpCodeVerifierSchema.safeParse(parsed.body.code_verifier).success) {
-      return mcpTokenError('invalid_request', 'The PKCE code verifier is invalid.', 400);
+      return mcpTokenError(
+        'invalid_request',
+        'The PKCE code verifier is invalid.',
+        400,
+        'pkce_format',
+      );
     }
     const exchange = await authorizationCodeExchange(parsed.body.code);
     if (exchange === null || exchange === undefined) {
       if (exchange === undefined) await issueMcpToken(request, parsed.body);
-      return mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
+      return mcpTokenError(
+        'invalid_grant',
+        'Reconnect Orbit to continue.',
+        400,
+        'authorization_code',
+      );
     }
     return secureMcpTokenResponse(await issueMcpToken(request, parsed.body), exchange, secret);
   }
   if (parsed.body.refresh_token === undefined) {
-    return mcpTokenError('invalid_request', 'A refresh token is required.', 400);
+    return mcpTokenError(
+      'invalid_request',
+      'A refresh token is required.',
+      400,
+      'missing_refresh_token',
+    );
   }
   const exchange = await refreshExchange(parsed.body.refresh_token, secret);
   if (exchange === null || exchange.sourceRefreshToken === null) {
-    return mcpTokenError('invalid_grant', 'Reconnect Orbit to continue.', 400);
+    return mcpTokenError(
+      'invalid_grant',
+      'Reconnect Orbit to continue.',
+      400,
+      'refresh_credential',
+    );
   }
   return secureMcpTokenResponse(
     await issueMcpToken(request, bodyWithRefreshToken(parsed, exchange.sourceRefreshToken)),
