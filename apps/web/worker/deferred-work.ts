@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { createDatabaseScope } from '@orbit/db';
 import { performDeferredWork } from '../src/lib/background/perform.ts';
-import { deferredWorkKey, deferredWorkSchema } from '../src/lib/background/work.ts';
+import { deferredWorkSchema } from '../src/lib/background/work.ts';
 import { DeferredWorkSlot } from '../src/lib/cloudflare/deferred-work-slot.ts';
 import type { WorkerBindings } from './bindings.ts';
 
@@ -23,12 +23,6 @@ export class DeferredWorkObject extends DurableObject<WorkerBindings> {
   }
 
   async alarm(): Promise<void> {
-    await this.slot().run(async (work) => {
-      try {
-        await createDatabaseScope()(() => performDeferredWork(work));
-      } catch (error: unknown) {
-        console.error(`[orbit] background work ${deferredWorkKey(work)} failed:`, error);
-      }
-    });
+    await createDatabaseScope()(() => this.slot().run(performDeferredWork));
   }
 }
