@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { z } from 'zod';
+import { privateDatabaseProxyUrl } from './private-proxy.ts';
 import * as schema from './schema/index.ts';
 import { resolveDatabaseTls } from './tls-policy.ts';
 
@@ -102,16 +103,8 @@ function openPool(idleSeconds: number = PROCESS_IDLE_SECONDS): Pool {
   });
 }
 
-export type PrivateProxyUrlResolver = () => string | undefined;
-
-let resolvePrivateProxyUrl: PrivateProxyUrlResolver | undefined;
-
-export function registerPrivateDatabaseProxy(resolve: PrivateProxyUrlResolver | undefined): void {
-  resolvePrivateProxyUrl = resolve;
-}
-
 function openScopedPool(): Pool {
-  const privateProxyUrl = resolvePrivateProxyUrl?.();
+  const privateProxyUrl = privateDatabaseProxyUrl();
   if (privateProxyUrl === undefined) return openPool(SCOPED_IDLE_SECONDS);
   return postgres(privateProxyUrl, {
     max: maxConnections,
@@ -164,3 +157,9 @@ export const db: Database = new Proxy(processDatabase, {
     return typeof value === 'function' ? value.bind(database) : value;
   },
 });
+
+export {
+  type PrivateProxyUrlResolver,
+  privateDatabaseProxyUrl,
+  registerPrivateDatabaseProxy,
+} from './private-proxy.ts';

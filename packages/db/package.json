@@ -8,6 +8,7 @@
     "./check-drift": "./src/check-drift.ts",
     "./connection": "./src/tls-policy.ts",
     "./migration-release": "./src/migration-release.ts",
+    "./private-proxy": "./src/private-proxy.ts",
     "./schema": "./src/schema/index.ts",
     "./test-lane": "./src/test-lane.ts"
   },

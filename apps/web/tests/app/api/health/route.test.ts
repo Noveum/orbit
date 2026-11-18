@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { registerPrivateDatabaseProxy } from '@orbit/db/private-proxy';
 import { getRecoveryState, setRecoveryState } from '@orbit/services/backup/readiness';
 import { resolveTestDatabaseUrl } from '../../../../../../scripts/test-env.ts';
 import { GET } from '../../../../src/app/api/health/route.ts';
@@ -139,6 +140,32 @@ describe('/api/health route', () => {
       } else {
         process.env['DIRECT_URL'] = origDirectUrl;
       }
+    }
+  });
+
+  it('checks readiness through a registered private proxy instead of the direct URL', async () => {
+    const reachableUrl = resolveTestDatabaseUrl('orbit_test_web');
+    expect(await isDatabaseReachable(reachableUrl)).toBe(true);
+
+    const origUrl = process.env['DATABASE_URL'];
+    const origDirectUrl = process.env['DIRECT_URL'];
+    process.env['DATABASE_URL'] = 'postgres://orbit:orbit@localhost:59999/down_db';
+    delete process.env['DIRECT_URL'];
+
+    try {
+      expect((await GET()).status).toBe(503);
+      registerPrivateDatabaseProxy(() => reachableUrl);
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ status: 'ok', service: 'web' });
+    } finally {
+      registerPrivateDatabaseProxy(undefined);
+      if (origUrl === undefined) {
+        delete process.env['DATABASE_URL'];
+      } else {
+        process.env['DATABASE_URL'] = origUrl;
+      }
+      if (origDirectUrl !== undefined) process.env['DIRECT_URL'] = origDirectUrl;
     }
   });
 });

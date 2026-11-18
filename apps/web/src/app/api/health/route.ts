@@ -1,13 +1,18 @@
+import { privateDatabaseProxyUrl } from '@orbit/db/private-proxy';
 import { getRecoveryState } from '@orbit/services/backup/readiness';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<Response> {
-  const databaseUrl = process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'];
+  const proxyUrl = privateDatabaseProxyUrl();
+  const databaseUrl = proxyUrl ?? process.env['DIRECT_URL'] ?? process.env['DATABASE_URL'];
 
   if (databaseUrl !== undefined && databaseUrl.length > 0) {
     try {
-      const recoveryState = await getRecoveryState(databaseUrl);
+      const recoveryState = await getRecoveryState(
+        databaseUrl,
+        proxyUrl === undefined ? 'direct' : 'private-proxy',
+      );
       if (recoveryState !== null && recoveryState.status !== 'ready') {
         return Response.json(
           {
