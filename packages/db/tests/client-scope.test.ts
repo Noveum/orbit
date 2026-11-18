@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   createDatabaseScope,
@@ -8,6 +8,7 @@ import {
   registerPrivateDatabaseProxy,
   withRequestScopedDatabase,
 } from '../src/client.ts';
+import * as schema from '../src/schema/index.ts';
 
 const sessionSchema = z.array(z.object({ pid: z.number(), application: z.string() })).length(1);
 
@@ -81,6 +82,45 @@ describe('a request scoped database', () => {
       return { own: own.pid, within };
     });
     expect(result.within).toBe(result.own);
+  });
+
+  it('round trips array, json and timestamp columns on a scoped connection, which looks up no types', async () => {
+    const id = `scoped-array-${crypto.randomUUID()}`;
+    const createdAt = new Date('2026-11-18T12:00:00.000Z');
+    const stored = await withRequestScopedDatabase(async () => {
+      try {
+        await db.insert(schema.oauthProviderClient).values({
+          id,
+          clientId: id,
+          redirectUris: ['https://one.example/callback', 'https://two.example/a,b "quoted"'],
+          scopes: [],
+          metadata: { nested: { values: [1, 'two'] } },
+          createdAt,
+        });
+        const [row] = await db
+          .select({
+            redirectUris: schema.oauthProviderClient.redirectUris,
+            scopes: schema.oauthProviderClient.scopes,
+            clientCredentialsScopes: schema.oauthProviderClient.clientCredentialsScopes,
+            metadata: schema.oauthProviderClient.metadata,
+            createdAt: schema.oauthProviderClient.createdAt,
+            disabled: schema.oauthProviderClient.disabled,
+          })
+          .from(schema.oauthProviderClient)
+          .where(eq(schema.oauthProviderClient.id, id));
+        return row;
+      } finally {
+        await db.delete(schema.oauthProviderClient).where(eq(schema.oauthProviderClient.id, id));
+      }
+    });
+    expect(stored).toEqual({
+      redirectUris: ['https://one.example/callback', 'https://two.example/a,b "quoted"'],
+      scopes: [],
+      clientCredentialsScopes: [],
+      metadata: { nested: { values: [1, 'two'] } },
+      createdAt,
+      disabled: false,
+    });
   });
 
   it('asks for the private proxy when a scoped request connects, never before', async () => {
