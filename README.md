@@ -280,6 +280,8 @@ editor picks up the conventions without you explaining them each time.
 
 ## Contributors
 
+Repository maintainers: [Shashank Agarwal](https://www.linkedin.com/in/shashankagarwal2/) and [@pulkitxm](https://github.com/pulkitxm). See [CODEOWNERS](.github/CODEOWNERS) for code review ownership.
+
 <a href="https://github.com/Noveum/orbit/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=Noveum/orbit" alt="Contributors" />
 </a>
