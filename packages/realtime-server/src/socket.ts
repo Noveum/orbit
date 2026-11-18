@@ -3,6 +3,7 @@ import type { ServerWebSocket } from 'bun';
 export const SOCKET_OPEN = 1;
 
 export interface RealtimeSocket {
+  readonly id?: string;
   readonly readyState: number;
   bufferedAmount(): number;
   send(data: string): void;

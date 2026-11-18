@@ -178,6 +178,13 @@ this line moves with it. Serving users from the region nearest them is the wrong
 instinct here, because a page makes several database round trips and only one
 trip from the browser.
 
+The same source also builds as a Cloudflare Worker: `bun run build:workers` in
+`apps/web` runs vinext, with the entry in `apps/web/worker`. There the socket is
+served by a Durable Object, Redis is not used, and each request gets its own
+Postgres pool. Anything that touches `apps/web/worker`, `@orbit/db`'s client,
+the realtime hub or the publisher has to keep both builds working. See
+`docs/cloudflare-workers.md`.
+
 Migrations are applied locally against the target database, never by a job in the
 platform. Run `DIRECT_URL="postgres://..." bun run db:release` before merging code
 that depends on a schema change. The command verifies the migration ledger, applies

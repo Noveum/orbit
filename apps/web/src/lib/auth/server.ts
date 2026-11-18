@@ -3,11 +3,11 @@ import { mcp } from '@better-auth/mcp';
 import { passkey } from '@better-auth/passkey';
 import {
   assertEmailDomainAllowed,
+  authRateLimitStorage,
   ingestExternalAvatar,
   isExternalImageUrl,
   lockMcpOwner,
   publishSessionRevoked,
-  redisRateLimitStorage,
   validateMcpGrant,
 } from '@orbit/core';
 import { db, eq, inArray, schema } from '@orbit/db';
@@ -123,7 +123,7 @@ const SIGN_IN_CODE_PATH = '/email-otp/send-verification-otp';
 
 function authRateLimit() {
   const customStorage =
-    process.env['NODE_ENV'] === 'production' ? redisRateLimitStorage() : undefined;
+    process.env['NODE_ENV'] === 'production' ? authRateLimitStorage() : undefined;
   return {
     customRules: AUTH_RATE_LIMIT_RULES,
     ...(customStorage === undefined ? {} : { customStorage }),

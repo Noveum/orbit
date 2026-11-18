@@ -2,6 +2,7 @@ import type { ServerMessage, SyncAction } from '@orbit/shared/events';
 import type { ConnectionPrincipal } from './auth.ts';
 import { logger } from './logger.ts';
 import { type RealtimeSocket, SOCKET_OPEN } from './socket.ts';
+import { detach } from './timers.ts';
 
 export interface ConnectionLimits {
   readonly batchWindowMs: number;
@@ -9,6 +10,13 @@ export interface ConnectionLimits {
   readonly maxBufferedBytes: number;
   readonly messageBurst: number;
   readonly messagesPerSecond: number;
+}
+
+export interface ConnectionSnapshot {
+  readonly id: string;
+  readonly principal: ConnectionPrincipal;
+  readonly scopes: readonly string[];
+  readonly watermark: number;
 }
 
 export interface SocketState {
@@ -31,6 +39,7 @@ export class Connection {
   private refilledAt = Date.now();
   private throttled = false;
   private watermark = 0;
+  private changed: (() => void) | undefined;
 
   constructor(
     readonly id: string,
@@ -47,6 +56,20 @@ export class Connection {
 
   adoptPrincipal(next: ConnectionPrincipal): void {
     this.current = next;
+    this.changed?.();
+  }
+
+  observe(changed: () => void): void {
+    this.changed = changed;
+  }
+
+  snapshot(): ConnectionSnapshot {
+    return {
+      id: this.id,
+      principal: this.current,
+      scopes: [...this.scopes],
+      watermark: this.watermark,
+    };
   }
 
   heldScopes(): string[] {
@@ -85,6 +108,7 @@ export class Connection {
 
   addScopes(scopes: readonly string[]): string[] {
     const rejected: string[] = [];
+    const held = this.scopes.size;
     for (const scope of scopes) {
       if (this.scopes.has(scope)) continue;
       if (this.scopes.size >= this.limits.maxSubscriptions) {
@@ -93,11 +117,14 @@ export class Connection {
       }
       this.scopes.add(scope);
     }
+    if (this.scopes.size !== held) this.changed?.();
     return rejected;
   }
 
   removeScopes(scopes: readonly string[]): void {
+    const held = this.scopes.size;
     for (const scope of scopes) this.scopes.delete(scope);
+    if (this.scopes.size !== held) this.changed?.();
   }
 
   matches(scopes: readonly string[], organizationId: string): boolean {
@@ -117,7 +144,9 @@ export class Connection {
   }
 
   advanceWatermark(syncId: number): void {
-    if (syncId > this.watermark) this.watermark = syncId;
+    if (syncId <= this.watermark) return;
+    this.watermark = syncId;
+    this.changed?.();
   }
 
   queueDelta(action: SyncAction): void {
@@ -183,8 +212,7 @@ export class Connection {
       this.pending.size === 0
     )
       return;
-    this.flushTimer = setTimeout(() => this.flushDeltas(), this.limits.batchWindowMs);
-    this.flushTimer.unref();
+    this.flushTimer = detach(setTimeout(() => this.flushDeltas(), this.limits.batchWindowMs));
   }
 
   flushDeltas(): void {

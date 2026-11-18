@@ -1,0 +1,5 @@
+/dist/
+.vinext/
+.wrangler/
+.dev.vars
+.dev.vars.*

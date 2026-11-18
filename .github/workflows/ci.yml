@@ -391,3 +391,30 @@ jobs:
         run: |
           echo "=== web ==="; cat "$RUNNER_TEMP/web.log" || true
           echo "=== realtime ==="; cat "$RUNNER_TEMP/realtime.log" || true
+
+  workers-build:
+    name: Workers build
+    runs-on: ubuntu-latest
+    env:
+      BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+      BETTER_AUTH_URL: http://localhost:8787
+      NEXT_PUBLIC_APP_URL: http://localhost:8787
+      ORBIT_PASSWORD_AUTH: "true"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: bun install --frozen-lockfile
+      - name: Build the Cloudflare Workers bundle
+        working-directory: apps/web
+        run: bun run build:workers
+      - name: Validate the bundle the way a deploy would, without deploying
+        working-directory: apps/web
+        run: bunx wrangler deploy --dry-run --config dist/server/wrangler.json
+      - name: OAuth discovery routes are in the bundle
+        working-directory: apps/web
+        run: grep -rlq "oauth-protected-resource" dist/server/index.js

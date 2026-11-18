@@ -1,4 +1,4 @@
-import { realtimeHub, redisConfigured } from '@/lib/realtime/hub.ts';
+import { realtimeConfigured, realtimeStats } from '@/lib/realtime/hub.ts';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -8,7 +8,7 @@ function runtime(): Record<string, string | null> {
 }
 
 export async function GET(): Promise<Response> {
-  if (!redisConfigured()) {
+  if (!realtimeConfigured()) {
     return Response.json(
       { status: 'unconfigured', redisConfigured: false, runtime: runtime() },
       { status: 503 },
@@ -16,7 +16,7 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    const stats = (await realtimeHub()).stats();
+    const stats = await realtimeStats();
     const healthy = stats.redis === 'ready';
     return Response.json(
       {

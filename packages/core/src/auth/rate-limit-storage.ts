@@ -118,6 +118,16 @@ export function redisRateLimitStorage(): RateLimitStorage | undefined {
   };
 }
 
+let registered: RateLimitStorage | undefined;
+
+export function registerAuthRateLimitStorage(storage: RateLimitStorage | undefined): void {
+  registered = storage;
+}
+
+export function authRateLimitStorage(): RateLimitStorage | undefined {
+  return registered ?? redisRateLimitStorage();
+}
+
 export function closeAuthRateLimitStorage(): void {
   const open = client;
   client = null;

@@ -222,6 +222,10 @@ function applyTagRules(
   element.setAttribute('rel', 'noopener noreferrer');
 }
 
+function hasStringRewriter(): boolean {
+  return typeof HTMLRewriter !== 'undefined' && process.versions['bun'] !== undefined;
+}
+
 let rewriter: HTMLRewriter | null = null;
 
 function bunSanitizer(): HTMLRewriter {
@@ -324,7 +328,7 @@ function sanitizeInDom(html: string): string {
 
 export function sanitizeHtml(html: string): string {
   if (html.length === 0) return '';
-  if (typeof HTMLRewriter === 'undefined') return sanitizeInDom(html);
+  if (!hasStringRewriter()) return sanitizeInDom(html);
   const sanitized: unknown = bunSanitizer().transform(html);
   if (typeof sanitized !== 'string') throw new TypeError('Expected sanitized HTML text');
   return sanitized;
@@ -353,7 +357,7 @@ function textInDom(html: string): string {
 
 export function htmlToText(html: string): string {
   if (html.length === 0) return '';
-  if (typeof HTMLRewriter === 'undefined') return textInDom(html);
+  if (!hasStringRewriter()) return textInDom(html);
   const parts: string[] = [];
   new HTMLRewriter()
     .on('*', {

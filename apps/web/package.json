@@ -9,9 +9,20 @@
     "start": "node --env-file=../../.env .next/standalone/apps/web/start.mjs",
     "typecheck": "tsc --noEmit",
     "test": "bun --env-file=../../.env test tests --timeout 20000",
-    "test:e2e": "bun --env-file=../../.env --bun playwright test"
+    "test:e2e": "bun --env-file=../../.env --bun playwright test",
+    "build:workers": "bun --env-file=../../.env ../../packages/db/src/check-drift.ts --guard-deploy && ORBIT_WORKERS_BUILD=1 bun --env-file=../../.env vite build",
+    "preview:workers": "wrangler dev --config dist/server/wrangler.json",
+    "deploy:workers": "wrangler deploy --config dist/server/wrangler.json"
+  },
+  "imports": {
+    "#argon2": {
+      "workerd": "./src/lib/auth/argon2/portable.ts",
+      "default": "./src/lib/auth/argon2/native.ts"
+    }
   },
   "dependencies": {
+    "@better-auth/mcp": "1.7.25",
+    "@better-auth/oauth-provider": "1.7.25",
     "@better-auth/passkey": "1.7.25",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-html": "^6.4.12",
@@ -24,6 +35,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@lezer/highlight": "^1.2.5",
+    "@noble/hashes": "^2.2.0",
     "@node-rs/argon2": "^2.2.1",
     "@orbit/core": "workspace:*",
     "@orbit/db": "workspace:*",
@@ -59,6 +71,7 @@
     "@tiptap/react": "^3.33.0",
     "@tiptap/starter-kit": "^3.33.0",
     "@vercel/functions": "^3.11.2",
+    "@vinext/cloudflare": "1.4.0",
     "better-auth": "1.7.25",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -76,14 +89,16 @@
     "prettier": "^3.10.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-server-dom-webpack": "19.3.1",
     "tailwind-merge": "^3.7.0",
+    "vinext": "1.4.6",
     "web-vitals": "^6.2.2",
     "ws": "^8.23.0",
-    "zod": "4.6.7",
-    "@better-auth/mcp": "1.7.25",
-    "@better-auth/oauth-provider": "1.7.25"
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "1.70.0",
+    "@cloudflare/workers-types": "5.20261117.1",
     "@happy-dom/global-registrator": "21.0.4",
     "@playwright/test": "^1.65.0",
     "@tailwindcss/postcss": "^4.3.5",
@@ -97,8 +112,13 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "6.3.0",
+    "@vitejs/plugin-rsc": "0.5.39",
     "babel-plugin-react-compiler": "^1.0.0",
+    "oxc-transform-react": "0.158.0",
     "tailwindcss": "^4.3.3",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "8.3.8",
+    "wrangler": "4.164.0"
   }
 }

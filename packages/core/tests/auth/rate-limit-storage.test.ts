@@ -1,10 +1,13 @@
-import { afterAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  authRateLimitStorage,
   closeAuthRateLimitStorage,
+  type RateLimitStorage,
   redisRateLimitStorage,
+  registerAuthRateLimitStorage,
 } from '../../src/auth/rate-limit-storage.ts';
 
 const RULE = { window: 60, max: 3 } as const;
@@ -107,5 +110,31 @@ describe('redisRateLimitStorage', () => {
     expect(await storage.consume(freshKey(), RULE)).toEqual({ allowed: true, retryAfter: null });
     expect(await storage.get(freshKey())).toBeNull();
     closeAuthRateLimitStorage();
+  });
+});
+
+describe('authRateLimitStorage', () => {
+  const registered: RateLimitStorage = {
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    consume: () => Promise.resolve({ allowed: false, retryAfter: 9 }),
+  };
+
+  afterEach(() => {
+    registerAuthRateLimitStorage(undefined);
+  });
+
+  it('prefers a storage the runtime registered over Redis', async () => {
+    registerAuthRateLimitStorage(registered);
+    expect(authRateLimitStorage()).toBe(registered);
+    expect(await authRateLimitStorage()?.consume('key', { window: 60, max: 1 })).toEqual({
+      allowed: false,
+      retryAfter: 9,
+    });
+  });
+
+  it('falls back to Redis when nothing is registered', () => {
+    expect(authRateLimitStorage() === undefined).toBe(redisRateLimitStorage() === undefined);
+    expect(authRateLimitStorage()).not.toBe(registered);
   });
 });

@@ -1,14 +1,20 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { z } from 'zod';
+import { privateDatabaseProxyUrl } from './private-proxy.ts';
 import * as schema from './schema/index.ts';
 import { resolveDatabaseTls } from './tls-policy.ts';
 
-const connectionString = process.env['DATABASE_URL'];
-
-if (connectionString === undefined || connectionString.length === 0) {
-  throw new Error('DATABASE_URL is not set. Copy .env.example to .env and run bun run infra:up.');
+function requiredConnectionString(): string {
+  const configured = process.env['DATABASE_URL'];
+  if (configured === undefined || configured.length === 0) {
+    throw new Error('DATABASE_URL is not set. Copy .env.example to .env and run bun run infra:up.');
+  }
+  return configured;
 }
+
+const connectionString = requiredConnectionString();
 
 const poolMaxSchema = z.coerce.number().int().positive().max(1000).default(10);
 const preparedStatementsSchema = z.enum(['true', 'false']).default('false');
@@ -30,6 +36,8 @@ if (!poolMax.success) {
     `DATABASE_POOL_MAX must be a positive integer, received "${process.env['DATABASE_POOL_MAX']}".`,
   );
 }
+
+const maxConnections = poolMax.data;
 
 export function resolvePreparedStatements(url: string, configured: string | undefined): boolean {
   const normalizedUrl = trimUrlControlEdges(url).replace(/[\t\n\r]/g, '');
@@ -80,22 +88,79 @@ const prepareStatements = resolvePreparedStatements(
   process.env['DATABASE_PREPARED_STATEMENTS'],
 );
 const ssl = resolveDatabaseTls(connectionString, process.env);
-const cacheKey = poolCacheKey(connectionString, poolMax.data, prepareStatements, ssl);
+const cacheKey = poolCacheKey(connectionString, maxConnections, prepareStatements, ssl);
 const cached = globalForDb.orbitPool;
 
-export const pool =
-  cached?.key === cacheKey
-    ? cached.sql
-    : postgres(connectionString, {
-        max: poolMax.data,
-        idle_timeout: 30,
-        prepare: prepareStatements,
-        ...(ssl === undefined ? {} : { ssl }),
-      });
+const PROCESS_IDLE_SECONDS = 30;
+const SCOPED_IDLE_SECONDS = 5;
+
+function openPool(idleSeconds: number = PROCESS_IDLE_SECONDS): Pool {
+  return postgres(connectionString, {
+    max: maxConnections,
+    idle_timeout: idleSeconds,
+    prepare: prepareStatements,
+    ...(ssl === undefined ? {} : { ssl }),
+  });
+}
+
+function openScopedPool(): Pool {
+  const privateProxyUrl = privateDatabaseProxyUrl();
+  if (privateProxyUrl === undefined) return openPool(SCOPED_IDLE_SECONDS);
+  return postgres(privateProxyUrl, {
+    max: maxConnections,
+    idle_timeout: SCOPED_IDLE_SECONDS,
+    prepare: true,
+  });
+}
+
+function openDatabase(client: Pool) {
+  return drizzle({ client, schema, casing: 'snake_case' });
+}
+
+export const pool = cached?.key === cacheKey ? cached.sql : openPool();
 
 globalForDb.orbitPool = { key: cacheKey, sql: pool };
 
-export const db = drizzle({ client: pool, schema, casing: 'snake_case' });
+const processDatabase = openDatabase(pool);
 
-export type Database = typeof db;
+export type Database = typeof processDatabase;
 export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+interface RequestDatabaseScope {
+  database: Database | undefined;
+}
+
+const requestScopes = new AsyncLocalStorage<RequestDatabaseScope>();
+
+function currentDatabase(): Database {
+  const scope = requestScopes.getStore();
+  if (scope === undefined) return processDatabase;
+  scope.database ??= openDatabase(openScopedPool());
+  return scope.database;
+}
+
+export type DatabaseScope = <T>(run: () => T) => T;
+
+export function createDatabaseScope(): DatabaseScope {
+  const scope: RequestDatabaseScope = { database: undefined };
+  return (run) => requestScopes.run(scope, run);
+}
+
+export function withRequestScopedDatabase<T>(run: () => T): T {
+  return createDatabaseScope()(run);
+}
+
+export const db: Database = new Proxy(processDatabase, {
+  get(_process, property) {
+    const database = currentDatabase();
+    if (property === '$client') return database.$client;
+    const value: unknown = Reflect.get(database, property, database);
+    return typeof value === 'function' ? value.bind(database) : value;
+  },
+});
+
+export {
+  type PrivateProxyUrlResolver,
+  privateDatabaseProxyUrl,
+  registerPrivateDatabaseProxy,
+} from './private-proxy.ts';

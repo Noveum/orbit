@@ -132,14 +132,19 @@ export async function setRecoveryState(
   }
 }
 
-export async function getRecoveryState(databaseUrl: string): Promise<RestoreRecoveryState | null> {
+export type RecoveryStateTransport = 'direct' | 'private-proxy';
+
+export async function getRecoveryState(
+  databaseUrl: string,
+  transport: RecoveryStateTransport = 'direct',
+): Promise<RestoreRecoveryState | null> {
   const sql = postgres(databaseUrl, {
     max: 1,
     connect_timeout: 5,
     idle_timeout: 5,
-    prepare: false,
+    prepare: transport === 'private-proxy',
     onnotice: (_notice) => undefined,
-    ...databaseTlsOptions(databaseUrl),
+    ...(transport === 'private-proxy' ? {} : databaseTlsOptions(databaseUrl)),
   });
   try {
     const [rowExists] = await sql<{ exists: boolean }[]>`

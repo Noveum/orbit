@@ -19,12 +19,14 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "worker/**/*.ts",
     "bench/**/*.ts",
     "e2e/**/*.ts",
     "tests-preload.ts",
     "tests-support.ts",
     "playwright.config.ts",
     "next.config.ts",
+    "vite.config.ts",
     ".next/types/**/*.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx"
