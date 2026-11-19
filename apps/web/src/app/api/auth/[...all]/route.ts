@@ -26,6 +26,7 @@ import {
 } from '@orbit/shared/validators';
 import { toNextJsHandler } from 'better-auth/next-js';
 import { decodeJwt } from 'jose';
+import { forwardRequest } from '@/lib/auth/forward-request.ts';
 import { providerClientRequest } from '@/lib/auth/mcp-client-auth.ts';
 import { providerTokenHash } from '@/lib/auth/mcp-provider.ts';
 import { isSafeMcpRedirectUri } from '@/lib/auth/mcp-redirect-uri.ts';
@@ -130,7 +131,7 @@ async function normalizeRevocationResponse(response: Response): Promise<Response
 async function revokeMcpCredential(request: Request): Promise<Response> {
   const url = new URL(request.url);
   url.pathname = '/api/auth/oauth2/revoke';
-  const original = new Request(url, request.clone());
+  const original = await forwardRequest(url, request.clone());
   if (
     request.headers.get('content-type')?.split(';')[0]?.trim() !==
     'application/x-www-form-urlencoded'
@@ -842,11 +843,11 @@ export function GET(request: Request): Promise<Response> | Response {
   }
   if (url.pathname.startsWith('/api/auth/mcp/')) {
     url.pathname = url.pathname.replace('/api/auth/mcp/', '/api/auth/oauth2/');
-    return providerAuthorizationResponse(new Request(url, request));
+    return forwardRequest(url, request).then(providerAuthorizationResponse);
   }
   if (url.pathname === '/api/auth/oauth2/authorize')
-    return providerAuthorizationResponse(new Request(url, request));
-  return handlers.GET(new Request(url, request));
+    return forwardRequest(url, request).then(providerAuthorizationResponse);
+  return forwardRequest(url, request).then((forwarded) => handlers.GET(forwarded));
 }
 
 export function POST(request: Request): Promise<Response> {
@@ -859,7 +860,9 @@ export function POST(request: Request): Promise<Response> {
   }
   if (url.pathname.startsWith('/api/auth/mcp/')) {
     url.pathname = url.pathname.replace('/api/auth/mcp/', '/api/auth/oauth2/');
-    return withSocketRevocation(new Request(url, request), handlers.POST);
+    return forwardRequest(url, request).then((forwarded) =>
+      withSocketRevocation(forwarded, handlers.POST),
+    );
   }
   return withSocketRevocation(request, handlers.POST);
 }
