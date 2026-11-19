@@ -168,8 +168,8 @@ Upgrade before doing any other work in that route. Awaiting redis, the database
 or anything else first stops the handshake reaching a 101, so attach the hub
 after the socket is open and buffer whatever arrives in between.
 
-Functions run in `cle1` because Supabase is in `us-east-2`, and `regions` in
-`apps/web/vercel.json` is what keeps them together. The database used to be in
+Functions run in `iad1` because Supabase is in `us-east-1`, and `regions` in
+`apps/web/vercel.json` is what keeps them together. The database was once in
 `ap-northeast-1` while functions ran in Vercel's default `iad1`, which put
 every query on a Virginia to Tokyo round trip of about 170ms. A page that
 reaches the database four times sequentially paid most of a second for it,

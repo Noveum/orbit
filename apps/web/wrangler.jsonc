@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
-  "placement": { "region": "aws:us-east-2" },
+  "placement": { "region": "aws:us-east-1" },
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
   "vars": { "NODE_ENV": "production" },
