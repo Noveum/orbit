@@ -44,12 +44,16 @@ The differences are in what surrounds the hub:
 - Presence and the issue team boundary cache live in memory only. While either
   holds entries the object keeps a timer pending so it is not evicted, then
   lets itself hibernate once they expire.
-- The object is created with the `apac-ne` location hint so it sits near the
-  database. A hint is a preference, not a placement: of the objects created
-  from a Worker placed in Tokyo, about four in five landed in Tokyo (3 ms from
-  the Worker) and the rest in Osaka (10 ms), with or without a hint. An object
-  never moves once created. Change `NEAR_THE_DATABASE` in
-  `apps/web/worker/bindings.ts` if your database is elsewhere.
+- Cloudflare chooses the location of a new object when it is first accessed.
+  Objects are requested without a location hint, so they start next to the
+  placed Worker that first asks for them. In one sample, a Worker placed for
+  `aws:us-east-2` ran in Chicago. All twelve new objects requested without a
+  hint started in Chicago. Twelve requested with the `enam` hint started in
+  Chicago, Atlanta, Ashburn and Miami. Have a request from the placed Worker initialize new objects before
+  enabling schedules. Existing named objects retain their location across
+  deployments. When moving regions, check latency to the existing realtime
+  hub and rate limiter as part of the cutover.
+  [Cloudflare data location](https://developers.cloudflare.com/durable-objects/reference/data-location/)
 
 One object carries every workspace. That is the right size for a deployment
 with hundreds of concurrent sockets. Sharding by organization is the path if it
@@ -122,8 +126,25 @@ connections open at once, and storage and provider calls need some of them.
 
 A Worker placed next to the database is still not inside the database's cloud.
 Every query crosses from Cloudflare to the provider and back, so the number of
-round trips decides how fast a request is. Measured from a Worker placed in
-Tokyo against a Supabase database in `ap-northeast-1`:
+round trips decides how fast a request is.
+
+Where the Worker actually runs decides the floor. Measured from probe Workers
+on 2026-11-18, TCP connect to the Supabase pooler in the same region, median:
+
+| Placement | Runs in | Same region pooler | Note |
+| --- | --- | --- | --- |
+| `aws:us-east-1` | Ashburn (IAD), 24 of 24 runs | 4 ms | to `us-east-2` 15 to 17 ms |
+| `aws:ap-northeast-1` | Tokyo (NRT) | 4 ms | |
+| `aws:us-east-2` | Chicago (ORD), 24 of 24 runs | 13 ms, p95 up to 52 ms | to `us-east-1` 25 ms |
+
+Pick a region where Cloudflare has a data center beside the cloud region,
+which is why Orbit uses `us-east-1`. Through Hyperdrive straight to Postgres, a
+warm query matched the TCP figure in both Tokyo (4 ms) and Ohio (13 to 15 ms).
+A Worker in one region talking to a database in the other was worse than
+either: from Ashburn to the Ohio database a query took 37 to 39 ms.
+
+Measured from a Worker placed in Tokyo against a Supabase database in
+`ap-northeast-1`:
 
 | What | Time |
 | --- | --- |
@@ -172,7 +193,8 @@ handler sends each job through the placed fetch handler.
 
 A Durable Object lands where Cloudflare chooses. From a Worker placed in
 Tokyo, about four in five landed in Tokyo and the rest in Osaka, 3 ms and
-10 ms from the Worker.
+10 ms from the Worker. Without a hint, objects followed the placed Worker in
+every sample.
 
 The first request a new isolate serves is slow, 0.6 to 1.5 seconds in most
 samples and 2.7 seconds in one, because the bundle starts and the route

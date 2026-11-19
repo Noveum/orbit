@@ -168,15 +168,18 @@ Upgrade before doing any other work in that route. Awaiting redis, the database
 or anything else first stops the handshake reaching a 101, so attach the hub
 after the socket is open and buffer whatever arrives in between.
 
-Functions run in `hnd1` because Supabase is in `ap-northeast-1`, and `regions`
-in `apps/web/vercel.json` is what keeps them together. Vercel defaults to `iad1`,
-which put every query on a Virginia to Tokyo round trip of about 170ms. A page
-that reaches the database four times sequentially paid most of a second for it,
+Functions run in `iad1` because Supabase is in `us-east-1`, and `regions` in
+`apps/web/vercel.json` is what keeps them together. The database was once in
+`ap-northeast-1` while functions ran in Vercel's default `iad1`, which put
+every query on a Virginia to Tokyo round trip of about 170ms. A page that
+reaches the database four times sequentially paid most of a second for it,
 which is why tuning the queries themselves changed almost nothing: they run in
 under 3ms and the trip to reach them was fifty times that. Move the database and
-this line moves with it. Serving users from the region nearest them is the wrong
-instinct here, because a page makes several database round trips and only one
-trip from the browser.
+this line moves with it, in the same deploy: `placement` in
+`apps/web/wrangler.jsonc` names the same region for the Workers build, and a
+test fails when the two disagree. Serving users from the region nearest them is
+the wrong instinct here, because a page makes several database round trips and
+only one trip from the browser.
 
 The same source also builds as a Cloudflare Worker: `bun run build:workers` in
 `apps/web` runs vinext, with the entry in `apps/web/worker`. There the socket is

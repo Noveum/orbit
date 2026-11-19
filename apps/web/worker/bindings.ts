@@ -16,7 +16,6 @@ export interface WorkerBindings {
 }
 
 const SINGLETON = 'global';
-const NEAR_THE_DATABASE = 'apac-ne';
 
 export function bindings(): WorkerBindings {
   return env as unknown as WorkerBindings;
@@ -24,15 +23,15 @@ export function bindings(): WorkerBindings {
 
 export function realtimeHub(): DurableObjectStub {
   const namespace = bindings().REALTIME_HUB;
-  return namespace.get(namespace.idFromName(SINGLETON), { locationHint: NEAR_THE_DATABASE });
+  return namespace.get(namespace.idFromName(SINGLETON));
 }
 
 export function authRateLimiter(): DurableObjectStub {
   const namespace = bindings().AUTH_RATE_LIMITER;
-  return namespace.get(namespace.idFromName(SINGLETON), { locationHint: NEAR_THE_DATABASE });
+  return namespace.get(namespace.idFromName(SINGLETON));
 }
 
 export function deferredWork(key: string): DurableObjectStub {
   const namespace = bindings().DEFERRED_WORK;
-  return namespace.get(namespace.idFromName(key), { locationHint: NEAR_THE_DATABASE });
+  return namespace.get(namespace.idFromName(key));
 }
