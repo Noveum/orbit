@@ -3,6 +3,10 @@ import path from 'node:path';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import vinext from 'vinext';
 import { defineConfig, type Plugin } from 'vite';
+import {
+  DRIVER_CONNECTION_MODULE,
+  sendParametersWithoutDescribing,
+} from './src/lib/cloudflare/driver-round-trips.ts';
 
 const OLDEST_NODE_THAT_SCANS_DOT_DIRECTORIES = 24;
 
@@ -51,9 +55,31 @@ function emailsRenderWithClientReact(): Plugin {
   };
 }
 
+function driverBindsWithoutDescribing(): Plugin {
+  let rewritten = false;
+  return {
+    name: 'orbit:driver-binds-without-describing',
+    enforce: 'pre',
+    transform(code, id) {
+      const file = id.split('?')[0] ?? id;
+      if (!DRIVER_CONNECTION_MODULE.test(file)) return null;
+      rewritten = true;
+      return { code: sendParametersWithoutDescribing(code), map: null };
+    },
+    buildEnd() {
+      if (this.environment.name === SERVER_COMPONENT_ENVIRONMENT && !rewritten) {
+        throw new Error(
+          'The Workers bundle did not include the Postgres driver build that the single round trip rewrite targets.',
+        );
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     emailsRenderWithClientReact(),
+    driverBindsWithoutDescribing(),
     vinext({ react: { compiler: true } }),
     cloudflare({
       viteEnvironment: {

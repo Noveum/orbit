@@ -53,6 +53,7 @@ export default {
       publicOrigin(),
       process.env['CRON_SECRET'] ?? '',
       (request) => serve(request, bindings, context),
+      bindings.SELF,
     );
   },
 };
