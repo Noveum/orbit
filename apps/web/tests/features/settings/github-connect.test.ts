@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import {
   createWorkspace,
@@ -579,6 +579,7 @@ describe('refreshWorkspaceRepositories', () => {
     }) as unknown as typeof globalThis.fetch;
     const installations = await listGithubInstallations(db, workspace.organizationId);
 
+    using log = spyOn(console, 'error').mockImplementation(() => undefined);
     const refreshed = await refreshWorkspaceRepositories({
       installations,
       force: true,
@@ -586,6 +587,12 @@ describe('refreshWorkspaceRepositories', () => {
       fetch: failingBackfill,
     });
 
+    expect(log.mock.calls).toEqual([
+      [
+        'Could not backfill GitHub repository pull requests.',
+        { error: 'Integration request failed.' },
+      ],
+    ]);
     expect(refreshed).toBe(1);
     const [sync] = await db
       .select({ backfilledAt: schema.githubRepositorySync.pullRequestsBackfilledAt })

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { createWorkspace, resetDatabase, type Workspace } from '@orbit/core/test-support';
 import { db, eq, schema } from '@orbit/db';
@@ -72,6 +72,31 @@ function request(code: string, fields: Record<string, unknown>): Request {
 }
 
 describe('Agent consent decision boundary', () => {
+  it('keeps database details out of the consent diagnostic and error response', async () => {
+    const input = request(await consentCode(), {});
+    const failure = Object.assign(new Error('Failed query: synthetic consent parameter'), {
+      code: '28P01',
+    });
+    const methods: Pick<typeof db, 'select'> = Object.getPrototypeOf(db);
+    using select = spyOn(methods, 'select').mockImplementation(() => {
+      throw failure;
+    });
+    using log = spyOn(console, 'error').mockImplementation(() => undefined);
+    const response = await POST(input);
+    expect(select).toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: 'internal',
+      message: 'Something went wrong. Try connecting again.',
+    });
+    expect(log.mock.calls).toEqual([
+      [
+        'mcp consent decision failed',
+        { error: 'Database query failed.', errorName: 'DatabaseError', errorCode: '28P01' },
+      ],
+    ]);
+  });
+
   it('grants explicitly selected writes only from the trusted requested scope', async () => {
     process.env['ORBIT_AGENT_ISSUE_WRITE'] = 'true';
     const response = await POST(
