@@ -33,6 +33,7 @@ import { isSafeMcpRedirectUri } from '@/lib/auth/mcp-redirect-uri.ts';
 import { organizationSessionPlugin } from '@/lib/auth/organization.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 import { uniqueHandleFor } from './handle.ts';
+import { authLoggingOptions } from './logging.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 import { withOAuthResourceConnectionRetry } from './resource-adapter.ts';
 import { SESSION_COOKIE_CACHE_POLICY } from './session-policy.ts';
@@ -202,6 +203,7 @@ const deployment = deploymentAuthOptions();
 
 export const auth = betterAuth({
   appName: 'Orbit',
+  ...authLoggingOptions,
   baseURL: deployment.baseURL,
   secret: serverEnv().BETTER_AUTH_SECRET,
   database: withOAuthResourceConnectionRetry(
