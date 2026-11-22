@@ -7,6 +7,7 @@ import {
   validationFailed,
 } from '@orbit/shared/errors';
 import type { Principal } from '@orbit/shared/policy';
+import { safeErrorFields } from '@orbit/shared/utils';
 import { idSchema } from '@orbit/shared/validators';
 import { redirect } from 'next/navigation';
 import { ZodError } from 'zod';
@@ -91,7 +92,10 @@ function toResponse(error: unknown): Response {
     );
   }
   if (!isDomainError(error)) {
-    console.error('A request failed on something the route did not expect.', error);
+    console.error(
+      'A request failed on something the route did not expect.',
+      safeErrorFields(error),
+    );
     const opaque = internal();
     return Response.json(opaque.toJSON(), { status: opaque.status });
   }

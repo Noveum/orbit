@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { forbidden } from '@orbit/shared/errors';
 import { ORIGIN_CLIENT_ID_HEADER, type SyncAction } from '@orbit/shared/events';
 import { z } from 'zod';
@@ -111,6 +111,7 @@ describe('errorResponse', () => {
   });
 
   it('never echoes a failed query or its parameters back to the caller', async () => {
+    using capture = spyOn(console, 'error').mockImplementation(() => undefined);
     const response = errorResponse(
       new Error(
         'Failed query: insert into "doc_comment" ("body") values ($1)\nparams: Bob gets a raise.',
@@ -119,6 +120,10 @@ describe('errorResponse', () => {
     const body = await response.text();
 
     expect(response.status).toBe(500);
+    expect(capture).toHaveBeenCalledWith(
+      'A request failed on something the route did not expect.',
+      { error: 'Database query failed.', errorName: 'DatabaseError' },
+    );
     expect(body).not.toContain('doc_comment');
     expect(body).not.toContain('Bob gets a raise.');
     expect(JSON.parse(body)).toEqual({
