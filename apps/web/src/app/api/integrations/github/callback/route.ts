@@ -6,6 +6,7 @@ import {
 } from '@orbit/shared/validators';
 import type { GithubConnectStatus } from '@/features/settings/github-view.ts';
 import { absoluteUrl, githubAppConfig } from '@/lib/env.ts';
+import { integrationErrorFields } from '@/lib/integrations/error-fields.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { consumeOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 
@@ -49,7 +50,7 @@ export async function GET(request: Request): Promise<Response> {
     });
     return settingsRedirect('connected');
   } catch (error) {
-    console.error('Could not complete the GitHub installation.', error);
+    console.error('Could not complete the GitHub installation.', integrationErrorFields(error));
     return settingsRedirect(statusForFailure(error));
   }
 }
