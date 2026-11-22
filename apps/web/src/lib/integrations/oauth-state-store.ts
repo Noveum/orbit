@@ -1,4 +1,5 @@
 import { and, db, eq, gt, lt, schema } from '@orbit/db';
+import { withDatabaseLogBoundary } from '@orbit/shared/utils';
 import {
   mintOAuthState,
   type OAuthState,
@@ -34,17 +35,19 @@ export async function consumeOAuthState(
 ): Promise<OAuthState | null> {
   const state = verifyOAuthState(token, secret, provider, now);
   if (state === null) return null;
-  const consumed = await db
-    .delete(schema.integrationOauthState)
-    .where(
-      and(
-        eq(schema.integrationOauthState.nonce, state.nonce),
-        eq(schema.integrationOauthState.provider, provider),
-        eq(schema.integrationOauthState.organizationId, state.org),
-        eq(schema.integrationOauthState.userId, state.user),
-        gt(schema.integrationOauthState.expiresAt, now),
-      ),
-    )
-    .returning({ nonce: schema.integrationOauthState.nonce });
+  const consumed = await withDatabaseLogBoundary(() =>
+    db
+      .delete(schema.integrationOauthState)
+      .where(
+        and(
+          eq(schema.integrationOauthState.nonce, state.nonce),
+          eq(schema.integrationOauthState.provider, provider),
+          eq(schema.integrationOauthState.organizationId, state.org),
+          eq(schema.integrationOauthState.userId, state.user),
+          gt(schema.integrationOauthState.expiresAt, now),
+        ),
+      )
+      .returning({ nonce: schema.integrationOauthState.nonce }),
+  );
   return consumed.length === 1 ? state : null;
 }

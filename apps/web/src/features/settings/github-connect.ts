@@ -17,6 +17,7 @@ import {
 } from '@orbit/services';
 import { conflict, forbidden, validationFailed } from '@orbit/shared/errors';
 import type { GithubAppConfig } from '@/lib/env.ts';
+import { integrationErrorFields } from '@/lib/integrations/error-fields.ts';
 
 export const GITHUB_REPOSITORY_CACHE_MS = 600_000;
 export const GITHUB_BACKFILL_REPOSITORY_LIMIT = 5;
@@ -162,8 +163,8 @@ export async function syncInstallationRepositories(input: SyncRepositoriesInput)
     await backfillInstallationPullRequests(input);
   } catch (error) {
     console.error(
-      `Could not backfill GitHub pull requests for installation ${input.installation.installationId}.`,
-      error,
+      'Could not backfill GitHub installation pull requests.',
+      integrationErrorFields(error),
     );
   }
   return repositories.length;
@@ -264,7 +265,10 @@ async function backfillInstallationPullRequests(input: SyncRepositoriesInput): P
         .returning({ id: schema.githubRepositorySync.id });
       completed += stamped.length;
     } catch (error) {
-      console.error(`Could not backfill ${repository.repositoryName}.`, error);
+      console.error(
+        'Could not backfill GitHub repository pull requests.',
+        integrationErrorFields(error),
+      );
     }
   }
   return completed;
@@ -326,8 +330,8 @@ export async function refreshWorkspaceRepositories(input: RefreshInput): Promise
       refreshed += 1;
     } catch (error) {
       console.error(
-        `Could not refresh repositories for GitHub installation ${installation.installationId}.`,
-        error,
+        'Could not refresh GitHub installation repositories.',
+        integrationErrorFields(error),
       );
     }
   }

@@ -1,5 +1,6 @@
 import { slackCallbackSchema } from '@orbit/shared';
 import { absoluteUrl, slackAppConfig } from '@/lib/env.ts';
+import { integrationErrorFields } from '@/lib/integrations/error-fields.ts';
 import { integrationStateSecret } from '@/lib/integrations/oauth-state.ts';
 import { consumeOAuthState } from '@/lib/integrations/oauth-state-store.ts';
 import {
@@ -39,7 +40,7 @@ export async function GET(request: Request): Promise<Response> {
     });
     return settingsRedirect('connected');
   } catch (error) {
-    console.error('Could not complete the Slack installation.', error);
+    console.error('Could not complete the Slack installation.', integrationErrorFields(error));
     return settingsRedirect(slackCallbackStatusForFailure(error));
   }
 }
