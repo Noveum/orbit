@@ -200,11 +200,15 @@ function isDatabaseError(entry: object): boolean {
   );
 }
 
-function* errorObjects(value: unknown): Generator<object> {
+function* errorEntries(value: unknown): Generator<object | string> {
   const pending: unknown[] = [value];
   const seen = new Set<object>();
   while (pending.length > 0) {
     const entry = pending.pop();
+    if (typeof entry === 'string') {
+      yield entry;
+      continue;
+    }
     if (entry === null || typeof entry !== 'object' || seen.has(entry)) continue;
     seen.add(entry);
     yield entry;
@@ -217,9 +221,13 @@ function* errorObjects(value: unknown): Generator<object> {
 }
 
 export function databaseLogFields(value: unknown): SafeErrorFields | undefined {
-  let database = typeof value === 'string' && value.includes('Failed query:');
+  let database = false;
   const codes = new Set<string>();
-  for (const entry of errorObjects(value)) {
+  for (const entry of errorEntries(value)) {
+    if (typeof entry === 'string') {
+      if (entry.includes('Failed query:')) database = true;
+      continue;
+    }
     if (isDatabaseError(entry)) database = true;
     const candidate = ownValue(entry, 'code');
     if (typeof candidate !== 'string') continue;

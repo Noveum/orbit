@@ -61,6 +61,19 @@ describe('safeErrorFields', () => {
     await expect(withDatabaseLogBoundary(() => Promise.reject(unrelated))).rejects.toBe(unrelated);
   });
 
+  it('removes a flattened query string nested inside a cause or aggregate', async () => {
+    const text = 'Failed query: select synthetic_private_column\nparams: SyntheticPrivateBinding';
+    const outer = new Error('wrapper', { cause: new AggregateError([text], 'inner') });
+    const thrown = await withDatabaseLogBoundary(() => Promise.reject(outer)).catch(
+      (error: Error) => error,
+    );
+    expect(thrown.cause).toBeUndefined();
+    expect(safeErrorFields(thrown)).toEqual({
+      error: 'Database query failed.',
+      errorName: 'DatabaseError',
+    });
+  });
+
   it('redacts credentials, emails and long mixed tokens from a plain error', () => {
     const fields = safeErrorFields(
       new Error(
