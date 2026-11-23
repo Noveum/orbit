@@ -146,12 +146,15 @@ Three things keep the round trips down, and all three matter:
   columns itself, so nothing is lost. Raw SQL on a request path must not pass
   a JavaScript array as a parameter or expect one back.
 - **The Workers build sends a parameterised query in one round trip.** As
-  shipped, the driver first asks the server to describe each statement a
-  connection has not seen, which doubles every query on a fresh connection.
-  `apps/web/vite.config.ts` rewrites that one decision in the driver's Workers
-  build so a pool that does not fetch types also does not describe first. The
-  build checks the installed driver before rewriting it and verifies the
-  resulting condition in the compiled server bundle.
+  shipped, the driver waits for the server to describe each statement a
+  connection has not seen before it binds any string parameter, which doubles
+  every query on a fresh connection. `apps/web/vite.config.ts` rewrites that one
+  decision in the driver's connection module so a pool that does not fetch
+  types sends strings as text in the same round trip as the parse and describe,
+  as the driver already does for numbers. A query with a `Date`, boolean,
+  `Buffer` or array parameter still waits for the description. The build checks
+  the installed driver before rewriting it and verifies the resulting condition
+  in the compiled server bundle.
 
 Cron Triggers do not follow placement. Three samples started in Paris and
 Chicago. The default configuration runs each job on the Worker that receives
