@@ -1,5 +1,6 @@
 import type { ExecutionContext, ScheduledController } from '@cloudflare/workers-types/index.ts';
 import { withRequestScopedDatabase } from '@orbit/db';
+import { withDatabaseLogBoundary } from '@orbit/shared/utils';
 import app from 'vinext/server/fetch-handler';
 import { withEdgeClientAddress } from '../src/lib/cloudflare/client-address.ts';
 import { runCronJobs } from '../src/lib/cloudflare/cron-schedule.ts';
@@ -19,7 +20,9 @@ function serve(
   bindings: WorkerBindings,
   context: ExecutionContext,
 ): Promise<Response> {
-  return withRequestScopedDatabase(() => app.fetch(request, bindings, context));
+  return withDatabaseLogBoundary(() =>
+    withRequestScopedDatabase(() => app.fetch(request, bindings, context)),
+  );
 }
 
 function publicOrigin(): string {
