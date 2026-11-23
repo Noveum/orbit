@@ -26,15 +26,23 @@ const config: SourceConfig = {
 };
 
 describe('previewAlias', () => {
-  it('turns a branch into a lowercase DNS label', () => {
-    expect(previewAlias('feat/Deploy_Noveum--Workers', 'orbit-pr')).toBe(
-      'feat-deploy-noveum-workers',
+  it('keeps a branch name that is already a DNS label', () => {
+    expect(previewAlias('fix-login', 'orbit-pr')).toBe('fix-login');
+  });
+
+  it('marks a rewritten branch name with a digest so two branches never share an alias', () => {
+    const slashed = previewAlias('fix/login', 'orbit-pr');
+    expect(slashed).toMatch(/^fix-login-[0-9a-f]{6}$/);
+    expect(slashed).not.toBe(previewAlias('fix-login', 'orbit-pr'));
+    expect(previewAlias('Fix-Login', 'orbit-pr')).not.toBe(slashed);
+    expect(previewAlias('feat/Deploy_Noveum--Workers', 'orbit-pr')).toMatch(
+      /^feat-deploy-noveum-workers-[0-9a-f]{6}$/,
     );
   });
 
   it('starts every alias with a letter', () => {
-    expect(previewAlias('123-fix', 'orbit-pr')).toBe('b-123-fix');
-    expect(previewAlias('/', 'orbit-pr')).toBe('b');
+    expect(previewAlias('123-fix', 'orbit-pr')).toMatch(/^b-123-fix-[0-9a-f]{6}$/);
+    expect(previewAlias('/', 'orbit-pr')).toMatch(/^b-[0-9a-f]{6}$/);
   });
 
   it('keeps long aliases inside one DNS label and distinct per branch', () => {
@@ -56,7 +64,7 @@ describe('workersTarget', () => {
   });
 
   it('sends every other branch to its own preview', () => {
-    expect(workersTarget({ WORKERS_CI_BRANCH: 'fix/login' }, config)).toEqual({
+    expect(workersTarget({ WORKERS_CI_BRANCH: 'fix-login' }, config)).toEqual({
       environment: 'preview',
       worker: 'orbit-pr',
       base: false,
@@ -73,7 +81,7 @@ describe('workersTarget', () => {
 
   it('refuses to send a branch other than main to production', () => {
     expect(() =>
-      workersTarget({ WORKERS_CI_BRANCH: 'fix/login', CLOUDFLARE_ENV: 'production' }, config),
+      workersTarget({ WORKERS_CI_BRANCH: 'fix-login', CLOUDFLARE_ENV: 'production' }, config),
     ).toThrow('Only main deploys to production');
   });
 
@@ -91,7 +99,7 @@ describe('workersTarget', () => {
         preview: { ...config.env.preview, vars: { BETTER_AUTH_URL: 'https://orbit.noveum.ai' } },
       },
     };
-    expect(() => workersTarget({ WORKERS_CI_BRANCH: 'fix/login' }, misnamed)).toThrow(
+    expect(() => workersTarget({ WORKERS_CI_BRANCH: 'fix-login' }, misnamed)).toThrow(
       'must be the workers.dev address of orbit-pr',
     );
   });
@@ -106,7 +114,7 @@ describe('buildEnvironment', () => {
 
   it('compiles the preview address into a branch build', () => {
     const environment = buildEnvironment(
-      workersTarget({ WORKERS_CI_BRANCH: 'fix/login' }, config),
+      workersTarget({ WORKERS_CI_BRANCH: 'fix-login' }, config),
       config,
     );
     expect(environment).toMatchObject({
@@ -134,7 +142,7 @@ describe('deployArguments', () => {
   });
 
   it('creates a named Worker Preview with its own address for a branch', () => {
-    expect(deployArguments(workersTarget({ WORKERS_CI_BRANCH: 'fix/login' }, config))).toEqual([
+    expect(deployArguments(workersTarget({ WORKERS_CI_BRANCH: 'fix-login' }, config))).toEqual([
       'preview',
       '--config',
       'dist/server/wrangler.json',

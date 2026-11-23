@@ -80,6 +80,15 @@ describe('deploymentStatus', () => {
     expect(serialized).not.toContain('private.example.com');
   });
 
+  it('asks for Redis on Node but not on Workers, where Durable Objects replace it', () => {
+    expect(deploymentStatus(admin, {}).find((check) => check.id === 'redis')?.status).toBe(
+      'Needs configuration',
+    );
+    expect(
+      deploymentStatus(admin, {}, { workers: true }).find((check) => check.id === 'redis'),
+    ).toBeUndefined();
+  });
+
   it('keeps GitHub sign-in distinct from the GitHub App integration', () => {
     const checks = deploymentStatus(admin, {
       GITHUB_CLIENT_ID: 'id',

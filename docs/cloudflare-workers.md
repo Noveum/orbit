@@ -258,8 +258,10 @@ the build settings when the login can reach more than one.
 ### First deployment
 
 When replacing another production scheduler, stage the first Worker with
-`"triggers": { "crons": [] }` in the deployment checkout's
-`apps/web/wrangler.jsonc` before building. Keep this setting for every staged
+`"triggers": { "crons": [] }` in the block you build: `env.production.triggers`
+for `CLOUDFLARE_ENV=production`, or the top-level `triggers` otherwise. Make
+the change in the deployment checkout's `apps/web/wrangler.jsonc` before
+building. Keep this setting for every staged
 build until the scheduler handoff below.
 
 For the first deployment, prepare a secrets file outside the checkout with the
@@ -357,11 +359,14 @@ version preview URLs for a Worker that implements a Durable Object. A version
 uploaded that way has `has_preview: false`. Worker Previews give each preview
 its own Durable Object namespaces instead.
 
-The alias is the branch name in lowercase, with every character outside
-`[a-z0-9-]` turned into a dash, repeated dashes collapsed, and a `b-` prefix when
-it would not start with a letter. When `<alias>-orbit-pr` would exceed the 63
-character DNS label limit, the alias is cut short and ends in six characters of
-the branch name's SHA-256, so it stays the same for every push to that branch.
+A branch name that is already a valid label, such as `fix-login`, is the alias
+as it is. Any other name is lowercased, every character outside `[a-z0-9-]`
+becomes a dash, repeated dashes collapse, a `b-` prefix is added when it would
+not start with a letter, and six characters of the branch name's SHA-256 are
+appended, so `fix/login` becomes `fix-login-5e870e` and never shares a preview
+with `fix-login`. When `<alias>-orbit-pr` would exceed the 63 character DNS
+label limit, the alias is cut short before the digest. The alias stays the same
+for every push to a branch.
 
 The preview build compiles `NEXT_PUBLIC_APP_URL` as the preview's own address,
 and the deploy step passes `BETTER_AUTH_URL` and `NEXT_PUBLIC_APP_URL` for that

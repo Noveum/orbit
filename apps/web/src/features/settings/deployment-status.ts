@@ -109,13 +109,17 @@ export function deploymentStatus(
       ['DATABASE_URL'],
       'Apply and verify migrations before deploying. Confirm that a task remains after reloading. Back up the database together with uploaded files.',
     ),
-    check(
-      environment,
-      'redis',
-      'Redis',
-      ['REDIS_URL'],
-      'Redis supports rate limits and event delivery. Keep it reachable from the application and off the public internet.',
-    ),
+    ...(runtime.workers
+      ? []
+      : [
+          check(
+            environment,
+            'redis',
+            'Redis',
+            ['REDIS_URL'],
+            'Redis supports rate limits and event delivery. Keep it reachable from the application and off the public internet.',
+          ),
+        ]),
     check(
       environment,
       'storage',

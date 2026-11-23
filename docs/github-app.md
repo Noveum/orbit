@@ -170,6 +170,9 @@ bun run db:catchup packages/db/catchup/github-delivery-and-refresh-claims.sql
 bun run db:check-drift
 ```
 
-The route serving `/api/webhooks/github` declares a 60 second `maxDuration`.
-The delivery claim lease is 15 seconds longer so a second delivery does not
-take over while the first request is still expected to run.
+The route serving `/api/webhooks/github` declares a 60 second `maxDuration`,
+which Workers do not enforce. The delivery claim lease is 15 seconds longer,
+which only delays a takeover: a request that runs past 75 seconds can be
+reclaimed by a second delivery while it still runs. Effects still commit only
+for the current claim, because each path finalizes in the same transaction and
+rolls back when the claim token no longer matches.

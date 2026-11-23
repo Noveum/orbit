@@ -37,19 +37,10 @@ on one preview does not work on another.
 
 ## Social login on a preview
 
-Social login is not configured on previews. To test it, set the same random
-`OAUTH_PROXY_SECRET` of at least 32 characters on production and on the preview,
-plus the provider credentials. Register only the production callback URLs with
-the providers:
-
-- `https://orbit.noveum.ai/api/auth/callback/google`
-- `https://orbit.noveum.ai/api/auth/callback/github`
-
-Google and GitHub then return to production, which exchanges the authorization
-code and sends an encrypted, short-lived profile to the initiating preview. The
-preview consumes its original state and creates the user and session in its own
-database. Production and the preview do not need to share their session
-secrets or databases.
+Social login is not supported on previews. Each preview sets `BETTER_AUTH_URL`
+to its own address, so the OAuth proxy would send provider callbacks to the
+preview rather than to a callback URL registered with Google or GitHub. Use
+password sign-in on previews, and test Google and GitHub sign-in on production.
 
 ## Access
 

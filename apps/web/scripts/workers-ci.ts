@@ -43,7 +43,7 @@ export function previewAlias(branch: string, worker: string): string {
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
   const lettered = /^[a-z]/.test(sanitized) ? sanitized : `b-${sanitized}`.replace(/-+$/, '');
-  if (lettered.length <= available) return lettered;
+  if (lettered === branch && lettered.length <= available) return lettered;
   const suffix = createHash('sha256').update(branch).digest('hex').slice(0, ALIAS_HASH_LENGTH);
   const kept = lettered.slice(0, available - suffix.length - 1).replace(/-+$/, '');
   return `${kept}-${suffix}`;
