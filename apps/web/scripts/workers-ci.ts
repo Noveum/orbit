@@ -139,6 +139,14 @@ export function assertBuiltFor(
   }
 }
 
+export function deployEnvironment(environment: Environment): Record<string, string> {
+  const flattened: Record<string, string> = {};
+  for (const [key, value] of Object.entries(environment)) {
+    if (key !== 'CLOUDFLARE_ENV' && value !== undefined) flattened[key] = value;
+  }
+  return flattened;
+}
+
 async function readSourceConfig(root: string): Promise<SourceConfig> {
   return sourceConfigSchema.parse(
     JSON.parse(await readFile(resolve(root, 'wrangler.jsonc'), 'utf8')),
@@ -147,7 +155,7 @@ async function readSourceConfig(root: string): Promise<SourceConfig> {
 
 async function run(command: string[], environment: Record<string, string>): Promise<void> {
   const child = Bun.spawn(command, {
-    env: { ...process.env, ...environment },
+    env: environment,
     stdio: ['inherit', 'inherit', 'inherit'],
   });
   const code = await child.exited;
@@ -166,7 +174,10 @@ async function main(step: string | undefined): Promise<void> {
   const target = workersTarget(process.env, config);
   process.stdout.write(`Workers ${step ?? ''} for the ${targetDescription(target)}\n`);
   if (step === 'build') {
-    await run(['bun', 'run', 'build:workers'], buildEnvironment(target, config));
+    await run(['bun', 'run', 'build:workers'], {
+      ...deployEnvironment(process.env),
+      ...buildEnvironment(target, config),
+    });
     return;
   }
   if (step === 'deploy') {
@@ -174,7 +185,7 @@ async function main(step: string | undefined): Promise<void> {
       JSON.parse(await readFile(resolve(root, BUILT_CONFIG), 'utf8')),
     );
     assertBuiltFor(target, built.name, process.env);
-    await run(['bunx', 'wrangler', ...deployArguments(target)], {});
+    await run(['bunx', 'wrangler', ...deployArguments(target)], deployEnvironment(process.env));
     return;
   }
   throw new Error('Usage: bun scripts/workers-ci.ts build|deploy');

@@ -4,6 +4,7 @@ import {
   assertBuiltFor,
   buildEnvironment,
   deployArguments,
+  deployEnvironment,
   previewAlias,
   type SourceConfig,
   workersTarget,
@@ -153,6 +154,19 @@ describe('deployArguments', () => {
       '--var',
       'NEXT_PUBLIC_APP_URL:https://fix-login-orbit-pr.acme.workers.dev',
     ]);
+  });
+});
+
+describe('deployEnvironment', () => {
+  it('hides CLOUDFLARE_ENV from wrangler, which would rename the flattened Worker', () => {
+    expect(
+      deployEnvironment({
+        CLOUDFLARE_ENV: 'production',
+        WORKERS_CI_BRANCH: 'main',
+        WRANGLER_CI_OVERRIDE_NAME: 'orbit',
+        UNSET: undefined,
+      }),
+    ).toEqual({ WORKERS_CI_BRANCH: 'main', WRANGLER_CI_OVERRIDE_NAME: 'orbit' });
   });
 });
 
