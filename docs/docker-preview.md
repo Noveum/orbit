@@ -127,10 +127,11 @@ loopback origins with HTTPS URLs, route object storage to a browser-reachable
 hostname, configure scoped CORS, use appropriately restricted storage credentials,
 complete real authentication, and provide backups and an upgrade procedure.
 
-Scheduled jobs are declared in `apps/web/vercel.json`: notifications and sprint
-rollover every minute, analytics snapshots every six hours, and pruning hourly.
-The Docker scheduler uses the same UTC schedule and a fresh `CRON_SECRET`
-shared with the web service. Each job makes a GET request with
+The Docker scheduler runs notifications and sprint rollover every minute,
+analytics snapshots every six hours, and pruning hourly, on UTC boundaries,
+with a fresh `CRON_SECRET` shared with the web service. These match the Cron
+Triggers in `apps/web/wrangler.jsonc`, which also run the daily project
+staleness job that the Docker scheduler does not. Each job makes a GET request with
 `Authorization: Bearer <CRON_SECRET>`. Never expose that secret in a public template.
 
 Optional credentials must be supplied to both tooling and web through the shared

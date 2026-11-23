@@ -53,9 +53,13 @@ if its catalog is incompatible.
 
 ## Deployment guard
 
-Every production Vercel build checks the configured production database before the
-application build. Missing credentials, an unreachable database or required drift
-fails the deployment. This guard never applies migrations during a build.
+`bun run build` and `bun run build:workers` both run
+`packages/db/src/check-drift.ts --guard-deploy` against the configured database
+before the application build. With `ORBIT_REQUIRE_SCHEMA_GUARD=1` the guard
+fails closed: missing credentials, an unreachable database or required drift
+fails the build. The Cloudflare Workers Builds production build sets that
+variable itself, through `bun run build:workers:ci`. Set it in any other
+production build. This guard never applies migrations during a build.
 
 ## Notification history backfill
 
@@ -87,8 +91,8 @@ flag changes require a new deployment before they affect running functions.
 
 ## History retention
 
-The authenticated `/api/cron/prune` job runs hourly in Vercel and through the
-Docker maintenance scheduler. Operational pruning runs before history cleanup,
+The authenticated `/api/cron/prune` job runs hourly, from a Cron Trigger on
+Cloudflare Workers and through the Docker maintenance scheduler. Operational pruning runs before history cleanup,
 so a large history backlog cannot prevent webhook and telemetry retention.
 Deliveries released by history cleanup become eligible on the next hourly run.
 

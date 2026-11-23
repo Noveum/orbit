@@ -14,9 +14,9 @@ Free, realtime, keyboard-first task manager. The UX polish of the best paid task
 ## Bun is the toolchain, not the runtime
 
 Bun installs, runs scripts, and runs tests. Shipped server code must not call a
-Bun built-in, because the web app runs on Vercel's node runtime: that is the only
-runtime where a Vercel function can upgrade a websocket, and `/api/ws` needs it.
-Anything imported from `bun` fails there with `Cannot find module 'bun'`.
+Bun built-in, because the web app runs on Cloudflare Workers and, in the Docker
+image, on Node. Neither has the `bun` module, so anything imported from `bun`
+fails there with `Cannot find module 'bun'`.
 
 | Need | Use | Never use |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ Anything imported from `bun` fails there with `Cannot find module 'bun'`.
 | Reading and writing files | `node:fs/promises` | `Bun.file()`, `Bun.write()` |
 | Hashing passwords | `@node-rs/argon2` (argon2id) | `Bun.password`, `bcrypt` |
 | Sortable ids | `randomUUIDv7()` from `@orbit/shared/utils` | `Bun.randomUUIDv7()`, `ulid`, `nanoid` |
-| WebSocket server | `ws`, upgraded by `@vercel/functions` | `Bun.serve({ websocket })` in shipped code |
+| WebSocket server | the `RealtimeHubObject` Durable Object on Workers, `ws` in the Node realtime host | `Bun.serve({ websocket })` in shipped code |
 | Running TypeScript | `bun file.ts` | `tsx`, `ts-node` |
 | Tests | `bun test` | `vitest`, `jest` |
 | Subprocesses | `Bun.spawn`, `Bun.$` | `node:child_process` |
@@ -52,7 +52,7 @@ Bun does not load a parent directory `.env`, so a script running with its cwd in
 
 ```
 apps/web                  Next.js 16 app: UI, REST route handlers, auth, webhooks,
-                          the realtime socket at /api/ws and the MCP server at /mcp
+                          the MCP server at /mcp, and the Worker entry in apps/web/worker
 apps/realtime             Bun.serve WebSocket host, local development only, never deployed
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/mcp-server       MCP tools and the fetch handler behind /mcp
@@ -62,10 +62,11 @@ scripts/                  repo tooling, written in TypeScript and run with bun
 extras/                   working notes, task board, demo artifacts (not shipped)
 ```
 
-Everything ships as one Next.js app on a single Vercel project. The realtime hub
-and the MCP tools live in packages so the app stays thin and both keep their own
-test suites. `apps/realtime` exists only so local development has a socket server,
-because a Vercel function cannot upgrade a connection under `next dev`.
+Everything ships as one Next.js app, built as a Cloudflare Worker for the hosted
+deployment and as standalone Node for Docker. The realtime hub and the MCP tools
+live in packages so the app stays thin and both keep their own test suites.
+`apps/realtime` exists only so local development has a socket server, because
+`next dev` cannot upgrade a connection.
 
 Cross-app code lives in `packages/shared`. If two apps need it, it belongs there, never duplicated.
 
@@ -152,46 +153,36 @@ domain verified in Resend, otherwise every send fails.
 
 ## Deployment
 
-Orbit is one Vercel project. The root directory is `apps/web`, the build runs
-`bun run build` there, and functions serve on the node runtime. The Docker Compose
-template in `deploy/docker` packages standalone Node with Postgres, Redis and
-MinIO, a Node realtime host, an HTTP gateway routing `/api/ws`, and a maintenance
-scheduler. See `docs/docker-preview.md`. Nothing runs in Kubernetes.
-
-The node runtime is not optional. `/api/ws` upgrades through
-`experimental_upgradeWebSocket` from `@vercel/functions`, and Vercel only injects
-that upgrade bridge on node. Setting `bunVersion` in `apps/web/vercel.json` moves
-every function to the bun runtime, where the upgrade silently never happens and
-the client just retries against a socket that never opens.
-
-Upgrade before doing any other work in that route. Awaiting redis, the database
-or anything else first stops the handshake reaching a 101, so attach the hub
-after the socket is open and buffer whatever arrives in between.
-
-Functions run in `hnd1` because Supabase is in `ap-northeast-1`, and `regions`
-in `apps/web/vercel.json` is what keeps them together. Vercel defaults to `iad1`,
-which put every query on a Virginia to Tokyo round trip of about 170ms. A page
-that reaches the database four times sequentially paid most of a second for it,
-which is why tuning the queries themselves changed almost nothing: they run in
-under 3ms and the trip to reach them was fifty times that. Move the database and
-this line moves with it. Serving users from the region nearest them is the wrong
-instinct here, because a page makes several database round trips and only one
-trip from the browser.
-
-The same source also builds as a Cloudflare Worker: `bun run build:workers` in
-`apps/web` runs vinext, with the entry in `apps/web/worker`. There the socket is
-served by a Durable Object, Redis is not used, and each request gets its own
-Postgres pool. Anything that touches `apps/web/worker`, `@orbit/db`'s client,
-the realtime hub or the publisher has to keep both builds working. See
+Orbit deploys to Cloudflare Workers. `bun run build:workers` in `apps/web` runs
+vinext, with the entry in `apps/web/worker`. There `/api/ws` is served by the
+`RealtimeHubObject` Durable Object, Redis is not used, scheduled jobs are Cron
+Triggers, and each request gets its own Postgres pool through Hyperdrive. The
+hosted deployment is `env.production` in `apps/web/wrangler.jsonc` (Worker
+`orbit` at orbit.noveum.ai) and every pull request gets a Worker Preview on
+`env.preview` (Worker `orbit-pr`). Workers Builds runs `bun run build:workers:ci`
+and `bun run deploy:workers:ci`, which pick the environment from the branch. See
 `docs/cloudflare-workers.md`.
+
+The Docker Compose template in `deploy/docker` packages standalone Node
+(`bun run build`) with Postgres, Redis and MinIO, a Node realtime host, an HTTP
+gateway routing `/api/ws`, and a maintenance scheduler. See
+`docs/docker-preview.md`. Nothing runs in Kubernetes. Anything that touches
+`apps/web/worker`, `@orbit/db`'s client, the realtime hub or the publisher has to
+keep both builds working.
+
+The Worker is placed next to the database with `placement.region` in
+`wrangler.jsonc`. A page makes several sequential database round trips and only
+one trip from the browser, so compute belongs beside the database, not beside
+the user. Move the database and the placement moves with it.
 
 Migrations are applied locally against the target database, never by a job in the
 platform. Run `DIRECT_URL="postgres://..." bun run db:release` before merging code
 that depends on a schema change. The command verifies the migration ledger, applies
 pending migrations under a database lock and then compares columns, types,
 nullability, defaults, generated columns, primary keys, indexes, foreign keys and
-enum values against the declared schema. A production Vercel build fails closed if
-that verification cannot run or finds the database behind.
+enum values against the declared schema. A build with
+`ORBIT_REQUIRE_SCHEMA_GUARD=1`, which the production Workers Builds build sets,
+fails closed if that verification cannot run or finds the database behind.
 
 ## Git
 

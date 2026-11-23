@@ -142,10 +142,10 @@ front saves a review round.
 **1. Bun is the package manager and the script runner.** No npm, no pnpm, no
 yarn, no turbo. If you see a `package-lock.json` in your diff, delete it.
 
-**2. Shipped server code must not import a Bun built-in.** Orbit runs on
-Vercel's node runtime, because that is the only runtime where a function can
-upgrade a websocket, and `/api/ws` needs that. Anything imported from `bun`
-fails there with `Cannot find module 'bun'`.
+**2. Shipped server code must not import a Bun built-in.** Orbit runs as a
+Cloudflare Worker and, in Docker, as a standalone Node app. Neither runtime has
+the `bun` module, so anything imported from `bun` fails there with
+`Cannot find module 'bun'`.
 
 | Need | Use | Never |
 | --- | --- | --- |
