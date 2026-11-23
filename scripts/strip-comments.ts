@@ -65,7 +65,14 @@ function parserLang(file: string): 'js' | 'jsx' | 'ts' | 'tsx' {
 }
 
 export function tsComments(file: string, text: string): ScanResult {
-  const { comments } = parseSync(file, text, { lang: parserLang(file), sourceType: 'unambiguous' });
+  const { comments, errors } = parseSync(file, text, {
+    lang: parserLang(file),
+    sourceType: 'unambiguous',
+  });
+  const failure = errors.find((error) => error.severity === 'Error');
+  if (failure !== undefined) {
+    throw new Error(`Could not parse ${file} to find its comments: ${failure.message}`);
+  }
   const remove: CommentRange[] = [];
   let kept = 0;
   for (const c of comments) {
