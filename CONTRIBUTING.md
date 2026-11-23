@@ -39,7 +39,7 @@ You do not need to write TypeScript to make Orbit better.
 
 ## Set up your machine
 
-You need [Bun](https://bun.sh) 1.3 or newer, [Node.js](https://nodejs.org) 24.x
+You need [Bun](https://bun.sh) 1.4.5 or newer, [Node.js](https://nodejs.org) 26.x
 on your PATH, and Docker. The tests and `bun run verify` use Node for fresh
 server-runtime import checks; Bun remains the package manager and test runner.
 Bun replaces npm, pnpm, yarn, ts-node, jest and turbo, so do not install any of

@@ -203,7 +203,7 @@ rather than on CPU, so none of them is near the CPU limit.
 
 ## Local run
 
-Node 24 is required for the build. Older releases skip `src/app/.well-known`
+Node 24 or newer is required for the build. Older releases skip `src/app/.well-known`
 when routes are scanned, and `vite.config.ts` refuses to start on them.
 
 Copy the variables the Worker needs from `.env` into `apps/web/.dev.vars`, then:
