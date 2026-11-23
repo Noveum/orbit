@@ -38,7 +38,8 @@ x-app-environment: &app-environment
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
+    command: [sh, -c, "if [ -s /var/lib/postgresql/18/docker/PG_VERSION ] && [ ! -s /var/lib/postgresql/19/docker/PG_VERSION ]; then echo \"This volume holds PostgreSQL 18 data and no PostgreSQL 19 cluster. Follow docs/runbooks/postgres-major-upgrade.md before starting PostgreSQL 19.\" >&2; exit 1; fi; exec docker-entrypoint.sh postgres"]
     environment:
       POSTGRES_USER: orbit
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run bun run preview:init}
