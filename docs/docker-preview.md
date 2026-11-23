@@ -113,8 +113,9 @@ replace the currently running image.
 An installation created before the move to PostgreSQL 19 keeps its data in a
 PostgreSQL 18 directory, and the new image refuses to start on it. Upgrade the
 `postgres` volume in place with the
-[PostgreSQL 18 to 19 upgrade](runbooks/postgres-major-upgrade.md) runbook before
-`preview:up`.
+[PostgreSQL 18 to 19 upgrade](runbooks/postgres-major-upgrade.md) runbook right
+after updating the checkout, before `preview:migrate` or any other step that
+starts PostgreSQL.
 
 When upgrading an installation that predates the scheduler, run `preview:start`
 instead of those individual steps. It adds the required scheduler secret before

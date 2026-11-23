@@ -29,6 +29,21 @@ Nothing has been lost. Follow the section for your installation.
 1. Capture a backup first with the [routine backup](routine-backup.md) procedure.
    The upgrade keeps the PostgreSQL 18 files, but an offsite archive is the
    recovery path if the host itself fails.
+
+   If PostgreSQL 19 has already refused to start, the backup has no database to
+   connect to. Start PostgreSQL 18 on the volume for the capture, point the
+   backup's direct database connection at
+   `postgres://orbit:<POSTGRES_PASSWORD>@127.0.0.1:5439/orbit`, and stop it
+   afterwards:
+
+   ```bash
+   docker run -d --name orbit-postgres-18-backup -p 127.0.0.1:5439:5432 \
+     -v orbit-preview_postgres:/var/lib/postgresql postgres:18-alpine
+   docker stop orbit-postgres-18-backup && docker rm orbit-postgres-18-backup
+   ```
+
+   The empty `/var/lib/postgresql/19` directory the refused start left behind is
+   harmless, and the upgrade removes it.
 2. Stop every container that uses the volume. The command refuses to run while
    one is running.
 
