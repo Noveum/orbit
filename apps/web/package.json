@@ -12,7 +12,9 @@
     "test:e2e": "bun --env-file=../../.env --bun playwright test",
     "build:workers": "bun --env-file=../../.env ../../packages/db/src/check-drift.ts --guard-deploy && ORBIT_WORKERS_BUILD=1 bun --env-file=../../.env vite build && bun ../../scripts/check-workers-driver.ts",
     "preview:workers": "wrangler dev --config dist/server/wrangler.json",
-    "deploy:workers": "wrangler deploy --config dist/server/wrangler.json"
+    "deploy:workers": "wrangler deploy --config dist/server/wrangler.json",
+    "build:workers:ci": "bun scripts/workers-ci.ts build",
+    "deploy:workers:ci": "bun scripts/workers-ci.ts deploy"
   },
   "imports": {
     "#argon2": {
@@ -70,7 +72,6 @@
     "@tiptap/pm": "^3.34.0",
     "@tiptap/react": "^3.34.0",
     "@tiptap/starter-kit": "^3.34.0",
-    "@vercel/functions": "^3.11.3",
     "@vinext/cloudflare": "1.4.0",
     "better-auth": "1.7.26",
     "class-variance-authority": "^0.7.1",

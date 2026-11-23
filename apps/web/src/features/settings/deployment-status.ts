@@ -36,20 +36,24 @@ function check(
   };
 }
 
+export interface DeploymentRuntime {
+  readonly workers: boolean;
+}
+
 export function deploymentStatus(
   principal: Principal,
   environment: Environment,
+  runtime: DeploymentRuntime = { workers: false },
 ): readonly DeploymentCheck[] {
   assertCan(principal, 'org:manage');
   const password = ['true', '1'].includes(environment['ORBIT_PASSWORD_AUTH'] ?? '');
   const email = emailConfigured(environment);
   const google = configured(environment, ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']);
   const github = configured(environment, ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET']);
-  const vercel = environment['VERCEL'] === '1';
   const selfHosted = environment['ORBIT_SELF_HOSTED'] === 'true';
   const realtimeDescription = selfHosted
     ? 'The Docker gateway routes /api/ws to the Node realtime service. Check its health and Redis, then test changes in two browser windows.'
-    : 'Configure the Vercel Node WebSocket runtime or the Docker realtime service and gateway. An HTTP-only deployment does not provide live updates.';
+    : 'Deploy as a Cloudflare Worker, which serves /api/ws from a Durable Object, or run the Docker realtime service and gateway. An HTTP-only deployment does not provide live updates.';
   const slackEnabled = environment['SLACK_ENABLED']?.trim().toLowerCase() === 'true';
   const slack = check(
     environment,
@@ -141,9 +145,9 @@ export function deploymentStatus(
     {
       id: 'realtime',
       title: 'Live updates',
-      status: vercel || selfHosted ? 'Requires verification' : 'Unavailable',
-      description: vercel
-        ? 'Test changes in two browser windows. Live updates require the Vercel Node WebSocket runtime and Redis.'
+      status: runtime.workers || selfHosted ? 'Requires verification' : 'Unavailable',
+      description: runtime.workers
+        ? 'The realtime Durable Object serves /api/ws. Test changes in two browser windows.'
         : realtimeDescription,
       variables: [],
     },
@@ -154,7 +158,7 @@ export function deploymentStatus(
         ? 'Requires verification'
         : 'Needs configuration',
       description:
-        'Vercel cron and the Docker scheduler call notification retries and sprint rollover every minute, analytics snapshots every six hours, and pruning daily. Check execution logs. A configured secret does not prove the scheduler is running.',
+        'Cloudflare Cron Triggers and the Docker scheduler call notification retries and sprint rollover every minute, analytics snapshots every six hours, and pruning daily. Check execution logs. A configured secret does not prove the scheduler is running.',
       variables: ['CRON_SECRET'],
     },
   ];

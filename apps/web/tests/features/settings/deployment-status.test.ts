@@ -55,18 +55,24 @@ describe('deploymentStatus', () => {
   });
 
   it('does not claim delivery, live updates or scheduling have been tested', () => {
-    const checks = deploymentStatus(admin, {
-      RESEND_API_KEY: 'private-resend',
-      EMAIL_FROM: 'Orbit <orbit@example.com>',
-      VERCEL: '1',
-      CRON_SECRET: 'private-cron',
-      ALLOWED_EMAIL_DOMAINS: 'private.example.com',
-    });
+    const checks = deploymentStatus(
+      admin,
+      {
+        RESEND_API_KEY: 'private-resend',
+        EMAIL_FROM: 'Orbit <orbit@example.com>',
+        CRON_SECRET: 'private-cron',
+        ALLOWED_EMAIL_DOMAINS: 'private.example.com',
+      },
+      { workers: true },
+    );
     expect(checks.find((check) => check.id === 'email')?.status).toBe('Configured');
     expect(checks.find((check) => check.id === 'email')?.description).toContain(
       'does not confirm delivery',
     );
     expect(checks.find((check) => check.id === 'realtime')?.status).toBe('Requires verification');
+    expect(checks.find((check) => check.id === 'realtime')?.description).toContain(
+      'Durable Object',
+    );
     expect(checks.find((check) => check.id === 'schedules')?.status).toBe('Requires verification');
     const serialized = JSON.stringify(checks);
     expect(serialized).not.toContain('private-resend');

@@ -1261,10 +1261,7 @@ const GUARD_FLAG = '--guard-deploy';
 
 if (import.meta.main) {
   const guarding = process.argv.includes(GUARD_FLAG);
-  const productionGuard =
-    guarding &&
-    (process.env['VERCEL_ENV'] === 'production' ||
-      process.env['ORBIT_REQUIRE_SCHEMA_GUARD'] === '1');
+  const productionGuard = guarding && process.env['ORBIT_REQUIRE_SCHEMA_GUARD'] === '1';
   const url = process.env['DATABASE_URL'];
 
   if (url === undefined || url.length === 0) {

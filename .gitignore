@@ -26,11 +26,8 @@ extras/
 
 .claude/worktrees/
 
-.vercel/
-
 next-env.d.ts
 .artifacts/
-.vercel
 .env*
 
 .claude/launch.json

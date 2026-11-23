@@ -43,6 +43,30 @@ describe('backup create CLI args', () => {
     expect(args.sourceRevision).toBe('git-sha-xyz');
   });
 
+  it('takes the revision from SOURCE_REVISION before the Workers Builds commit', () => {
+    const saved = {
+      source: process.env['SOURCE_REVISION'],
+      workers: process.env['WORKERS_CI_COMMIT_SHA'],
+    };
+    try {
+      process.env['WORKERS_CI_COMMIT_SHA'] = 'workers-build-sha';
+      delete process.env['SOURCE_REVISION'];
+      expect(parseArgs(['bun', 'scripts/backup/create.ts']).sourceRevision).toBe(
+        'workers-build-sha',
+      );
+      process.env['SOURCE_REVISION'] = 'release-sha';
+      expect(parseArgs(['bun', 'scripts/backup/create.ts']).sourceRevision).toBe('release-sha');
+    } finally {
+      for (const [key, value] of [
+        ['SOURCE_REVISION', saved.source],
+        ['WORKERS_CI_COMMIT_SHA', saved.workers],
+      ] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it('emits json error and exits nonzero when database url is missing and --json is passed', () => {
     const env = {
       ...process.env,

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SyncAction } from '@orbit/shared/events';
-import { z } from 'zod';
+import { CRON_SCHEDULE } from '@/lib/cloudflare/cron-schedule.ts';
 
 const SECRET = 'a-notifications-cron-secret-that-is-long-enough';
 const previousSecret = process.env['CRON_SECRET'];
@@ -265,15 +265,11 @@ describe('GET /api/cron/notifications', () => {
   });
 });
 
-const vercelConfigSchema = z.object({
-  crons: z.array(z.object({ path: z.string(), schedule: z.string() })),
-});
-
 describe('notification delivery schedule', () => {
-  it('runs every minute', async () => {
-    const url = new URL('../../../../../vercel.json', import.meta.url);
-    const config = vercelConfigSchema.parse(JSON.parse(await Bun.file(url).text()));
-    const notifications = config.crons.find((cron) => cron.path === '/api/cron/notifications');
-    expect(notifications?.schedule).toBe('* * * * *');
+  it('runs every minute', () => {
+    const schedule = Object.entries(CRON_SCHEDULE).find(([, paths]) =>
+      paths.includes('/api/cron/notifications'),
+    );
+    expect(schedule?.[0]).toBe('* * * * *');
   });
 });
