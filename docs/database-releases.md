@@ -57,9 +57,12 @@ if its catalog is incompatible.
 `packages/db/src/check-drift.ts --guard-deploy` against the configured database
 before the application build. With `ORBIT_REQUIRE_SCHEMA_GUARD=1` the guard
 fails closed: missing credentials, an unreachable database or required drift
-fails the build. The Cloudflare Workers Builds production build sets that
-variable itself, through `bun run build:workers:ci`. Set it in any other
-production build. This guard never applies migrations during a build.
+fails the build. Without the variable, a build with no `DATABASE_URL` or an
+unreachable database reports that the schema went unchecked and carries on.
+Cloudflare Workers Builds has no database access, so its builds skip the guard.
+Run `db:release` and `db:check-drift` against production from a machine with
+database access before merging code that depends on a schema change. This guard
+never applies migrations during a build.
 
 ## Notification history backfill
 

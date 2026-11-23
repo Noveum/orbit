@@ -292,9 +292,18 @@ Before deploying, the script checks that the bundle was built for the Worker
 the branch targets and, inside Workers Builds, that it matches the Worker the
 connection belongs to (`WRANGLER_CI_OVERRIDE_NAME`). A preview connection that
 somehow built for `orbit` stops there instead of deploying production code to
-the wrong Worker. The production build always runs with
-`ORBIT_REQUIRE_SCHEMA_GUARD=1`, so it fails when `DATABASE_URL` is missing,
-unreachable, or behind the schema.
+the wrong Worker.
+
+Workers Builds cannot reach the database, so no build there checks the schema.
+Without `DATABASE_URL` the guard in `build:workers` says so and lets the build
+through, as it does anywhere else. Before merging code that depends on a schema
+change, run the release and the guard from a machine with database access, as
+described in [database releases](database-releases.md):
+
+```
+DIRECT_URL="postgres://..." bun run db:release
+DATABASE_URL="postgres://..." bun run db:check-drift
+```
 
 Settings for the Worker **`orbit`**:
 
@@ -305,18 +314,19 @@ Settings for the Worker **`orbit`**:
 | Root directory | `apps/web` |
 | Build command | `cd ../.. && bun install --frozen-lockfile && cd apps/web && bun run build:workers:ci` |
 | Deploy command | `bun run deploy:workers:ci` |
-| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.3.14`, `CLOUDFLARE_ENV=production`, `NEXT_PUBLIC_APP_URL=https://orbit.noveum.ai`, `ORBIT_PASSWORD_AUTH` with the runtime value |
-| Build secrets | `DATABASE_URL` (the production database, read for the schema guard), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM` |
+| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.3.14`, `CLOUDFLARE_ENV=production`, `NEXT_PUBLIC_APP_URL=https://orbit.noveum.ai`, `ORBIT_PASSWORD_AUTH=true` |
+| Build secrets | none |
 
 The build command installs from the repository root because `bun.lock` lives
 there, not in `apps/web`. The build scripts load `../../.env` when it exists
 and carry on without it, so a clean checkout needs no `.env`.
 
 `next.config.ts` refuses a production build that has no usable first sign-in
-method, so the build needs the same sign-in variables as the runtime: at least
-one of `ORBIT_PASSWORD_AUTH=true`, a Google pair, a GitHub pair, or Resend with
-a real `EMAIL_FROM`. Build variables are not runtime variables. Runtime secrets
-stay under the Worker's Settings, Variables and Secrets.
+method: `ORBIT_PASSWORD_AUTH=true`, a Google pair, a GitHub pair, or Resend with
+a real `EMAIL_FROM`. Production runs with `ORBIT_PASSWORD_AUTH=true`, so that
+build variable is enough and no sign-in secret is needed at build time. Build
+variables are not runtime variables. Runtime secrets stay under the Worker's
+Settings, Variables and Secrets.
 
 Settings for the Worker **`orbit-pr`**:
 

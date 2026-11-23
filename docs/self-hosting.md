@@ -208,9 +208,11 @@ hours, and project staleness daily at 09:00 UTC.
    `build:workers` runs.
 4. To build from Git with Workers Builds, set the root directory to `apps/web`,
    the build command to `bun run build:workers` and the deploy command to
-   `bun run deploy:workers`, with `NODE_VERSION=24`. Add
-   `ORBIT_REQUIRE_SCHEMA_GUARD=1` and `DATABASE_URL` as build variables so a
-   build fails when the database is unreachable or behind the schema. The
+   `bun run deploy:workers`, with `NODE_VERSION=24`. If the build can reach
+   your database, add `ORBIT_REQUIRE_SCHEMA_GUARD=1` and `DATABASE_URL` as
+   build variables so a build fails when the database is behind the schema.
+   Otherwise run `db:release` and `db:check-drift` from a machine with database
+   access before merging schema changes. The
    `build:workers:ci` and `deploy:workers:ci` scripts deploy the `production`
    and `preview` environments in `wrangler.jsonc`, which describe the hosted
    Orbit. Use them only after pointing those environments at your own Workers,
@@ -313,8 +315,7 @@ On Cloudflare Workers, build and deploy from `apps/web` with
 `bun run build:workers` and `bun run deploy:workers` instead of `bun run build`.
 
 Always complete the database release before the code that depends on it goes live.
-With `ORBIT_REQUIRE_SCHEMA_GUARD=1`, which the Workers Builds production build
-sets itself, `build` and `build:workers` refuse to build when the configured
+With `ORBIT_REQUIRE_SCHEMA_GUARD=1`, `build` and `build:workers` refuse to build when the configured
 database cannot be verified or is missing a required schema object. Additional
 legacy tables and indexes are reported and preserved. Orbit ships continuously from `main`. We
 also publish automated weekly dated tags and GitHub releases, with manual

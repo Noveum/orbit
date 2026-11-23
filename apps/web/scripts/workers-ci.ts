@@ -96,7 +96,7 @@ export function buildEnvironment(
   config: SourceConfig,
 ): Record<string, string> {
   if (target.environment === 'production') {
-    return { CLOUDFLARE_ENV: 'production', ORBIT_REQUIRE_SCHEMA_GUARD: '1' };
+    return { CLOUDFLARE_ENV: 'production' };
   }
   const { NODE_ENV: _runtimeOnly, ...vars } = config.env.preview.vars;
   if (target.base) return { ...vars, CLOUDFLARE_ENV: 'preview' };

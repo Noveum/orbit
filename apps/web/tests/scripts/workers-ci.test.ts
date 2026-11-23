@@ -98,10 +98,9 @@ describe('workersTarget', () => {
 });
 
 describe('buildEnvironment', () => {
-  it('guards the production schema', () => {
+  it('builds production without requiring a database', () => {
     expect(buildEnvironment({ environment: 'production', worker: 'orbit' }, config)).toEqual({
       CLOUDFLARE_ENV: 'production',
-      ORBIT_REQUIRE_SCHEMA_GUARD: '1',
     });
   });
 

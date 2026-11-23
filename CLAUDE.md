@@ -181,8 +181,9 @@ that depends on a schema change. The command verifies the migration ledger, appl
 pending migrations under a database lock and then compares columns, types,
 nullability, defaults, generated columns, primary keys, indexes, foreign keys and
 enum values against the declared schema. A build with
-`ORBIT_REQUIRE_SCHEMA_GUARD=1`, which the production Workers Builds build sets,
-fails closed if that verification cannot run or finds the database behind.
+`ORBIT_REQUIRE_SCHEMA_GUARD=1` fails closed if that verification cannot run or
+finds the database behind. Workers Builds has no database access, so run the
+release and `bun run db:check-drift` from a machine that does.
 
 ## Git
 
