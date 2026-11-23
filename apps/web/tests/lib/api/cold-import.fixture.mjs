@@ -4,7 +4,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { pathToFileURL } from 'node:url';
 
-assert.equal(process.versions.node.split('.')[0], '24');
+assert.equal(process.versions.node.split('.')[0], '26');
 assert.equal(process.versions.bun, undefined);
 registerHooks({
   resolve(specifier, context, nextResolve) {
