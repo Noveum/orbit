@@ -13,8 +13,14 @@ let expiresAt = Number.POSITIVE_INFINITY;
 let selectedCutoff = 0;
 let peerPort = 0;
 const originalConnect = net.Socket.prototype.connect;
+const normalizedConnectArguments = z.tuple(
+  [z.tuple([z.object({ port: z.number(), host: z.string() })], z.unknown())],
+  z.unknown(),
+);
 net.Socket.prototype.connect = function (this: Socket, ...args: unknown[]): Socket {
-  if (args[0] !== peerPort || args[1] !== '127.0.0.1' || peerPort === 0) {
+  const normalized = normalizedConnectArguments.safeParse(args);
+  const target = normalized.success ? normalized.data[0][0] : undefined;
+  if (target?.port !== peerPort || target.host !== '127.0.0.1' || peerPort === 0) {
     deniedConnections += 1;
     throw new Error('Only the owned loopback peer is allowed');
   }
