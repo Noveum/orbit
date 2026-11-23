@@ -41,7 +41,7 @@
   "env": {
     "production": {
       "name": "orbit",
-      "workers_dev": true,
+      "workers_dev": false,
       "preview_urls": false,
       "routes": [{ "pattern": "orbit.noveum.ai", "custom_domain": true }],
       "vars": { "NODE_ENV": "production" },
