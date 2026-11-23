@@ -128,7 +128,7 @@ async function body(response: Response, signal: AbortSignal, operation: string):
     }
     const parts: Uint8Array[] = [];
     let size = 0;
-    for (;;) {
+    while (true) {
       signal.throwIfAborted();
       const { done, value } = await reader.read();
       if (done) break;
