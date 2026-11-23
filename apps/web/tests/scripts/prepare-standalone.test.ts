@@ -11,16 +11,10 @@ afterEach(async () => {
 });
 
 describe('prepareStandalone', () => {
-  it('leaves Vercel builds for the platform to trace', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'orbit-standalone-'));
-    roots.push(root);
-    await expect(prepareStandalone(root, '1')).resolves.toBeUndefined();
-  });
-
   it('refuses a local build without standalone output', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orbit-standalone-'));
     roots.push(root);
-    await expect(prepareStandalone(root, undefined)).rejects.toThrow('Missing standalone output');
+    await expect(prepareStandalone(root)).rejects.toThrow('Missing standalone output');
   });
 
   it('copies public assets and static output and builds the node entrypoint', async () => {
@@ -36,7 +30,7 @@ describe('prepareStandalone', () => {
     await writeFile(join(root, 'src', 'realtime.ts'), "process.stdout.write('realtime');\n");
     await writeFile(join(root, 'src', 'scheduler.ts'), "process.stdout.write('scheduler');\n");
 
-    await prepareStandalone(root, undefined);
+    await prepareStandalone(root);
 
     const standalone = join(root, '.next', 'standalone', 'apps', 'web');
     expect(await readFile(join(standalone, 'public', 'asset.txt'), 'utf8')).toBe('public asset');

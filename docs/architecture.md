@@ -1,32 +1,37 @@
 # Architecture
 
-Orbit is one Next.js app, plus Postgres, Redis and a bucket. The interesting
-part is how a change reaches every other open screen in well under a second, and
+Orbit is one Next.js app, plus Postgres and a bucket, and Redis when it runs on
+Node. The interesting part is how a change reaches every other open screen in well under a second, and
 how it reaches only the people entitled to see it.
 
 ## The shape
 
 ```
                         ┌──────────────────────────────┐
-   browser  ◄──────────►│  Next.js app on Vercel node  │
-   (React,              │                              │
-    TanStack Query,     │  UI, REST handlers, auth,    │
-    realtime client)    │  /api/ws, /mcp               │
+   browser  ◄──────────►│  Next.js app: a Cloudflare   │
+   (React,              │  Worker, or Node in Docker   │
+    TanStack Query,     │                              │
+    realtime client)    │  UI, REST handlers, auth,    │
+                        │  /api/ws, /mcp               │
                         └───┬───────────┬──────────┬───┘
                             │           │          │
                        ┌────▼────┐ ┌────▼────┐ ┌───▼────┐
-                       │ Postgres│ │  Redis  │ │ Bucket │
-                       │ (truth) │ │(fan-out)│ │(files) │
+                       │ Postgres│ │Realtime │ │ Bucket │
+                       │ (truth) │ │   hub   │ │(files) │
                        └─────────┘ └─────────┘ └────────┘
 ```
 
-Everything ships as a single Vercel project. Nothing is containerised, and
-nothing runs in Kubernetes.
+On Cloudflare Workers the hub is the `RealtimeHubObject` Durable Object, and
+the Worker entry, `apps/web/worker/index.ts`, routes `/api/ws` to it. In the
+Docker deployment the hub runs in a separate Node realtime service on port
+3100, a Caddy gateway routes `/api/ws` to it, and Redis carries the fan-out
+from the web service. See [Cloudflare Workers](cloudflare-workers.md) and the
+[Docker Compose preview](docker-preview.md). Nothing runs in Kubernetes.
 
 ## The workspace
 
 ```
-apps/web                  Next.js app: UI, REST handlers, auth, /api/ws, /mcp
+apps/web                  Next.js app: UI, REST handlers, auth, /mcp, Worker entry
 apps/realtime             Bun.serve websocket host, local development only
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/realtime-client   Browser client: subscribe, patch, reconnect
@@ -41,9 +46,10 @@ The hub and the MCP tools live in packages rather than in the app for two
 reasons: the app stays thin, and both keep their own test suites that run
 without booting Next.
 
-`apps/realtime` exists only because a Vercel function cannot upgrade a
-connection under `next dev`. It is never deployed. In production the socket is
-served from the app itself.
+`apps/realtime` exists only because `next dev` cannot upgrade a websocket. It
+is never deployed. In production the socket is served on the app's own origin,
+by the Worker's Durable Object or by the Docker realtime service behind the
+gateway.
 
 If two apps need a piece of code it belongs in `packages/shared`, never copied.
 
@@ -66,13 +72,14 @@ courtesy. This is the gate.
 workspace. It is what lets a client that missed messages ask for everything
 since the last one it saw, instead of refetching the world.
 
-**5. A `SyncAction` is published to Redis.** It carries the `syncId`, the
+**5. A `SyncAction` is published to the hub.** On Docker and in local
+development it goes through Redis. On Workers it is a `fetch` to the Durable
+Object. It carries the `syncId`, the
 `organizationId`, the `scopes` entitled to see it, the `action`
 (`insert`, `update`, `delete`, `archive`, `unarchive`), the `model`, and the
 row.
 
-**6. The hub fans it out.** It is subscribed to Redis and holds every open
-connection with the scopes that connection is subscribed to. The action goes to
+**6. The hub fans it out.** It holds every open connection with the scopes that connection is subscribed to. The action goes to
 matching connections and no others.
 
 **7. Every other browser patches its cache.** The realtime stream invalidates
@@ -138,23 +145,19 @@ team an issue moved from. Durable event recovery for those cases is tracked by
 RT-001. The reconnect banner only appears once retries have actually been
 failing, so a blip does not flash a warning at anyone.
 
-### Why node, and not Bun
+### Where the socket is served
 
-`/api/ws` upgrades through `experimental_upgradeWebSocket` from
-`@vercel/functions`, and Vercel only injects that bridge on the node runtime.
-Setting `bunVersion` in `apps/web/vercel.json` moves every function to Bun,
-where the upgrade silently never happens and the client retries forever against
-a socket that never opens.
-
-**Upgrade before doing anything else in that route.** Awaiting Redis or the
-database first stops the handshake reaching a 101. Attach the hub after the
-socket is open, and buffer whatever arrives in between.
+The Next.js app has no `/api/ws` route. On Cloudflare Workers the Worker entry
+hands `/api/ws` to the `RealtimeHubObject` Durable Object before the request
+reaches the app. In Docker the Caddy gateway sends `/api/ws` and
+`/api/realtime/health` to the Node realtime service. Locally `bun run dev`
+starts `apps/realtime` on port 3100 next to `next dev`.
 
 ## Bun is the toolchain, not the runtime
 
 Bun installs, runs scripts, runs the TypeScript and runs the tests. Shipped
-server code must not import a Bun built-in, because the deployed runtime is
-node.
+server code must not import a Bun built-in, because the deployed runtimes are
+Cloudflare Workers and node.
 
 | Need | Use | Never |
 | --- | --- | --- |
@@ -225,9 +228,11 @@ workspace and re-verifies a passkey. See [MCP server](mcp.md).
 
 ## Design decisions worth knowing
 
-**Why Redis and not Postgres LISTEN/NOTIFY.** `NOTIFY` payloads are capped at
-8000 bytes and delivery is tied to a connection that pooled serverless functions
-do not keep. Redis pub/sub does not care how the app is scaled.
+**Why Redis and not Postgres LISTEN/NOTIFY on Node.** `NOTIFY` payloads are
+capped at 8000 bytes and delivery is tied to a connection that a pooled app does
+not keep. Redis pub/sub does not care how the app is scaled. On Workers every
+socket is in the one hub Durable Object, so there is nothing to fan out
+between.
 
 **Why a monotonic `sync_id` and not timestamps.** Clocks disagree and are not
 monotonic. A counter per workspace gives an unambiguous "everything after this".

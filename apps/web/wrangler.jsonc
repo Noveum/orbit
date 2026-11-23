@@ -37,5 +37,76 @@
   ],
   "triggers": {
     "crons": ["* * * * *", "0 * * * *", "0 */6 * * *", "0 9 * * *"]
+  },
+  "env": {
+    "production": {
+      "name": "orbit",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [{ "pattern": "orbit.noveum.ai", "custom_domain": true }],
+      "vars": { "NODE_ENV": "production" },
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHubObject" },
+          { "name": "AUTH_RATE_LIMITER", "class_name": "AuthRateLimiterObject" },
+          { "name": "DEFERRED_WORK", "class_name": "DeferredWorkObject" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHubObject", "AuthRateLimiterObject"] },
+        { "tag": "v2", "new_sqlite_classes": ["DeferredWorkObject"] }
+      ],
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "3978dafc899e4f6d8d5db6a914b24b2b" }],
+      "services": [{ "binding": "SELF", "service": "orbit" }],
+      "triggers": {
+        "crons": ["* * * * *", "0 * * * *", "0 */6 * * *", "0 9 * * *"]
+      }
+    },
+    "preview": {
+      "name": "orbit-pr",
+      "workers_dev": true,
+      "preview_urls": true,
+      "routes": [],
+      "vars": {
+        "NODE_ENV": "production",
+        "BETTER_AUTH_URL": "https://orbit-pr.shashank-1a4.workers.dev",
+        "NEXT_PUBLIC_APP_URL": "https://orbit-pr.shashank-1a4.workers.dev",
+        "ORBIT_AUTH_ALLOWED_HOSTS": "*-orbit-pr.shashank-1a4.workers.dev",
+        "ORBIT_PASSWORD_AUTH": "true"
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHubObject" },
+          { "name": "AUTH_RATE_LIMITER", "class_name": "AuthRateLimiterObject" },
+          { "name": "DEFERRED_WORK", "class_name": "DeferredWorkObject" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHubObject", "AuthRateLimiterObject"] },
+        { "tag": "v2", "new_sqlite_classes": ["DeferredWorkObject"] }
+      ],
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "8f03a329dbbd4dc6855b63f90f2569c3" }],
+      "triggers": { "crons": [] },
+      "previews": {
+        "placement": { "region": "aws:ap-northeast-1" },
+        "limits": { "cpu_ms": 300000 },
+        "observability": { "enabled": true },
+        "vars": {
+          "NODE_ENV": "production",
+          "BETTER_AUTH_URL": "https://orbit-pr.shashank-1a4.workers.dev",
+          "NEXT_PUBLIC_APP_URL": "https://orbit-pr.shashank-1a4.workers.dev",
+          "ORBIT_AUTH_ALLOWED_HOSTS": "*-orbit-pr.shashank-1a4.workers.dev",
+          "ORBIT_PASSWORD_AUTH": "true"
+        },
+        "durable_objects": {
+          "bindings": [
+            { "name": "REALTIME_HUB", "class_name": "RealtimeHubObject" },
+            { "name": "AUTH_RATE_LIMITER", "class_name": "AuthRateLimiterObject" },
+            { "name": "DEFERRED_WORK", "class_name": "DeferredWorkObject" }
+          ]
+        },
+        "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "8f03a329dbbd4dc6855b63f90f2569c3" }]
+      }
+    }
   }
 }

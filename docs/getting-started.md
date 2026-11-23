@@ -117,9 +117,10 @@ Things worth trying first:
 | MinIO (S3 API) | 9010 | |
 | MinIO console | 9011 | Sign in with `orbitminio` and `orbitminio` |
 
-The realtime server only exists locally, because a Vercel function cannot
-upgrade a websocket under `next dev`. In production the socket is served from
-the app itself at `/api/ws`. See [Architecture](architecture.md).
+The realtime server only exists locally, because `next dev` cannot upgrade a
+websocket. In production the socket is served on the app's own origin at
+`/api/ws`: by a Durable Object on Cloudflare Workers, or by the realtime service
+behind the gateway in Docker. See [Architecture](architecture.md).
 
 ## Day to day commands
 

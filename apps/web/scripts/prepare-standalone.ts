@@ -13,8 +13,7 @@ async function requireDirectory(path: string): Promise<void> {
   throw new Error('Missing standalone output');
 }
 
-export async function prepareStandalone(root: string, vercel: string | undefined): Promise<void> {
-  if (vercel === '1') return;
+export async function prepareStandalone(root: string): Promise<void> {
   const standalone = join(root, '.next', 'standalone', 'apps', 'web');
   await requireDirectory(standalone);
   await mkdir(join(standalone, '.next'), { recursive: true });
@@ -35,5 +34,4 @@ export async function prepareStandalone(root: string, vercel: string | undefined
     throw new AggregateError(result.logs, 'Failed to build standalone entrypoint');
 }
 
-if (import.meta.main)
-  await prepareStandalone(resolve(import.meta.dir, '..'), process.env['VERCEL']);
+if (import.meta.main) await prepareStandalone(resolve(import.meta.dir, '..'));

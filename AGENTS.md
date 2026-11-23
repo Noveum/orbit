@@ -10,9 +10,9 @@ how to test, and how a pull request is reviewed.
 
 ## The short version
 
-Orbit is a free, realtime, keyboard-first task manager. One Next.js app on
-Vercel's node runtime, with the realtime hub and the MCP tools in workspace
-packages.
+Orbit is a free, realtime, keyboard-first task manager. One Next.js app that
+deploys as a Cloudflare Worker or as a standalone Node app in Docker, with the
+realtime hub and the MCP tools in workspace packages.
 
 ```bash
 bun install
@@ -26,8 +26,8 @@ bun run verify     # lint, comment policy, types, tests
 ## Rules that will fail the build
 
 1. **Bun only.** No npm, pnpm, yarn or turbo. Every command starts with `bun`.
-2. **Shipped server code must not import a Bun built-in.** The deployed runtime
-   is node. Use `postgres.js`, `ioredis`, `@aws-sdk/client-s3`,
+2. **Shipped server code must not import a Bun built-in.** The deployed
+   runtimes are Cloudflare Workers and node. Use `postgres.js`, `ioredis`, `@aws-sdk/client-s3`,
    `node:fs/promises`, `@node-rs/argon2` and `randomUUIDv7()` from
    `@orbit/shared/utils`. Test files and `apps/realtime` are exempt.
 3. **No comments in code.** `bun run check-comments` fails on anything that is

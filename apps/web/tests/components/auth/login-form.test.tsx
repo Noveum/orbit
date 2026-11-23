@@ -16,7 +16,11 @@ await restoreModulesAfterThisFile(['@/components/ui/toast.tsx']);
 
 Object.defineProperty(window, 'location', {
   configurable: true,
-  value: { ...window.location, origin: 'https://orbit-abc123-magicapi.vercel.app', assign },
+  value: {
+    ...window.location,
+    origin: 'https://feature-login-orbit-pr.example.workers.dev',
+    assign,
+  },
 });
 
 mock.module('@/lib/auth/client.ts', () => ({
@@ -94,7 +98,8 @@ describe('LoginForm', () => {
     expect(signInSocial).toHaveBeenCalledWith({
       provider: 'google',
       callbackURL: '/settings/account/sessions',
-      errorCallbackURL: 'https://orbit-abc123-magicapi.vercel.app/settings/account/sessions',
+      errorCallbackURL:
+        'https://feature-login-orbit-pr.example.workers.dev/settings/account/sessions',
     });
   });
 
@@ -105,7 +110,7 @@ describe('LoginForm', () => {
     expect(signInSocial).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'google',
-        errorCallbackURL: 'https://orbit-abc123-magicapi.vercel.app/login',
+        errorCallbackURL: 'https://feature-login-orbit-pr.example.workers.dev/login',
       }),
     );
   });

@@ -393,13 +393,18 @@ jobs:
           echo "=== realtime ==="; cat "$RUNNER_TEMP/realtime.log" || true
 
   workers-build:
-    name: Workers build
+    name: Workers build (${{ matrix.target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [self-hosted, production, preview]
     env:
       BETTER_AUTH_SECRET: ci-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:8787
       NEXT_PUBLIC_APP_URL: http://localhost:8787
       ORBIT_PASSWORD_AUTH: "true"
+      WORKERS_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2
@@ -411,7 +416,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Build the Cloudflare Workers bundle
         working-directory: apps/web
-        run: bun run build:workers
+        run: |
+          if [ "$WORKERS_TARGET" != self-hosted ]; then export CLOUDFLARE_ENV="$WORKERS_TARGET"; fi
+          bun run build:workers
+      - name: The bundle is for the Worker this environment names
+        working-directory: apps/web
+        run: |
+          expected=$(case "$WORKERS_TARGET" in preview) echo orbit-pr;; *) echo orbit;; esac)
+          actual=$(bun -e 'console.log((await Bun.file("dist/server/wrangler.json").json()).name)')
+          test "$actual" = "$expected"
       - name: Validate the bundle the way a deploy would, without deploying
         working-directory: apps/web
         run: bunx wrangler deploy --dry-run --config dist/server/wrangler.json

@@ -102,15 +102,23 @@ narrower `allowedEmailDomains`.
 
 The expected behavior depends on the deployment route.
 
-**On Vercel:** inspect the websocket request to `/api/ws` and verify that it
-receives a `101 Switching Protocols` response. If it does not, continue with
+**On Cloudflare Workers:** inspect the websocket request to `/api/ws` and
+verify that it receives a `101 Switching Protocols` response. The Worker entry
+hands `/api/ws` to the `RealtimeHubObject` Durable Object through the
+`REALTIME_HUB` binding, and `/api/realtime/health` should answer 200. Redis is
+not involved. If there is no 101, continue with
 [The websocket never reaches a 101](#the-websocket-never-reaches-a-101).
 `NEXT_PUBLIC_REALTIME_URL` cannot redirect a production socket because Orbit
 ignores it whenever `NODE_ENV` is `production`.
 
-**With standalone Node (Preview):** realtime is not supported yet because
-`/api/ws` depends on Vercel's websocket request context. Reverse proxy settings
-cannot enable it. Use Vercel when realtime is required, and see
+**With the Docker Compose preview:** the gateway routes `/api/ws` and
+`/api/realtime/health` to the Node realtime service on port 3100, which
+receives changes from the web service through Redis. Check that the realtime
+service is running and that both services reach the same Redis.
+
+**With standalone Node (Preview):** realtime is not supported, because the Next
+standalone server does not serve `/api/ws`. Use Cloudflare Workers or the
+[Docker Compose preview](docker-preview.md) when realtime is required, and see
 [Self-hosting](self-hosting.md#run-standalone-node-preview) for the current
 standalone limitations.
 
@@ -119,17 +127,18 @@ standalone limitations.
 
 ### The websocket never reaches a 101
 
-`bunVersion` is set in `apps/web/vercel.json`, so functions run on the Bun
-runtime where `experimental_upgradeWebSocket` silently never fires. Remove it.
-
-It can also happen if something in the route awaits Redis or the database before
-upgrading. Upgrade first, attach afterwards, and buffer whatever arrives in
-between.
+The request is not reaching the component that serves `/api/ws`. The Next.js
+app has no `/api/ws` route. On Cloudflare Workers only the Worker entry,
+`apps/web/worker/index.ts`, upgrades it, so the Worker must be built with
+`bun run build:workers` and deployed from `dist/server/wrangler.json`. On Docker
+only the gateway routes it to the realtime service, so send browser traffic to
+the gateway and not to the web service directly.
 
 ### Changes do not appear in other tabs, and there is no banner
 
-The socket is connected but nothing is being published, so Redis is the problem.
-Check `REDIS_URL` and that Redis is reachable from where the app runs.
+The socket is connected but nothing is being published. On Docker and in local
+development Redis is the problem. Check `REDIS_URL` and that Redis is reachable
+from where the app runs.
 
 ```bash
 redis-cli -u "$REDIS_URL" ping

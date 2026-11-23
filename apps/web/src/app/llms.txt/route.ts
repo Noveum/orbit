@@ -23,7 +23,7 @@ export function GET(): Response {
 
 - Licensed Apache-2.0, sponsored by Noveum AI
 - Source: https://github.com/Noveum/orbit
-- Self-hostable on Vercel with Postgres, Redis, and an S3-compatible bucket
+- Self-hostable on Cloudflare Workers, or with Docker using Postgres, Redis, and an S3-compatible bucket
 
 ## Links
 
