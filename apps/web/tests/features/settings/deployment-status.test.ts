@@ -55,23 +55,38 @@ describe('deploymentStatus', () => {
   });
 
   it('does not claim delivery, live updates or scheduling have been tested', () => {
-    const checks = deploymentStatus(admin, {
-      RESEND_API_KEY: 'private-resend',
-      EMAIL_FROM: 'Orbit <orbit@example.com>',
-      VERCEL: '1',
-      CRON_SECRET: 'private-cron',
-      ALLOWED_EMAIL_DOMAINS: 'private.example.com',
-    });
+    const checks = deploymentStatus(
+      admin,
+      {
+        RESEND_API_KEY: 'private-resend',
+        EMAIL_FROM: 'Orbit <orbit@example.com>',
+        CRON_SECRET: 'private-cron',
+        ALLOWED_EMAIL_DOMAINS: 'private.example.com',
+      },
+      { workers: true },
+    );
     expect(checks.find((check) => check.id === 'email')?.status).toBe('Configured');
     expect(checks.find((check) => check.id === 'email')?.description).toContain(
       'does not confirm delivery',
     );
     expect(checks.find((check) => check.id === 'realtime')?.status).toBe('Requires verification');
+    expect(checks.find((check) => check.id === 'realtime')?.description).toContain(
+      'Durable Object',
+    );
     expect(checks.find((check) => check.id === 'schedules')?.status).toBe('Requires verification');
     const serialized = JSON.stringify(checks);
     expect(serialized).not.toContain('private-resend');
     expect(serialized).not.toContain('private-cron');
     expect(serialized).not.toContain('private.example.com');
+  });
+
+  it('asks for Redis on Node but not on Workers, where Durable Objects replace it', () => {
+    expect(deploymentStatus(admin, {}).find((check) => check.id === 'redis')?.status).toBe(
+      'Needs configuration',
+    );
+    expect(
+      deploymentStatus(admin, {}, { workers: true }).find((check) => check.id === 'redis'),
+    ).toBeUndefined();
   });
 
   it('keeps GitHub sign-in distinct from the GitHub App integration', () => {

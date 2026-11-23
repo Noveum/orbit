@@ -24,7 +24,7 @@ beforeEach(async () => {
 });
 
 describe('GET /api/cron/prune', () => {
-  it('prunes when Vercel presents the secret', async () => {
+  it('prunes when the scheduler presents the secret', async () => {
     await db.insert(schema.webhookDelivery).values({
       id: randomUUIDv7(),
       provider: 'github',

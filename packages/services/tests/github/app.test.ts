@@ -363,10 +363,10 @@ describe('fetchGithubPullRequestHistory', () => {
             {
               id: 15,
               state: 'failure',
-              context: 'Vercel',
+              context: 'Deploy',
               description: 'Deployment failed',
-              target_url: 'https://vercel.com/acme/web/deployment/15',
-              creator: { login: 'vercel', id: 4 },
+              target_url: 'https://deploys.example.com/acme/web/deployment/15',
+              creator: { login: 'deploy', id: 4 },
               created_at: '2026-08-13T04:30:00.000Z',
               updated_at: '2026-08-13T05:30:00.000Z',
             },
@@ -396,7 +396,7 @@ describe('fetchGithubPullRequestHistory', () => {
     expect(history[2]?.path).toBe('src/index.ts');
     expect(history[2]?.line).toBe(42);
     expect(history[3]?.state).toBe('success');
-    expect(history[4]?.body).toBe('Vercel');
+    expect(history[4]?.body).toBe('Deploy');
     expect(history[4]?.state).toBe('failure');
   });
 });
@@ -450,18 +450,18 @@ describe('fetchGithubCheckHeadSnapshot', () => {
             {
               id: 51,
               state: 'failure',
-              context: 'Vercel',
-              target_url: 'https://vercel.com/acme/web/51',
-              creator: { login: 'old-vercel-app', id: 80 },
+              context: 'Deploy',
+              target_url: 'https://deploys.example.com/acme/web/51',
+              creator: { login: 'old-deploy-app', id: 80 },
               created_at: '2026-08-13T05:30:00.000Z',
               updated_at: '2026-08-13T06:00:00.000Z',
             },
             {
               id: 52,
               state: 'success',
-              context: 'vercel',
-              target_url: 'https://vercel.com/acme/web/52',
-              creator: { login: 'new-vercel-app', id: 81 },
+              context: 'deploy',
+              target_url: 'https://deploys.example.com/acme/web/52',
+              creator: { login: 'new-deploy-app', id: 81 },
               created_at: '2026-08-13T06:30:00.000Z',
               updated_at: '2026-08-13T07:00:00.000Z',
             },
@@ -498,17 +498,17 @@ describe('fetchGithubCheckHeadSnapshot', () => {
     });
     expect(snapshot.activities[2]).toEqual({
       sourceKind: 'commit_status',
-      contextKey: 'v1:13:commit_status6:vercel',
+      contextKey: 'v1:13:commit_status6:deploy',
       providerObjectId: '52',
       providerRunId: null,
-      providerContext: 'vercel',
+      providerContext: 'deploy',
       appId: null,
       state: 'success',
       status: 'success',
       conclusion: 'success',
       providerUpdatedAt: '2026-08-13T07:00:00.000Z',
-      url: 'https://vercel.com/acme/web/52',
-      creator: { login: 'new-vercel-app', id: 81 },
+      url: 'https://deploys.example.com/acme/web/52',
+      creator: { login: 'new-deploy-app', id: 81 },
     });
     expect(snapshot.contexts.map((context) => context.providerObjectId)).toEqual([
       '42',

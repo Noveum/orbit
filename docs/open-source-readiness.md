@@ -126,8 +126,8 @@ follow-up work.
   standalone Next.js artifact has a portable Node start command and a
   copied-artifact smoke test.
 - [ ] **DEP-002: Portable realtime topology.** **Status: open.** Put the realtime
-  service behind a same-origin proxy without relying on Vercel-only websocket
-  behavior.
+  service behind a same-origin proxy without relying on one hosting platform's
+  websocket behavior.
 - [ ] **DEP-003: Application containers.** **Status: open.** Add reproducible
   production images and a complete Compose profile for web, realtime, Postgres,
   Redis, and object storage.
@@ -186,7 +186,9 @@ follow-up work.
 - [ ] **DEP-006: Portable email.** **Status: open.** Retain Resend and add a
   tested SMTP transport with local mail capture for development.
 - [ ] **DEP-007: Operator-selected region.** **Status: open.** Remove the
-  hard-coded Vercel compute region and document data-affinity choices.
+  hard-coded Worker placement region in `apps/web/wrangler.jsonc` and the
+  Durable Object location hint in `apps/web/worker/bindings.ts`, and document
+  data-affinity choices.
 - [ ] **SEC-007: Markdown privacy.** **Status: open.** Narrow permitted classes
   and define a safe policy for remote images.
 - [ ] **SEC-008: Response headers.** **Status: open.** Add and test CSP, frame,

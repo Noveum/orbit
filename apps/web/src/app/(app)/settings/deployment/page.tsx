@@ -5,11 +5,12 @@ import { DeploymentGuide } from '@/features/settings/deployment-guide.tsx';
 import { deploymentGuides } from '@/features/settings/deployment-guides.ts';
 import { deploymentStatus } from '@/features/settings/deployment-status.ts';
 import { pageContext } from '@/lib/api/handler.ts';
+import { realtimeHosted } from '@/lib/realtime/hub.ts';
 
 export default async function DeploymentSettingsPage() {
   const { principal } = await pageContext();
   if (!can(principal, 'org:manage')) notFound();
-  const checks = deploymentStatus(principal, process.env);
+  const checks = deploymentStatus(principal, process.env, { workers: realtimeHosted() });
   const guides = deploymentGuides(principal, process.env);
 
   return (
@@ -58,8 +59,8 @@ export default async function DeploymentSettingsPage() {
             restart alone does not load a changed environment file.
           </li>
           <li>
-            Vercel: add the variables under Project Settings, Environment Variables for the intended
-            environment, then redeploy. Rebuild whenever the public app URL changes.
+            Cloudflare Workers: add the variables under the Worker's Settings, Variables and
+            Secrets, then redeploy. Rebuild whenever the public app URL changes.
           </li>
           <li>
             Other Node hosts: update the environment used by all application processes and redeploy.
@@ -75,11 +76,11 @@ export default async function DeploymentSettingsPage() {
             Docker and RepoCloud deployment guide
           </a>
           <a
-            href="https://github.com/Noveum/orbit/blob/main/docs/self-hosting.md#deploy-on-vercel"
+            href="https://github.com/Noveum/orbit/blob/main/docs/cloudflare-workers.md"
             target="_blank"
             rel="noreferrer"
           >
-            Vercel deployment guide
+            Cloudflare Workers deployment guide
           </a>
         </div>
       </section>

@@ -25,7 +25,7 @@ working directory is inside a workspace package will not see the repository
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgres://orbit:orbit@localhost:5434/orbit` | Postgres 16 or newer. In production use the runtime connection string recommended by your provider |
-| `REDIS_URL` | `redis://localhost:6380` | Redis 7 or newer. Carries realtime fan-out. Use `rediss://` for TLS |
+| `REDIS_URL` | `redis://localhost:6380` | Redis 7 or newer. Carries realtime fan-out on Node, in local development and Docker. Not used on Cloudflare Workers. Use `rediss://` for TLS |
 | `BETTER_AUTH_SECRET` | 32+ random characters | Signs sessions. `openssl rand -base64 32`. Never reuse the example value |
 | `BETTER_AUTH_URL` | `https://orbit.example.com` | Must match the origin exactly, or sign-in loops |
 | `NEXT_PUBLIC_APP_URL` | `https://orbit.example.com` | Public origin. Used for absolute links in email and OAuth metadata |
@@ -53,9 +53,10 @@ Connection options such as `sslmode=require` remain in `DATABASE_URL`.
 | `NOTIFICATION_PROVIDERS_PAUSED` | Set `true` to stop Slack and notification-email claims during migration or incident response. Defaults to false |
 | `NOTIFICATION_CONVERSATIONS_ENABLED` | Set `true` after conversation backfill and verification to select the grouped inbox. False or unset retains the legacy view |
 
-Vercel presents `CRON_SECRET` as a bearer token when it invokes the scheduled
-routes. Without the secret, protected routes refuse to run. The notification
-worker runs every minute. Slack delivery additionally requires
+The Cron Triggers in `apps/web/wrangler.jsonc` and the Docker maintenance
+scheduler both present `CRON_SECRET` as a bearer token when they invoke the
+scheduled routes. Without the secret, protected routes refuse to run. The
+notification worker runs every minute. Slack delivery additionally requires
 `SLACK_ENABLED=true`; notification email requires Resend configuration.
 Pausing providers preserves queued work and still allows GitHub reconciliation
 and snooze wakes. See [Inbox conversations](features/inbox.md) for rollout order.
@@ -85,8 +86,9 @@ windows and completion state on the Sprints page or the authenticated
 `/api/cycles` response. Current means `startsAt <= now < endsAt` and not completed;
 expired or completed sprints are excluded from assignment menus, and archived
 records are excluded from workspace data. A missing number alone does not prove
-that rollover failed. Check the Vercel cron invocation logs for
-`/api/cron/sprint-rollover` to verify execution. An unauthenticated 401 confirms
+that rollover failed. To verify execution, check the Worker's Trigger Events
+and Workers Logs for the every-minute run, or the Docker scheduler logs for
+`/api/cron/sprint-rollover`. An unauthenticated 401 confirms
 route protection, not a successful scheduled run. Correct the dates or completion
 state only after establishing why that specific sprint was excluded.
 The analytics route runs every six hours so every sprint-local
@@ -158,11 +160,12 @@ hourly rule would have to allow a whole hour of sends in a single burst, and a
 per-IP hourly cap tight enough to be worth having would lock out an office that
 shares one address.
 
-In production those counters live in Redis, on the `REDIS_URL` the app already
-needs, so the caps hold across every serverless instance rather than resetting
-with each one. If Redis cannot be reached the check lets the request through
-rather than locking everybody out, which means an outage costs you the ceiling
-and not sign-in. Outside production better-auth keeps its own in-process store,
+In production those counters live outside the process, so the caps hold across
+every instance rather than resetting with each one. On Cloudflare Workers they
+live in the `AuthRateLimiterObject` Durable Object. On Node they live in Redis,
+on the `REDIS_URL` the app already needs. If Redis cannot be reached the check
+lets the request through rather than locking everybody out, which means an
+outage costs you the ceiling and not sign-in. Outside production better-auth keeps its own in-process store,
 which is all a single development server needs.
 
 ```bash
@@ -234,8 +237,8 @@ object versions. On AWS S3, grant `s3:ListBucket`, `s3:ListBucketVersions`,
 | `ORBIT_GITHUB_INSTALLATION_REPLACEMENT_ENABLED` | Production installation replacement is off unless this is exactly `true`. Current installation and first connects remain available. Enable only after the [replacement rollout gates](github-app.md#installation-replacement-activation) |
 | `SLACK_CLIENT_ID` | Slack OAuth client ID. It is not secret |
 | `SLACK_APP_ID` | Optional fallback app identity for legacy connections. New OAuth connections store the returned app ID automatically |
-| `SLACK_CLIENT_SECRET` | Slack OAuth client secret. Mark it Sensitive in Vercel |
-| `SLACK_SIGNING_SECRET` | Verifies Slack webhook signatures. Mark it Sensitive in Vercel |
+| `SLACK_CLIENT_SECRET` | Slack OAuth client secret. Store it as a secret, not a plain variable |
+| `SLACK_SIGNING_SECRET` | Verifies Slack webhook signatures. Store it as a secret, not a plain variable |
 | `SLACK_ENABLED` | Global server-side Slack gate. `true` enables Slack for every current and future Orbit organization. False or unset keeps Slack dark |
 
 Both integrations are optional. Their setup cards remain visible to workspace

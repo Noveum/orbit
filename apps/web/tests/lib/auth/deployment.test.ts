@@ -7,7 +7,8 @@ import { deploymentAuthOptions } from '@/lib/auth/deployment';
 import { nativeFetchGlobals } from '../../../tests-preload';
 
 const canonical = 'https://orbit.example.com';
-const preview = 'https://orbit-abc123-magicapi.vercel.app';
+const preview = 'https://feature-login-orbit-pr.acme.workers.dev';
+const previewHosts = '*-orbit-pr.acme.workers.dev';
 const browserFetchGlobals = {
   Headers: globalThis.Headers,
   Request: globalThis.Request,
@@ -25,7 +26,7 @@ function createAuth(secret = 'preview-session-secret-at-least-32-characters') {
   return betterAuth({
     ...deploymentAuthOptions({
       BETTER_AUTH_URL: canonical,
-      ORBIT_AUTH_ALLOWED_HOSTS: 'orbit-*-magicapi.vercel.app',
+      ORBIT_AUTH_ALLOWED_HOSTS: previewHosts,
       OAUTH_PROXY_SECRET: 'dedicated-proxy-secret-at-least-32-characters',
     }),
     database: memoryAdapter({ user: [], account: [], session: [], verification: [] }),
@@ -128,17 +129,17 @@ describe('deployment authentication', () => {
     },
   );
 
-  it('includes the exact deployment and branch aliases', () => {
+  it('allows the canonical host and the configured preview pattern', () => {
     const options = deploymentAuthOptions({
       BETTER_AUTH_URL: canonical,
-      VERCEL_URL: 'orbit-abc123-magicapi.vercel.app',
-      VERCEL_BRANCH_URL: 'orbit-git-feature-magicapi.vercel.app',
+      ORBIT_AUTH_ALLOWED_HOSTS: ` ${previewHosts} , orbit-*-team.example.app,staging.example.com `,
     });
     expect(options.baseURL).toMatchObject({
       allowedHosts: [
         'orbit.example.com',
-        'orbit-abc123-magicapi.vercel.app',
-        'orbit-git-feature-magicapi.vercel.app',
+        '*-orbit-pr.acme.workers.dev',
+        'orbit-*-team.example.app',
+        'staging.example.com',
       ],
       fallback: canonical,
     });
@@ -152,11 +153,35 @@ describe('deployment authentication', () => {
     expect(() => deploymentAuthOptions({ OAUTH_PROXY_SECRET: 'short' })).toThrow();
   });
 
+  it.each([
+    '*',
+    '*.dev',
+    '*.workers.dev',
+    '*.example.com',
+    'orbit.*.example.com',
+    '*-orbit-pr.*.workers.dev',
+    '**-orbit-pr.acme.workers.dev',
+    '*-orbit-pr.workers',
+  ])('refuses the wildcard %s, which reaches beyond one deployment', (pattern) => {
+    expect(() =>
+      deploymentAuthOptions({ BETTER_AUTH_URL: canonical, ORBIT_AUTH_ALLOWED_HOSTS: pattern }),
+    ).toThrow();
+  });
+
+  it('accepts a bare wildcard label above three fixed labels', () => {
+    const options = deploymentAuthOptions({
+      BETTER_AUTH_URL: canonical,
+      ORBIT_AUTH_ALLOWED_HOSTS: '*.preview.example.com',
+    });
+    expect(options.baseURL).toMatchObject({
+      allowedHosts: ['orbit.example.com', '*.preview.example.com'],
+    });
+  });
+
   it('resolves MCP OAuth metadata on the canonical origin without a request', async () => {
     const deployment = deploymentAuthOptions({
       BETTER_AUTH_URL: canonical,
-      VERCEL_URL: 'orbit-abc123-magicapi.vercel.app',
-      ORBIT_AUTH_ALLOWED_HOSTS: 'orbit-*-magicapi.vercel.app',
+      ORBIT_AUTH_ALLOWED_HOSTS: previewHosts,
     });
     const auth = betterAuth({
       ...deployment,
@@ -192,8 +217,7 @@ describe('deployment authentication', () => {
 
   it('ignores empty optional deployment values in local configuration', () => {
     const options = deploymentAuthOptions({
-      VERCEL_URL: '',
-      VERCEL_BRANCH_URL: ' ',
+      ORBIT_AUTH_ALLOWED_HOSTS: ' , ',
       OAUTH_PROXY_SECRET: '',
     });
     expect(options.baseURL).toBe('http://localhost:3000');
@@ -223,8 +247,13 @@ describe('deployment authentication', () => {
     );
   });
 
-  it('rejects another Vercel project', async () => {
-    const response = await socialSignIn('https://other-magicapi.vercel.app', 'google');
+  it.each([
+    'https://orbit.acme.workers.dev',
+    'https://orbit-pr.acme.workers.dev',
+    'https://feature-orbit-pr.other.workers.dev',
+    'https://feature-orbit-pr.acme.workers.dev.attacker.example',
+  ])('rejects %s, which the preview pattern does not cover', async (origin) => {
+    const response = await socialSignIn(origin, 'google');
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ code: 'INVALID_ORIGIN' });
   });

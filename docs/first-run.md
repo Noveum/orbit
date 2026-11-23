@@ -84,7 +84,10 @@ or connected Slack DMs for delivered notifications.
 
 ## Provider limits
 
-Vercel's Node runtime provides the WebSocket upgrade bridge used by `/api/ws`.
+On Cloudflare Workers the Worker entry routes `/api/ws` to the
+`RealtimeHubObject` Durable Object, and Cron Triggers in
+`apps/web/wrangler.jsonc` call the authenticated maintenance routes. See
+[Cloudflare Workers](cloudflare-workers.md).
 The Docker preview supplies a separate Node realtime host using the same shared
 hub, a gateway routing `/api/ws`, and an authenticated maintenance scheduler.
 A RepoCloud VPS must install the complete stack and configure public HTTPS and
@@ -92,8 +95,8 @@ storage addresses; a running VPS alone does not deploy Orbit. Running only the
 Next standalone HTTP server omits realtime and maintenance.
 
 A Netlify Next.js deployment is not currently an equivalent supported target.
-Its functions do not supply the Vercel-specific WebSocket bridge, and the
-Vercel cron declaration does not configure a Netlify scheduler. Validate adapter
-behavior, all infrastructure, authentication and background work before
-publishing a one-click template. See [self-hosting](self-hosting.md) and the
+The Next.js app has no `/api/ws` route of its own, and nothing configures a
+Netlify scheduler for the maintenance routes. Validate adapter behavior, all
+infrastructure, authentication and background work before publishing a
+one-click template. See [self-hosting](self-hosting.md) and the
 [Docker preview](docker-preview.md) for the current deployment boundaries.

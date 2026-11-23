@@ -7,32 +7,32 @@ import {
   runCronJobs,
 } from '../../../src/lib/cloudflare/cron-schedule.ts';
 
-const vercelSchema = z.object({
-  crons: z.array(z.object({ path: z.string(), schedule: z.string() })),
-});
+const triggersSchema = z.object({ crons: z.array(z.string()) });
 
-const wranglerSchema = z.object({ triggers: z.object({ crons: z.array(z.string()) }) });
+const wranglerSchema = z.object({
+  triggers: triggersSchema,
+  env: z.record(z.string(), z.object({ triggers: triggersSchema.optional() })),
+});
 
 async function readJsonFile(relative: string): Promise<unknown> {
   return JSON.parse(await readFile(new URL(relative, import.meta.url), 'utf8'));
 }
 
 describe('the Workers cron schedule', () => {
-  it('runs exactly the jobs the Vercel project runs, on the same schedules', async () => {
-    const vercel = vercelSchema.parse(await readJsonFile('../../../vercel.json'));
-    const expected = new Map<string, string[]>();
-    for (const cron of vercel.crons) {
-      expected.set(cron.schedule, [...(expected.get(cron.schedule) ?? []), cron.path].sort());
-    }
-    const actual = new Map(
-      Object.entries(CRON_SCHEDULE).map(([schedule, paths]) => [schedule, [...paths].sort()]),
-    );
-    expect(actual).toEqual(expected);
+  it('runs every maintenance job on its schedule', () => {
+    expect(CRON_SCHEDULE).toEqual({
+      '* * * * *': ['/api/cron/notifications', '/api/cron/sprint-rollover'],
+      '0 * * * *': ['/api/cron/prune'],
+      '0 */6 * * *': ['/api/cron/analytics-snapshots'],
+      '0 9 * * *': ['/api/cron/project-staleness'],
+    });
   });
 
   it('registers a Cron Trigger for every schedule and nothing else', async () => {
     const wrangler = wranglerSchema.parse(await readJsonFile('../../../wrangler.jsonc'));
-    expect([...wrangler.triggers.crons].sort()).toEqual(Object.keys(CRON_SCHEDULE).sort());
+    const schedules = Object.keys(CRON_SCHEDULE).sort();
+    expect([...wrangler.triggers.crons].sort()).toEqual(schedules);
+    expect([...(wrangler.env['production']?.triggers?.crons ?? [])].sort()).toEqual(schedules);
   });
 
   it('knows no paths for an expression that is not scheduled', () => {

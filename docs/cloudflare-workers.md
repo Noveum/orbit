@@ -1,28 +1,30 @@
 # Running Orbit on Cloudflare Workers
 
-The web app builds two ways from the same source. `bun run build` produces the
-Next.js output that Vercel and the Docker image serve. `bun run build:workers`
-produces a Cloudflare Worker with [vinext](https://github.com/cloudflare/vinext).
-Nothing in `src/app` differs between the two.
+Orbit's hosted deployment runs on Cloudflare Workers. The web app builds two
+ways from the same source. `bun run build:workers` produces a Cloudflare Worker
+with [vinext](https://github.com/cloudflare/vinext). `bun run build` produces the
+standalone Next.js output that the Docker image serves. Nothing in `src/app`
+differs between the two. Vercel is no longer used.
 
 This page covers what the Worker is made of, how to run it locally, how to
-deploy it, and what to check before pointing a domain at it.
+deploy it with Workers Builds, how pull request previews work, and what to check
+before pointing a domain at it.
 
 ## What changes on Workers
 
-| Concern | Node (Vercel, Docker) | Workers |
+| Concern | Node (Docker) | Workers |
 | --- | --- | --- |
 | Build | `next build` | `vite build` with vinext, entry `apps/web/worker/index.ts` |
-| Realtime socket | `/api/ws` route, hub in the function, Redis pub/sub fan-out | `/api/ws` goes to the `RealtimeHubObject` Durable Object, no Redis |
+| Realtime socket | `/api/ws` routed by the gateway to the Node realtime host, Redis pub/sub fan-out | `/api/ws` goes to the `RealtimeHubObject` Durable Object, no Redis |
 | Publishing deltas | `PUBLISH` to Redis | `fetch` to the Durable Object |
 | Auth rate limits | Redis with a Lua script | `AuthRateLimiterObject` Durable Object with SQLite storage |
-| Crons | `vercel.json` crons, or the Docker scheduler | Cron Triggers calling the same `/api/cron/*` routes |
-| Long background work | `after()`, up to the function's `maxDuration` | an alarm on the `DeferredWorkObject` Durable Object |
+| Crons | the Docker maintenance scheduler | Cron Triggers calling the same `/api/cron/*` routes |
+| Long background work | `after()` in the Node process | an alarm on the `DeferredWorkObject` Durable Object |
 | Postgres | one pool per process | one pool per request, through Hyperdrive when bound |
 | Password hashing | `@node-rs/argon2` (native) | `@noble/hashes` argon2id (pure JavaScript) |
 | AI provider calls | Node sockets with a pinned DNS lookup | `fetch` |
 | Email templates | `react-dom/server` loaded by Node | a Vite plugin resolves the email modules to the client React build |
-| Client address | `x-forwarded-for` set by the platform | `cf-connecting-ip`, copied over `x-forwarded-for` at the entry |
+| Client address | `x-forwarded-for` set by the gateway | `cf-connecting-ip`, copied over `x-forwarded-for` at the entry |
 
 ### Realtime
 
@@ -194,8 +196,8 @@ the `colo` line.
 | Startup | 1 second | about 0.7 seconds, measured by a deploy |
 | CPU per request | 30 seconds default, 5 minutes with `limits.cpu_ms` | set to 5 minutes |
 | CPU per cron run | 30 seconds for schedules under an hour | the minute crons wait on IO |
-| Wall time per cron run | 15 minutes | Vercel allowed 5 |
-| Wall time per request | none while the client is connected | Vercel allowed 5 minutes |
+| Wall time per cron run | 15 minutes | the minute crons finish in seconds |
+| Wall time per request | none while the client is connected | routes keep their `maxDuration` of 5 minutes or less |
 | Memory | 128 MB per isolate | argon2id takes 64 MB while it runs |
 
 Every route that set `maxDuration` waits on Postgres, GitHub, Slack or Resend
@@ -236,9 +238,30 @@ curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
 
 ## Deploy
 
+`apps/web/wrangler.jsonc` has three layers:
+
+- The top level is a generic configuration for anyone self-hosting. Build it
+  with `bun run build:workers` and deploy it with `bun run deploy:workers`.
+- `env.production` is Noveum's deployment: Worker `orbit`, the custom domain
+  `orbit.noveum.ai`, its Hyperdrive configuration, the `SELF` binding and the
+  four Cron Triggers.
+- `env.preview` is the pull request preview Worker `orbit-pr`: no routes, no
+  Cron Triggers, no `SELF` binding, its own Durable Objects and a Hyperdrive
+  configuration for the preview database. See [Preview deployments](#preview-deployments).
+
+The vite plugin reads `CLOUDFLARE_ENV` when it builds and flattens the chosen
+environment into `dist/server/wrangler.json`, which is what Wrangler deploys.
+
+`wrangler.jsonc` names no account. Set `CLOUDFLARE_ACCOUNT_ID` in the shell or
+the build settings when the login can reach more than one.
+
+### First deployment
+
 When replacing another production scheduler, stage the first Worker with
-`"triggers": { "crons": [] }` in the deployment checkout's
-`apps/web/wrangler.jsonc` before building. Keep this setting for every staged
+`"triggers": { "crons": [] }` in the block you build: `env.production.triggers`
+for `CLOUDFLARE_ENV=production`, or the top-level `triggers` otherwise. Make
+the change in the deployment checkout's `apps/web/wrangler.jsonc` before
+building. Keep this setting for every staged
 build until the scheduler handoff below.
 
 For the first deployment, prepare a secrets file outside the checkout with the
@@ -246,22 +269,137 @@ runtime values listed below and point `WORKER_SECRETS_FILE` at its absolute path
 
 ```
 cd apps/web
-bun run build:workers
+CLOUDFLARE_ENV=production bun run build:workers
 bun run deploy:workers --secrets-file "$WORKER_SECRETS_FILE"
 ```
 
+Leave `CLOUDFLARE_ENV` unset to build the generic top-level configuration.
 Subsequent deployments can use `bun run deploy:workers`.
 
-`wrangler.jsonc` names no account. Set `CLOUDFLARE_ACCOUNT_ID` in the shell or
-the build settings when the login can reach more than one.
+### Workers Builds
 
-To use Workers Builds, bootstrap the Worker and its runtime secrets with the
-first deployment above. Then set the root directory to `apps/web`, the build command to
-`bun run build:workers`, the deploy command to
-`bunx wrangler deploy --config dist/server/wrangler.json`, and `NODE_VERSION`
-to `24`. Set `ORBIT_REQUIRE_SCHEMA_GUARD=1` and `DATABASE_URL` as build
-variables on the production branch so a build fails when the database is behind
-the schema, the same guard the Vercel build has.
+Production and previews deploy from Git through two Workers Builds connections
+on the same repository. Both use the package scripts `build:workers:ci` and
+`deploy:workers:ci` (`apps/web/scripts/workers-ci.ts`). They read
+`WORKERS_CI_BRANCH`, which Workers Builds sets, and choose the target:
+
+| Branch | `CLOUDFLARE_ENV` | Target | Deploy |
+| --- | --- | --- | --- |
+| `main` | unset or `production` | Worker `orbit` | `wrangler deploy` |
+| `main` | `preview` | Worker `orbit-pr` itself | `wrangler deploy` |
+| any other | unset or `preview` | a Worker Preview of `orbit-pr` named after the branch | `wrangler preview --name <alias>` |
+| any other | `production` | refused | none |
+
+Before deploying, the script checks that the bundle was built for the Worker
+the branch targets and, inside Workers Builds, that it matches the Worker the
+connection belongs to (`WRANGLER_CI_OVERRIDE_NAME`). A preview connection that
+somehow built for `orbit` stops there instead of deploying production code to
+the wrong Worker.
+
+Workers Builds cannot reach the database, so no build there checks the schema.
+Without `DATABASE_URL` the guard in `build:workers` says so and lets the build
+through, as it does anywhere else. Before merging code that depends on a schema
+change, run the release and the guard from a machine with database access, as
+described in [database releases](database-releases.md):
+
+```
+DIRECT_URL="postgres://..." bun run db:release
+DATABASE_URL="postgres://..." bun run db:check-drift
+```
+
+Settings for the Worker **`orbit`**:
+
+| Setting | Value |
+| --- | --- |
+| Git branch (production) | `main` |
+| Preview builds for non-production branches | off |
+| Root directory | `apps/web` |
+| Build command | `cd ../.. && bun install --frozen-lockfile && cd apps/web && bun run build:workers:ci` |
+| Deploy command | `bun run deploy:workers:ci` |
+| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.4.5`, `CLOUDFLARE_ENV=production`, `NEXT_PUBLIC_APP_URL=https://orbit.noveum.ai`, `ORBIT_PASSWORD_AUTH=true` |
+| Build secrets | none |
+
+The build command installs from the repository root because `bun.lock` lives
+there, not in `apps/web`. The build scripts load `../../.env` when it exists
+and carry on without it, so a clean checkout needs no `.env`.
+
+`next.config.ts` refuses a production build that has no usable first sign-in
+method: `ORBIT_PASSWORD_AUTH=true`, a Google pair, a GitHub pair, or Resend with
+a real `EMAIL_FROM`. Production runs with `ORBIT_PASSWORD_AUTH=true`, so that
+build variable is enough and no sign-in secret is needed at build time. Build
+variables are not runtime variables. Runtime secrets stay under the Worker's
+Settings, Variables and Secrets.
+
+Settings for the Worker **`orbit-pr`**:
+
+| Setting | Value |
+| --- | --- |
+| Git branch (production) | `main` |
+| Preview builds for non-production branches | on |
+| Root directory | `apps/web` |
+| Build command | `cd ../.. && bun install --frozen-lockfile && cd apps/web && bun run build:workers:ci` |
+| Deploy command | `bun run deploy:workers:ci` |
+| Preview command | `bun run deploy:workers:ci` |
+| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.4.5`, `CLOUDFLARE_ENV=preview` |
+| Build secrets | none |
+
+A push to `main` on this connection redeploys `orbit-pr` itself from `main`, so
+`https://orbit-pr.<subdomain>.workers.dev` follows `main` against the preview
+database. Every other branch becomes a Worker Preview. The preview build takes
+`ORBIT_PASSWORD_AUTH` and the other public values from `env.preview.vars`, so it
+needs no build secrets.
+
+## Preview deployments
+
+Each branch gets a [Worker Preview](https://developers.cloudflare.com/workers/previews/)
+of `orbit-pr` at `https://<alias>-orbit-pr.<subdomain>.workers.dev`, plus a
+unique URL for every deployment of it. Previews use Worker Previews rather than
+`wrangler versions upload --preview-alias`, because Cloudflare does not generate
+version preview URLs for a Worker that implements a Durable Object. A version
+uploaded that way has `has_preview: false`. Worker Previews give each preview
+its own Durable Object namespaces instead.
+
+A branch name that is already a valid label, such as `fix-login`, is the alias
+as it is. Any other name is lowercased, every character outside `[a-z0-9-]`
+becomes a dash, repeated dashes collapse, a `b-` prefix is added when it would
+not start with a letter, and six characters of the branch name's SHA-256 are
+appended, so `fix/login` becomes `fix-login-5e870e` and never shares a preview
+with `fix-login`. When `<alias>-orbit-pr` would exceed the 63 character DNS
+label limit, the alias is cut short before the digest. The alias stays the same
+for every push to a branch.
+
+The preview build compiles `NEXT_PUBLIC_APP_URL` as the preview's own address,
+and the deploy step passes `BETTER_AUTH_URL` and `NEXT_PUBLIC_APP_URL` for that
+address with `--var`. `env.preview` sets `ORBIT_AUTH_ALLOWED_HOSTS` to
+`*-orbit-pr.<subdomain>.workers.dev` so the unique deployment URLs are accepted
+too, and `ORBIT_PASSWORD_AUTH=true` so people sign up with an email and a
+password. See [Preview authentication](preview-authentication.md).
+
+Worker Previews do not inherit the Worker's settings. Their bindings and
+variables come from the `previews` block inside `env.preview`, and their secrets
+from the preview base config, which applies to every new preview:
+
+```
+cd apps/web
+CLOUDFLARE_ENV=preview bun run build:workers
+bunx wrangler preview base-config secret bulk "$PREVIEW_SECRETS_FILE" --config dist/server/wrangler.json
+```
+
+The preview Worker and its previews need only `DATABASE_URL`,
+`BETTER_AUTH_SECRET` and `CRON_SECRET`, with values made for previews. Do not
+copy production secrets. Slack, the GitHub App, Resend, Google, GitHub sign-in
+and object storage stay unset, so those features are unavailable on previews.
+
+All previews share the preview database. Its schema follows `main`: run
+`DIRECT_URL=<preview database> bun run db:release` after a migration merges. A
+pull request that adds a migration needs that migration applied to the preview
+database before its preview works, which affects every other preview, so do it
+only for a migration that is backward compatible.
+
+`workers.dev` on this account sits behind Cloudflare Access, so a preview URL
+first asks for the team login. Delete a finished preview with
+`bunx wrangler preview delete --name <alias> --config dist/server/wrangler.json`.
+Cloudflare also removes the oldest previews automatically at the plan's limit.
 
 ### Bindings
 
@@ -345,8 +483,10 @@ to fit the database's available connection budget.
 ### Variables and secrets
 
 `NODE_ENV=production` is set in `wrangler.jsonc`, because better-auth only
-rate limits in production and Workers do not set it. Everything else is a
-secret.
+rate limits in production and Workers do not set it. On `orbit` everything else
+is a secret. `env.preview` also sets its public values (`BETTER_AUTH_URL`,
+`NEXT_PUBLIC_APP_URL`, `ORBIT_AUTH_ALLOWED_HOSTS`, `ORBIT_PASSWORD_AUTH`) as
+variables, so they must not also exist as secrets on `orbit-pr`.
 
 The first deploy has to carry the required secrets with it, as
 `wrangler deploy --secrets-file <file>`. Cloudflare runs the Worker's startup
@@ -361,8 +501,8 @@ that, `wrangler secret put NAME` and `wrangler secret bulk` work as usual.
 - As used: the Google, GitHub, GitHub App and Slack variables, `OAUTH_PROXY_SECRET`,
   `ORBIT_AUTH_ALLOWED_HOSTS`, `ORBIT_PASSWORD_AUTH`, `ORBIT_PUBLIC_URL`,
   `DATABASE_POOL_MAX`, the notification flags.
-- Not used on Workers: `REDIS_URL`, `DATABASE_TLS_CA_PEM` and
-  `DATABASE_REQUIRE_TLS` when Hyperdrive is bound, every `VERCEL_*` variable.
+- Not used on Workers: `REDIS_URL`, and `DATABASE_TLS_CA_PEM` and
+  `DATABASE_REQUIRE_TLS` when Hyperdrive is bound.
 
 `NEXT_PUBLIC_*` values are compiled into the client bundle, so they must also be
 present when `build:workers` runs.
@@ -414,4 +554,5 @@ switch the five variables and resume writes on R2. Keys stay the same.
   also permits private destinations. Redirects are disabled.
 - `/api/realtime/health` reports `redisConfigured: true` for a healthy hub. The
   field now means that a fan-out transport is configured.
-- Preview deployments per pull request are not set up.
+- Worker Previews are in open beta. Routes and Cron Triggers always target the
+  Worker's own deployment, so scheduled jobs never run on a preview.

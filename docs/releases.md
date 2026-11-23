@@ -19,8 +19,9 @@ Read the upgrade notes for every release between your current and target tag.
 
 GitHub supplies source archives for each tag. The project does not yet publish
 release container images, signed binary artifacts, SBOMs, or provenance
-attestations. The reference deployment remains the Next.js app on Vercel;
-the portable realtime host is not yet a supported production deployment.
+attestations. The reference deployment is the Cloudflare Workers build of the
+Next.js app; the portable realtime host is not yet a supported production
+deployment.
 
 ## Prepare a release
 

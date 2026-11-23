@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   if (problems.length > 0) {
     for (const problem of problems) console.log(describe(problem));
     console.log(
-      `\n${problems.length} runtime import(s) of a Bun built-in in shipped code. The web app runs on Vercel's node runtime, where these fail with "Cannot find module 'bun'". A type-only import is fine because it is erased; a value import is not. See the table in CLAUDE.md for the node equivalent.`,
+      `\n${problems.length} runtime import(s) of a Bun built-in in shipped code. The web app runs on Node and on Cloudflare Workers, where these fail with "Cannot find module 'bun'". A type-only import is fine because it is erased; a value import is not. See the table in CLAUDE.md for the node equivalent.`,
     );
     process.exit(1);
   }

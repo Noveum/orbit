@@ -1,7 +1,8 @@
 # Infrastructure
 
-Orbit deploys as a single Vercel project, so the only thing left here is the
-bucket policy the browser needs.
+The Cloudflare Worker is configured in `apps/web/wrangler.jsonc` and the Docker
+stack lives in `deploy/docker`, so the only thing left here is the bucket policy
+the browser needs.
 
 `s3-cors.json` is the CORS document for the uploads bucket. Uploads go straight
 from the browser to object storage through a presigned PUT, so the bucket has to

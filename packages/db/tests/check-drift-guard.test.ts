@@ -38,9 +38,10 @@ describe('the deploy guard', () => {
   }, 30_000);
 
   it('refuses a production build when there is no database to check', async () => {
-    const { code, out } = await runGuard({ DATABASE_URL: undefined, VERCEL_ENV: 'production' }, [
-      '--guard-deploy',
-    ]);
+    const { code, out } = await runGuard(
+      { DATABASE_URL: undefined, ORBIT_REQUIRE_SCHEMA_GUARD: '1' },
+      ['--guard-deploy'],
+    );
     expect(code).toBe(1);
     expect(out).toContain('Production schema verification is required');
   }, 30_000);
@@ -49,7 +50,7 @@ describe('the deploy guard', () => {
     const { code, out } = await runGuard(
       {
         DATABASE_URL: 'postgres://nobody:nothing@127.0.0.1:9/none',
-        VERCEL_ENV: 'production',
+        ORBIT_REQUIRE_SCHEMA_GUARD: '1',
       },
       ['--guard-deploy'],
     );
@@ -68,7 +69,7 @@ describe('the deploy guard', () => {
       env: {
         ...process.env,
         DATABASE_URL: 'postgres://nobody:nothing@127.0.0.1:9/none',
-        VERCEL_ENV: 'production',
+        ORBIT_REQUIRE_SCHEMA_GUARD: '1',
       },
       stdout: 'pipe',
       stderr: 'pipe',

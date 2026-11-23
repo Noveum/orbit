@@ -1,9 +1,0 @@
-.env
-.env.*
-!.env.example
-
-extras
-uploads
-recordings
-test-results
-playwright-report

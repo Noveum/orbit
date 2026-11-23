@@ -64,7 +64,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   const sourceRevision =
     flags.get('--source-revision') ??
     process.env['SOURCE_REVISION'] ??
-    process.env['VERCEL_GIT_COMMIT_SHA'];
+    process.env['WORKERS_CI_COMMIT_SHA'];
 
   const encryptionKeyFile =
     flags.get('--encryption-key-file') ?? process.env['ORBIT_BACKUP_ENCRYPTION_KEY_FILE'];
