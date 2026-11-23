@@ -14,7 +14,7 @@ export function splitOnTerm(text: string, term: string): HighlightPart[] {
   const parts: HighlightPart[] = [];
   let cursor = 0;
 
-  for (;;) {
+  while (true) {
     const at = haystack.indexOf(needle, cursor);
     if (at === -1) break;
     if (at > cursor) parts.push({ text: text.slice(cursor, at), match: false, start: cursor });

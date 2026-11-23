@@ -23,8 +23,8 @@
     "test": "bun --env-file=../../.env test --timeout 20000"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1163.0",
-    "@aws-sdk/s3-request-presigner": "^3.1163.0",
+    "@aws-sdk/client-s3": "^3.1173.0",
+    "@aws-sdk/s3-request-presigner": "^3.1173.0",
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
     "@react-email/components": "1.0.12",
@@ -33,9 +33,9 @@
     "ioredis": "^6.0.0",
     "linkedom": "0.18.15",
     "lowlight": "^3",
-    "marked": "18.2.0",
+    "marked": "18.2.1",
     "postgres": "^3.4.9",
-    "resend": "6.38.0",
+    "resend": "6.39.0",
     "zod": "4.6.7"
   },
   "peerDependencies": {
