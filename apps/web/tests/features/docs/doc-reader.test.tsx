@@ -210,3 +210,24 @@ describe('doc stats', () => {
     expect((await screen.findByTestId('doc-stats')).textContent).toBe('3 words · 1 min read');
   });
 });
+
+describe('reading width', () => {
+  it('uses the width it was given instead of the stored preference', async () => {
+    render(
+      <DocReader
+        doc={doc}
+        contentHtml=""
+        attachments={[]}
+        author={{ name: 'Pulkit', image: null }}
+        followers={1}
+        collectionName={null}
+        projectName={null}
+        width="full"
+      />,
+    );
+
+    const reader = await screen.findByTestId('doc-reader');
+    expect(reader).toHaveAttribute('data-reading-width', 'full');
+    expect(reader.className).toContain('max-w-none');
+  });
+});

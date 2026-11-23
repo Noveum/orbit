@@ -85,7 +85,7 @@ export default async function PublishedDocPage({ params }: PageProps) {
         />
       )}
       <div className="sticky top-0 z-10 border-border border-b bg-surface/95 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-[68rem] items-center justify-between px-6">
+        <div className="flex h-14 w-full items-center justify-between px-8">
           <span className="font-medium text-dense text-text">Orbit</span>
           <span className="text-2xs text-faint">{publishedBanner(detail.doc.visibility)}</span>
         </div>
@@ -114,6 +114,7 @@ export default async function PublishedDocPage({ params }: PageProps) {
         followers={detail.followers}
         collectionName={null}
         projectName={null}
+        width="full"
       />
     </main>
   );
