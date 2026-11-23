@@ -172,6 +172,14 @@ function surfaceOf(testId: string): HTMLElement {
   return node as HTMLElement;
 }
 
+function placeCaretAtEnd(surface: HTMLElement): void {
+  const selection = document.getSelection();
+  if (selection === null) throw new Error('no document selection');
+  selection.selectAllChildren(surface);
+  selection.collapseToEnd();
+  document.dispatchEvent(new Event('selectionchange'));
+}
+
 function textFile(): File {
   return new File(['boom at line 12'], 'trace.log', { type: 'text/plain' });
 }
@@ -194,6 +202,7 @@ describe('a comment whose attachments are still uploading', () => {
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.click(surfaceOf(`comment-edit-${CREATED_ID}`));
+    placeCaretAtEnd(surfaceOf(`comment-edit-${CREATED_ID}`));
     await user.paste(' and the stack is in the file');
     await user.click(screen.getByTestId(`comment-edit-${CREATED_ID}-submit`));
     await waitFor(() => expect(server.patched()).toHaveLength(1));

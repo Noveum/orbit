@@ -28,7 +28,7 @@ MinIO. Back up both together. A database-only backup does not preserve file byte
 
 ## Start a fresh evaluation
 
-Install Bun 1.3.14 or newer and Docker with Compose v2. Run from the repository root.
+Install Bun 1.4.5 or newer and Docker with Compose v2. Run from the repository root.
 Running repository tests or `bun run verify` on the host also requires Node.js 24.x
 on PATH for fresh server-runtime import checks.
 Docker needs enough free memory for a full Next.js build in addition to the
@@ -71,7 +71,7 @@ rotating their existing credentials.
 
 The tooling image installs with Bun and builds Linux-native dependencies. The
 operator runs migrations explicitly before building. The runtime image contains
-the standalone output and runs on Node 22 as a non-root user. It does not install
+the standalone output and runs on Node 26 as a non-root user. It does not install
 dependencies, migrate the database, or start a development server on boot.
 
 Both web and storage bind to loopback. Postgres and Redis expose no host ports.

@@ -316,7 +316,7 @@ Settings for the Worker **`orbit`**:
 | Root directory | `apps/web` |
 | Build command | `cd ../.. && bun install --frozen-lockfile && cd apps/web && bun run build:workers:ci` |
 | Deploy command | `bun run deploy:workers:ci` |
-| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.3.14`, `CLOUDFLARE_ENV=production`, `NEXT_PUBLIC_APP_URL=https://orbit.noveum.ai`, `ORBIT_PASSWORD_AUTH=true` |
+| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.4.5`, `CLOUDFLARE_ENV=production`, `NEXT_PUBLIC_APP_URL=https://orbit.noveum.ai`, `ORBIT_PASSWORD_AUTH=true` |
 | Build secrets | none |
 
 The build command installs from the repository root because `bun.lock` lives
@@ -340,7 +340,7 @@ Settings for the Worker **`orbit-pr`**:
 | Build command | `cd ../.. && bun install --frozen-lockfile && cd apps/web && bun run build:workers:ci` |
 | Deploy command | `bun run deploy:workers:ci` |
 | Preview command | `bun run deploy:workers:ci` |
-| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.3.14`, `CLOUDFLARE_ENV=preview` |
+| Build variables | `NODE_VERSION=24`, `BUN_VERSION=1.4.5`, `CLOUDFLARE_ENV=preview` |
 | Build secrets | none |
 
 A push to `main` on this connection redeploys `orbit-pr` itself from `main`, so
