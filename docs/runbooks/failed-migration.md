@@ -7,7 +7,7 @@ schema migration during an Orbit release upgrade.
 
 - `bun run db:release` fails with `Advisory lock is currently held` or SQL statement error
 - `bun run db:check-drift` reports catalog differences between declared schema and live tables
-- Vercel production build fails at the database release gate
+- A build with `ORBIT_REQUIRE_SCHEMA_GUARD=1` fails at the database schema guard
 
 ## Step 1: Check advisory locks and running processes
 

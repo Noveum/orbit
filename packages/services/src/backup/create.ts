@@ -237,7 +237,7 @@ function buildRawManifest(
 ): BackupManifest {
   const orbitVersion = options.orbitVersion ?? env['ORBIT_VERSION'] ?? '0.1.0';
   const sourceRevision =
-    options.sourceRevision ?? env['SOURCE_REVISION'] ?? env['VERCEL_GIT_COMMIT_SHA'] ?? 'unknown';
+    options.sourceRevision ?? env['SOURCE_REVISION'] ?? env['WORKERS_CI_COMMIT_SHA'] ?? 'unknown';
   const imageDigests = options.imageDigests ?? {};
 
   return {

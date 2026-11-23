@@ -8,11 +8,18 @@ const deploymentSchema = z.object({
     (value) => (value === '' ? undefined : value),
     z.string().min(32).optional(),
   ),
-  VERCEL_URL: z.string().optional(),
-  VERCEL_BRANCH_URL: z.string().optional(),
 });
 
-const hostSchema = z.string().regex(/^[a-zA-Z0-9*.-]+(?::\d+)?$/);
+const exactHostSchema = z.string().regex(/^[a-zA-Z0-9.-]+(?::\d+)?$/);
+
+const wildcardHostSchema = z
+  .string()
+  .regex(/^[a-zA-Z0-9-]*\*[a-zA-Z0-9-]*(?:\.[a-zA-Z0-9-]+){2,}(?::\d+)?$/)
+  .refine((host) => !/^\*\.[^.]+\.[^.:]+(?::\d+)?$/.test(host), {
+    message: 'A bare wildcard label must sit above at least three fixed labels.',
+  });
+
+const hostSchema = z.union([exactHostSchema, wildcardHostSchema]);
 
 export function deploymentAuthOptions(
   environment: Readonly<Record<string, string | undefined>> = process.env,
@@ -24,9 +31,6 @@ export function deploymentAuthOptions(
     ...env.ORBIT_AUTH_ALLOWED_HOSTS.split(',')
       .map((host) => host.trim())
       .filter(Boolean),
-    ...[env.VERCEL_URL, env.VERCEL_BRANCH_URL]
-      .map((host) => host?.trim())
-      .filter((host) => host !== undefined && host.length > 0),
   ].map((host) => hostSchema.parse(host));
   const plugins: [] | [ReturnType<typeof oAuthProxy>] = env.OAUTH_PROXY_SECRET
     ? [oAuthProxy({ productionURL: canonical.origin, secret: env.OAUTH_PROXY_SECRET })]

@@ -28,6 +28,10 @@ export function registerHostedRealtime(readStats: RealtimeStatsReader): void {
   hostedStats = readStats;
 }
 
+export function realtimeHosted(): boolean {
+  return hostedStats !== undefined;
+}
+
 export function realtimeConfigured(): boolean {
   return hostedStats !== undefined || redisConfigured();
 }

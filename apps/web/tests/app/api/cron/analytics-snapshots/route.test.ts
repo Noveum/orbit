@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { createWorkspace, resetDatabase } from '@orbit/core/test-support';
 import { count, db, eq, schema } from '@orbit/db';
 import type { SyncAction } from '@orbit/shared/events';
-import { z } from 'zod';
+import { CRON_SCHEDULE } from '@/lib/cloudflare/cron-schedule.ts';
 
 const SECRET = 'an-analytics-cron-secret-that-is-long-enough';
 const previousSecret = process.env['CRON_SECRET'];
@@ -139,7 +139,7 @@ describe('GET /api/cron/analytics-snapshots', () => {
     expect(published).toEqual([[sentinel]]);
   });
 
-  it('keeps one local-day row when Vercel retries the same run', async () => {
+  it('keeps one local-day row when the scheduler retries the same run', async () => {
     const workspace = await createWorkspace('Nova');
     const cycle = await core.activeCycle(workspace.admin);
     if (cycle === undefined) throw new Error('expected an active sprint');
@@ -154,15 +154,11 @@ describe('GET /api/cron/analytics-snapshots', () => {
   });
 });
 
-const vercelConfigSchema = z.object({
-  crons: z.array(z.object({ path: z.string(), schedule: z.string() })),
-});
-
 describe('analytics snapshot schedule', () => {
-  it('invokes at least every six hours so a local day is not skipped at a DST boundary', async () => {
-    const url = new URL('../../../../../vercel.json', import.meta.url);
-    const config = vercelConfigSchema.parse(JSON.parse(await Bun.file(url).text()));
-    const snapshot = config.crons.find((cron) => cron.path === '/api/cron/analytics-snapshots');
-    expect(snapshot?.schedule).toBe('0 */6 * * *');
+  it('invokes at least every six hours so a local day is not skipped at a DST boundary', () => {
+    const schedule = Object.entries(CRON_SCHEDULE).find(([, paths]) =>
+      paths.includes('/api/cron/analytics-snapshots'),
+    );
+    expect(schedule?.[0]).toBe('0 */6 * * *');
   });
 });

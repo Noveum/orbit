@@ -123,10 +123,12 @@ The webhook route reads `GITHUB_WEBHOOK_SECRET`. That is the name to set in the
 deployment environment, and it has to match what the App is configured with.
 
 Rotate in this order: change it on the App, update
-`GITHUB_WEBHOOK_SECRET` in the environment, then redeploy. Vercel does not apply
-an environment change to a deployment that already exists, so skipping the
-redeploy leaves every delivery failing signature verification with a `401` while
-GitHub retries. Do it in one sitting.
+`GITHUB_WEBHOOK_SECRET` in the environment, then make sure the running
+deployment uses the new value. On Cloudflare Workers, set it under the
+Worker's Settings, Variables and Secrets, or with `wrangler secret put`. On the
+Docker preview, run `bun run preview:down` and `bun run preview:up` so the web
+service starts with it. Until the running deployment has the new value, every delivery fails
+signature verification with a `401` while GitHub retries. Do it in one sitting.
 
 ## Installation replacement activation
 
@@ -168,6 +170,9 @@ bun run db:catchup packages/db/catchup/github-delivery-and-refresh-claims.sql
 bun run db:check-drift
 ```
 
-The Vercel function serving `/api/webhooks/github` has a 60 second maximum
-duration. The delivery claim lease is slightly longer so a second delivery does
-not take over while the first function is still allowed to run.
+The route serving `/api/webhooks/github` declares a 60 second `maxDuration`,
+which Workers do not enforce. The delivery claim lease is 15 seconds longer,
+which only delays a takeover: a request that runs past 75 seconds can be
+reclaimed by a second delivery while it still runs. Effects still commit only
+for the current claim, because each path finalizes in the same transaction and
+rolls back when the claim token no longer matches.

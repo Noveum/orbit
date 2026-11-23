@@ -157,32 +157,29 @@ Full walkthrough in [docs/getting-started.md](docs/getting-started.md).
 The setup below describes the Noveum AI deployment profile. It is not a
 provider-neutral production support commitment.
 
-Orbit is one Next.js app. It needs Postgres, Redis and an S3-compatible bucket,
-all of which have free tiers, so a small team can run it for nothing.
+Orbit is one Next.js app. It needs Postgres and an S3-compatible bucket, both of
+which have free tiers.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FNoveum%2Forbit&root-directory=apps%2Fweb&env=DATABASE_URL,REDIS_URL,BETTER_AUTH_SECRET,BETTER_AUTH_URL,NEXT_PUBLIC_APP_URL,RESEND_API_KEY,EMAIL_FROM&project-name=orbit&repository-name=orbit)
+The hosted Orbit runs as a Cloudflare Worker. `bun run build:workers` in
+`apps/web` builds it with vinext from the same source as the Node build. The
+Worker serves `/api/ws` from a Durable Object, so it needs no Redis, and its
+scheduled jobs are Cron Triggers declared in `apps/web/wrangler.jsonc`. Set it
+up with [docs/cloudflare-workers.md](docs/cloudflare-workers.md).
 
-The button prompts for Resend so a fresh deployment can send sign-in codes. You
-can instead configure password, Google or GitHub sign-in. Production refuses to
-build or start without one complete method; see [Authentication](docs/configuration.md#authentication).
+A fresh deployment needs one complete sign-in method: Resend for sign-in codes,
+or password, Google or GitHub sign-in. Production refuses to build or start
+without one; see [Authentication](docs/configuration.md#authentication).
 
-Two things that are not optional and produce confusing failures if you get them
-wrong:
+**Never set `NEXT_PUBLIC_REALTIME_URL` in production.** The socket is served
+from the page's own origin, and Orbit ignores this variable in production.
+Leaving it set only makes the deployment configuration misleading.
 
-- **Root directory is `apps/web`, and functions run on node.** Do not set
-  `bunVersion` in `apps/web/vercel.json`. It moves every function to the Bun
-  runtime, where the websocket upgrade at `/api/ws` silently never happens and
-  the browser retries forever against a socket that never opens.
-- **Never set `NEXT_PUBLIC_REALTIME_URL` in production.** The socket is served
-  from the page's own origin, and Orbit ignores this variable in production.
-  Leaving it set only makes the deployment configuration misleading.
-
-Supabase for Postgres, Upstash for Redis, Cloudflare R2 for files and Resend for
+Supabase for Postgres through Hyperdrive, Cloudflare R2 for files and Resend for
 email is the combination we run. Other providers have not yet been certified by
 this project.
 
-Full guide, including running it on your own server behind nginx:
-[docs/self-hosting.md](docs/self-hosting.md).
+Full guide, including the Docker Compose preview with its own realtime service
+and Redis: [docs/self-hosting.md](docs/self-hosting.md).
 
 ## For AI agents
 
@@ -217,7 +214,7 @@ today:
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Run it locally in five minutes |
 | [Concepts](docs/concepts.md) | Workspaces, teams, issues, sprints, projects, docs, views |
-| [Self-hosting](docs/self-hosting.md) | Vercel, Supabase, Upstash, R2, or your own server |
+| [Self-hosting](docs/self-hosting.md) | Cloudflare Workers, Docker, Supabase, R2, or your own server |
 | [Configuration](docs/configuration.md) | Every environment variable |
 | [Keyboard shortcuts](docs/keyboard-shortcuts.md) | All of them |
 | [MCP server](docs/mcp.md) | Connect an AI assistant |
@@ -232,7 +229,7 @@ today:
 ## How it is built
 
 ```
-apps/web                  Next.js 16: UI, REST handlers, auth, /api/ws, /mcp
+apps/web                  Next.js 16: UI, REST handlers, auth, /mcp, Worker entry
 apps/realtime             Websocket host, local development only, never deployed
 packages/realtime-server  Connection hub: tickets, scopes, presence, Redis fan-out
 packages/realtime-client  Browser client: subscribe, patch, reconnect
@@ -244,14 +241,15 @@ packages/shared           Zod validators, domain types, event contracts, policy
 ```
 
 TypeScript throughout, in strict mode with `any` as a lint error. Next.js 16 and
-React 19. Postgres through Drizzle. Redis for realtime fan-out. Bun as the
-toolchain, node as the runtime, because a Vercel function can only upgrade a
-websocket on node.
+React 19. Postgres through Drizzle. Bun as the toolchain. The runtime is a
+Cloudflare Worker, where the realtime hub is a Durable Object, or Node in
+Docker, where a separate realtime service fans out through Redis.
 
-A change writes to Postgres, bumps a monotonic `sync_id`, publishes to Redis,
-and the hub fans it out to the connections whose scope entitles them to see it.
-The client patches its cache rather than refetching, so your scroll position and
-selection survive. [docs/architecture.md](docs/architecture.md) has the detail.
+A change writes to Postgres, bumps a monotonic `sync_id`, publishes it to the
+hub, and the hub fans it out to the connections whose scope entitles them to
+see it. The client patches its cache rather than refetching, so your scroll
+position and selection survive. [docs/architecture.md](docs/architecture.md)
+has the detail.
 
 ## Contributing
 

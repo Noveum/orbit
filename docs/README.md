@@ -27,7 +27,7 @@ gated behind a plan.
 | Review source release changes | [Changelog](https://github.com/Noveum/orbit/blob/main/CHANGELOG.md) |
 | Release or upgrade an installation | [Releases and upgrades](releases.md) |
 | Handle disaster recovery, backups and upgrades | [Operator runbooks](runbooks/README.md) |
-| Operate gated Vercel Preview deployments | [Vercel Preview deployment gate](VERCEL_BUILD_GATE.md) |
+| Deploy to Cloudflare Workers | [Cloudflare Workers](cloudflare-workers.md) |
 | Contribute | [CONTRIBUTING.md](https://github.com/Noveum/orbit/blob/main/CONTRIBUTING.md) |
 
 ## The five minute version
