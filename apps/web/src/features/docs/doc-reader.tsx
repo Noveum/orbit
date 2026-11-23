@@ -12,7 +12,11 @@ import { DocBody } from './doc-body.tsx';
 import { DocOutline } from './doc-outline.tsx';
 import type { DocHeading } from './outline.ts';
 import { readTimeMinutes, wordCount } from './outline.ts';
-import { READING_WIDTH_CLASS, useDocPreferences } from './use-doc-preferences.ts';
+import {
+  READING_WIDTH_CLASS,
+  type ReadingWidth,
+  useDocPreferences,
+} from './use-doc-preferences.ts';
 import { useHashScroll } from './use-hash-scroll.ts';
 import { useScrollSpy } from './use-scroll-spy.ts';
 
@@ -25,6 +29,7 @@ export interface DocReaderProps {
   readonly collectionName: string | null;
   readonly projectName: string | null;
   readonly backlinks?: readonly { readonly id: string; readonly title: string }[];
+  readonly width?: ReadingWidth;
 }
 
 export function DocContextRow({
@@ -108,8 +113,10 @@ export function DocReader({
   collectionName,
   projectName,
   backlinks = [],
+  width: widthOverride,
 }: DocReaderProps) {
-  const { width } = useDocPreferences();
+  const preferences = useDocPreferences();
+  const width = widthOverride ?? preferences.width;
   const [headings, setHeadings] = useState<DocHeading[]>([]);
   const activeId = useScrollSpy(headings);
   useHashScroll(`${doc.id}:${headings.map((heading) => heading.id).join('|')}`);
