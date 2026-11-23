@@ -21,9 +21,9 @@
     }
   },
   "dependencies": {
-    "@better-auth/mcp": "1.7.25",
-    "@better-auth/oauth-provider": "1.7.25",
-    "@better-auth/passkey": "1.7.25",
+    "@better-auth/mcp": "1.7.26",
+    "@better-auth/oauth-provider": "1.7.26",
+    "@better-auth/passkey": "1.7.26",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-markdown": "^6.5.2",
@@ -72,7 +72,7 @@
     "@tiptap/starter-kit": "^3.34.0",
     "@vercel/functions": "^3.11.2",
     "@vinext/cloudflare": "1.4.0",
-    "better-auth": "1.7.25",
+    "better-auth": "1.7.26",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
