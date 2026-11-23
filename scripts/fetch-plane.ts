@@ -102,9 +102,9 @@ let requests = 0;
 let throttled = 0;
 
 async function takeSlot(): Promise<void> {
-  for (;;) {
+  while (true) {
     const now = Date.now();
-    for (;;) {
+    while (true) {
       const oldest = requestWindow[0];
       if (oldest === undefined || now - oldest <= 60_000) break;
       requestWindow.shift();
@@ -137,7 +137,7 @@ async function collect<T>(path: string): Promise<T[]> {
   const rows: T[] = [];
   const seen = new Set<string>();
   let cursor: string | null = null;
-  for (;;) {
+  while (true) {
     const separator = path.includes('?') ? '&' : '?';
     const suffix: string =
       cursor === null ? '' : `${separator}cursor=${encodeURIComponent(cursor)}`;
@@ -158,7 +158,7 @@ async function mapConcurrent<T>(
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(limit, items.length) }, async () => {
-      for (;;) {
+      while (true) {
         const index = next;
         next += 1;
         const item = items[index];

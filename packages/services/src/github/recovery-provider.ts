@@ -102,7 +102,7 @@ async function readRecoveryBody<T extends z.ZodType>(
   selected(reader);
   const chunks: Uint8Array[] = [];
   let bytes = 0;
-  for (;;) {
+  while (true) {
     const part = await Promise.race([reader.read(), aborted]);
     if (part.done) break;
     bytes += part.value.length;

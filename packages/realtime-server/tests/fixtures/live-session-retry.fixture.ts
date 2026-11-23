@@ -102,7 +102,7 @@ const server = net.createServer((socket) => {
   const healthy = mode === 'permission' || connectionNumber > 1;
   socket.on('data', (bytes: Buffer) => {
     buffer = Buffer.concat([buffer, bytes]);
-    for (;;) {
+    while (true) {
       if (!started) {
         if (buffer.length < 4) return;
         const length = buffer.readInt32BE(0);
