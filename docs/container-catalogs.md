@@ -7,7 +7,10 @@ have persistent volumes. Password signup is enabled; no demo users are seeded.
 The runtime image applies the committed database migrations before starting the
 web server. A failed migration prevents startup. Back up PostgreSQL and object
 storage before upgrading. Keep the authentication, database and storage secrets
-stable across upgrades.
+stable across upgrades. A deployment whose PostgreSQL volume was created by
+PostgreSQL 18 needs the
+[PostgreSQL 18 to 19 upgrade](runbooks/postgres-major-upgrade.md) before it runs
+the PostgreSQL 19 image.
 
 Build from the repository root:
 

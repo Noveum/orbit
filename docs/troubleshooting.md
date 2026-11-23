@@ -44,6 +44,12 @@ bun run db:push && bun run db:test-setup && bun run db:seed
 `infra:reset` destroys the data. That is fine locally, and never run it against
 anything you care about.
 
+If `docker logs orbit-postgres` says there appears to be PostgreSQL data in
+`/var/lib/postgresql/18/docker`, the volume predates the move to PostgreSQL 19.
+Upgrade it with `bun run postgres:upgrade-volume --volume orbit_orbit-postgres`
+after `bun run infra:down`, or reset it. See the
+[PostgreSQL 18 to 19 upgrade](runbooks/postgres-major-upgrade.md).
+
 ### Port already in use
 
 ```bash
