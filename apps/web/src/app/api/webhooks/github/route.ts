@@ -11,7 +11,7 @@ import {
   verifyGithubSignature,
 } from '@orbit/services';
 import { notifyMany } from '@orbit/services/notifications';
-import { randomUUIDv7 } from '@orbit/shared/utils';
+import { randomUUIDv7, safeErrorFields, withDatabaseLogBoundary } from '@orbit/shared/utils';
 import { z } from 'zod';
 import { publish } from '@/lib/api/publish.ts';
 import { slackIntegrationEnabledForOrganization } from '@/lib/integrations/slack-capability.ts';
@@ -105,7 +105,7 @@ export async function finalizeDelivery(
   return finalized.length > 0;
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function processWebhook(request: Request): Promise<Response> {
   const secret = process.env['GITHUB_WEBHOOK_SECRET'] ?? '';
   const raw = await request.text();
   const signature = request.headers.get(SIGNATURE_HEADER);
@@ -194,7 +194,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!deliveryFinalized) {
       await finalizeDelivery(claim, { status: 'failed', error: null });
     }
-    console.error('[orbit] github webhook failed', error);
+    console.error('[orbit] github webhook failed', safeErrorFields(error));
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
 }
@@ -240,7 +240,7 @@ async function handleInstallationEvent(input: {
     return Response.json({ ok: true, handled: outcome.handled });
   } catch (error) {
     await finalizeDelivery(input.claim, { status: 'failed', error: null });
-    console.error('[orbit] github installation webhook failed', error);
+    console.error('[orbit] github installation webhook failed', safeErrorFields(error));
     return Response.json({ error: 'processing failed' }, { status: 500 });
   }
 }
@@ -284,4 +284,8 @@ function outcomeFinalization(ignoredReason: string | null): WebhookFinalization 
 
 function requireDeliveryOwnership(finalized: boolean): void {
   if (!finalized) throw new Error('GitHub webhook delivery ownership was lost.');
+}
+
+export function POST(request: Request): Promise<Response> {
+  return withDatabaseLogBoundary(() => processWebhook(request));
 }

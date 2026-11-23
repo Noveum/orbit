@@ -1,5 +1,6 @@
 import { listOrganizationsForUser, passkeyVerifiedWithin, userHasPasskey } from '@orbit/core';
 import { toDomainError } from '@orbit/shared/errors';
+import { databaseLogFields } from '@orbit/shared/utils';
 import { mcpConsentDecisionSchema } from '@orbit/shared/validators';
 import { finalizeProviderConsent } from '@/lib/auth/mcp-consent.ts';
 import { auth } from '@/lib/auth/server.ts';
@@ -65,7 +66,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ redirectUri: approved.redirectUri });
   } catch (error) {
     const domain = toDomainError(error);
-    console.error('mcp consent decision failed', { code: domain.code, message: domain.message });
+    console.error('mcp consent decision failed', databaseLogFields(error) ?? { code: domain.code });
     const message =
       domain.status >= 500 ? 'Something went wrong. Try connecting again.' : domain.message;
     return Response.json({ error: domain.code, message }, { status: domain.status });

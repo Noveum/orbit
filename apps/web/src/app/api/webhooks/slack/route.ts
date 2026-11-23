@@ -5,7 +5,7 @@ import {
   slackCredentialVersionExpression,
   verifySlackSignature,
 } from '@orbit/services';
-import { randomUUIDv7 } from '@orbit/shared/utils';
+import { randomUUIDv7, withDatabaseLogBoundary } from '@orbit/shared/utils';
 import { slackEventSchema } from '@orbit/shared/validators';
 import {
   slackIntegrationEnabledForOrganization,
@@ -19,7 +19,7 @@ const TIMESTAMP_HEADER = 'x-slack-request-timestamp';
 export const maxDuration = 60;
 const SLACK_EVENT_CLAIM_TIMEOUT_MS = (maxDuration + 15) * 1000;
 
-export async function POST(request: Request): Promise<Response> {
+async function processWebhook(request: Request): Promise<Response> {
   if (!slackRolloutConfigured()) return slackIntegrationUnavailable();
   const signingSecret = process.env['SLACK_SIGNING_SECRET'] ?? '';
   const raw = await request.text();
@@ -226,4 +226,8 @@ async function unfurlLinks(
     unfurls,
   });
   return integrationRow.organizationId;
+}
+
+export function POST(request: Request): Promise<Response> {
+  return withDatabaseLogBoundary(() => processWebhook(request));
 }
