@@ -1,4 +1,4 @@
-import ts from 'typescript';
+import { parseSync } from 'oxc-parser';
 
 export interface CommentRange {
   pos: number;
@@ -57,48 +57,20 @@ export function keep(raw: string): boolean {
   return false;
 }
 
-function scriptKind(file: string): ts.ScriptKind {
-  if (file.endsWith('.tsx')) return ts.ScriptKind.TSX;
-  if (file.endsWith('.jsx')) return ts.ScriptKind.JSX;
-  if (/\.(c|m)?ts$/.test(file)) return ts.ScriptKind.TS;
-  return ts.ScriptKind.JS;
+function parserLang(file: string): 'js' | 'jsx' | 'ts' | 'tsx' {
+  if (file.endsWith('.tsx')) return 'tsx';
+  if (file.endsWith('.jsx')) return 'jsx';
+  if (/\.(c|m)?ts$/.test(file)) return 'ts';
+  return 'js';
 }
 
 export function tsComments(file: string, text: string): ScanResult {
-  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind(file));
-  const seen = new Set<string>();
-  const found: CommentRange[] = [];
-  const jsxSpans: [number, number][] = [];
-  const add = (ranges: readonly ts.CommentRange[] | undefined): void => {
-    for (const r of ranges ?? []) {
-      const key = `${r.pos}:${r.end}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      found.push({ pos: r.pos, end: r.end });
-    }
-  };
-  const visit = (node: ts.Node): void => {
-    if (node.kind === ts.SyntaxKind.JsxText) {
-      jsxSpans.push([node.getFullStart(), node.getEnd()]);
-      return;
-    }
-    const children = node.getChildren(sf);
-    if (children.length === 0) {
-      add(ts.getLeadingCommentRanges(text, node.getFullStart()));
-      add(ts.getTrailingCommentRanges(text, node.getEnd()));
-      return;
-    }
-    for (const c of children) visit(c);
-  };
-  visit(sf);
-
-  const inJsxText = (r: CommentRange): boolean => jsxSpans.some(([s, e]) => r.pos < e && r.end > s);
+  const { comments } = parseSync(file, text, { lang: parserLang(file), sourceType: 'unambiguous' });
   const remove: CommentRange[] = [];
   let kept = 0;
-  for (const r of found) {
-    if (inJsxText(r)) continue;
-    if (keep(text.slice(r.pos, r.end))) kept++;
-    else remove.push(r);
+  for (const c of comments) {
+    if (keep(text.slice(c.start, c.end))) kept++;
+    else remove.push({ pos: c.start, end: c.end });
   }
   return { remove, kept };
 }

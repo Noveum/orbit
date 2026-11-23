@@ -23,14 +23,14 @@
     "test": "bun --env-file=../../.env test --timeout 20000"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1173.0",
-    "@aws-sdk/s3-request-presigner": "^3.1173.0",
+    "@aws-sdk/client-s3": "^3.1175.0",
+    "@aws-sdk/s3-request-presigner": "^3.1175.0",
     "@orbit/db": "workspace:*",
     "@orbit/shared": "workspace:*",
     "@react-email/components": "1.0.12",
     "@react-email/render": "2.3.1",
     "drizzle-orm": "0.45.4",
-    "ioredis": "^6.0.0",
+    "ioredis": "^6.1.0",
     "linkedom": "0.18.15",
     "lowlight": "^3",
     "marked": "18.2.1",
@@ -42,9 +42,9 @@
     "react": ">=19"
   },
   "devDependencies": {
-    "@types/bun": "1.4.4",
+    "@types/bun": "1.4.5",
     "@types/react": "19.3.0",
     "react": "19.3.1",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
