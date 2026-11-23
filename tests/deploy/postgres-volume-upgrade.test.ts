@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import {
   POSTGRES_18_IMAGE,
   POSTGRES_19_IMAGE,
+  UPGRADE_LOCK,
+  UPGRADE_STAGING,
   upgradeVolume,
 } from '../../scripts/upgrade-postgres-volume.ts';
 
@@ -39,12 +41,28 @@ async function sql(container: string, database: string, query: string): Promise<
     '-U',
     'orbit',
     '-d',
-    database,
+    `dbname='${database}'`,
     '-tAc',
     query,
   );
   if (result.code !== 0) throw new Error(result.stderr);
   return result.stdout;
+}
+
+async function onVolume(script: string): Promise<number> {
+  return (
+    await docker(
+      'run',
+      '--rm',
+      '-v',
+      `${volume}:/var/lib/postgresql`,
+      '--entrypoint',
+      'sh',
+      POSTGRES_19_IMAGE,
+      '-c',
+      script,
+    )
+  ).code;
 }
 
 async function waitReady(container: string, fresh: boolean): Promise<void> {
@@ -147,9 +165,14 @@ test('upgrades a PostgreSQL 18 volume to 19 without losing data, roles or passwo
     'orbit',
     'create index issue_title_trgm on issue using gin (title gin_trgm_ops)',
   );
-  await sql(original, 'orbit', 'create database extra');
-  await sql(original, 'extra', 'create table note (body text)');
-  await sql(original, 'extra', "insert into note values ('kept')");
+  await sql(original, 'orbit', 'create table "audit log" (entry text)');
+  await sql(original, 'orbit', `insert into "audit log" values ('a'), ('b'), ('c')`);
+  await sql(original, 'orbit', 'create database "extra db"');
+  await sql(original, 'extra db', 'create table note (body text)');
+  await sql(original, 'extra db', "insert into note values ('kept')");
+  await sql(original, 'orbit', 'create database "__proto__"');
+  await sql(original, '__proto__', 'create table odd (n int)');
+  await sql(original, '__proto__', 'insert into odd values (7)');
   await docker('stop', original);
   await docker('rm', original);
 
@@ -165,6 +188,17 @@ test('upgrades a PostgreSQL 18 volume to 19 without losing data, roles or passwo
   expect(refused.stderr).toContain('/var/lib/postgresql/18/docker');
 
   const logged: string[] = [];
+  expect(await onVolume(`mkdir /var/lib/postgresql/${UPGRADE_LOCK}`)).toBe(0);
+  await expect(
+    upgradeVolume({ volume, user: 'orbit', dumpDirectory, log: (line) => logged.push(line) }),
+  ).rejects.toThrow('Another upgrade');
+  expect(await onVolume(`rmdir /var/lib/postgresql/${UPGRADE_LOCK}`)).toBe(0);
+  expect(
+    await onVolume(
+      `mkdir -p /var/lib/postgresql/${UPGRADE_STAGING}/docker && echo 19 > /var/lib/postgresql/${UPGRADE_STAGING}/docker/PG_VERSION`,
+    ),
+  ).toBe(0);
+
   const outcome = await upgradeVolume({
     volume,
     user: 'orbit',
@@ -172,6 +206,9 @@ test('upgrades a PostgreSQL 18 volume to 19 without losing data, roles or passwo
     log: (line) => logged.push(line),
   });
   expect(outcome).toBe('upgraded');
+  expect((await stat(dumpDirectory)).mode & 0o777).toBe(0o700);
+  expect(await onVolume(`test -e /var/lib/postgresql/${UPGRADE_LOCK}`)).not.toBe(0);
+  expect(await onVolume(`test -e /var/lib/postgresql/${UPGRADE_STAGING}`)).not.toBe(0);
 
   const started = await docker(
     'run',
@@ -198,7 +235,9 @@ test('upgrades a PostgreSQL 18 volume to 19 without losing data, roles or passwo
     await sql(upgraded, 'orbit', "select count(*) from issue where title % 'Issue 42'"),
   ).not.toBe('0');
   expect(await sql(upgraded, 'orbit', "select nextval('issue_id_seq')")).toBe('501');
-  expect(await sql(upgraded, 'extra', 'select body from note')).toBe('kept');
+  expect(await sql(upgraded, 'orbit', 'select count(*) from "audit log"')).toBe('3');
+  expect(await sql(upgraded, 'extra db', 'select body from note')).toBe('kept');
+  expect(await sql(upgraded, '__proto__', 'select n from odd')).toBe('7');
 
   const remote = (secret: string) =>
     docker(
