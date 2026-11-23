@@ -33,9 +33,9 @@
     "ioredis": "^6.0.0",
     "linkedom": "0.18.15",
     "lowlight": "^3",
-    "marked": "18.2.0",
+    "marked": "18.2.1",
     "postgres": "^3.4.9",
-    "resend": "6.38.0",
+    "resend": "6.39.0",
     "zod": "4.6.7"
   },
   "peerDependencies": {
