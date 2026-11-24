@@ -9,7 +9,7 @@ and a maintenance scheduler calls the application's authenticated cron routes.
 
 | Capability | Dependency | Template behavior |
 | --- | --- | --- |
-| Tasks, workspaces, document content, document history, attachment metadata | Postgres 18 | Persistent named volume, health check, manually applied migrations |
+| Tasks, workspaces, document content, document history, attachment metadata | Postgres 19 | Persistent named volume, health check, manually applied migrations |
 | Cache, rate limits, event publication | Redis 8 | Private Compose network, persistent append-only volume |
 | Uploaded files, images and attachments | S3-compatible object storage | MinIO with a persistent volume and private `orbit-uploads` bucket |
 | Browser uploads and previews | Browser-reachable S3 endpoint and CORS | `http://orbit-storage.localhost:9000`, CORS scoped to `http://127.0.0.1:33170` |
@@ -109,6 +109,13 @@ to erase the evaluation database and files. To upgrade, back up the database and
 bucket, update the checkout, then repeat `preview:tools`, `preview:migrate`,
 `preview:build` and `preview:up`. Run one build at a time. A failed build does not
 replace the currently running image.
+
+An installation created before the move to PostgreSQL 19 keeps its data in a
+PostgreSQL 18 directory, and the new image refuses to start on it. Upgrade the
+`postgres` volume in place with the
+[PostgreSQL 18 to 19 upgrade](runbooks/postgres-major-upgrade.md) runbook right
+after updating the checkout, before `preview:migrate` or any other step that
+starts PostgreSQL.
 
 When upgrading an installation that predates the scheduler, run `preview:start`
 instead of those individual steps. It adds the required scheduler secret before

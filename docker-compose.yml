@@ -2,7 +2,7 @@ name: orbit
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     container_name: orbit-postgres
     restart: unless-stopped
     environment:

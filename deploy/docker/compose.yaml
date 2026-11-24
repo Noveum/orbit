@@ -38,7 +38,7 @@ x-app-environment: &app-environment
 
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     environment:
       POSTGRES_USER: orbit
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run bun run preview:init}

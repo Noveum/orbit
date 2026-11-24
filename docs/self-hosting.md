@@ -325,6 +325,11 @@ dated tag for deployed versions.
 Watch the [releases](https://github.com/Noveum/orbit/releases) for anything
 labelled `breaking change` and follow the upgrade notes in the associated release.
 
+The Docker and catalog templates run PostgreSQL 19. A Docker volume created by
+an earlier PostgreSQL 18 template needs the
+[PostgreSQL 18 to 19 upgrade](runbooks/postgres-major-upgrade.md). A managed
+database needs nothing: Orbit runs on PostgreSQL 16 or newer.
+
 Upgrades across this release drop four tables the app never displayed: `module`,
 `module_member`, `module_issue` and `module_link`. A Plane import before #287
 filled them and nothing has read them since, so the migration removes them.

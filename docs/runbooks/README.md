@@ -70,4 +70,5 @@ Do not clear readiness with SQL based only on standalone validation.
 | Interrupted migration | [Failed migration](failed-migration.md) |
 | Deleted application content | [Accidental deletion](accidental-deletion-recovery.md) |
 | Infrastructure cutover | [Region/provider migration](region-provider-migration.md) |
+| PostgreSQL 18 Docker volume | [PostgreSQL 18 to 19 upgrade](postgres-major-upgrade.md) |
 | Failed recovery checks | [Validation failure](validation-failure-after-restore.md) |
