@@ -17,11 +17,11 @@ afterEach(() => {
 });
 
 describe('useStandupDisplay', () => {
-  it('defaults to assigned work, every agent and member cards', () => {
+  it('defaults to assigned work, every agent and the automatic member layout', () => {
     const { result } = renderHook(() => useStandupDisplay(userId));
     expect(result.current.loaded).toBe(true);
     expect(result.current.display).toEqual({
-      memberLayout: 'cards',
+      memberLayout: 'auto',
       workType: 'assigned',
       aiOnly: false,
     });

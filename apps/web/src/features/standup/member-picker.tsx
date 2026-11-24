@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button.tsx';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.tsx';
 import { isEditableTarget } from '@/lib/keyboard/binding.ts';
 import { PersonTiles, type PersonTilesProps, UNASSIGNED } from './person-tiles.tsx';
+import type { MemberLayout } from './standup-display.tsx';
+import { useRowFits } from './use-row-fits.ts';
 
 function memberSwitchDirection(event: KeyboardEvent, isMac: boolean): number {
   if (isMac) {
@@ -23,8 +25,13 @@ function memberSwitchDirection(event: KeyboardEvent, isMac: boolean): number {
   }
 }
 
-export function MemberPicker(props: PersonTilesProps) {
-  const dropdown = props.layout === 'dropdown';
+export interface MemberPickerProps extends Omit<PersonTilesProps, 'arrangement'> {
+  readonly layout: MemberLayout;
+}
+
+export function MemberPicker({ layout, ...props }: MemberPickerProps) {
+  const measured = useRowFits(layout === 'auto');
+  const dropdown = layout === 'dropdown' || (layout === 'auto' && !measured.fits);
   const [open, setOpen] = useState(false);
   const switching = useRef(false);
   const preserveFocus = useRef(false);
@@ -97,19 +104,7 @@ export function MemberPicker(props: PersonTilesProps) {
   const label =
     selected?.name.trim() ?? (props.selectedId === UNASSIGNED ? 'Unassigned' : 'All Members');
 
-  if (!dropdown)
-    return (
-      <fieldset
-        data-testid="standup-members"
-        aria-label="Standup members"
-        className="w-full min-w-0 max-w-full sm:w-auto"
-        title={shortcut}
-      >
-        <PersonTiles {...props} />
-      </fieldset>
-    );
-
-  return (
+  const menu = (
     <Popover
       open={open}
       onOpenChange={(next) => {
@@ -132,7 +127,7 @@ export function MemberPicker(props: PersonTilesProps) {
       </PopoverTrigger>
       <PopoverContent
         ref={content}
-        align="end"
+        align="start"
         aria-label="Members"
         className="max-h-80 overflow-y-auto"
         onOpenAutoFocus={(event) => {
@@ -145,6 +140,7 @@ export function MemberPicker(props: PersonTilesProps) {
       >
         <PersonTiles
           {...props}
+          arrangement="stack"
           onSelect={(id) => {
             props.onSelect(id);
             switching.current = false;
@@ -153,5 +149,44 @@ export function MemberPicker(props: PersonTilesProps) {
         />
       </PopoverContent>
     </Popover>
+  );
+
+  if (layout === 'dropdown') return menu;
+
+  if (layout === 'list')
+    return (
+      <fieldset
+        data-testid="standup-members"
+        aria-label="Standup members"
+        className="w-full min-w-0 sm:w-auto sm:flex-1"
+        title={shortcut}
+      >
+        <PersonTiles {...props} arrangement="wrap" />
+      </fieldset>
+    );
+
+  return (
+    <div ref={measured.container} className="relative flex min-w-0 flex-1 items-center">
+      <div
+        aria-hidden={!measured.fits}
+        inert={!measured.fits}
+        className={
+          measured.fits
+            ? 'contents'
+            : 'pointer-events-none invisible absolute inset-0 overflow-hidden'
+        }
+      >
+        <fieldset
+          ref={measured.row}
+          data-testid={measured.fits ? 'standup-members' : undefined}
+          aria-label="Standup members"
+          className="w-max shrink-0"
+          title={shortcut}
+        >
+          <PersonTiles {...props} arrangement="row" />
+        </fieldset>
+      </div>
+      {measured.fits ? null : menu}
+    </div>
   );
 }

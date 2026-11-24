@@ -10,11 +10,19 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu.tsx';
 
-const memberLayoutSchema = z.enum(['cards', 'dropdown']);
+const memberLayoutSchema = z.enum(['auto', 'list', 'dropdown']);
 export type MemberLayout = z.infer<typeof memberLayoutSchema>;
 
 const workTypeSchema = z.enum(['assigned', 'reviewing', 'all']);
 export type WorkType = z.infer<typeof workTypeSchema>;
+
+const MEMBER_LAYOUT_OPTIONS: Readonly<
+  Record<MemberLayout, { readonly label: string; readonly hint: string }>
+> = {
+  auto: { label: 'Auto', hint: 'A list when everyone fits on one line, a dropdown when not' },
+  list: { label: 'List', hint: 'Always show every member, wrapping onto more lines' },
+  dropdown: { label: 'Dropdown', hint: 'Always pick members from a dropdown' },
+};
 
 const WORK_TYPE_LABELS: Readonly<Record<WorkType, string>> = {
   assigned: 'Assigned',
@@ -23,14 +31,14 @@ const WORK_TYPE_LABELS: Readonly<Record<WorkType, string>> = {
 };
 
 const standupDisplaySchema = z.object({
-  memberLayout: memberLayoutSchema.catch('cards'),
+  memberLayout: memberLayoutSchema.catch('auto'),
   workType: workTypeSchema.catch('assigned'),
   aiOnly: z.boolean().catch(false),
 });
 export type StandupDisplay = z.infer<typeof standupDisplaySchema>;
 
 export const DEFAULT_STANDUP_DISPLAY: StandupDisplay = {
-  memberLayout: 'cards',
+  memberLayout: 'auto',
   workType: 'assigned',
   aiOnly: false,
 };
@@ -125,8 +133,16 @@ export function StandupDisplayOptions({
         value={display.memberLayout}
         onValueChange={(value) => onChange({ memberLayout: memberLayoutSchema.parse(value) })}
       >
-        <DropdownMenuRadioItem value="cards">Cards</DropdownMenuRadioItem>
-        <DropdownMenuRadioItem value="dropdown">Dropdown</DropdownMenuRadioItem>
+        {memberLayoutSchema.options.map((layout) => (
+          <DropdownMenuRadioItem
+            key={layout}
+            value={layout}
+            title={MEMBER_LAYOUT_OPTIONS[layout].hint}
+            data-testid={`member-layout-${layout}`}
+          >
+            {MEMBER_LAYOUT_OPTIONS[layout].label}
+          </DropdownMenuRadioItem>
+        ))}
       </DropdownMenuRadioGroup>
       <DropdownMenuSeparator />
     </>

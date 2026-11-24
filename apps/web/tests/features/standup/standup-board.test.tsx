@@ -604,7 +604,7 @@ describe('standup member cards', () => {
       await screen.findByTestId('standup-kanban');
       const user = userEvent.setup();
       await user.click(screen.getByRole('button', { name: 'Display options' }));
-      expect(screen.getByRole('menuitemradio', { name: 'Cards' })).toHaveAttribute(
+      expect(screen.getByRole('menuitemradio', { name: 'Auto' })).toHaveAttribute(
         'aria-checked',
         'true',
       );
@@ -655,9 +655,45 @@ describe('standup member cards', () => {
       'aria-checked',
       'true',
     );
-    await user.click(screen.getByRole('menuitemradio', { name: 'Cards' }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'List' }));
     expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
-    expect(storedDisplay()?.memberLayout).toBe('cards');
+    expect(storedDisplay()?.memberLayout).toBe('list');
+  });
+
+  it('switches Auto to a dropdown only when the members do not fit on one line', async () => {
+    const scrollWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth');
+    const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
+    Object.defineProperty(Element.prototype, 'scrollWidth', {
+      configurable: true,
+      get(this: Element) {
+        return this.tagName === 'FIELDSET' ? 900 : 0;
+      },
+    });
+    Object.defineProperty(Element.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 300;
+      },
+    });
+    try {
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      expect(screen.getByRole('button', { name: 'Members: All Members' })).toBeVisible();
+      expect(screen.getByTestId('standup-tiles').closest('[aria-hidden="true"]')).not.toBeNull();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Display options' }));
+      await user.click(screen.getByRole('menuitemradio', { name: 'List' }));
+      expect(screen.queryByRole('button', { name: /^Members:/ })).toBeNull();
+      expect(screen.getByTestId('standup-tiles').closest('[aria-hidden="true"]')).toBeNull();
+      expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    } finally {
+      if (scrollWidth) Object.defineProperty(Element.prototype, 'scrollWidth', scrollWidth);
+      else Reflect.deleteProperty(Element.prototype, 'scrollWidth');
+      if (clientWidth) Object.defineProperty(Element.prototype, 'clientWidth', clientWidth);
+      else Reflect.deleteProperty(Element.prototype, 'clientWidth');
+    }
   });
 
   it('wraps backwards and keeps the cards visible on loss of focus', async () => {
@@ -747,7 +783,7 @@ describe('standup filter interactions', () => {
       ).toBe(true),
     );
     expect(window.location.search).toBe(`?person=${bo.id}`);
-    expect(storedDisplay()).toEqual({ memberLayout: 'cards', workType: 'reviewing', aiOnly: true });
+    expect(storedDisplay()).toEqual({ memberLayout: 'auto', workType: 'reviewing', aiOnly: true });
     expect(screen.getByTestId('display-modified-dot')).toBeTruthy();
     await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Display options' }));

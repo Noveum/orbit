@@ -6,12 +6,19 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { Member } from '@/lib/query/schemas.ts';
-import type { MemberLayout } from './standup-display.tsx';
 
 export const UNASSIGNED = UNSET_FILTER_VALUE;
 
+export type TileArrangement = 'row' | 'wrap' | 'stack';
+
+const ARRANGEMENT_CLASSES: Readonly<Record<TileArrangement, string>> = {
+  row: 'flex w-max flex-nowrap items-center gap-1.5',
+  wrap: 'flex min-w-0 flex-wrap items-center gap-1.5',
+  stack: 'flex min-w-0 flex-col gap-0.5',
+};
+
 export interface PersonTilesProps {
-  readonly layout?: MemberLayout;
+  readonly arrangement?: TileArrangement;
   readonly members: readonly Member[];
   readonly currentUserId?: string | null;
   readonly selectedId: string | null;
@@ -34,7 +41,7 @@ function tileTone(selected: boolean, count: number | null): string {
 }
 
 export function PersonTiles({
-  layout = 'cards',
+  arrangement = 'wrap',
   members,
   selectedId,
   counts,
@@ -43,26 +50,17 @@ export function PersonTiles({
 }: PersonTilesProps) {
   const countOf = (key: string): number | null => (counts === null ? null : (counts[key] ?? 0));
   const unassigned = countOf(UNASSIGNED);
+  const stacked = arrangement === 'stack';
+  const shape = stacked ? 'w-full' : 'border';
 
   return (
-    <div
-      data-testid="standup-tiles"
-      className={
-        layout === 'cards'
-          ? 'flex min-w-0 flex-wrap items-center justify-end gap-1.5'
-          : 'flex min-w-0 flex-col gap-0.5'
-      }
-    >
+    <div data-testid="standup-tiles" className={ARRANGEMENT_CLASSES[arrangement]}>
       <button
         type="button"
         data-testid="standup-tile-everyone"
         aria-pressed={selectedId === null}
         onClick={() => onSelect(null)}
-        className={cn(
-          tile,
-          layout === 'cards' ? 'border' : 'w-full',
-          selectedId === null ? selectedTile : idleTile,
-        )}
+        className={cn(tile, shape, selectedId === null ? selectedTile : idleTile)}
       >
         <Users className="size-3.5" aria-hidden="true" />
         All Members
@@ -79,15 +77,11 @@ export function PersonTiles({
             title={member.name}
             aria-label={member.id === currentUserId ? `${member.name} (You)` : member.name}
             onClick={() => onSelect(selected ? null : member.id)}
-            className={cn(
-              tile,
-              layout === 'cards' ? 'border' : 'w-full',
-              tileTone(selected, count),
-            )}
+            className={cn(tile, shape, tileTone(selected, count))}
           >
             <Avatar name={member.name} src={member.image} size="xs" />
-            <span className={layout === 'cards' ? 'max-w-28 truncate' : 'max-w-48 truncate'}>
-              {layout === 'cards' ? member.name.trim().split(/\s+/)[0] : member.name.trim()}
+            <span className={stacked ? 'max-w-48 truncate' : 'max-w-28 truncate'}>
+              {stacked ? member.name.trim() : member.name.trim().split(/\s+/)[0]}
               {member.id === currentUserId ? ' (You)' : ''}
             </span>
             {member.isAgent ? <span className="text-faint">AI</span> : null}
@@ -102,11 +96,7 @@ export function PersonTiles({
           aria-pressed={selectedId === UNASSIGNED}
           title="Issues nobody owns"
           onClick={() => onSelect(selectedId === UNASSIGNED ? null : UNASSIGNED)}
-          className={cn(
-            tile,
-            layout === 'cards' ? 'border' : 'w-full',
-            tileTone(selectedId === UNASSIGNED, unassigned),
-          )}
+          className={cn(tile, shape, tileTone(selectedId === UNASSIGNED, unassigned))}
         >
           <UserMinus className="size-3.5" aria-hidden="true" />
           Unassigned
