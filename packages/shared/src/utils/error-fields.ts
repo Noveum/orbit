@@ -148,7 +148,118 @@ function errorCode(chain: readonly Error[]): string | undefined {
   return undefined;
 }
 
+const databaseCodes = new Set([
+  '08001',
+  '08003',
+  '08006',
+  '22001',
+  '22P02',
+  '23502',
+  '23503',
+  '23505',
+  '23514',
+  '28000',
+  '28P01',
+  '40001',
+  '40P01',
+  '42501',
+  '42601',
+  '42703',
+  '42P01',
+  '53300',
+  '55P03',
+  '57014',
+  '57P01',
+  'CONNECTION_CLOSED',
+  'CONNECTION_ENDED',
+  'CONNECTION_DESTROYED',
+  'CONNECT_TIMEOUT',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+]);
+
+function ownValue(value: object, key: string): unknown {
+  return Object.getOwnPropertyDescriptor(value, key)?.value;
+}
+
+function isDatabaseError(entry: object): boolean {
+  const proto: unknown = Object.getPrototypeOf(entry);
+  const name =
+    ownValue(entry, 'name') ??
+    (proto === null || typeof proto !== 'object' ? undefined : ownValue(proto, 'name'));
+  const message = ownValue(entry, 'message');
+  return (
+    name === 'PostgresError' ||
+    name === 'DatabaseError' ||
+    name === 'DrizzleQueryError' ||
+    (typeof message === 'string' && message.includes('Failed query:')) ||
+    (Object.hasOwn(entry, 'query') &&
+      (Object.hasOwn(entry, 'params') || Object.hasOwn(entry, 'parameters')))
+  );
+}
+
+function* errorEntries(value: unknown): Generator<object | string> {
+  const pending: unknown[] = [value];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (typeof entry === 'string') {
+      yield entry;
+      continue;
+    }
+    if (entry === null || typeof entry !== 'object' || seen.has(entry)) continue;
+    seen.add(entry);
+    yield entry;
+    pending.push(ownValue(entry, 'cause'));
+    const children = ownValue(entry, 'errors');
+    if (entry instanceof AggregateError && Array.isArray(children)) {
+      for (const child of children) pending.push(child);
+    }
+  }
+}
+
+export function databaseLogFields(value: unknown): SafeErrorFields | undefined {
+  let database = false;
+  const codes = new Set<string>();
+  for (const entry of errorEntries(value)) {
+    if (typeof entry === 'string') {
+      if (entry.includes('Failed query:')) database = true;
+      continue;
+    }
+    if (isDatabaseError(entry)) database = true;
+    const candidate = ownValue(entry, 'code');
+    if (typeof candidate !== 'string') continue;
+    if (/^(?:[0-9][0-9A-Z]|F0|HV|P0|XX)[A-Z0-9]{3}$/.test(candidate)) database = true;
+    if (databaseCodes.has(candidate)) codes.add(candidate);
+  }
+  const [code] = codes.size === 1 ? codes : [];
+  return database
+    ? {
+        error: 'Database query failed.',
+        errorName: 'DatabaseError',
+        ...(code === undefined ? {} : { errorCode: code }),
+      }
+    : undefined;
+}
+
+export async function withDatabaseLogBoundary<T>(operation: () => T | Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const fields = databaseLogFields(error);
+    if (fields === undefined) throw error;
+    throw Object.assign(new Error(fields.error), {
+      name: 'DatabaseError',
+      ...(fields.errorCode === undefined ? {} : { code: fields.errorCode }),
+    });
+  }
+}
+
 export function safeErrorFields(value: unknown): SafeErrorFields {
+  const database = databaseLogFields(value);
+  if (database !== undefined) return database;
   const chain = errorChain(value);
   const error = chain.at(-1);
   if (error === undefined) return { error: safeMessage(String(value)) };

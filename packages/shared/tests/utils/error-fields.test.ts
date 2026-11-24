@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { safeErrorFields } from '../../src/utils/error-fields.ts';
+import { safeErrorFields, withDatabaseLogBoundary } from '../../src/utils/error-fields.ts';
 
 describe('safeErrorFields', () => {
   it('keeps a useful database cause without logging SQL or parameters', () => {
@@ -13,9 +13,64 @@ describe('safeErrorFields', () => {
     );
 
     expect(safeErrorFields(wrapped)).toEqual({
-      error: 'Connection terminated unexpectedly',
-      errorName: 'PostgresError',
+      error: 'Database query failed.',
+      errorName: 'DatabaseError',
       errorCode: 'CONNECTION_CLOSED',
+    });
+  });
+
+  it('keeps only approved driver codes through nested causes and plain driver records', async () => {
+    const value = 'syntheticsecret';
+    const cause = { code: '28P01', detail: value, query: value, parameters: [value] };
+    const wrapped = new Error(value, {
+      cause: Object.assign(new Error(value, { cause }), {
+        query: value,
+        params: [value],
+      }),
+    });
+    const safe = {
+      error: 'Database query failed.',
+      errorName: 'DatabaseError',
+      errorCode: '28P01',
+    };
+    expect(safeErrorFields(wrapped)).toEqual(safe);
+    const thrown = await withDatabaseLogBoundary(() => Promise.reject(wrapped)).catch(
+      (error: Error) => error,
+    );
+    expect(safeErrorFields(thrown)).toEqual(safe);
+    expect(thrown.cause).toBeUndefined();
+    expect(JSON.stringify(thrown)).not.toContain(value);
+    cause.code = 'SHORT';
+    expect(safeErrorFields(wrapped)).toEqual({ error: safe.error, errorName: safe.errorName });
+    expect(safeErrorFields({ code: '28P01', detail: value })).toEqual(safe);
+    const inherited = Object.create({ name: 'PostgresError' });
+    expect(safeErrorFields(Object.assign(inherited, { message: value, code: 'SHORT' }))).toEqual({
+      error: safe.error,
+      errorName: safe.errorName,
+    });
+    const aggregate = new AggregateError(
+      [new Error(value), { code: '28P01', detail: value }],
+      value,
+    );
+    expect(safeErrorFields(aggregate)).toEqual(safe);
+    expect(safeErrorFields({ code: 'P0001', detail: value })).toEqual({
+      error: safe.error,
+      errorName: safe.errorName,
+    });
+    const unrelated = new TypeError('unrelated');
+    await expect(withDatabaseLogBoundary(() => Promise.reject(unrelated))).rejects.toBe(unrelated);
+  });
+
+  it('removes a flattened query string nested inside a cause or aggregate', async () => {
+    const text = 'Failed query: select synthetic_private_column\nparams: SyntheticPrivateBinding';
+    const outer = new Error('wrapper', { cause: new AggregateError([text], 'inner') });
+    const thrown = await withDatabaseLogBoundary(() => Promise.reject(outer)).catch(
+      (error: Error) => error,
+    );
+    expect(thrown.cause).toBeUndefined();
+    expect(safeErrorFields(thrown)).toEqual({
+      error: 'Database query failed.',
+      errorName: 'DatabaseError',
     });
   });
 

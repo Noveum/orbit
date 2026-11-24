@@ -11,7 +11,7 @@ import {
 } from '@orbit/core';
 import { and, db, eq, gt, isNotNull, isNull, schema, type Transaction } from '@orbit/db';
 import { isDomainError } from '@orbit/shared/errors';
-import { randomUUIDv7 } from '@orbit/shared/utils';
+import { randomUUIDv7, withDatabaseLogBoundary } from '@orbit/shared/utils';
 import {
   type McpTokenRequest,
   mcpAuthorizationCodeSchema,
@@ -26,6 +26,7 @@ import {
 } from '@orbit/shared/validators';
 import { toNextJsHandler } from 'better-auth/next-js';
 import { decodeJwt } from 'jose';
+import { authHttpHandler } from '@/lib/auth/logging.ts';
 import { providerClientRequest } from '@/lib/auth/mcp-client-auth.ts';
 import { providerTokenHash } from '@/lib/auth/mcp-provider.ts';
 import { isSafeMcpRedirectUri } from '@/lib/auth/mcp-redirect-uri.ts';
@@ -33,7 +34,7 @@ import { auth, MCP_TOKEN_RATE_LIMIT_PROBE_HEADER } from '@/lib/auth/server.ts';
 import { withSocketRevocation } from '@/lib/auth/sign-out.ts';
 import { mcpServerUrl, serverEnv } from '@/lib/env.ts';
 
-const handlers = toNextJsHandler(auth.handler);
+const handlers = toNextJsHandler(authHttpHandler(auth.handler));
 const providerResource = oauthProviderResourceClient(auth).getActions();
 
 const MCP_AUTHORIZE_PATH = '/api/auth/mcp/authorize';
@@ -810,7 +811,7 @@ async function handleMcpTokenRequest(request: Request): Promise<Response> {
   );
 }
 
-export function GET(request: Request): Promise<Response> | Response {
+function getAuthResponse(request: Request): Promise<Response> | Response {
   const url = new URL(request.url);
   if (url.pathname === MCP_AUTHORIZE_PATH || url.pathname === '/api/auth/oauth2/authorize') {
     const callbacks = url.searchParams.getAll('redirect_uri');
@@ -849,7 +850,7 @@ export function GET(request: Request): Promise<Response> | Response {
   return handlers.GET(new Request(url, request));
 }
 
-export function POST(request: Request): Promise<Response> {
+function postAuthResponse(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === '/api/auth/oauth2/revoke' || url.pathname === '/api/auth/mcp/revoke') {
     return revokeMcpCredential(request);
@@ -862,4 +863,12 @@ export function POST(request: Request): Promise<Response> {
     return withSocketRevocation(new Request(url, request), handlers.POST);
   }
   return withSocketRevocation(request, handlers.POST);
+}
+
+export function GET(request: Request): Promise<Response> {
+  return withDatabaseLogBoundary(() => getAuthResponse(request));
+}
+
+export function POST(request: Request): Promise<Response> {
+  return withDatabaseLogBoundary(() => postAuthResponse(request));
 }
