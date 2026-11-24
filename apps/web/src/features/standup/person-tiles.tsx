@@ -6,7 +6,7 @@ import { Avatar } from '@/components/ui/avatar.tsx';
 import { cn } from '@/lib/cn.ts';
 import { cardHover } from '@/lib/interaction.ts';
 import type { Member } from '@/lib/query/schemas.ts';
-import type { MemberLayout } from './member-layout.tsx';
+import type { MemberLayout } from './standup-display.tsx';
 
 export const UNASSIGNED = UNSET_FILTER_VALUE;
 
