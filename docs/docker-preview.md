@@ -29,7 +29,7 @@ MinIO. Back up both together. A database-only backup does not preserve file byte
 ## Start a fresh evaluation
 
 Install Bun 1.4.5 or newer and Docker with Compose v2. Run from the repository root.
-Running repository tests or `bun run verify` on the host also requires Node.js 24.x
+Running repository tests or `bun run verify` on the host also requires Node.js 26.x
 on PATH for fresh server-runtime import checks.
 Docker needs enough free memory for a full Next.js build in addition to the
 database and storage services. Concurrent builds can exhaust Docker Desktop's

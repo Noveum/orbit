@@ -137,7 +137,7 @@ domain verified in Resend, otherwise every send fails.
 
 ## Testing
 
-- Install Node.js 24.x on PATH alongside Bun. Fresh server-runtime import checks use actual
+- Install Node.js 26.x on PATH alongside Bun. Fresh server-runtime import checks use actual
   Node processes, so `bun test` and `bun run verify` require both executables.
 - Unit and integration: `bun test`. Tests live in each package's own `tests/` tree, mirroring the
   layout of `src/`, never beside the code. `src/a/b/thing.ts` is tested by `tests/a/b/thing.test.ts`.
