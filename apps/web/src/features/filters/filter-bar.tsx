@@ -35,6 +35,7 @@ export interface FilterBarProps {
   readonly showSaveView?: boolean;
   readonly displayOptions?: ReactNode;
   readonly displayModified?: boolean;
+  readonly filterPlacement?: 'start' | 'end';
 }
 
 export function FilterBar({
@@ -51,6 +52,7 @@ export function FilterBar({
   showSaveView = true,
   displayOptions,
   displayModified = false,
+  filterPlacement = 'start',
 }: FilterBarProps) {
   const hydrated = useHydrated();
   const workspace = useWorkspace();
@@ -106,6 +108,30 @@ export function FilterBar({
     preventDefault: false,
   });
 
+  const addFilter = (
+    <FilterMenu
+      open={target === 'new'}
+      onOpenChange={(open) => setTarget(open ? 'new' : null)}
+      fields={fields}
+      filter={config.filter}
+      facets={facets}
+      onChange={setFilter}
+      anchor={
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="add-filter"
+          aria-haspopup="dialog"
+          aria-expanded={target === 'new'}
+          onClick={() => setTarget(target === 'new' ? null : 'new')}
+        >
+          <ListFilter className="size-3.5" aria-hidden="true" />
+          {conditions.length === 0 ? 'Filter' : 'Add filter'}
+        </Button>
+      }
+    />
+  );
+
   return (
     <fieldset
       className="flex min-w-0 flex-wrap items-center gap-1.5 border-border border-b px-3 py-1.5"
@@ -129,27 +155,7 @@ export function FilterBar({
         />
       ))}
 
-      <FilterMenu
-        open={target === 'new'}
-        onOpenChange={(open) => setTarget(open ? 'new' : null)}
-        fields={fields}
-        filter={config.filter}
-        facets={facets}
-        onChange={setFilter}
-        anchor={
-          <Button
-            size="sm"
-            variant="ghost"
-            data-testid="add-filter"
-            aria-haspopup="dialog"
-            aria-expanded={target === 'new'}
-            onClick={() => setTarget(target === 'new' ? null : 'new')}
-          >
-            <ListFilter className="size-3.5" aria-hidden="true" />
-            {conditions.length === 0 ? 'Filter' : 'Add filter'}
-          </Button>
-        }
-      />
+      {filterPlacement === 'start' ? addFilter : null}
 
       <div className="ml-auto flex items-center gap-1">
         {conditions.length === 0 ? null : (
@@ -196,6 +202,7 @@ export function FilterBar({
             Save view
           </Button>
         ) : null}
+        {filterPlacement === 'end' ? addFilter : null}
         <DisplayMenu
           config={config}
           capability={controls.capability}
