@@ -295,6 +295,13 @@
       "when": 1794862574373,
       "tag": "0041_friendly_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795574573479,
+      "tag": "0042_right_hannibal_king",
+      "breakpoints": true
     }
   ]
 }
