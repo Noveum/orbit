@@ -80,6 +80,53 @@ describe('listBoardGroups', () => {
     expect(column?.issues.map((issue) => issue.id)).toEqual(listed.issues.map((issue) => issue.id));
   });
 
+  it('ranks a done column by last updated and pages it in the same order', async () => {
+    const done = workspace.states.find((state) => state.category === 'completed')?.id ?? '';
+    const todo = states[0]?.id ?? '';
+    const first = await newIssue('Finished first', done);
+    const second = await newIssue('Finished second', done);
+    const third = await newIssue('Finished third', done);
+    await updateIssue(workspace.admin, first.id, { title: 'Touched last' });
+    await newIssue('Open one', todo);
+    await newIssue('Open two', todo);
+
+    const page = await listBoardGroups(workspace.admin, {
+      teamId,
+      perGroup: 2,
+      sortDoneByUpdated: 'true',
+    });
+    const doneColumn = groupOf(page, done);
+    const todoColumn = groupOf(page, todo);
+    const rest = await listIssues(workspace.admin, {
+      teamId,
+      stateId: done,
+      orderBy: doneColumn?.orderBy,
+      cursor: doneColumn?.nextCursor ?? undefined,
+      limit: 50,
+    });
+
+    expect(doneColumn?.orderBy).toBe('updated');
+    expect(todoColumn?.orderBy).toBe('manual');
+    expect([...(doneColumn?.issues ?? []), ...rest.issues].map((issue) => issue.id)).toEqual([
+      first.id,
+      third.id,
+      second.id,
+    ]);
+    const manual = await listIssues(workspace.admin, { teamId, stateId: todo, limit: 50 });
+    expect(todoColumn?.issues.map((issue) => issue.id)).toEqual(
+      manual.issues.map((issue) => issue.id),
+    );
+  });
+
+  it('keeps the done column in manual order unless asked', async () => {
+    const done = workspace.states.find((state) => state.category === 'completed')?.id ?? '';
+    await newIssue('Finished', done);
+
+    const column = groupOf(await listBoardGroups(workspace.admin, { teamId }), done);
+
+    expect(column?.orderBy).toBe('manual');
+  });
+
   it('groups by assignee when asked, keeping the unassigned column', async () => {
     const mine = await newIssue('Mine');
     await updateIssue(workspace.admin, mine.id, { assigneeId: workspace.admin.userId });

@@ -176,6 +176,68 @@ describe('groupIssues', () => {
     ).toEqual(['a', 'b']);
   });
 
+  describe('the done column under manual ordering', () => {
+    const doneContext: GroupContext = {
+      ...context,
+      states: [
+        ...context.states,
+        {
+          id: 'state_done',
+          teamId: 'team_1',
+          name: 'Done',
+          category: 'completed',
+          color: '#4c9a6a',
+          position: 2,
+        },
+      ],
+    };
+    const rows = [
+      issue({ id: 'old', sortOrder: 1, updatedAt: '2026-01-01T00:00:00.000Z' }),
+      issue({ id: 'new', sortOrder: 2, updatedAt: '2026-03-01T00:00:00.000Z' }),
+      issue({ id: 'mid', sortOrder: 3, updatedAt: '2026-02-01T00:00:00.000Z' }),
+    ];
+    const done = rows.map((row) => ({ ...row, stateId: 'state_done' }));
+    const todo = rows.map((row) => ({ ...row, id: `todo_${row.id}` }));
+
+    function columns(sortDoneByUpdated: boolean) {
+      return groupIssues([...todo, ...done], 'state', doneContext, {
+        ...options,
+        sortDoneByUpdated,
+      });
+    }
+
+    it('lists the most recently updated issue first and leaves other columns manual', () => {
+      const [todoGroup, doneGroup] = columns(true);
+      expect(doneGroup?.ordering).toBe('updated');
+      expect(doneGroup?.issues.map((entry) => entry.id)).toEqual(['new', 'mid', 'old']);
+      expect(todoGroup?.ordering).toBe('manual');
+      expect(todoGroup?.issues.map((entry) => entry.id)).toEqual([
+        'todo_old',
+        'todo_new',
+        'todo_mid',
+      ]);
+    });
+
+    it('keeps the manual order when the toggle is off', () => {
+      const doneGroup = columns(false)[1];
+      expect(doneGroup?.ordering).toBe('manual');
+      expect(doneGroup?.issues.map((entry) => entry.id)).toEqual(['old', 'new', 'mid']);
+    });
+
+    it('carries the done order into sub groups', () => {
+      const doneGroup = groupIssues(done, 'state', doneContext, {
+        ...options,
+        sortDoneByUpdated: true,
+        subGroupBy: 'priority',
+      })[0];
+      expect(doneGroup?.subGroups[0]?.issues.map((entry) => entry.id)).toEqual([
+        'new',
+        'mid',
+        'old',
+      ]);
+    });
+  });
+
   it('drops empty groups unless they are asked for', () => {
     expect(groupIssues([], 'state', context, options)).toEqual([]);
     expect(
