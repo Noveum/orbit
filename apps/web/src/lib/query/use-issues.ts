@@ -1,5 +1,6 @@
 'use client';
 
+import type { IssueOrdering } from '@orbit/shared/filters';
 import { decodeFilter, hasCurrentSprintFilter } from '@orbit/shared/filters';
 import { sortOrderBetween } from '@orbit/shared/utils';
 import type {
@@ -242,8 +243,18 @@ export function columnScopeKey(scope: Readonly<Record<string, string>>): string 
   return scope['teamId'] ?? scope['projectId'] ?? 'workspace';
 }
 
-export function useColumnIssues(column: BoardColumnKey, groupId: string, enabled: boolean) {
-  const search = groupColumnSearch(column.query, column.groupBy, groupId, column.scope);
+export function useColumnIssues(
+  column: BoardColumnKey,
+  groupId: string,
+  ordering: IssueOrdering,
+  enabled: boolean,
+) {
+  const search = groupColumnSearch(
+    { ...column.query, orderBy: ordering },
+    column.groupBy,
+    groupId,
+    column.scope,
+  );
   return useInfiniteQuery({
     ...pagedIssueOptions(queryKeys.issues(columnScopeKey(column.scope), search), search),
     enabled: enabled && search.length > 0,
@@ -262,7 +273,12 @@ export function seedBoardColumns(
 ): void {
   if (issueCacheRevisionGeneration(client) !== revision) return;
   for (const group of page.groups) {
-    const search = groupColumnSearch(column.query, column.groupBy, group.id, column.scope);
+    const search = groupColumnSearch(
+      { ...column.query, orderBy: group.orderBy },
+      column.groupBy,
+      group.id,
+      column.scope,
+    );
     if (search.length === 0) continue;
     const key = queryKeys.issues(columnScopeKey(column.scope), search);
     const held = client.getQueryState(key);
@@ -274,9 +290,15 @@ export function seedBoardColumns(
   }
 }
 
-export function useBoardPage(column: BoardColumnKey, enabled: boolean) {
+export function useBoardPage(column: BoardColumnKey, sortDoneByUpdated: boolean, enabled: boolean) {
   const client = useQueryClient();
-  const search = boardSearch(column.query, column.groupBy, column.scope);
+  const search = boardSearch(
+    column.query,
+    column.groupBy,
+    column.scope,
+    undefined,
+    sortDoneByUpdated,
+  );
 
   return useQuery({
     queryKey: queryKeys.boardPage(search),

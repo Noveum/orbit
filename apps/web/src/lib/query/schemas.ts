@@ -2,6 +2,7 @@ import { DOC_KINDS, ISSUE_RELATION_TYPES } from '@orbit/shared/constants';
 import {
   defaultViewState,
   GROUP_BY_FIELDS,
+  ISSUE_ORDERINGS,
   VIEW_LAYOUTS,
   viewStateSchema,
 } from '@orbit/shared/filters';
@@ -158,6 +159,7 @@ export type IssuePage = z.infer<typeof issueListSchema>;
 export const boardGroupSchema = z.object({
   id: z.string(),
   total: z.number(),
+  orderBy: z.enum(ISSUE_ORDERINGS),
   issues: z.array(issueSchema),
   nextCursor: z.string().nullable().default(null),
 });

@@ -40,6 +40,7 @@ export const ORDER_PARAM = 'order';
 export const SUB_ISSUES_PARAM = 'sub';
 export const EMPTY_GROUPS_PARAM = 'empty';
 export const COMPLETED_PARAM = 'done';
+export const DONE_ORDER_PARAM = 'doneorder';
 export const PROPERTIES_PARAM = 'props';
 
 export function defaultViewConfig(layout: ViewLayoutMode): ViewConfig {
@@ -96,6 +97,7 @@ export function parseViewConfig(
         COMPLETED_WINDOWS,
         base.display.showCompleted,
       ),
+      sortDoneByUpdated: parseBoolean(params.get(DONE_ORDER_PARAM), base.display.sortDoneByUpdated),
       properties: [...(parseProperties(params.get(PROPERTIES_PARAM)) ?? base.display.properties)],
     },
   };
@@ -125,6 +127,9 @@ export function viewConfigToParams(config: ViewConfig, layout: ViewLayoutMode): 
   if (config.display.showCompleted !== fallback.display.showCompleted) {
     params.set(COMPLETED_PARAM, config.display.showCompleted);
   }
+  if (config.display.sortDoneByUpdated !== fallback.display.sortDoneByUpdated) {
+    params.set(DONE_ORDER_PARAM, config.display.sortDoneByUpdated ? '1' : '0');
+  }
   if (!sameProperties(config.display.properties, fallback.display.properties)) {
     params.set(PROPERTIES_PARAM, config.display.properties.join(','));
   }
@@ -146,6 +151,7 @@ export function displayIsDefault(config: ViewConfig, layout: ViewLayoutMode): bo
     showsEmptyGroups(config.display.showEmptyGroups, layout) ===
       showsEmptyGroups(fallback.display.showEmptyGroups, layout) &&
     config.display.showCompleted === fallback.display.showCompleted &&
+    config.display.sortDoneByUpdated === fallback.display.sortDoneByUpdated &&
     sameProperties(config.display.properties, fallback.display.properties)
   );
 }

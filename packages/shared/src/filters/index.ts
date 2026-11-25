@@ -447,6 +447,7 @@ export const displayOptionsSchema = z.object({
   showSubIssues: z.boolean().default(true),
   showEmptyGroups: z.boolean().nullable().default(null),
   showCompleted: z.enum(COMPLETED_WINDOWS).default('all'),
+  sortDoneByUpdated: z.boolean().default(true),
   properties: z.array(z.enum(DISPLAY_PROPERTIES)).default([...DISPLAY_PROPERTIES]),
 });
 
@@ -475,8 +476,19 @@ export function defaultDisplayOptions(_layout: ViewLayout): DisplayOptions {
     showSubIssues: true,
     showEmptyGroups: null,
     showCompleted: 'all',
+    sortDoneByUpdated: true,
     properties: [...DEFAULT_DISPLAY_PROPERTIES],
   };
+}
+
+export function groupOrdering(
+  ordering: IssueOrdering,
+  category: string | null,
+  sortDoneByUpdated: boolean,
+): IssueOrdering {
+  return ordering === 'manual' && sortDoneByUpdated && category === 'completed'
+    ? 'updated'
+    : ordering;
 }
 
 export function daysInUnit(unit: RelativeUnit): number {

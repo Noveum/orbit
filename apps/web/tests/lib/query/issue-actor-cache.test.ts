@@ -520,7 +520,7 @@ describe('member events refresh Issue Human Actors', () => {
       };
       const relations: IssueRelation[] = [{ id: 'r_1', type: 'related', issue: row }];
       const board: BoardPage = {
-        groups: [{ id: human.id, total: 1, issues: [row], nextCursor: null }],
+        groups: [{ id: human.id, total: 1, orderBy: 'manual', issues: [row], nextCursor: null }],
         truncated: false,
       };
       const seed = { ...bootstrap(), issues: [row] };

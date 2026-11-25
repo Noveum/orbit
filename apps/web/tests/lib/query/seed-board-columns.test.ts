@@ -21,7 +21,15 @@ function issue(id: string): Issue {
 
 function boardPage(ids: readonly string[]): BoardPage {
   return {
-    groups: [{ id: 'todo', total: ids.length, issues: ids.map(issue), nextCursor: null }],
+    groups: [
+      {
+        id: 'todo',
+        total: ids.length,
+        orderBy: 'manual',
+        issues: ids.map(issue),
+        nextCursor: null,
+      },
+    ],
   } as unknown as BoardPage;
 }
 
@@ -36,6 +44,28 @@ function identifiersIn(client: QueryClient): string[] {
 }
 
 describe('seedBoardColumns', () => {
+  it('seeds a done column under the ordering the server ranked it by', () => {
+    const client = new QueryClient();
+    const page = {
+      groups: [
+        { id: 'done', total: 1, orderBy: 'updated', issues: [issue('ENG-3')], nextCursor: null },
+      ],
+    } as unknown as BoardPage;
+
+    seedBoardColumns(client, column, page, Date.now());
+
+    const updatedKey = queryKeys.issues(
+      columnScopeKey(column.scope),
+      groupColumnSearch({ ...query, orderBy: 'updated' }, 'state', 'done', column.scope),
+    );
+    const manualKey = queryKeys.issues(
+      columnScopeKey(column.scope),
+      groupColumnSearch(query, 'state', 'done', column.scope),
+    );
+    expect(client.getQueryData<IssuePages>(updatedKey)?.pages[0]?.issues).toHaveLength(1);
+    expect(client.getQueryData<IssuePages>(manualKey)).toBeUndefined();
+  });
+
   it('seeds a column that has nothing in it', () => {
     const client = new QueryClient();
     seedBoardColumns(client, column, boardPage(['ENG-1']), Date.now());

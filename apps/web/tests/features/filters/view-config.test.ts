@@ -44,6 +44,7 @@ describe('view config url round trip', () => {
         showSubIssues: false,
         showEmptyGroups: true,
         showCompleted: 'week',
+        sortDoneByUpdated: false,
         properties: ['priority', 'assignee'],
       },
     };
@@ -97,6 +98,7 @@ describe('view config url round trip', () => {
         showSubIssues: false,
         showEmptyGroups: true,
         showCompleted: 'none',
+        sortDoneByUpdated: true,
         properties: ['identifier', 'status'],
       },
     };

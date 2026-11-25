@@ -399,6 +399,7 @@ describe('planDrop across merged state columns', () => {
       title: 'Todo',
       category: 'unstarted',
       color: '#000000',
+      ordering: 'manual' as const,
       issues: [] as ReturnType<typeof issue>[],
       total: 0,
       subGroups: [],

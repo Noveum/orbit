@@ -60,6 +60,7 @@ function group(id: string, issues: readonly Issue[], total = issues.length): Iss
     title: id,
     color: null,
     category: null,
+    ordering: 'manual',
     issues,
     subGroups: [],
     total,
@@ -490,6 +491,22 @@ describe('identifying the authoritative drop target', () => {
     expect(snapshot.kind).toBe('found');
     if (snapshot.kind !== 'found') throw new Error('missing drop target');
     expect(snapshot.target.destination).toEqual({ groupId: 'done', column: 'done' });
+  });
+
+  it('drops into a done column sorted by last updated without picking neighbours', () => {
+    const held = issue('held');
+    const first = issue('first', { stateId: 'done', sortOrder: 1024 });
+    const target = issue('target', { stateId: 'done', sortOrder: 2048 });
+    const done = { ...group('done', [first, target]), ordering: 'updated' as const };
+
+    const snapshot = dragTargetSnapshotFor([done], held, 'target', 'state', undefined, true);
+
+    expect(snapshot.kind).toBe('found');
+    if (snapshot.kind !== 'found') throw new Error('missing drop target');
+    expect(snapshot.target.destination).toEqual({ groupId: 'done', column: 'done' });
+    expect(snapshot.target.placement).toEqual(
+      expect.objectContaining({ stateId: 'done', beforeId: null, afterId: null }),
+    );
   });
 });
 

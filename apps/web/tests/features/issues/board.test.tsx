@@ -232,12 +232,25 @@ describe('Board actor columns outside the base page', () => {
     };
     const page: BoardPage = {
       groups: [
-        { id: human.id, total: 100, issues: rows.slice(0, 15), nextCursor: null },
-        { id: 'outside_team', total: 1, issues: [remoteHuman], nextCursor: null },
+        {
+          id: human.id,
+          total: 100,
+          orderBy: 'manual',
+          issues: rows.slice(0, 15),
+          nextCursor: null,
+        },
+        {
+          id: 'outside_team',
+          total: 1,
+          orderBy: 'manual',
+          issues: [remoteHuman],
+          nextCursor: null,
+        },
         ...(truncated
           ? Array.from({ length: 58 }, (_entry, index) => ({
               id: `agent:capped_${index}`,
               total: 1,
+              orderBy: 'manual' as const,
               issues: [
                 issue({
                   id: `capped_issue_${index}`,
@@ -253,7 +266,15 @@ describe('Board actor columns outside the base page', () => {
               ],
               nextCursor: null,
             }))
-          : [{ id: 'agent:agent_1', total: 1, issues: [remoteAgent], nextCursor: null }]),
+          : [
+              {
+                id: 'agent:agent_1',
+                total: 1,
+                orderBy: 'manual' as const,
+                issues: [remoteAgent],
+                nextCursor: null,
+              },
+            ]),
       ],
       truncated,
     };
@@ -426,6 +447,7 @@ describe('Board actor columns outside the base page', () => {
       title: 'Cached member name',
       color: '#5a63c8',
       category: 'started',
+      ordering: 'manual' as const,
       issues: [],
       subGroups: [
         { id: 'priority_1', title: 'Urgent', color: null, category: null, issues: [row] },
@@ -433,11 +455,11 @@ describe('Board actor columns outside the base page', () => {
       total: 2,
     };
     const page: BoardPage = {
-      groups: [{ id: group.id, total: 2, issues: [row], nextCursor: null }],
+      groups: [{ id: group.id, total: 2, orderBy: 'manual', issues: [row], nextCursor: null }],
       truncated: false,
     };
 
-    expect(actorBoardGroups([group], page, 'assignee')).toEqual([
+    expect(actorBoardGroups([group], page, 'assignee', 'manual')).toEqual([
       { ...group, title: 'Real person (Deleted)' },
     ]);
   });
@@ -654,7 +676,9 @@ describe('Board agent manual sorting', () => {
       };
       const column = { ...ownedColumnSource, groupBy: 'assignee' };
       const page: BoardPage = {
-        groups: [{ id: 'agent:agent_1', total: 3, issues: rows, nextCursor: null }],
+        groups: [
+          { id: 'agent:agent_1', total: 3, orderBy: 'manual', issues: rows, nextCursor: null },
+        ],
         truncated: false,
       };
       const client = new QueryClient({
@@ -933,7 +957,15 @@ function boardPage(rows: readonly Issue[]): BoardPage {
     const issues = rows.filter((row) => row.stateId === state.id);
     return issues.length === 0
       ? []
-      : [{ id: state.id, total: issues.length, issues, nextCursor: null }];
+      : [
+          {
+            id: state.id,
+            total: issues.length,
+            orderBy: 'manual' as const,
+            issues,
+            nextCursor: null,
+          },
+        ];
   });
   return {
     groups,
@@ -2058,7 +2090,15 @@ describe('Board card keyboard boundaries', () => {
         rendered.client,
         ownedColumnSource,
         {
-          groups: [{ id: todo.id, total: 2, issues: [updated, second], nextCursor: null }],
+          groups: [
+            {
+              id: todo.id,
+              total: 2,
+              orderBy: 'manual',
+              issues: [updated, second],
+              nextCursor: null,
+            },
+          ],
           truncated: false,
         },
         Date.now() + 10_000,
@@ -2077,7 +2117,9 @@ describe('Board card keyboard boundaries', () => {
         rendered.client,
         ownedColumnSource,
         {
-          groups: [{ id: todo.id, total: 1, issues: [second], nextCursor: null }],
+          groups: [
+            { id: todo.id, total: 1, orderBy: 'manual', issues: [second], nextCursor: null },
+          ],
           truncated: false,
         },
         Date.now() + 20_000,
@@ -2089,7 +2131,15 @@ describe('Board card keyboard boundaries', () => {
         rendered.client,
         ownedColumnSource,
         {
-          groups: [{ id: doing.id, total: 2, issues: [updated, third], nextCursor: null }],
+          groups: [
+            {
+              id: doing.id,
+              total: 2,
+              orderBy: 'manual',
+              issues: [updated, third],
+              nextCursor: null,
+            },
+          ],
           truncated: false,
         },
         Date.now() + 30_000,
@@ -2126,7 +2176,15 @@ describe('Board card keyboard boundaries', () => {
         rendered.client,
         ownedColumnSource,
         {
-          groups: [{ id: doing.id, total: 2, issues: [updated, third], nextCursor: null }],
+          groups: [
+            {
+              id: doing.id,
+              total: 2,
+              orderBy: 'manual',
+              issues: [updated, third],
+              nextCursor: null,
+            },
+          ],
           truncated: false,
         },
         Date.now() + 10_000,
@@ -2151,7 +2209,9 @@ describe('Board card keyboard boundaries', () => {
         rendered.client,
         ownedColumnSource,
         {
-          groups: [{ id: todo.id, total: 1, issues: [second], nextCursor: null }],
+          groups: [
+            { id: todo.id, total: 1, orderBy: 'manual', issues: [second], nextCursor: null },
+          ],
           truncated: false,
         },
         Date.now() + 20_000,

@@ -25,6 +25,7 @@ const storedDisplaySchema = z.object({
   showSubIssues: z.boolean(),
   showEmptyGroups: z.boolean().nullable().default(null),
   showCompleted: z.enum(COMPLETED_WINDOWS).default('all'),
+  sortDoneByUpdated: z.boolean().default(true),
   properties: z.array(z.enum(DISPLAY_PROPERTIES)),
 });
 
@@ -57,6 +58,7 @@ function toStored(config: ViewConfig): StoredDisplay {
     showSubIssues: config.display.showSubIssues,
     showEmptyGroups: config.display.showEmptyGroups,
     showCompleted: config.display.showCompleted,
+    sortDoneByUpdated: config.display.sortDoneByUpdated,
     properties: [...config.display.properties],
   };
 }
@@ -81,6 +83,7 @@ function withStored(base: ViewConfig, stored: StoredDisplay | null): ViewConfig 
       showSubIssues: stored.showSubIssues,
       showEmptyGroups: stored.showEmptyGroups,
       showCompleted: stored.showCompleted,
+      sortDoneByUpdated: stored.sortDoneByUpdated,
       properties: stored.properties,
     },
   };
