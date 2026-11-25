@@ -2,17 +2,9 @@
 
 import type { OrgRole } from '@orbit/shared/constants';
 import type { DisplayProperty, GroupByField, IssueOrdering } from '@orbit/shared/filters';
-import { Bot, ChevronDown, SearchX } from 'lucide-react';
+import { SearchX } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button.tsx';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu.tsx';
 import { EmptyState } from '@/components/ui/empty-state.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { FilterBar } from '@/features/filters/filter-bar.tsx';
@@ -33,20 +25,20 @@ import { useWorkspace } from '@/features/issues/workspace-provider.tsx';
 import { summarySearch } from '@/lib/query/issue-search.ts';
 import type { Issue } from '@/lib/query/schemas.ts';
 import { useAllIssues, useIssueSummary } from '@/lib/query/use-issues.ts';
-import { MemberLayoutOptions, useMemberLayout } from './member-layout.tsx';
 import { MemberPicker } from './member-picker.tsx';
 import { UNASSIGNED } from './person-tiles.tsx';
+import {
+  isStandupDisplayModified,
+  type StandupDisplay,
+  StandupDisplayOptions,
+  useStandupDisplay,
+} from './standup-display.tsx';
 
 const NO_ISSUES: readonly Issue[] = [];
-const WORK_TYPES = { all: 'All work', reviewing: 'To review', assigned: 'Assigned' } as const;
-type WorkType = keyof typeof WORK_TYPES;
-function workTypeOf(value: string | null): WorkType {
-  return value === 'reviewing' || value === 'assigned' ? value : 'all';
-}
 
 export const PERSON_PARAM = 'person';
 
-const CARRIED_PARAMS: readonly string[] = [PERSON_PARAM, 'workType', 'aiOnly'];
+const CARRIED_PARAMS: readonly string[] = [PERSON_PARAM];
 
 export function standupBoardOptions(role: OrgRole, groupBy: GroupByField, orderBy: IssueOrdering) {
   return {
@@ -58,7 +50,30 @@ export function standupBoardOptions(role: OrgRole, groupBy: GroupByField, orderB
 
 export function StandupBoard() {
   const workspace = useWorkspace();
-  const [memberLayout, setMemberLayout] = useMemberLayout(workspace.userId);
+  const { display, loaded, update } = useStandupDisplay(workspace.userId);
+
+  if (!(workspace.ready && loaded)) {
+    return (
+      <div className="flex flex-col gap-2 p-4">
+        <Skeleton className="h-7 w-48" />
+        <Skeleton className="h-7 w-full" />
+        <Skeleton className="h-7 w-2/3" />
+      </div>
+    );
+  }
+
+  return <LoadedStandupBoard display={display} setDisplay={update} />;
+}
+
+function LoadedStandupBoard({
+  display,
+  setDisplay,
+}: {
+  readonly display: StandupDisplay;
+  readonly setDisplay: (patch: Partial<StandupDisplay>) => void;
+}) {
+  const workspace = useWorkspace();
+  const { memberLayout, workType, aiOnly } = display;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { config, setConfig } = useViewConfig(null, 'board', 'standup', CARRIED_PARAMS);
@@ -66,19 +81,10 @@ export function StandupBoard() {
 
   const [chosen, setChosen] = useState<string | null>(() => searchParams.get(PERSON_PARAM));
 
-  const [workType, setWorkType] = useState<WorkType>(() =>
-    workTypeOf(searchParams.get('workType')),
-  );
-  const [aiOnly, setAiOnly] = useState(() => searchParams.get('aiOnly') === 'true');
-
   const urlPerson = searchParams.get(PERSON_PARAM);
-  const urlWorkType = searchParams.get('workType');
-  const urlAiOnly = searchParams.get('aiOnly');
   useEffect(() => {
     setChosen(urlPerson);
-    setWorkType(workTypeOf(urlWorkType));
-    setAiOnly(urlAiOnly === 'true');
-  }, [urlPerson, urlWorkType, urlAiOnly]);
+  }, [urlPerson]);
 
   const known =
     chosen === null ||
@@ -102,15 +108,6 @@ export function StandupBoard() {
     [pathname],
   );
 
-  function selectFilter(key: 'workType' | 'aiOnly', value: string) {
-    if (key === 'workType') setWorkType(workTypeOf(value));
-    else setAiOnly(value === 'true');
-    const params = new URLSearchParams(window.location.search);
-    if (value === 'all' || value === 'false') params.delete(key);
-    else params.set(key, value);
-    window.history.replaceState(null, '', `${pathname}${params.size ? `?${params}` : ''}`);
-  }
-
   const query = useMemo(
     () => ({ filter: config.filter, orderBy: config.orderBy }),
     [config.filter, config.orderBy],
@@ -125,11 +122,8 @@ export function StandupBoard() {
     [selectedId, rosterScope],
   );
 
-  const active = useAllIssues(query, scope, workspace.ready);
-  const roster = useIssueSummary(
-    summarySearch(null, query, 'participant', rosterScope),
-    workspace.ready,
-  );
+  const active = useAllIssues(query, scope);
+  const roster = useIssueSummary(summarySearch(null, query, 'participant', rosterScope));
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = active;
   const rows = useMemo(() => active.data ?? NO_ISSUES, [active.data]);
@@ -154,16 +148,6 @@ export function StandupBoard() {
     [workspace.members],
   );
 
-  if (!workspace.ready) {
-    return (
-      <div className="flex flex-col gap-2 p-4">
-        <Skeleton className="h-7 w-48" />
-        <Skeleton className="h-7 w-full" />
-        <Skeleton className="h-7 w-2/3" />
-      </div>
-    );
-  }
-
   const empty = model.groups.every((group) => group.issues.length === 0);
   const boardOptions = standupBoardOptions(workspace.role, config.groupBy, config.orderBy);
 
@@ -174,42 +158,6 @@ export function StandupBoard() {
         <span data-numeric className="text-2xs text-faint" data-testid="issue-count">
           {model.total}
         </span>
-        <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-          <Button
-            size="sm"
-            variant={aiOnly ? 'primary' : 'secondary'}
-            aria-pressed={aiOnly}
-            onClick={() => selectFilter('aiOnly', String(!aiOnly))}
-            title="Tasks with AI agent involvement, including creation, assignment, reviews, comments, reactions, and activity"
-          >
-            <Bot className="size-3.5" aria-hidden="true" />
-            AI only
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="secondary"
-                aria-label={`Work type: ${WORK_TYPES[workType]}`}
-              >
-                {WORK_TYPES[workType]}
-                <ChevronDown className="size-3.5" aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuRadioGroup
-                value={workType}
-                onValueChange={(value) => selectFilter('workType', value)}
-              >
-                {Object.entries(WORK_TYPES).map(([value, label]) => (
-                  <DropdownMenuRadioItem key={value} value={value}>
-                    {label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
         <MemberPicker
           key={memberLayout}
           layout={memberLayout}
@@ -230,8 +178,9 @@ export function StandupBoard() {
         controls={controls}
         facets={model.facets}
         showSaveView={false}
-        displayModified={memberLayout !== 'cards'}
-        displayOptions={<MemberLayoutOptions layout={memberLayout} onChange={setMemberLayout} />}
+        filterPlacement="end"
+        displayModified={isStandupDisplayModified(display)}
+        displayOptions={<StandupDisplayOptions display={display} onChange={setDisplay} />}
       />
 
       <StandupBody

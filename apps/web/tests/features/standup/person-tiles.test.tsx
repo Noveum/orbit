@@ -78,7 +78,7 @@ describe('PersonTiles', () => {
   it('shows full names in the dropdown to distinguish duplicate first names', () => {
     render(
       <PersonTiles
-        layout="dropdown"
+        arrangement="stack"
         members={[member('user_ada', 'Ada Lovelace'), member('user_other_ada', 'Ada Byron')]}
         selectedId={null}
         counts={counts}

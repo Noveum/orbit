@@ -10,6 +10,7 @@ import type { Issue, Member, WorkflowState } from '@/lib/query/schemas.ts';
 import { emptyFacets } from '@/lib/query/schemas.ts';
 import type { WorkspaceData } from '../../../src/features/issues/workspace-provider.tsx';
 import * as workspaceProvider from '../../../src/features/issues/workspace-provider.tsx';
+import type { StandupDisplay } from '../../../src/features/standup/standup-display.tsx';
 import { restoreModulesAfterThisFile } from '../../../tests-support.ts';
 
 await restoreModulesAfterThisFile(['@/features/issues/workspace-provider.tsx']);
@@ -257,6 +258,11 @@ function tileCount(userId: string): string | null {
   return screen.queryByTestId(`standup-tile-count-${userId}`)?.textContent ?? null;
 }
 
+function storedDisplay(): StandupDisplay | null {
+  const raw = window.localStorage.getItem('orbit.standup.display.user_ada');
+  return raw === null ? null : (JSON.parse(raw) as StandupDisplay);
+}
+
 const PRIORITY_FILTER = JSON.stringify({
   kind: 'group',
   combinator: 'and',
@@ -268,7 +274,7 @@ afterEach(() => {
   else Reflect.deleteProperty(navigator, 'platform');
   globalThis.fetch = originalFetch;
   search = '';
-  window.localStorage.removeItem('orbit.standup.member-layout.user_ada');
+  window.localStorage.removeItem('orbit.standup.display.user_ada');
   window.history.replaceState(null, '', '/standup');
 });
 
@@ -598,7 +604,7 @@ describe('standup member cards', () => {
       await screen.findByTestId('standup-kanban');
       const user = userEvent.setup();
       await user.click(screen.getByRole('button', { name: 'Display options' }));
-      expect(screen.getByRole('menuitemradio', { name: 'Cards' })).toHaveAttribute(
+      expect(screen.getByRole('menuitemradio', { name: 'Auto' })).toHaveAttribute(
         'aria-checked',
         'true',
       );
@@ -639,7 +645,7 @@ describe('standup member cards', () => {
     await user.click(screen.getByRole('menuitemradio', { name: 'Dropdown' }));
     expect(screen.getByRole('button', { name: 'Members: Bo Chen' })).toBeVisible();
     expect(window.location.search).toContain('person=user_bo');
-    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('dropdown');
+    expect(storedDisplay()?.memberLayout).toBe('dropdown');
     mounted.unmount();
     mountBoard();
     await screen.findByTestId('standup-kanban');
@@ -649,9 +655,45 @@ describe('standup member cards', () => {
       'aria-checked',
       'true',
     );
-    await user.click(screen.getByRole('menuitemradio', { name: 'Cards' }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'List' }));
     expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
-    expect(window.localStorage.getItem('orbit.standup.member-layout.user_ada')).toBe('cards');
+    expect(storedDisplay()?.memberLayout).toBe('list');
+  });
+
+  it('switches Auto to a dropdown only when the members do not fit on one line', async () => {
+    const scrollWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth');
+    const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth');
+    Object.defineProperty(Element.prototype, 'scrollWidth', {
+      configurable: true,
+      get(this: Element) {
+        return this.tagName === 'FIELDSET' ? 900 : 0;
+      },
+    });
+    Object.defineProperty(Element.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 300;
+      },
+    });
+    try {
+      workspace = buildWorkspace();
+      serve();
+      mountBoard();
+      await screen.findByTestId('standup-kanban');
+      expect(screen.getByRole('button', { name: 'Members: All Members' })).toBeVisible();
+      expect(screen.getByTestId('standup-tiles').closest('[aria-hidden="true"]')).not.toBeNull();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Display options' }));
+      await user.click(screen.getByRole('menuitemradio', { name: 'List' }));
+      expect(screen.queryByRole('button', { name: /^Members:/ })).toBeNull();
+      expect(screen.getByTestId('standup-tiles').closest('[aria-hidden="true"]')).toBeNull();
+      expect(screen.getByTestId('standup-tile-user_bo')).toBeVisible();
+    } finally {
+      if (scrollWidth) Object.defineProperty(Element.prototype, 'scrollWidth', scrollWidth);
+      else Reflect.deleteProperty(Element.prototype, 'scrollWidth');
+      if (clientWidth) Object.defineProperty(Element.prototype, 'clientWidth', clientWidth);
+      else Reflect.deleteProperty(Element.prototype, 'clientWidth');
+    }
   });
 
   it('wraps backwards and keeps the cards visible on loss of focus', async () => {
@@ -668,7 +710,11 @@ describe('standup member cards', () => {
   });
   it('sends combined AI and work type scopes to lists, facets and roster counts', async () => {
     workspace = buildWorkspace();
-    search = 'aiOnly=true&workType=reviewing&person=user_ada';
+    window.localStorage.setItem(
+      'orbit.standup.display.user_ada',
+      JSON.stringify({ aiOnly: true, workType: 'reviewing' }),
+    );
+    search = 'person=user_ada';
     const served = serve();
     mountBoard();
     await screen.findByTestId('standup-kanban');
@@ -683,7 +729,33 @@ describe('standup member cards', () => {
 });
 
 describe('standup filter interactions', () => {
-  it('combines the AI toggle and work type dropdown without clearing the member', async () => {
+  it('opens on assigned work for everyone with nothing saved', async () => {
+    workspace = buildWorkspace();
+    const served = serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    expect(served.listUrls.length).toBe(1);
+    for (const url of [...served.listUrls, ...served.facetUrls, ...served.rosterUrls]) {
+      const params = new URL(url, 'http://localhost').searchParams;
+      expect(params.get('workType')).toBe('assigned');
+      expect(params.get('aiOnly')).toBe('false');
+    }
+    expect(screen.queryByTestId('display-modified-dot')).toBeNull();
+  });
+
+  it('keeps every board control together in the display group on the right', async () => {
+    workspace = buildWorkspace();
+    serve();
+    mountBoard();
+    await screen.findByTestId('standup-kanban');
+    const filter = screen.getByTestId('add-filter');
+    const display = screen.getByTestId('display-menu-trigger');
+    expect(filter.parentElement).toBe(display.parentElement);
+    expect(screen.queryByRole('button', { name: 'AI only' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Work type/ })).toBeNull();
+  });
+
+  it('combines AI only and work type from the display menu without clearing the member', async () => {
     workspace = buildWorkspace();
     search = `person=${bo.id}`;
     window.history.replaceState(null, '', `/standup?${search}`);
@@ -691,8 +763,12 @@ describe('standup filter interactions', () => {
     mountBoard();
     await screen.findByTestId('standup-kanban');
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'AI only' }));
-    await user.click(screen.getByRole('button', { name: 'Work type: All work' }));
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Assigned' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'AI only' }));
     await user.click(screen.getByRole('menuitemradio', { name: 'To review' }));
     await waitFor(() =>
       expect(
@@ -706,10 +782,13 @@ describe('standup filter interactions', () => {
         }),
       ).toBe(true),
     );
-    expect(window.location.search).toContain('workType=reviewing');
-    expect(window.location.search).toContain(`person=${bo.id}`);
-    await user.click(screen.getByRole('button', { name: 'AI only' }));
-    expect(window.location.search).not.toContain('aiOnly=');
+    expect(window.location.search).toBe(`?person=${bo.id}`);
+    expect(storedDisplay()).toEqual({ memberLayout: 'auto', workType: 'reviewing', aiOnly: true });
+    expect(screen.getByTestId('display-modified-dot')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Display options' }));
+    await user.click(screen.getByRole('menuitemcheckbox', { name: 'AI only' }));
+    expect(storedDisplay()?.aiOnly).toBe(false);
   });
 
   it('leaves ordinary Tab and editable fields alone and preserves focus during switching', async () => {
@@ -718,7 +797,7 @@ describe('standup filter interactions', () => {
     serve();
     mountBoard();
     await screen.findByTestId('standup-kanban');
-    const button = screen.getByRole('button', { name: 'AI only' });
+    const button = screen.getByRole('button', { name: 'Display options' });
     button.focus();
     fireEvent.keyDown(window, { key: 'Tab' });
     expect(window.location.search).not.toContain('person=user_ada');
