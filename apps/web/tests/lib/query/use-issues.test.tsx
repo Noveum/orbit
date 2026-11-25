@@ -1720,7 +1720,7 @@ describe('issue mutations patch the cache without a refetch drain', () => {
         groupBy: 'state',
         scope: { teamId: TEAM },
       };
-      const source = renderHook(() => useColumnIssues(column, 'state_todo', true), {
+      const source = renderHook(() => useColumnIssues(column, 'state_todo', 'manual', true), {
         wrapper: wrapper(client),
       });
       await waitFor(() =>
@@ -1807,7 +1807,7 @@ describe('issue mutations patch the cache without a refetch drain', () => {
       groupBy: 'state',
       scope: { teamId: TEAM },
     };
-    const source = renderHook(() => useColumnIssues(column, 'state_todo', true), {
+    const source = renderHook(() => useColumnIssues(column, 'state_todo', 'manual', true), {
       wrapper: wrapper(client),
     });
     await waitFor(() =>
@@ -1874,6 +1874,7 @@ describe('issue mutations patch the cache without a refetch drain', () => {
             scope: { teamId: TEAM },
           },
           human.id,
+          'manual',
           true,
         ),
       { wrapper: wrapper(client) },
@@ -1978,7 +1979,7 @@ describe('issue mutations patch the cache without a refetch drain', () => {
         groupBy: 'state',
         scope: { teamId: TEAM },
       };
-      const source = renderHook(() => useColumnIssues(column, 'state_todo', true), {
+      const source = renderHook(() => useColumnIssues(column, 'state_todo', 'manual', true), {
         wrapper: wrapper(client),
       });
       await waitFor(() =>
@@ -2042,7 +2043,7 @@ describe('issue mutations patch the cache without a refetch drain', () => {
       groupBy: 'state',
       scope: { teamId: TEAM },
     };
-    const source = renderHook(() => useColumnIssues(column, 'state_todo', true), {
+    const source = renderHook(() => useColumnIssues(column, 'state_todo', 'manual', true), {
       wrapper: wrapper(client),
     });
     await waitFor(() => expect(source.result.current.data).toHaveLength(1));

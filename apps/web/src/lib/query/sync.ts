@@ -502,7 +502,11 @@ export function orderingOf(search: string): IssueOrdering {
 }
 
 export function sortForSearch(search: string, issues: readonly Issue[]): Issue[] {
-  const ordering = ORDER_READERS[orderingOf(search)];
+  return sortByOrdering(orderingOf(search), issues);
+}
+
+export function sortByOrdering(chosen: IssueOrdering, issues: readonly Issue[]): Issue[] {
+  const ordering = ORDER_READERS[chosen];
   const sign = ordering.descending ? -1 : 1;
   return [...issues].sort((left, right) => {
     const primary = compareValues(ordering.read(left), ordering.read(right));

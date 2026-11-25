@@ -60,6 +60,7 @@ function group(id: string, issues: readonly Issue[], total = issues.length): Iss
     title: id,
     color: null,
     category: null,
+    ordering: 'manual',
     issues,
     subGroups: [],
     total,

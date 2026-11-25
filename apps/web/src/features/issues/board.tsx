@@ -22,7 +22,12 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { OrgRole } from '@orbit/shared/constants';
-import type { DisplayOptions, DisplayProperty, GroupByField } from '@orbit/shared/filters';
+import type {
+  DisplayOptions,
+  DisplayProperty,
+  GroupByField,
+  IssueOrdering,
+} from '@orbit/shared/filters';
 import { DEFAULT_DISPLAY_PROPERTIES, emptyFilterGroup } from '@orbit/shared/filters';
 import { permissionsFor } from '@orbit/shared/policy';
 import type { IssueMoveExpected } from '@orbit/shared/validators';
@@ -827,6 +832,7 @@ export function dragTargetSnapshotFor(
 
   const targets = new Map<string, DragTargetSnapshot>();
   for (const group of candidates) {
+    const groupReorderable = reorderable && group.ordering === 'manual';
     const placement = planDrop(
       [group],
       [issue, ...group.issues],
@@ -834,11 +840,11 @@ export function dragTargetSnapshotFor(
       overId,
       groupBy,
       resolveState,
-      reorderable,
+      groupReorderable,
     );
     const position = dropPositionFor([group], issue.id, overId);
     if (placement === null || position === null) continue;
-    const destination: BoardTarget = reorderable
+    const destination: BoardTarget = groupReorderable
       ? { ...position, groupId: group.id }
       : { column: position.column, groupId: group.id };
     if (!targets.has(group.id)) targets.set(group.id, { overId, destination, placement });
@@ -1148,6 +1154,7 @@ export function actorBoardGroups(
   groups: readonly IssueGroup[],
   page: BoardPage | undefined,
   groupBy: GroupByField,
+  ordering: IssueOrdering,
   totals?: Readonly<Record<string, number>>,
   columnTitles?: ReadonlyMap<string, string>,
 ): readonly IssueGroup[] {
@@ -1174,6 +1181,7 @@ export function actorBoardGroups(
           titles.get(id) ?? (id.startsWith('agent:') ? 'Unknown agent (Agent)' : 'Unknown user'),
         color: null,
         category: null,
+        ordering,
         issues: [],
         subGroups: [],
         total,
@@ -1207,7 +1215,11 @@ export function Board({
   const queryClient = useQueryClient();
   const move = useMoveIssue();
   const positionsIncomplete = boardPositionsAreIncomplete(filtered, columnSource?.display);
-  const boardPage = useBoardPage(columnSource ?? EMPTY_COLUMN, columnSource !== undefined);
+  const boardPage = useBoardPage(
+    columnSource ?? EMPTY_COLUMN,
+    columnSource?.display.sortDoneByUpdated ?? false,
+    columnSource !== undefined,
+  );
   const column = columnSource ?? EMPTY_COLUMN;
   const actorSummary = useIssueSummary(
     summarySearch(null, column.query, groupBy, column.scope),
@@ -1222,10 +1234,18 @@ export function Board({
         providedGroups,
         boardPage.data,
         groupBy,
+        column.query.orderBy,
         actorSummary.data?.groupTotals,
         columnActorTitles,
       ),
-    [providedGroups, boardPage.data, groupBy, actorSummary.data?.groupTotals, columnActorTitles],
+    [
+      providedGroups,
+      boardPage.data,
+      groupBy,
+      column.query.orderBy,
+      actorSummary.data?.groupTotals,
+      columnActorTitles,
+    ],
   );
   const columnsReady = columnsReadyFor(columnSource, boardPage.isPending);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -2248,6 +2268,7 @@ function BoardColumn({
   const owned = useColumnIssues(
     columnSource ?? EMPTY_COLUMN,
     group.id,
+    group.ordering,
     columnSource !== undefined && columnsReady,
   );
   const ownsData = columnSource !== undefined;

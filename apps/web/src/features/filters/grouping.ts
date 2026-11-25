@@ -1,9 +1,10 @@
 import { PRIORITIES, PRIORITY_LABELS, type Priority } from '@orbit/shared/constants';
 import type { GroupByField, IssueOrdering } from '@orbit/shared/filters';
+import { groupOrdering } from '@orbit/shared/filters';
 import { sprintLabel } from '@orbit/shared/utils';
 import { resolveIssueActor } from '@/lib/query/issue-actors.ts';
 import type { Cycle, Issue, Label, Member, Project, WorkflowState } from '@/lib/query/schemas.ts';
-import { sortIssues } from '@/lib/query/sync.ts';
+import { sortByOrdering, sortIssues } from '@/lib/query/sync.ts';
 
 export const UNGROUPED_ID = 'none';
 
@@ -27,6 +28,7 @@ export interface IssueSubGroup extends GroupDefinition {
 }
 
 export interface IssueGroup extends GroupDefinition {
+  readonly ordering: IssueOrdering;
   readonly issues: readonly Issue[];
   readonly subGroups: readonly IssueSubGroup[];
   readonly total: number;
@@ -151,6 +153,7 @@ export function issueActorGroupKey(issue: Issue, role: 'creator' | 'assignee'): 
 export interface GroupOptions {
   readonly showEmptyGroups: boolean;
   readonly ordering: IssueOrdering;
+  readonly sortDoneByUpdated?: boolean;
   readonly subGroupBy?: GroupByField;
   readonly totals?: Readonly<Record<string, number>> | undefined;
   readonly remap?: ReadonlyMap<string, string> | undefined;
@@ -247,8 +250,13 @@ function definitionsWithExtras(
   return [...definitions.map((definition) => actors.get(definition.id) ?? definition), ...extras];
 }
 
-function ordered(issues: readonly Issue[], ordering: IssueOrdering): readonly Issue[] {
-  return ordering === 'manual' ? sortIssues(issues) : issues;
+function ordered(
+  issues: readonly Issue[],
+  base: IssueOrdering,
+  ordering: IssueOrdering,
+): readonly Issue[] {
+  if (ordering === 'manual') return sortIssues(issues);
+  return ordering === base ? issues : sortByOrdering(ordering, issues);
 }
 
 export function groupIssues(
@@ -264,12 +272,17 @@ export function groupIssues(
     const rows = buckets.get(definition.id) ?? [];
     const total = options.totals?.[definition.id] ?? rows.length;
     if (total === 0 && rows.length === 0 && !options.showEmptyGroups) return [];
-    const sorted = ordered(rows, options.ordering);
+    const ordering = groupOrdering(
+      options.ordering,
+      definition.category,
+      options.sortDoneByUpdated ?? false,
+    );
+    const sorted = ordered(rows, options.ordering, ordering);
     const subGroups =
       subGroupBy === 'none' || subGroupBy === groupBy
         ? []
-        : subGroupsOf(sorted, subGroupBy, context, options);
-    return [{ ...definition, issues: sorted, subGroups, total }];
+        : subGroupsOf(sorted, subGroupBy, context, options, ordering);
+    return [{ ...definition, ordering, issues: sorted, subGroups, total }];
   });
 }
 
@@ -278,13 +291,14 @@ function subGroupsOf(
   subGroupBy: GroupByField,
   context: GroupContext,
   options: GroupOptions,
+  ordering: IssueOrdering,
 ): IssueSubGroup[] {
   const buckets = bucket(issues, subGroupBy, options.remap);
   return definitionsWithExtras(subGroupBy, context, buckets.keys(), issues).flatMap(
     (definition) => {
       const rows = buckets.get(definition.id) ?? [];
       if (rows.length === 0) return [];
-      return [{ ...definition, issues: ordered(rows, options.ordering) }];
+      return [{ ...definition, issues: ordered(rows, options.ordering, ordering) }];
     },
   );
 }

@@ -168,6 +168,18 @@ export function DisplayMenu({
         >
           Show sub-issues
         </DropdownMenuCheckboxItem>
+        {config.groupBy === 'state' && config.orderBy === 'manual' ? (
+          <DropdownMenuCheckboxItem
+            checked={config.display.sortDoneByUpdated}
+            data-testid="toggle-done-by-updated"
+            onSelect={(event) => {
+              event.preventDefault();
+              setDisplay({ sortDoneByUpdated: !config.display.sortDoneByUpdated });
+            }}
+          >
+            Sort done by last updated
+          </DropdownMenuCheckboxItem>
+        ) : null}
         {capability.showEmptyGroups ? (
           <DropdownMenuCheckboxItem
             checked={config.display.showEmptyGroups ?? false}

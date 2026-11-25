@@ -51,11 +51,13 @@ export function boardSearch(
   groupBy: string,
   scope: Readonly<Record<string, string>> = {},
   perGroup?: number,
+  sortDoneByUpdated = false,
 ): string {
   const params = searchParams(query);
   params.delete('limit');
   for (const [key, value] of Object.entries(scope)) params.set(key, value);
   params.set('groupBy', groupBy);
+  if (sortDoneByUpdated) params.set('sortDoneByUpdated', 'true');
   if (perGroup !== undefined) params.set('perGroup', String(perGroup));
   return params.toString();
 }

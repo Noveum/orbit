@@ -97,6 +97,7 @@ export function useIssueViewModel({
         {
           showEmptyGroups: config.display.showEmptyGroups ?? false,
           ordering: config.orderBy,
+          sortDoneByUpdated: config.display.sortDoneByUpdated,
           subGroupBy: config.subGroupBy,
           totals: groupTotals,
           remap: config.groupBy === 'state' ? remap : undefined,
@@ -106,6 +107,7 @@ export function useIssueViewModel({
       shown.issues,
       config.groupBy,
       config.display.showEmptyGroups,
+      config.display.sortDoneByUpdated,
       config.orderBy,
       config.subGroupBy,
       states,

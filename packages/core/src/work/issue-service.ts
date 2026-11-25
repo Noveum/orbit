@@ -22,6 +22,7 @@ import {
   truncate,
 } from '@orbit/shared/utils';
 import {
+  booleanFlag,
   createSubIssuesSchema,
   duplicateIssueQuerySchema,
   type IssueExpectedProperties,
@@ -2393,15 +2394,14 @@ export const ISSUE_LIST_COLUMNS = listColumns;
 
 type OrderKey = ReturnType<typeof issueListSchema.parse>['orderBy'];
 
-const ORDERINGS: Record<
-  OrderKey,
-  {
-    expression: SQL;
-    descending: boolean;
-    cast: string;
-    read: (row: IssueListRow) => string | number;
-  }
-> = {
+interface IssueListOrdering {
+  readonly expression: SQL;
+  readonly descending: boolean;
+  readonly cast: string;
+  readonly read: (row: IssueListRow) => string | number;
+}
+
+const ORDERINGS: Record<OrderKey, IssueListOrdering> = {
   manual: {
     expression: sql`${schema.issue.sortOrder}`,
     descending: false,
@@ -2761,11 +2761,13 @@ export const BOARD_GROUP_LIMIT = 60;
 const boardSchema = issueListSchema.extend({
   groupBy: z.enum(BOARD_GROUP_PROPERTIES).default('state'),
   perGroup: z.coerce.number().int().min(1).max(100).default(BOARD_COLUMN_LIMIT),
+  sortDoneByUpdated: booleanFlag(false),
 });
 
 export interface BoardGroup {
   readonly id: string;
   readonly total: number;
+  readonly orderBy: OrderKey;
   readonly issues: IssueActorRead<IssueListRow>[];
   readonly nextCursor: string | null;
 }
@@ -2786,33 +2788,55 @@ function shownGroups(column: SQL.Aliased<string | null>, keys: readonly (string 
   return or(inNamed, isNull(column)) ?? inNamed;
 }
 
+function seatOrder(ordering: IssueListOrdering): SQL {
+  const direction = sql.raw(ordering.descending ? 'desc' : 'asc');
+  return sql`${ordering.expression} ${direction}, ${schema.issue.id} ${direction}`;
+}
+
+function seatOrderWithOverride(
+  ordering: IssueListOrdering,
+  override: IssueListOrdering,
+  stateIds: readonly string[],
+): SQL {
+  if (stateIds.length === 0) return seatOrder(ordering);
+  const overridden = inArray(schema.issue.stateId, [...stateIds]);
+  const direction = sql.raw(override.descending ? 'desc' : 'asc');
+  return sql`case when ${overridden} then ${override.expression} end ${direction},
+             case when ${overridden} then ${schema.issue.id} end ${direction},
+             ${seatOrder(ordering)}`;
+}
+
+async function completedStateIds(
+  organizationId: string,
+  keys: readonly (string | null)[],
+): Promise<string[]> {
+  const ids = keys.filter((key): key is string => key !== null);
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ id: schema.workflowState.id })
+    .from(schema.workflowState)
+    .where(
+      and(
+        eq(schema.workflowState.organizationId, organizationId),
+        eq(schema.workflowState.category, 'completed'),
+        inArray(schema.workflowState.id, ids),
+      ),
+    );
+  return rows.map((row) => row.id);
+}
+
 export async function listBoardGroups(
   principal: Principal,
   input: unknown = {},
 ): Promise<BoardPage> {
   assertCan(principal, 'issue:read');
   const filter = boardSchema.parse(input);
-  const ordering = ORDERINGS[filter.orderBy];
   const column = FACET_COLUMNS[filter.groupBy]();
   const matching = buildIssueWhere(principal, {
     visibility: 'team',
     filter,
     now: new Date(),
   });
-
-  const ranked = db
-    .select({
-      ...ISSUE_LIST_COLUMNS,
-      groupKey: sql<string | null>`${column}::text`.as('group_key'),
-      seat: sql<number>`row_number() over (
-        partition by ${column}
-        order by ${ordering.expression} ${sql.raw(ordering.descending ? 'desc' : 'asc')},
-                 ${schema.issue.id} ${sql.raw(ordering.descending ? 'desc' : 'asc')}
-      )`.as('seat'),
-    })
-    .from(schema.issue)
-    .where(matching)
-    .as('ranked');
 
   const counted = await db
     .select({ groupKey: sql<string | null>`${column}::text`, total: count() })
@@ -2823,6 +2847,30 @@ export async function listBoardGroups(
     .limit(BOARD_GROUP_LIMIT + 1);
 
   const totals = counted.slice(0, BOARD_GROUP_LIMIT);
+  const doneByUpdated =
+    filter.sortDoneByUpdated && filter.groupBy === 'state' && filter.orderBy === 'manual'
+      ? new Set(
+          await completedStateIds(
+            principal.organizationId,
+            totals.map((row) => row.groupKey),
+          ),
+        )
+      : new Set<string>();
+  const orderOf = (key: string): OrderKey => (doneByUpdated.has(key) ? 'updated' : filter.orderBy);
+
+  const ranked = db
+    .select({
+      ...ISSUE_LIST_COLUMNS,
+      groupKey: sql<string | null>`${column}::text`.as('group_key'),
+      seat: sql<number>`row_number() over (
+        partition by ${column}
+        order by ${seatOrderWithOverride(ORDERINGS[filter.orderBy], ORDERINGS.updated, [...doneByUpdated])}
+      )`.as('seat'),
+    })
+    .from(schema.issue)
+    .where(matching)
+    .as('ranked');
+
   const rows =
     totals.length === 0
       ? []
@@ -2853,13 +2901,15 @@ export async function listBoardGroups(
     const key = row.groupKey ?? UNGROUPED_KEY;
     const issues = byGroup.get(key) ?? [];
     const last = issues.at(-1);
+    const orderBy = orderOf(key);
     groups.push({
       id: key,
       total: Number(row.total),
+      orderBy,
       issues,
       nextCursor:
         Number(row.total) > issues.length && last !== undefined
-          ? encodeCursor(ordering.read(last), last.id)
+          ? encodeCursor(ORDERINGS[orderBy].read(last), last.id)
           : null,
     });
   }
