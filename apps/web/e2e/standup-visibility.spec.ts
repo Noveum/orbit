@@ -5,6 +5,7 @@ import { BASE } from './base-url.ts';
 test('Standup shows a member tasks from other teams and filters by participant', async ({
   page,
 }, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto(`${BASE}/login`);
   await page.getByTestId('dev-sign-in-taylor@orbit.example').click();
   await page.waitForURL(`${BASE}/my-issues`);
@@ -91,6 +92,7 @@ test('Standup shows a member tasks from other teams and filters by participant',
 });
 
 test('Standup remembers member layouts and supports shortcuts in both', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto(`${BASE}/login`);
   await page.getByTestId('dev-sign-in-alex@orbit.example').click();
   await page.waitForURL(`${BASE}/my-issues`);
@@ -101,7 +103,12 @@ test('Standup remembers member layouts and supports shortcuts in both', async ({
   const isMac = await page.evaluate(() => /Mac/i.test(navigator.platform));
   const next = isMac ? 'Tab' : 'j';
   const previous = isMac ? 'Shift+Tab' : 'k';
-  for (const layout of ['cards', 'dropdown']) {
+  await page.getByRole('button', { name: 'Display options' }).click();
+  await expect(page.getByRole('menuitemradio', { name: 'Auto', exact: true })).toBeChecked();
+  await page.getByRole('menuitemradio', { name: 'List', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(cards).toBeVisible();
+  for (const layout of ['list', 'dropdown']) {
     if (layout === 'dropdown') {
       await page.getByRole('button', { name: 'Display options' }).click();
       await page.getByRole('menuitemradio', { name: 'Dropdown', exact: true }).click();
@@ -124,7 +131,7 @@ test('Standup remembers member layouts and supports shortcuts in both', async ({
       first ?? '',
     );
     await page.keyboard.up('Alt');
-    if (layout === 'cards') await expect(cards).toBeVisible();
+    if (layout === 'list') await expect(cards).toBeVisible();
     else await expect(cards).toBeHidden();
   }
   const selectedUrl = page.url();
@@ -133,7 +140,30 @@ test('Standup remembers member layouts and supports shortcuts in both', async ({
   await expect(cards).toBeHidden();
   await page.getByRole('button', { name: 'Display options' }).click();
   await expect(page.getByRole('menuitemradio', { name: 'Dropdown', exact: true })).toBeChecked();
-  await page.getByRole('menuitemradio', { name: 'Cards', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'List', exact: true }).click();
   await expect(cards).toBeVisible();
   await expect(page).toHaveURL(selectedUrl);
+});
+
+test('Standup Auto members show a list when they fit and a dropdown when they do not', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(`${BASE}/login`);
+  await page.getByTestId('dev-sign-in-alex@orbit.example').click();
+  await page.waitForURL(`${BASE}/my-issues`);
+  await page.goto(`${BASE}/standup`);
+  const cards = page.getByTestId('standup-tiles');
+  const dropdown = page.getByRole('button', { name: /^Members:/ });
+  await expect(cards).toBeVisible();
+  await expect(dropdown).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(dropdown).toBeVisible();
+  await expect(cards).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(cards).toBeVisible();
+  await expect(dropdown).toHaveCount(0);
 });
