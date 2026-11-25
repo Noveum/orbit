@@ -70,6 +70,7 @@ export const oauthAccessToken = pgTable(
   (table) => [
     index('oauth_access_token_client_idx').on(table.clientId),
     index('oauth_access_token_user_idx').on(table.userId),
+    index('oauth_access_token_session_idx').on(table.sessionId),
   ],
 );
 

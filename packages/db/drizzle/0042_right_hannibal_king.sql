@@ -1,0 +1,1 @@
+CREATE INDEX "oauth_access_token_session_idx" ON "oauth_access_token" USING btree ("session_id");
